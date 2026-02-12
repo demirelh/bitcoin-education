@@ -151,7 +151,7 @@ Schedule: detect every 6h, run-pending daily at 02:00.
 
 Expose the web dashboard publicly via Caddy reverse proxy with automatic TLS.
 
-**Architecture:** `Internet → DuckDNS → Router → Caddy (:443) → Gunicorn (:8090)`
+**Architecture:** `Internet → DuckDNS → Router → Caddy (:443) → Gunicorn (:8091)`
 
 ### Quick setup
 
@@ -168,11 +168,13 @@ sudo systemctl enable --now btcedu-web.service
 caddy hash-password --plaintext 'YOUR_PASSWORD'
 
 # 4. Edit /etc/caddy/Caddyfile - add inside lnodebtc.duckdns.org { }:
-#    handle_path /dashboard/* {
-#        basic_auth {
+#    @dashboard path /dashboard/*
+#    handle @dashboard {
+#        uri strip_prefix /dashboard
+#        basicauth {
 #            pi PASTE_HASH_HERE
 #        }
-#        reverse_proxy 127.0.0.1:8090
+#        reverse_proxy 127.0.0.1:8091
 #    }
 #    header {
 #        X-Content-Type-Options nosniff

@@ -8,12 +8,13 @@
 #   3. Reload caddy:
 #        sudo systemctl reload caddy
 
-    # btcedu dashboard (password-protected)
-    handle_path /dashboard/* {
-        basic_auth {
+    @dashboard path /dashboard/*
+    handle @dashboard {
+        uri strip_prefix /dashboard
+        basicauth {
             pi HASH_HERE
         }
-        reverse_proxy 127.0.0.1:8090
+        reverse_proxy 127.0.0.1:8091
     }
 
     # Security headers (add once, outside any handle block)

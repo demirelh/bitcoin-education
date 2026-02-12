@@ -24,6 +24,7 @@ dependencies = [
 [project.optional-dependencies]
 web = [
     "flask>=3.0.0",
+    "gunicorn>=22.0.0",
 ]
 dev = [
     "pytest>=8.0.0",

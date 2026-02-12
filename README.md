@@ -147,6 +147,68 @@ journalctl -u btcedu-run --since today
 
 Schedule: detect every 6h, run-pending daily at 02:00.
 
+## Public Dashboard Deployment (DuckDNS + HTTPS)
+
+Expose the web dashboard publicly via Caddy reverse proxy with automatic TLS.
+
+**Architecture:** `Internet → DuckDNS → Router → Caddy (:443) → Gunicorn (:8090)`
+
+### Quick setup
+
+```bash
+# 1. Install gunicorn
+.venv/bin/pip install 'gunicorn>=22.0.0'
+
+# 2. Install and start the systemd service
+sudo cp deploy/btcedu-web.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now btcedu-web.service
+
+# 3. Generate a password hash for basic auth
+caddy hash-password --plaintext 'YOUR_PASSWORD'
+
+# 4. Edit /etc/caddy/Caddyfile - add inside lnodebtc.duckdns.org { }:
+#    handle_path /dashboard/* {
+#        basic_auth {
+#            pi PASTE_HASH_HERE
+#        }
+#        reverse_proxy 127.0.0.1:8090
+#    }
+#    header {
+#        X-Content-Type-Options nosniff
+#        X-Frame-Options DENY
+#        Referrer-Policy no-referrer
+#    }
+
+# 5. Reload Caddy
+sudo systemctl reload caddy
+```
+
+Dashboard will be at: **https://lnodebtc.duckdns.org/dashboard/**
+
+### Change password
+
+```bash
+caddy hash-password --plaintext 'NEW_PASSWORD'
+# Edit /etc/caddy/Caddyfile, replace the hash, then:
+sudo systemctl reload caddy
+```
+
+### Monitoring
+
+```bash
+sudo systemctl status btcedu-web
+sudo journalctl -u btcedu-web -f
+```
+
+### Security
+
+- Gunicorn binds to `127.0.0.1` only (never exposed directly)
+- Basic auth required for all dashboard routes
+- HTTPS with auto-renewing Let's Encrypt certificates (managed by Caddy)
+- Security headers: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`
+- No API keys or secrets exposed to the browser
+
 ## Cost
 
 ~$0.38 per episode (6 Claude Sonnet calls with ~5k input / ~1.5k output tokens each).
@@ -204,6 +266,9 @@ btcedu/
 deploy/
   btcedu-detect.*     # systemd units for detection
   btcedu-run.*        # systemd units for processing
+  btcedu-web.service  # systemd unit for web dashboard
+  Caddyfile.dashboard # Caddy config snippet
+  setup-web.sh        # Deployment helper script
 tests/
 data/
   btcedu.db           # SQLite database

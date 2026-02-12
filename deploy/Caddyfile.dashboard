@@ -1,0 +1,24 @@
+# btcedu dashboard - add this block INSIDE the lnodebtc.duckdns.org { } block
+# Place it BEFORE the existing handle blocks.
+#
+# Usage:
+#   1. Generate a password hash:
+#        caddy hash-password --plaintext 'YOUR_PASSWORD'
+#   2. Replace HASH_HERE below with the output
+#   3. Reload caddy:
+#        sudo systemctl reload caddy
+
+    # btcedu dashboard (password-protected)
+    handle_path /dashboard/* {
+        basic_auth {
+            pi HASH_HERE
+        }
+        reverse_proxy 127.0.0.1:8090
+    }
+
+    # Security headers (add once, outside any handle block)
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+    }

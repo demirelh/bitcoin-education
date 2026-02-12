@@ -483,8 +483,19 @@ def journal(tail_n: int) -> None:
 @cli.command()
 @click.option("--host", default="127.0.0.1", help="Bind address (use 0.0.0.0 for LAN).")
 @click.option("--port", default=5000, type=int, help="Port number.")
-def web(host: str, port: int) -> None:
+@click.option("--production", is_flag=True, default=False, help="Print gunicorn command instead.")
+def web(host: str, port: int, production: bool) -> None:
     """Start the web dashboard."""
+    if production:
+        venv = Path(sys.executable).parent
+        cmd = (
+            f'{venv / "gunicorn"} -w 2 -b {host}:{port} '
+            f'--timeout 300 "btcedu.web.app:create_app()"'
+        )
+        click.echo("Run this command for production:\n")
+        click.echo(f"  {cmd}")
+        return
+
     from btcedu.web.app import create_app
 
     app = create_app()

@@ -82,9 +82,50 @@ Tests: python -m pytest tests/ -v
 
 **Next steps (not yet implemented):**
 - Auto-refresh polling (optional timer in JS)
-- Systemd unit for web dashboard
 - Episode selection via URL params
 - Bulk actions (run-pending from UI)
 - WebSocket for live pipeline progress
+
+---
+
+## Public Dashboard Deployment - Plan & Implementation
+_2026-02-12_
+
+**Goal:** Expose the btcedu web dashboard publicly at https://lnodebtc.duckdns.org/dashboard/
+with basic auth, HTTPS, and production-grade serving.
+
+**Key discovery:** Caddy v2.6.2 already runs on the Pi with auto-TLS for lnodebtc.duckdns.org.
+No need for nginx or certbot.
+
+**Architecture:**
+```
+Internet → DuckDNS → Router → Caddy (:443, auto-TLS) → Gunicorn (:8090)
+```
+
+**Files created:**
+- `deploy/btcedu-web.service` - systemd unit for gunicorn (2 workers, 300s timeout, localhost-only)
+- `deploy/Caddyfile.dashboard` - Caddy config snippet with basic_auth + security headers
+- `deploy/setup-web.sh` - Deployment helper script
+
+**Files modified:**
+- `pyproject.toml` - Added gunicorn to [web] deps
+- `btcedu/cli.py` - Added `--production` flag to `btcedu web` command
+- `README.md` - Added "Public Dashboard Deployment" section
+
+**Security measures:**
+- Gunicorn binds to 127.0.0.1 only
+- Caddy basic_auth with bcrypt password
+- Security headers: X-Content-Type-Options, X-Frame-Options, Referrer-Policy
+- Auto-renewing TLS via Caddy/Let's Encrypt
+- No secrets exposed to frontend
+
+**Deployment steps:**
+```bash
+.venv/bin/pip install 'gunicorn>=22.0.0'
+sudo cp deploy/btcedu-web.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now btcedu-web
+# Then update /etc/caddy/Caddyfile with handle_path /dashboard/* block
+sudo systemctl reload caddy
+```
 
 ---

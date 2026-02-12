@@ -1,5 +1,7 @@
 import logging
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -28,8 +30,13 @@ def download_audio(
 
     output_template = str(out_path / f"audio.%(ext)s")
 
+    # Prefer yt-dlp from the same venv as the running Python interpreter,
+    # so it works even when PATH doesn't include the venv bin directory
+    # (e.g. when running under gunicorn/systemd).
+    ytdlp = shutil.which("yt-dlp") or str(Path(sys.executable).parent / "yt-dlp")
+
     cmd = [
-        "yt-dlp",
+        ytdlp,
         "--extract-audio",
         "--audio-format", audio_format,
         "--output", output_template,

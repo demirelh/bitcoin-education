@@ -460,3 +460,33 @@ def cost(ctx: click.Context, episode_id: str | None) -> None:
 def init_db_cmd(ctx: click.Context) -> None:
     """Initialize the database (create tables)."""
     click.echo("Database initialized successfully.")
+
+
+@cli.command()
+@click.option("--tail", "tail_n", type=int, default=50, help="Show last N lines.")
+def journal(tail_n: int) -> None:
+    """Show the project progress log."""
+    from btcedu.utils.journal import JOURNAL_PATH
+
+    if not JOURNAL_PATH.exists():
+        click.echo(f"No journal yet at {JOURNAL_PATH}")
+        return
+
+    lines = JOURNAL_PATH.read_text(encoding="utf-8").splitlines()
+    if len(lines) <= tail_n:
+        click.echo("\n".join(lines))
+    else:
+        click.echo(f"... ({len(lines) - tail_n} lines above) ...\n")
+        click.echo("\n".join(lines[-tail_n:]))
+
+
+@cli.command()
+@click.option("--host", default="127.0.0.1", help="Bind address (use 0.0.0.0 for LAN).")
+@click.option("--port", default=5000, type=int, help="Port number.")
+def web(host: str, port: int) -> None:
+    """Start the web dashboard."""
+    from btcedu.web.app import create_app
+
+    app = create_app()
+    click.echo(f"Starting dashboard on http://{host}:{port}")
+    app.run(host=host, port=port, debug=False)

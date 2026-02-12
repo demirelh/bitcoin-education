@@ -8,6 +8,9 @@
 #   3. Reload caddy:
 #        sudo systemctl reload caddy
 
+    # Redirect /dashboard (no trailing slash) → /dashboard/
+    redir /dashboard /dashboard/ permanent
+
     @dashboard path /dashboard/*
     handle @dashboard {
         uri strip_prefix /dashboard

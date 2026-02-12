@@ -114,11 +114,46 @@ def client(app):
 # Episode list + detail
 # ---------------------------------------------------------------------------
 
-class TestEpisodeEndpoints:
+class TestHealthAndStaticAssets:
+    def test_health_endpoint(self, client):
+        r = client.get("/api/health")
+        assert r.status_code == 200
+        data = r.get_json()
+        assert data["status"] == "ok"
+
     def test_index_returns_html(self, client):
         r = client.get("/")
         assert r.status_code == 200
         assert b"btcedu" in r.data
+
+    def test_index_uses_relative_static_paths(self, client):
+        r = client.get("/")
+        html = r.data.decode()
+        # Must NOT use absolute /static/ paths (breaks reverse proxy)
+        assert 'href="/static/' not in html
+        assert 'src="/static/' not in html
+        # Must use relative paths
+        assert 'href="static/' in html
+        assert 'src="static/' in html
+
+    def test_static_css_served(self, client):
+        r = client.get("/static/styles.css")
+        assert r.status_code == 200
+        assert b"--bg" in r.data  # CSS custom property
+
+    def test_static_js_served(self, client):
+        r = client.get("/static/app.js")
+        assert r.status_code == 200
+        assert b"btcedu" in r.data
+
+    def test_js_uses_relative_api_paths(self, client):
+        r = client.get("/static/app.js")
+        js = r.data.decode()
+        # Must NOT use absolute /api paths (breaks reverse proxy)
+        assert 'fetch("/api' not in js
+
+
+class TestEpisodeEndpoints:
 
     def test_get_episodes_returns_json(self, client):
         r = client.get("/api/episodes")

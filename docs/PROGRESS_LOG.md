@@ -129,3 +129,36 @@ sudo systemctl reload caddy
 ```
 
 ---
+
+## Dashboard Fix: Reverse Proxy URL Routing
+_2026-02-12_
+
+**Problem:** Dashboard at `https://lnodebtc.duckdns.org/dashboard/` loaded HTML but was completely non-functional — episode list stuck on "Loading...", all buttons broken.
+
+**Root cause:** Absolute URL paths in HTML and JS conflicted with Caddy's route matching:
+- `<link href="/static/styles.css">` → served by btc-dashboard file_server (wrong app)
+- `<script src="/static/app.js">` → served by btc-dashboard file_server (wrong app)
+- `fetch("/api/episodes")` → routed to btc-dashboard API on :9000 (wrong backend)
+
+Only the initial `/dashboard/` request matched Caddy's `@dashboard path /dashboard/*` matcher. All subsequent absolute-path requests bypassed it.
+
+**Fix:**
+1. Changed HTML paths from absolute to relative: `href="static/styles.css"`, `src="static/app.js"`
+2. Changed JS fetch from `fetch("/api" + path)` to `fetch("api" + path)` (relative)
+3. Added `redir /dashboard /dashboard/ permanent` in Caddy for trailing slash
+4. Added `GET /api/health` endpoint for monitoring
+5. Added error handling in JS: try/catch on refresh(), error banner in table, toast on API failure
+6. Added 5 new tests: health endpoint, relative paths verification, static asset serving, JS path check
+
+**Files modified:**
+- `btcedu/web/templates/index.html` - Relative static paths
+- `btcedu/web/static/app.js` - Relative API paths + error handling
+- `btcedu/web/api.py` - Health endpoint
+- `deploy/Caddyfile.dashboard` - Trailing slash redirect
+- `tests/test_web.py` - 5 new tests (28 total)
+
+**Test results:** 177 tests passing (172 existing + 5 new)
+
+**Verification:** All routes confirmed working through Caddy proxy (health, episodes API, static assets, redirect).
+
+---

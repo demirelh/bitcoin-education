@@ -16,6 +16,16 @@ logger = logging.getLogger(__name__)
 api_bp = Blueprint("api", __name__)
 
 
+# ---------------------------------------------------------------------------
+# Health check
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/health")
+def health():
+    """Simple health check for monitoring and proxy verification."""
+    return jsonify({"status": "ok"})
+
+
 def _get_session():
     return current_app.config["session_factory"]()
 

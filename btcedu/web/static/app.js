@@ -6,13 +6,23 @@
   let selected = null;
 
   // ── API helpers ──────────────────────────────────────────────
+  // Use relative URL so requests stay within the reverse-proxy prefix
+  // (e.g. /dashboard/api/... when served behind Caddy at /dashboard/).
   async function api(method, path, body) {
     const opts = { method, headers: {} };
     if (body) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
     }
-    const res = await fetch("/api" + path, opts);
+    const endpoint = "api" + path;
+    const res = await fetch(endpoint, opts);
+    if (!res.ok) {
+      // Handle non-JSON error responses (e.g. 401 from proxy)
+      const ct = res.headers.get("content-type") || "";
+      if (!ct.includes("application/json")) {
+        return { error: `HTTP ${res.status} ${res.statusText}` };
+      }
+    }
     const data = await res.json();
     if (!res.ok && !data.error) data.error = `HTTP ${res.status}`;
     return data;
@@ -221,32 +231,51 @@
 
   // ── What's new ───────────────────────────────────────────────
   async function loadWhatsNew() {
-    const data = await GET("/whats-new");
-    const bar = document.getElementById("whats-new");
-    let html = "";
-    const nn = (data.new_episodes || []).length;
-    const nf = (data.failed || []).length;
-    const ni = (data.incomplete || []).length;
-    if (nn) html += `<span class="wn-badge wn-new">${nn} new</span>`;
-    if (nf) html += `<span class="wn-badge wn-failed">${nf} failed</span>`;
-    if (ni) html += `<span class="wn-badge wn-incomplete">${ni} incomplete</span>`;
-    if (!html) html = "All episodes up to date.";
-    bar.innerHTML = html;
+    try {
+      const data = await GET("/whats-new");
+      if (data.error) return;
+      const bar = document.getElementById("whats-new");
+      let html = "";
+      const nn = (data.new_episodes || []).length;
+      const nf = (data.failed || []).length;
+      const ni = (data.incomplete || []).length;
+      if (nn) html += `<span class="wn-badge wn-new">${nn} new</span>`;
+      if (nf) html += `<span class="wn-badge wn-failed">${nf} failed</span>`;
+      if (ni) html += `<span class="wn-badge wn-incomplete">${ni} incomplete</span>`;
+      if (!html) html = "All episodes up to date.";
+      bar.innerHTML = html;
+    } catch (err) {
+      // Non-critical, don't block the UI
+    }
   }
 
   // ── Refresh ──────────────────────────────────────────────────
   async function refresh() {
-    const data = await GET("/episodes");
-    episodes = data;
-    applyFilters();
-    loadWhatsNew();
-    // Re-select if still exists
-    if (selected) {
-      const found = episodes.find((e) => e.episode_id === selected.episode_id);
-      if (found) selectEpisode(found);
+    try {
+      const data = await GET("/episodes");
+      if (data.error) {
+        showError("API error: " + data.error);
+        return;
+      }
+      episodes = Array.isArray(data) ? data : [];
+      applyFilters();
+      loadWhatsNew();
+      // Re-select if still exists
+      if (selected) {
+        const found = episodes.find((e) => e.episode_id === selected.episode_id);
+        if (found) selectEpisode(found);
+      }
+    } catch (err) {
+      showError("Cannot reach API: " + err.message);
     }
   }
   window.refresh = refresh;
+
+  function showError(msg) {
+    const tbody = document.getElementById("ep-tbody");
+    tbody.innerHTML = `<tr><td colspan="5" class="empty" style="color:var(--red)">${esc(msg)}</td></tr>`;
+    toast(msg, false);
+  }
 
   // ── Utils ────────────────────────────────────────────────────
   function esc(s) {

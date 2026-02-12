@@ -201,7 +201,19 @@ sudo systemctl reload caddy
 ```bash
 sudo systemctl status btcedu-web
 sudo journalctl -u btcedu-web -f
+
+# Health check
+curl -u pi:PASSWORD https://lnodebtc.duckdns.org/dashboard/api/health
 ```
+
+### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| HTML loads but JS non-functional | Absolute `/static/` or `/api/` paths bypass proxy | Use relative paths (no leading `/`) |
+| 401 on all requests | Basic auth credentials wrong | Re-generate hash: `caddy hash-password` |
+| 502 Bad Gateway | Gunicorn not running | `sudo systemctl restart btcedu-web` |
+| `/dashboard` gives 404 | Missing trailing slash redirect | Add `redir /dashboard /dashboard/ permanent` |
 
 ### Security
 

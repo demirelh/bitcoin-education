@@ -43,6 +43,45 @@ def detect(ctx: click.Context) -> None:
 
 
 @cli.command()
+@click.option("--max", "max_count", type=int, default=None, help="Max new episodes to insert.")
+@click.option("--since", type=click.DateTime(formats=["%Y-%m-%d"]), default=None,
+              help="Only videos published on or after YYYY-MM-DD.")
+@click.option("--until", "until_date", type=click.DateTime(formats=["%Y-%m-%d"]), default=None,
+              help="Only videos published on or before YYYY-MM-DD.")
+@click.option("--dry-run", is_flag=True, default=False, help="Print what would be inserted, don't write.")
+@click.pass_context
+def backfill(ctx: click.Context, max_count: int | None, since: datetime | None,
+             until_date: datetime | None, dry_run: bool) -> None:
+    """Import full YouTube channel history via yt-dlp.
+
+    Unlike 'detect' (which reads the RSS feed limited to ~15 videos),
+    this command uses yt-dlp to list ALL videos from the channel.
+    """
+    from btcedu.core.detector import backfill_episodes
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        result = backfill_episodes(
+            session, settings,
+            max_count=max_count,
+            since=since.date() if since else None,
+            until=until_date.date() if until_date else None,
+            dry_run=dry_run,
+        )
+        prefix = "[dry-run] " if dry_run else ""
+        click.echo(
+            f"{prefix}Found: {result.found}  New: {result.new}  "
+            f"Total in DB: {result.total}"
+        )
+    except Exception as e:
+        click.echo(f"Backfill failed: {e}", err=True)
+        sys.exit(1)
+    finally:
+        session.close()
+
+
+@cli.command()
 @click.option(
     "--episode-id", "episode_ids", multiple=True, required=True,
     help="Episode ID(s) to download (repeatable).",

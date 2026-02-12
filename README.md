@@ -56,7 +56,8 @@ btcedu run-latest
 
 | Command | Description |
 |---------|-------------|
-| `btcedu detect` | Check RSS feed for new episodes |
+| `btcedu detect` | Check RSS feed for new episodes (~15 most recent) |
+| `btcedu backfill` | Import full channel history via yt-dlp (see below) |
 | `btcedu download --episode-id ID` | Download audio |
 | `btcedu transcribe --episode-id ID` | Transcribe via Whisper |
 | `btcedu chunk --episode-id ID` | Chunk transcript + FTS5 index |
@@ -117,6 +118,44 @@ Resumes from the **last failed stage**:
 Example: episode at `chunked` with "generate failed" error → clears error, skips download/transcribe/chunk, runs generate.
 
 If the episode has no error, retry returns "Nothing to retry. Use 'run' instead."
+
+## Backfill Full Channel History
+
+YouTube's RSS feed only returns the **~15 most recent videos**. To import older videos, use `btcedu backfill` which uses yt-dlp to list all videos from the channel.
+
+```bash
+# Import all videos from the channel
+btcedu backfill
+
+# Preview what would be imported (no DB changes)
+btcedu backfill --dry-run
+
+# Only videos from 2024 onwards
+btcedu backfill --since 2024-01-01
+
+# Only videos before 2024
+btcedu backfill --until 2023-12-31
+
+# Import at most 10 new videos
+btcedu backfill --max 10
+
+# Combine filters
+btcedu backfill --since 2023-01-01 --until 2024-06-30 --max 20
+```
+
+**How it works:**
+- Runs `yt-dlp --flat-playlist -J` on the channel URL (no audio download)
+- Parses JSON output for video ID, title, and upload date
+- Inserts new episodes with status `new` (idempotent — existing episodes are never modified)
+- After backfill, use `btcedu run-pending` or the dashboard to process the new episodes
+
+**detect vs backfill:**
+| | `btcedu detect` | `btcedu backfill` |
+|---|---|---|
+| Source | YouTube RSS feed | yt-dlp channel listing |
+| Speed | ~1 second | 10-30 seconds |
+| Coverage | ~15 most recent | All videos |
+| Use case | Cron / incremental | One-off / catch-up |
 
 ## Web Dashboard
 

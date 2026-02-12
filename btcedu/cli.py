@@ -182,6 +182,7 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
                         EpisodeStatus.DOWNLOADED,
                         EpisodeStatus.TRANSCRIBED,
                         EpisodeStatus.CHUNKED,
+                        EpisodeStatus.GENERATED,
                     ])
                 )
                 .order_by(Episode.published_at.asc())
@@ -429,6 +430,33 @@ def generate(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, top_
         for eid in episode_ids:
             try:
                 result = generate_content(session, eid, settings, force=force, top_k=top_k)
+                click.echo(
+                    f"[OK] {eid} -> {len(result.artifacts)} artifacts "
+                    f"(${result.total_cost_usd:.4f})"
+                )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
+@cli.command()
+@click.option(
+    "--episode-id", "episode_ids", multiple=True, required=True,
+    help="Episode ID(s) to refine (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-refine even if v2 outputs exist.")
+@click.pass_context
+def refine(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
+    """Refine generated content using QA feedback (v1 -> v2)."""
+    from btcedu.core.generator import refine_content
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = refine_content(session, eid, settings, force=force)
                 click.echo(
                     f"[OK] {eid} -> {len(result.artifacts)} artifacts "
                     f"(${result.total_cost_usd:.4f})"

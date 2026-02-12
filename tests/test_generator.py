@@ -12,6 +12,7 @@ from btcedu.core.generator import (
     build_query_terms,
     format_chunks_for_prompt,
     generate_content,
+    refine_content,
     retrieve_chunks,
     save_retrieval_snapshot,
 )
@@ -375,3 +376,112 @@ class TestFormatChunks:
         formatted = format_chunks_for_prompt(chunks, "ep001")
         assert "[ep001_C0001]" in formatted
         assert "Test text" in formatted
+
+
+# ── Refine Content (mocked Claude) ──────────────────────────────
+
+
+def _create_generated_episode(db_session, tmp_path):
+    """Create a GENERATED episode with v1 artifacts on disk."""
+    ep = Episode(
+        episode_id="ep_gen",
+        source="youtube_rss",
+        title="Bitcoin und die Zukunft des Geldes",
+        url="https://youtube.com/watch?v=ep_gen",
+        status=EpisodeStatus.GENERATED,
+    )
+    db_session.add(ep)
+    db_session.commit()
+
+    output_dir = tmp_path / "outputs" / "ep_gen"
+    output_dir.mkdir(parents=True)
+    (output_dir / "outline.tr.md").write_text("# Outline v1\n- Punkt 1 [ep_gen_C0001]", encoding="utf-8")
+    (output_dir / "script.long.tr.md").write_text("# Script v1\nBitcoin bir [ep_gen_C0001]...", encoding="utf-8")
+    (output_dir / "qa.json").write_text('{"claims": [{"status": "supported"}]}', encoding="utf-8")
+
+    return ep
+
+
+class TestRefineContent:
+    @patch("btcedu.core.generator.call_claude")
+    def test_creates_3_v2_artifacts(self, mock_claude, db_session, tmp_path):
+        mock_claude.return_value = _mock_claude_response()
+        _create_generated_episode(db_session, tmp_path)
+        settings = _make_settings(tmp_path)
+
+        result = refine_content(db_session, "ep_gen", settings)
+
+        assert len(result.artifacts) == 3
+        for path in result.artifacts:
+            assert Path(path).exists()
+
+    @patch("btcedu.core.generator.call_claude")
+    def test_updates_status_to_refined(self, mock_claude, db_session, tmp_path):
+        mock_claude.return_value = _mock_claude_response()
+        _create_generated_episode(db_session, tmp_path)
+        settings = _make_settings(tmp_path)
+
+        refine_content(db_session, "ep_gen", settings)
+
+        ep = db_session.query(Episode).filter_by(episode_id="ep_gen").first()
+        assert ep.status == EpisodeStatus.REFINED
+
+    @patch("btcedu.core.generator.call_claude")
+    def test_creates_pipeline_run_with_refine_stage(self, mock_claude, db_session, tmp_path):
+        mock_claude.return_value = _mock_claude_response()
+        _create_generated_episode(db_session, tmp_path)
+        settings = _make_settings(tmp_path)
+
+        refine_content(db_session, "ep_gen", settings)
+
+        run = (
+            db_session.query(PipelineRun)
+            .filter_by(stage=PipelineStage.REFINE)
+            .first()
+        )
+        assert run is not None
+        assert run.status == RunStatus.SUCCESS
+        assert run.estimated_cost_usd > 0
+
+    @patch("btcedu.core.generator.call_claude")
+    def test_output_v2_filenames(self, mock_claude, db_session, tmp_path):
+        mock_claude.return_value = _mock_claude_response()
+        _create_generated_episode(db_session, tmp_path)
+        settings = _make_settings(tmp_path)
+
+        refine_content(db_session, "ep_gen", settings)
+
+        output_dir = tmp_path / "outputs" / "ep_gen"
+        assert (output_dir / "outline.tr.v2.md").exists()
+        assert (output_dir / "script.long.tr.v2.md").exists()
+        assert (output_dir / "publishing_pack.v2.json").exists()
+
+    def test_rejects_wrong_status(self, db_session):
+        ep = Episode(
+            episode_id="ep_new",
+            source="youtube_rss",
+            title="Test",
+            url="https://youtube.com/watch?v=ep_new",
+            status=EpisodeStatus.NEW,
+        )
+        db_session.add(ep)
+        db_session.commit()
+
+        settings = Settings(outputs_dir="/tmp/test")
+        with pytest.raises(ValueError, match="expected 'generated'"):
+            refine_content(db_session, "ep_new", settings)
+
+    def test_rejects_missing_v1_artifacts(self, db_session, tmp_path):
+        ep = Episode(
+            episode_id="ep_no_files",
+            source="youtube_rss",
+            title="Test",
+            url="https://youtube.com/watch?v=ep_no_files",
+            status=EpisodeStatus.GENERATED,
+        )
+        db_session.add(ep)
+        db_session.commit()
+
+        settings = _make_settings(tmp_path)
+        with pytest.raises(ValueError, match="Missing required input"):
+            refine_content(db_session, "ep_no_files", settings)

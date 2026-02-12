@@ -119,9 +119,9 @@ class TestRunEpisodePipeline:
         call_args = mock_stage.call_args
         assert call_args[0][3] == "generate"  # stage_name arg
 
-        # Download, transcribe, chunk should be marked skipped
+        # Download, transcribe, chunk, refine should be marked skipped
         skipped = [s for s in report.stages if s.status == "skipped"]
-        assert len(skipped) == 3
+        assert len(skipped) == 4
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_records_failure_and_increments_retry(self, mock_stage, db_session, new_episode, tmp_path):
@@ -250,11 +250,30 @@ class TestRunPending:
         assert mock_run.call_args[0][1].episode_id == "ep_new"
 
     @patch("btcedu.core.pipeline.run_episode_pipeline")
-    def test_skips_generated_episodes(self, mock_run, db_session, tmp_path):
+    def test_includes_generated_episodes(self, mock_run, db_session, tmp_path):
+        """GENERATED episodes are pending (need refine stage)."""
+        ep = Episode(
+            episode_id="ep_gen", source="youtube_rss", title="Generated",
+            url="https://youtube.com/watch?v=gen",
+            status=EpisodeStatus.GENERATED,
+            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+        )
+        db_session.add(ep)
+        db_session.commit()
+
+        mock_run.return_value = PipelineReport(episode_id="ep_gen", title="Generated", success=True)
+        settings = _make_settings(tmp_path)
+        reports = run_pending(db_session, settings)
+
+        assert len(reports) == 1
+        mock_run.assert_called_once()
+
+    @patch("btcedu.core.pipeline.run_episode_pipeline")
+    def test_skips_refined_episodes(self, mock_run, db_session, tmp_path):
         ep = Episode(
             episode_id="ep_done", source="youtube_rss", title="Done",
             url="https://youtube.com/watch?v=done",
-            status=EpisodeStatus.GENERATED,
+            status=EpisodeStatus.REFINED,
             published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
         )
         db_session.add(ep)
@@ -422,11 +441,12 @@ class TestWriteReport:
 class TestResolvePipelinePlan:
     def test_new_episode_plans_all_stages(self, db_session, new_episode):
         plan = resolve_pipeline_plan(db_session, new_episode)
-        assert len(plan) == 4
+        assert len(plan) == 5
         assert plan[0] == StagePlan("download", "run", "status=new")
         assert plan[1] == StagePlan("transcribe", "pending", "after prior stages")
         assert plan[2] == StagePlan("chunk", "pending", "after prior stages")
         assert plan[3] == StagePlan("generate", "pending", "after prior stages")
+        assert plan[4] == StagePlan("refine", "pending", "after prior stages")
 
     def test_downloaded_skips_download(self, db_session):
         ep = Episode(
@@ -443,6 +463,7 @@ class TestResolvePipelinePlan:
         assert plan[1].decision == "run"
         assert plan[2].decision == "pending"
         assert plan[3].decision == "pending"
+        assert plan[4].decision == "pending"
 
     def test_chunked_skips_three(self, db_session):
         ep = Episode(
@@ -458,12 +479,29 @@ class TestResolvePipelinePlan:
         skipped = [p for p in plan if p.decision == "skip"]
         assert len(skipped) == 3
         assert plan[3] == StagePlan("generate", "run", "status=chunked")
+        assert plan[4] == StagePlan("refine", "pending", "after prior stages")
 
-    def test_generated_skips_all(self, db_session):
+    def test_generated_runs_refine(self, db_session):
         ep = Episode(
             episode_id="ep_gen", source="youtube_rss", title="Generated",
             url="https://youtube.com/watch?v=gen",
             status=EpisodeStatus.GENERATED,
+            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+        )
+        db_session.add(ep)
+        db_session.commit()
+
+        plan = resolve_pipeline_plan(db_session, ep)
+        # download/transcribe/chunk/generate skipped, refine runs
+        skipped = [p for p in plan if p.decision == "skip"]
+        assert len(skipped) == 4
+        assert plan[4] == StagePlan("refine", "run", "status=generated")
+
+    def test_refined_skips_all(self, db_session):
+        ep = Episode(
+            episode_id="ep_ref", source="youtube_rss", title="Refined",
+            url="https://youtube.com/watch?v=ref",
+            status=EpisodeStatus.REFINED,
             published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
         )
         db_session.add(ep)
@@ -476,7 +514,7 @@ class TestResolvePipelinePlan:
         ep = Episode(
             episode_id="ep_force", source="youtube_rss", title="Force",
             url="https://youtube.com/watch?v=force",
-            status=EpisodeStatus.GENERATED,
+            status=EpisodeStatus.REFINED,
             published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
         )
         db_session.add(ep)
@@ -484,18 +522,20 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep, force=True)
         assert all(p.decision == "run" for p in plan)
-        # First three should say "forced" since they're past their required status
+        assert len(plan) == 5
         assert plan[0].reason == "forced"
-        assert plan[3].reason == "forced"
+        assert plan[4].reason == "forced"
 
     def test_plan_with_error_still_resolves(self, db_session, failed_episode):
         """Pipeline plan ignores error_message — only looks at status."""
         plan = resolve_pipeline_plan(db_session, failed_episode)
-        # failed_episode is CHUNKED, so download/transcribe/chunk skip, generate runs
+        # failed_episode is CHUNKED, so download/transcribe/chunk skip, generate runs, refine pending
         skipped = [p for p in plan if p.decision == "skip"]
         assert len(skipped) == 3
         assert plan[3].decision == "run"
         assert plan[3].stage == "generate"
+        assert plan[4].decision == "pending"
+        assert plan[4].stage == "refine"
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_stage_callback_invoked(self, mock_stage, db_session, tmp_path):

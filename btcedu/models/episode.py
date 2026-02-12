@@ -13,6 +13,7 @@ class EpisodeStatus(str, enum.Enum):
     TRANSCRIBED = "transcribed"
     CHUNKED = "chunked"
     GENERATED = "generated"
+    REFINED = "refined"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -23,6 +24,7 @@ class PipelineStage(str, enum.Enum):
     TRANSCRIBE = "transcribe"
     CHUNK = "chunk"
     GENERATE = "generate"
+    REFINE = "refine"
     COMPLETE = "complete"
 
 

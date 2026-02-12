@@ -132,7 +132,9 @@ body {
 .badge-downloaded { background: #d2992233; color: var(--yellow); }
 .badge-transcribed { background: #d1861633; color: var(--orange); }
 .badge-chunked { background: #bc8cff33; color: var(--purple); }
-.badge-generated, .badge-completed { background: #3fb95033; color: var(--green); }
+.badge-generated { background: #3fb95033; color: var(--green); }
+.badge-refined { background: #58a6ff33; color: var(--accent); }
+.badge-completed { background: #3fb95033; color: var(--green); }
 .badge-failed { background: #f8514933; color: var(--red); }
 
 /* File indicators */

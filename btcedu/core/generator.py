@@ -41,6 +41,8 @@ DE_STOPWORDS = frozenset(
 
 ARTIFACT_TYPES = ("outline", "script", "shorts", "visuals", "qa", "publishing")
 
+REFINE_ARTIFACT_TYPES = ("refine_outline", "refine_script", "refine_publishing")
+
 ARTIFACT_FILENAMES = {
     "outline": "outline.tr.md",
     "script": "script.long.tr.md",
@@ -48,6 +50,9 @@ ARTIFACT_FILENAMES = {
     "visuals": "visuals.json",
     "qa": "qa.json",
     "publishing": "publishing_pack.json",
+    "refine_outline": "outline.tr.v2.md",
+    "refine_script": "script.long.tr.v2.md",
+    "refine_publishing": "publishing_pack.v2.json",
 }
 
 
@@ -336,6 +341,130 @@ def generate_content(
     return result
 
 
+def refine_content(
+    session: Session,
+    episode_id: str,
+    settings: Settings,
+    force: bool = False,
+) -> GenerationResult:
+    """Refine generated content using QA feedback.
+
+    Reads v1 outline, script, and qa.json to produce v2 artifacts:
+    - outline.tr.v2.md (improved structure)
+    - script.long.tr.v2.md (improved script)
+    - publishing_pack.v2.json (regenerated from v2)
+
+    Returns:
+        GenerationResult with paths and usage stats.
+
+    Raises:
+        ValueError: If episode not found or not in GENERATED/REFINED state.
+    """
+    episode = (
+        session.query(Episode)
+        .filter(Episode.episode_id == episode_id)
+        .first()
+    )
+    if not episode:
+        raise ValueError(f"Episode not found: {episode_id}")
+
+    if episode.status not in (EpisodeStatus.GENERATED, EpisodeStatus.REFINED) and not force:
+        raise ValueError(
+            f"Episode {episode_id} is in status '{episode.status.value}', "
+            "expected 'generated'. Use --force to override."
+        )
+
+    output_dir = Path(settings.outputs_dir) / episode_id
+
+    # Read v1 artifacts (required inputs)
+    outline_v1_path = output_dir / ARTIFACT_FILENAMES["outline"]
+    script_v1_path = output_dir / ARTIFACT_FILENAMES["script"]
+    qa_path = output_dir / ARTIFACT_FILENAMES["qa"]
+
+    for path, label in [
+        (outline_v1_path, "outline v1"),
+        (script_v1_path, "script v1"),
+        (qa_path, "qa.json"),
+    ]:
+        if not path.exists():
+            raise ValueError(f"Missing required input: {label} ({path})")
+
+    outline_v1 = outline_v1_path.read_text(encoding="utf-8")
+    script_v1 = script_v1_path.read_text(encoding="utf-8")
+    qa_text = qa_path.read_text(encoding="utf-8")
+
+    # Create PipelineRun
+    pipeline_run = PipelineRun(
+        episode_id=episode.id,
+        stage=PipelineStage.REFINE,
+        status=RunStatus.RUNNING,
+    )
+    session.add(pipeline_run)
+    session.flush()
+
+    result = GenerationResult(episode_id=episode_id, output_dir=str(output_dir))
+
+    try:
+        # We don't re-retrieve chunks for refinement — prompts use v1 text + QA
+        # Use empty chunks list for snapshot/hash (no retrieval needed)
+        empty_chunks: list[dict] = []
+        empty_query_terms: list[str] = []
+
+        # Step 1: Refine outline using v1 outline + QA
+        outline_v2_resp = _generate_artifact(
+            "refine_outline", episode, empty_chunks, "", empty_query_terms,
+            settings, output_dir, 0, session, force,
+            outline_text=outline_v1,
+            qa_text=qa_text,
+        )
+        _accumulate(result, outline_v2_resp)
+
+        # Step 2: Refine script using v1 script + v2 outline + QA
+        script_v2_resp = _generate_artifact(
+            "refine_script", episode, empty_chunks, "", empty_query_terms,
+            settings, output_dir, 0, session, force,
+            script_text=script_v1,
+            outline_text=outline_v2_resp["text"],
+            qa_text=qa_text,
+        )
+        _accumulate(result, script_v2_resp)
+
+        # Step 3: Regenerate publishing pack from v2 outline + v2 script
+        pub_v2_resp = _generate_artifact(
+            "refine_publishing", episode, empty_chunks, "", empty_query_terms,
+            settings, output_dir, 0, session, force,
+            outline_text=outline_v2_resp["text"],
+            script_text=script_v2_resp["text"],
+        )
+        _accumulate(result, pub_v2_resp)
+
+        # Update PipelineRun
+        pipeline_run.status = RunStatus.SUCCESS
+        pipeline_run.completed_at = _utcnow()
+        pipeline_run.input_tokens = result.total_input_tokens
+        pipeline_run.output_tokens = result.total_output_tokens
+        pipeline_run.estimated_cost_usd = result.total_cost_usd
+
+        # Update Episode
+        episode.status = EpisodeStatus.REFINED
+        session.commit()
+
+        logger.info(
+            "Refined %d artifacts for %s ($%.4f)",
+            len(result.artifacts), episode_id, result.total_cost_usd,
+        )
+
+    except Exception as e:
+        pipeline_run.status = RunStatus.FAILED
+        pipeline_run.completed_at = _utcnow()
+        pipeline_run.error_message = str(e)
+        episode.error_message = str(e)
+        session.commit()
+        raise
+
+    return result
+
+
 def _accumulate(result: GenerationResult, artifact_resp: dict) -> None:
     """Accumulate artifact response into GenerationResult."""
     result.artifacts.append(artifact_resp["path"])
@@ -357,6 +486,7 @@ def _generate_artifact(
     force: bool,
     outline_text: str = "",
     script_text: str = "",
+    qa_text: str = "",
 ) -> dict:
     """Generate a single artifact. Returns dict with text, path, tokens, cost."""
     filename = ARTIFACT_FILENAMES[artifact_type]
@@ -379,7 +509,7 @@ def _generate_artifact(
 
     user_prompt = _build_prompt(
         artifact_type, episode.title, episode.episode_id,
-        chunks_text, outline_text, script_text,
+        chunks_text, outline_text, script_text, qa_text,
     )
 
     # Compute prompt hash
@@ -403,10 +533,12 @@ def _generate_artifact(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(response.text, encoding="utf-8")
 
-    # Save retrieval snapshot
-    snapshot_path = save_retrieval_snapshot(
-        chunks, artifact_type, output_dir, query_terms, top_k,
-    )
+    # Save retrieval snapshot (skip for refine artifacts which don't retrieve chunks)
+    snapshot_path = None
+    if chunks:
+        snapshot_path = save_retrieval_snapshot(
+            chunks, artifact_type, output_dir, query_terms, top_k,
+        )
 
     # Persist ContentArtifact
     artifact = ContentArtifact(
@@ -436,6 +568,7 @@ def _build_prompt(
     chunks_text: str,
     outline_text: str = "",
     script_text: str = "",
+    qa_text: str = "",
 ) -> str:
     """Build user prompt from the appropriate template."""
     if artifact_type == "outline":
@@ -459,6 +592,20 @@ def _build_prompt(
         return build_user_prompt(episode_title, episode_id, chunks_text, script_text)
 
     elif artifact_type == "publishing":
+        from btcedu.prompts.publishing import build_user_prompt
+        return build_user_prompt(episode_title, episode_id, outline_text, script_text)
+
+    elif artifact_type == "refine_outline":
+        from btcedu.prompts.refine_outline import build_user_prompt
+        return build_user_prompt(episode_title, episode_id, outline_text, qa_text)
+
+    elif artifact_type == "refine_script":
+        from btcedu.prompts.refine_script import build_user_prompt
+        return build_user_prompt(
+            episode_title, episode_id, script_text, outline_text, qa_text,
+        )
+
+    elif artifact_type == "refine_publishing":
         from btcedu.prompts.publishing import build_user_prompt
         return build_user_prompt(episode_title, episode_id, outline_text, script_text)
 

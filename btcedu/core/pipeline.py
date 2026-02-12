@@ -23,7 +23,8 @@ _STATUS_ORDER = {
     EpisodeStatus.TRANSCRIBED: 2,
     EpisodeStatus.CHUNKED: 3,
     EpisodeStatus.GENERATED: 4,
-    EpisodeStatus.COMPLETED: 5,
+    EpisodeStatus.REFINED: 5,
+    EpisodeStatus.COMPLETED: 6,
     EpisodeStatus.FAILED: -1,
 }
 
@@ -33,6 +34,7 @@ _STAGES = [
     ("transcribe", EpisodeStatus.DOWNLOADED),
     ("chunk", EpisodeStatus.TRANSCRIBED),
     ("generate", EpisodeStatus.CHUNKED),
+    ("refine", EpisodeStatus.GENERATED),
 ]
 
 
@@ -147,6 +149,16 @@ def _run_stage(
                 detail=f"{len(result.artifacts)} artifacts (${result.total_cost_usd:.4f})",
             )
 
+        elif stage_name == "refine":
+            from btcedu.core.generator import refine_content
+
+            result = refine_content(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+            return StageResult(
+                "refine", "success", elapsed,
+                detail=f"{len(result.artifacts)} artifacts (${result.total_cost_usd:.4f})",
+            )
+
         else:
             raise ValueError(f"Unknown stage: {stage_name}")
 
@@ -164,7 +176,7 @@ def run_episode_pipeline(
 ) -> PipelineReport:
     """Run the full pipeline for a single episode.
 
-    Chains: download -> transcribe -> chunk -> generate.
+    Chains: download -> transcribe -> chunk -> generate -> refine.
     Each stage is skipped if the episode has already passed it.
     On failure: records error, increments retry_count, stops processing.
 
@@ -241,12 +253,12 @@ def run_episode_pipeline(
 
     report.completed_at = _utcnow()
 
-    # Calculate total cost from generate stage result if present
+    # Calculate total cost from generate/refine stage results
     for sr in report.stages:
-        if sr.stage == "generate" and sr.status == "success" and "$" in sr.detail:
+        if sr.stage in ("generate", "refine") and sr.status == "success" and "$" in sr.detail:
             try:
                 cost_str = sr.detail.split("$")[1].rstrip(")")
-                report.total_cost_usd = float(cost_str)
+                report.total_cost_usd += float(cost_str)
             except (IndexError, ValueError):
                 pass
 
@@ -288,6 +300,7 @@ def run_pending(
                 EpisodeStatus.DOWNLOADED,
                 EpisodeStatus.TRANSCRIBED,
                 EpisodeStatus.CHUNKED,
+                EpisodeStatus.GENERATED,
             ])
         )
         .order_by(Episode.published_at.asc())
@@ -344,6 +357,7 @@ def run_latest(
                 EpisodeStatus.DOWNLOADED,
                 EpisodeStatus.TRANSCRIBED,
                 EpisodeStatus.CHUNKED,
+                EpisodeStatus.GENERATED,
             ])
         )
         .order_by(Episode.published_at.desc())

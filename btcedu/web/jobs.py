@@ -135,6 +135,8 @@ class JobManager:
                     self._do_chunk(job, session, settings)
                 elif job.action == "generate":
                     self._do_generate(job, session, settings)
+                elif job.action == "refine":
+                    self._do_refine(job, session, settings)
                 elif job.action == "run":
                     self._do_full_pipeline(job, session, settings)
                 elif job.action == "retry":
@@ -207,6 +209,27 @@ class JobManager:
         self._log(
             job,
             f"Generation complete: {len(result.artifacts)} artifacts, "
+            f"${result.total_cost_usd:.4f}",
+        )
+
+    def _do_refine(self, job, session, settings):
+        from btcedu.core.generator import refine_content
+
+        self._update(job, stage="refining")
+        self._log(job, "Refining content (v1 -> v2)...")
+        result = refine_content(
+            session, job.episode_id, settings, force=job.force,
+        )
+        self._update(job, result={
+            "success": True,
+            "artifacts": len(result.artifacts),
+            "cost_usd": result.total_cost_usd,
+            "input_tokens": result.total_input_tokens,
+            "output_tokens": result.total_output_tokens,
+        })
+        self._log(
+            job,
+            f"Refinement complete: {len(result.artifacts)} artifacts, "
             f"${result.total_cost_usd:.4f}",
         )
 

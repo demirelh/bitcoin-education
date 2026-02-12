@@ -145,11 +145,13 @@
   // ── Render episode table ─────────────────────────────────────
   const FILE_KEYS = [
     "audio", "transcript_raw", "transcript_clean", "chunks",
-    "outline", "script", "shorts", "visuals", "qa", "publishing"
+    "outline", "script", "shorts", "visuals", "qa", "publishing",
+    "outline_v2", "script_v2", "publishing_v2"
   ];
   const FILE_LABELS = [
     "Audio", "Transcript DE", "Transcript Clean", "Chunks",
-    "Outline TR", "Script TR", "Shorts", "Visuals", "QA", "Publishing"
+    "Outline TR", "Script TR", "Shorts", "Visuals", "QA", "Publishing",
+    "Outline v2", "Script v2", "Publishing v2"
   ];
 
   function renderTable(eps) {
@@ -210,6 +212,7 @@
           <button class="btn btn-sm" onclick="actions.transcribe()" title="Transcribe audio via Whisper API">Transcribe</button>
           <button class="btn btn-sm" onclick="actions.chunk()" title="Split transcript into searchable chunks">Chunk</button>
           <button class="btn btn-sm btn-primary" onclick="actions.generate()" title="Generate Turkish content via Claude API">Generate</button>
+          <button class="btn btn-sm" onclick="actions.refine()" title="Refine generated content using QA feedback (v1 → v2)">Refine</button>
           <button class="btn btn-sm" onclick="actions.run()" title="Run full pipeline from the earliest incomplete stage">Run All</button>
           <button class="btn btn-sm btn-danger" onclick="actions.retry()" title="Resume from the last failed stage">Retry</button>
           <label><input type="checkbox" id="chk-force"> force</label>
@@ -222,6 +225,9 @@
         <div class="tab" data-tab="script">Script TR</div>
         <div class="tab" data-tab="qa">QA</div>
         <div class="tab" data-tab="publishing">Publishing</div>
+        <div class="tab" data-tab="outline_v2">Outline v2</div>
+        <div class="tab" data-tab="script_v2">Script v2</div>
+        <div class="tab" data-tab="publishing_v2">Publishing v2</div>
         <div class="tab" data-tab="report">Report</div>
         <div class="tab" data-tab="logs">Logs</div>
       </div>
@@ -304,6 +310,10 @@
         force: isForce(),
         dry_run: isDryRun(),
       });
+    },
+    refine() {
+      if (!selected) return;
+      submitJob("Refine", `/episodes/${selected.episode_id}/refine`, { force: isForce() });
     },
     run() {
       if (!selected) return;

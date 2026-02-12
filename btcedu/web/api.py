@@ -64,6 +64,9 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
         "visuals": (out / "visuals.json").exists(),
         "qa": (out / "qa.json").exists(),
         "publishing": (out / "publishing_pack.json").exists(),
+        "outline_v2": (out / "outline.tr.v2.md").exists(),
+        "script_v2": (out / "script.long.tr.v2.md").exists(),
+        "publishing_v2": (out / "publishing_pack.v2.json").exists(),
     }
 
 
@@ -212,6 +215,12 @@ def run_episode(episode_id: str):
     return _submit_job("run", episode_id, force=body.get("force", False))
 
 
+@api_bp.route("/episodes/<episode_id>/refine", methods=["POST"])
+def refine_episode(episode_id: str):
+    body = request.get_json(silent=True) or {}
+    return _submit_job("refine", episode_id, force=body.get("force", False))
+
+
 @api_bp.route("/episodes/<episode_id>/retry", methods=["POST"])
 def retry_episode(episode_id: str):
     return _submit_job("retry", episode_id)
@@ -279,6 +288,9 @@ _FILE_MAP = {
     "visuals": ("outputs_dir", "{eid}/visuals.json"),
     "qa": ("outputs_dir", "{eid}/qa.json"),
     "publishing": ("outputs_dir", "{eid}/publishing_pack.json"),
+    "outline_v2": ("outputs_dir", "{eid}/outline.tr.v2.md"),
+    "script_v2": ("outputs_dir", "{eid}/script.long.tr.v2.md"),
+    "publishing_v2": ("outputs_dir", "{eid}/publishing_pack.v2.json"),
 }
 
 
@@ -392,7 +404,7 @@ def whats_new():
         # Episodes missing a step (have audio but no transcript, etc.)
         incomplete = []
         all_eps = session.query(Episode).filter(
-            Episode.status.notin_([EpisodeStatus.NEW, EpisodeStatus.GENERATED, EpisodeStatus.COMPLETED])
+            Episode.status.notin_([EpisodeStatus.NEW, EpisodeStatus.GENERATED, EpisodeStatus.REFINED, EpisodeStatus.COMPLETED])
         ).all()
         for ep in all_eps:
             files = _file_presence(ep.episode_id, settings)

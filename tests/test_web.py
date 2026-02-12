@@ -204,6 +204,10 @@ class TestEpisodeEndpoints:
         # All should be False since no real files exist in tmp dirs
         assert files["audio"] is False
         assert files["transcript_raw"] is False
+        # v2 file keys should also be present
+        assert "outline_v2" in files
+        assert "script_v2" in files
+        assert "publishing_v2" in files
 
     def test_episode_detail_includes_cost(self, client):
         data = client.get("/api/episodes/ep001").get_json()
@@ -254,6 +258,11 @@ class TestPipelineActions:
 
     def test_run_returns_202(self, client):
         r = client.post("/api/episodes/ep002/run", json={"force": False})
+        assert r.status_code == 202
+        assert "job_id" in r.get_json()
+
+    def test_refine_returns_202(self, client):
+        r = client.post("/api/episodes/ep001/refine", json={"force": False})
         assert r.status_code == 202
         assert "job_id" in r.get_json()
 
@@ -383,8 +392,16 @@ class TestJobsAndLogs:
         assert r.status_code == 200
         assert len(r.get_json()["lines"]) == 5
 
-    def test_run_all_nothing_to_do_on_generated(self, client, app):
-        """Run All on a GENERATED episode completes with 'Nothing to do'."""
+    def test_run_all_nothing_to_do_on_refined(self, client, app, seeded_db):
+        """Run All on a REFINED episode completes with 'Nothing to do'."""
+        # Update ep001 to REFINED status so all stages are skipped
+        _, factory = seeded_db
+        session = factory()
+        ep = session.query(Episode).filter_by(episode_id="ep001").first()
+        ep.status = EpisodeStatus.REFINED
+        session.commit()
+        session.close()
+
         r = client.post("/api/episodes/ep001/run", json={})
         assert r.status_code == 202
         job_id = r.get_json()["job_id"]

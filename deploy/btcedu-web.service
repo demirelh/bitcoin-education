@@ -7,7 +7,8 @@ Type=notify
 User=pi
 WorkingDirectory=/home/pi/AI-Startup-Lab/bitcoin-education
 ExecStart=/home/pi/AI-Startup-Lab/bitcoin-education/.venv/bin/gunicorn \
-    -w 2 \
+    -w 1 \
+    --threads 4 \
     -b 127.0.0.1:8091 \
     --timeout 300 \
     "btcedu.web.app:create_app()"

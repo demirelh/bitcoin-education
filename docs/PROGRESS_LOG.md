@@ -162,3 +162,53 @@ Only the initial `/dashboard/` request matched Caddy's `@dashboard path /dashboa
 **Verification:** All routes confirmed working through Caddy proxy (health, episodes API, static assets, redirect).
 
 ---
+
+## Background Job Execution for Dashboard Actions
+_2026-02-12_
+
+**Problem:** Dashboard pipeline actions (download, transcribe, chunk, generate, run, retry) were synchronous — the browser fetch blocked for 2-30+ minutes with no progress indicator, frequently timing out via Caddy/gunicorn. No logging to diagnose issues.
+
+**Solution:** Non-blocking 202 pattern with background thread execution and real-time polling.
+
+**Architecture:**
+```
+gunicorn (-w 1 --threads 4 gthread)
+├── Threads 1-4: Flask request handlers
+│     POST /api/episodes/X/transcribe → JobManager.submit() → 202 {job_id}
+│     GET /api/jobs/{id} → return job state from memory
+└── ThreadPoolExecutor(max_workers=1)
+      → runs pipeline tasks sequentially (SQLite single-writer safe)
+      → updates job.state/stage in-memory
+      → appends to data/logs/episodes/{episode_id}.log
+```
+
+**Key decisions:**
+- `-w 1 --threads 4` instead of `-w 2`: single process = shared in-memory job state, less RAM on Pi
+- `ThreadPoolExecutor(max_workers=1)`: one job at a time (SQLite constraint), tasks queue up
+- In-memory jobs: lost on restart, but episode DB status is always the source of truth
+- `detect` stays synchronous: fast, global action, user expects immediate feedback
+
+**Files created:**
+- `btcedu/web/jobs.py` - Job dataclass + JobManager class (~220 lines)
+
+**Files modified:**
+- `btcedu/web/app.py` - JobManager init, request logging to data/logs/web.log
+- `btcedu/web/api.py` - 6 endpoints return 202 + job_id, new GET /api/jobs/{id}, GET /api/episodes/{id}/action-log
+- `btcedu/web/static/app.js` - submitJob/pollJob pattern, spinner with stage info, Logs tab, auto-refresh
+- `btcedu/web/static/styles.css` - spinner-inline, pulse animation, log-viewer, disabled button styles
+- `deploy/btcedu-web.service` - Changed to `-w 1 --threads 4`
+- `tests/test_web.py` - Updated for 202 responses, added TestJobsAndLogs class (8 tests)
+
+**New API endpoints:**
+- GET /api/jobs/{job_id} - Poll job state/stage/result + current episode_status
+- GET /api/episodes/{id}/action-log?tail=N - Per-episode log file tail
+
+**Frontend changes:**
+- Action buttons return immediately, show inline spinner with stage info
+- Buttons disabled while job is active, 409 prevents duplicate submissions
+- New "Logs" tab with auto-refresh while job is running
+- Toast notifications for job completion/failure with result details
+
+**Test results:** 183 tests passing (177 existing + 6 new/updated)
+
+---

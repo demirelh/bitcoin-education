@@ -1,6 +1,8 @@
 """Tests for the btcedu web dashboard API endpoints."""
 
 import json
+import threading
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -25,6 +27,7 @@ def test_settings(tmp_path):
         chunks_dir=str(tmp_path / "chunks"),
         outputs_dir=str(tmp_path / "outputs"),
         reports_dir=str(tmp_path / "reports"),
+        logs_dir=str(tmp_path / "logs"),
     )
 
 
@@ -111,7 +114,7 @@ def client(app):
 
 
 # ---------------------------------------------------------------------------
-# Episode list + detail
+# Health, static assets, and observability
 # ---------------------------------------------------------------------------
 
 class TestHealthAndStaticAssets:
@@ -120,6 +123,8 @@ class TestHealthAndStaticAssets:
         assert r.status_code == 200
         data = r.get_json()
         assert data["status"] == "ok"
+        assert "time" in data
+        assert data["version"] == "0.1.0"
 
     def test_index_returns_html(self, client):
         r = client.get("/")
@@ -152,6 +157,10 @@ class TestHealthAndStaticAssets:
         # Must NOT use absolute /api paths (breaks reverse proxy)
         assert 'fetch("/api' not in js
 
+
+# ---------------------------------------------------------------------------
+# Episode list + detail
+# ---------------------------------------------------------------------------
 
 class TestEpisodeEndpoints:
 
@@ -199,11 +208,12 @@ class TestEpisodeEndpoints:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline action endpoints
+# Pipeline action endpoints (now return 202 + job_id)
 # ---------------------------------------------------------------------------
 
 class TestPipelineActions:
-    def test_detect_endpoint(self, client):
+    def test_detect_endpoint_sync(self, client):
+        """Detect stays synchronous."""
         mock_result = MagicMock(found=5, new=2, total=10)
         with patch("btcedu.core.detector.detect_episodes", return_value=mock_result):
             r = client.post("/api/detect")
@@ -212,92 +222,161 @@ class TestPipelineActions:
             assert data["success"] is True
             assert data["new"] == 2
 
-    def test_download_endpoint_mocked(self, client):
-        with patch("btcedu.core.detector.download_episode", return_value="/tmp/audio.m4a"):
-            r = client.post(
-                "/api/episodes/ep002/download",
-                json={"force": False},
-            )
-            assert r.status_code == 200
-            data = r.get_json()
-            assert data["success"] is True
-            assert data["path"] == "/tmp/audio.m4a"
+    def test_download_returns_202(self, client):
+        r = client.post("/api/episodes/ep002/download", json={"force": False})
+        assert r.status_code == 202
+        data = r.get_json()
+        assert "job_id" in data
+        assert data["state"] in ("queued", "running")
 
-    def test_transcribe_endpoint_mocked(self, client):
-        with patch("btcedu.core.transcriber.transcribe_episode", return_value="/tmp/transcript.txt"):
-            r = client.post(
-                "/api/episodes/ep002/transcribe",
-                json={"force": False},
-            )
-            assert r.status_code == 200
-            assert r.get_json()["success"] is True
+    def test_transcribe_returns_202(self, client):
+        r = client.post("/api/episodes/ep002/transcribe", json={"force": False})
+        assert r.status_code == 202
+        assert "job_id" in r.get_json()
 
-    def test_chunk_endpoint_mocked(self, client):
-        with patch("btcedu.core.transcriber.chunk_episode", return_value=12):
-            r = client.post(
-                "/api/episodes/ep002/chunk",
-                json={"force": False},
-            )
-            assert r.status_code == 200
-            data = r.get_json()
-            assert data["success"] is True
-            assert data["count"] == 12
+    def test_chunk_returns_202(self, client):
+        r = client.post("/api/episodes/ep002/chunk", json={"force": False})
+        assert r.status_code == 202
+        assert "job_id" in r.get_json()
 
-    def test_generate_endpoint_mocked(self, client):
-        mock_result = MagicMock(
-            artifacts=["a.md", "b.md"],
-            total_cost_usd=0.38,
-            total_input_tokens=8000,
-            total_output_tokens=3000,
+    def test_generate_returns_202(self, client):
+        r = client.post(
+            "/api/episodes/ep003/generate",
+            json={"force": True, "dry_run": False},
         )
-        with patch("btcedu.core.generator.generate_content", return_value=mock_result):
-            r = client.post(
-                "/api/episodes/ep003/generate",
-                json={"force": True, "dry_run": False},
-            )
-            assert r.status_code == 200
-            data = r.get_json()
-            assert data["success"] is True
-            assert data["artifacts"] == 2
-            assert data["cost_usd"] == pytest.approx(0.38)
+        assert r.status_code == 202
+        assert "job_id" in r.get_json()
 
-    def test_run_endpoint_mocked(self, client):
-        mock_report = MagicMock(
-            success=True,
-            total_cost_usd=0.40,
-            error=None,
-            stages=[],
-        )
-        with patch("btcedu.core.pipeline.run_episode_pipeline", return_value=mock_report):
-            with patch("btcedu.core.pipeline.write_report"):
-                r = client.post(
-                    "/api/episodes/ep002/run",
-                    json={"force": False},
-                )
-                assert r.status_code == 200
-                data = r.get_json()
-                assert data["success"] is True
+    def test_run_returns_202(self, client):
+        r = client.post("/api/episodes/ep002/run", json={"force": False})
+        assert r.status_code == 202
+        assert "job_id" in r.get_json()
 
-    def test_run_not_found(self, client):
-        r = client.post("/api/episodes/nonexistent/run", json={})
+    def test_retry_returns_202(self, client):
+        r = client.post("/api/episodes/ep003/retry")
+        assert r.status_code == 202
+        assert "job_id" in r.get_json()
+
+
+# ---------------------------------------------------------------------------
+# Job lifecycle and logs
+# ---------------------------------------------------------------------------
+
+class TestJobsAndLogs:
+    def test_job_lifecycle_queued_to_success(self, client, app):
+        """Submit a job, poll it, verify it completes."""
+        event = threading.Event()
+
+        def mock_download(session, episode_id, settings, force=False):
+            event.wait(timeout=5)
+            return "/tmp/audio.m4a"
+
+        with patch("btcedu.core.detector.download_episode", side_effect=mock_download):
+            r = client.post("/api/episodes/ep002/download", json={})
+            assert r.status_code == 202
+            job_id = r.get_json()["job_id"]
+
+            # Poll: should be queued or running
+            r2 = client.get(f"/api/jobs/{job_id}")
+            assert r2.status_code == 200
+            assert r2.get_json()["state"] in ("queued", "running")
+
+            # Let the job finish
+            event.set()
+            time.sleep(0.5)
+
+            # Poll: should be success
+            r3 = client.get(f"/api/jobs/{job_id}")
+            assert r3.status_code == 200
+            data = r3.get_json()
+            assert data["state"] == "success"
+            assert data["result"]["path"] == "/tmp/audio.m4a"
+
+    def test_job_error_state(self, client, app):
+        """Job that raises exception ends in error state."""
+        with patch(
+            "btcedu.core.detector.download_episode",
+            side_effect=RuntimeError("Download failed"),
+        ):
+            r = client.post("/api/episodes/ep002/download", json={})
+            job_id = r.get_json()["job_id"]
+            time.sleep(0.5)
+
+            r2 = client.get(f"/api/jobs/{job_id}")
+            data = r2.get_json()
+            assert data["state"] == "error"
+            assert "Download failed" in data["message"]
+
+    def test_active_job_prevents_duplicate(self, client, app):
+        """409 when submitting while a job is active for same episode."""
+        event = threading.Event()
+
+        def mock_download(session, episode_id, settings, force=False):
+            event.wait(timeout=5)
+            return "/tmp/audio.m4a"
+
+        with patch("btcedu.core.detector.download_episode", side_effect=mock_download):
+            r1 = client.post("/api/episodes/ep002/download", json={})
+            assert r1.status_code == 202
+
+            # Second attempt should be blocked
+            r2 = client.post("/api/episodes/ep002/transcribe", json={})
+            assert r2.status_code == 409
+            assert "already active" in r2.get_json()["error"]
+
+            event.set()
+            time.sleep(0.5)
+
+    def test_job_not_found(self, client):
+        r = client.get("/api/jobs/nonexistent")
         assert r.status_code == 404
 
-    def test_retry_endpoint_mocked(self, client):
-        mock_report = MagicMock(success=True, total_cost_usd=0.38, error=None)
-        with patch("btcedu.core.pipeline.retry_episode", return_value=mock_report):
-            with patch("btcedu.core.pipeline.write_report"):
-                r = client.post("/api/episodes/ep003/retry")
-                assert r.status_code == 200
-                assert r.get_json()["success"] is True
-
-    def test_retry_invalid_returns_400(self, client):
+    def test_job_includes_episode_status(self, client, app):
+        """Job response includes episode_status from DB."""
         with patch(
-            "btcedu.core.pipeline.retry_episode",
-            side_effect=ValueError("Not in failed state"),
+            "btcedu.core.detector.download_episode",
+            return_value="/tmp/audio.m4a",
         ):
-            r = client.post("/api/episodes/ep001/retry")
-            assert r.status_code == 400
-            assert "error" in r.get_json()
+            r = client.post("/api/episodes/ep002/download", json={})
+            job_id = r.get_json()["job_id"]
+            time.sleep(0.5)
+
+            r2 = client.get(f"/api/jobs/{job_id}")
+            data = r2.get_json()
+            assert "episode_status" in data
+
+    def test_action_log_endpoint(self, client, test_settings):
+        """Action log returns lines from per-episode log file."""
+        log_dir = Path(test_settings.logs_dir) / "episodes"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        (log_dir / "ep001.log").write_text(
+            "2026-02-12 10:00:00 [download] Starting...\n"
+            "2026-02-12 10:00:05 [download] Complete\n",
+            encoding="utf-8",
+        )
+
+        r = client.get("/api/episodes/ep001/action-log")
+        assert r.status_code == 200
+        data = r.get_json()
+        assert len(data["lines"]) == 2
+        assert "Starting" in data["lines"][0]
+
+    def test_action_log_empty(self, client):
+        """Episode with no log file returns empty list."""
+        r = client.get("/api/episodes/ep999/action-log")
+        assert r.status_code == 200
+        assert r.get_json()["lines"] == []
+
+    def test_action_log_tail(self, client, test_settings):
+        """Tail parameter limits returned lines."""
+        log_dir = Path(test_settings.logs_dir) / "episodes"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        lines = "\n".join(f"line {i}" for i in range(50)) + "\n"
+        (log_dir / "ep001.log").write_text(lines, encoding="utf-8")
+
+        r = client.get("/api/episodes/ep001/action-log?tail=5")
+        assert r.status_code == 200
+        assert len(r.get_json()["lines"]) == 5
 
 
 # ---------------------------------------------------------------------------

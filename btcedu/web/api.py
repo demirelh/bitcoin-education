@@ -22,8 +22,12 @@ api_bp = Blueprint("api", __name__)
 
 @api_bp.route("/health")
 def health():
-    """Simple health check for monitoring and proxy verification."""
-    return jsonify({"status": "ok"})
+    """Health check for monitoring and proxy verification."""
+    return jsonify({
+        "status": "ok",
+        "time": datetime.now(timezone.utc).isoformat(),
+        "version": "0.1.0",
+    })
 
 
 def _get_session():
@@ -32,6 +36,10 @@ def _get_session():
 
 def _get_settings():
     return current_app.config["settings"]
+
+
+def _get_job_manager():
+    return current_app.config["job_manager"]
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +82,25 @@ def _episode_to_dict(ep: Episode, settings) -> dict:
         "retry_count": ep.retry_count,
         "files": _file_presence(ep.episode_id, settings),
     }
+
+
+def _submit_job(action, episode_id, **kwargs):
+    """Submit a background job, return (response, status_code)."""
+    mgr = _get_job_manager()
+    active = mgr.active_for_episode(episode_id)
+    if active:
+        return jsonify({
+            "error": "Job already active",
+            "job_id": active.job_id,
+        }), 409
+
+    job = mgr.submit(
+        action=action,
+        episode_id=episode_id,
+        app=current_app._get_current_object(),
+        **kwargs,
+    )
+    return jsonify({"job_id": job.job_id, "state": job.state}), 202
 
 
 # ---------------------------------------------------------------------------
@@ -124,11 +151,12 @@ def get_episode(episode_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Pipeline actions
+# Pipeline actions (all async via JobManager)
 # ---------------------------------------------------------------------------
 
 @api_bp.route("/detect", methods=["POST"])
 def detect():
+    """Detect new episodes — synchronous (fast network I/O)."""
     from btcedu.core.detector import detect_episodes
 
     session = _get_session()
@@ -150,155 +178,92 @@ def detect():
 
 @api_bp.route("/episodes/<episode_id>/download", methods=["POST"])
 def download_episode(episode_id: str):
-    from btcedu.core.detector import download_episode as do_download
-
-    session = _get_session()
-    settings = _get_settings()
-    try:
-        body = request.get_json(silent=True) or {}
-        force = body.get("force", False)
-        path = do_download(session, episode_id, settings, force=force)
-        return jsonify({"success": True, "path": path})
-    except Exception as e:
-        logger.exception("Download failed: %s", episode_id)
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        session.close()
+    body = request.get_json(silent=True) or {}
+    return _submit_job("download", episode_id, force=body.get("force", False))
 
 
 @api_bp.route("/episodes/<episode_id>/transcribe", methods=["POST"])
 def transcribe_episode(episode_id: str):
-    from btcedu.core.transcriber import transcribe_episode as do_transcribe
-
-    session = _get_session()
-    settings = _get_settings()
-    try:
-        body = request.get_json(silent=True) or {}
-        force = body.get("force", False)
-        path = do_transcribe(session, episode_id, settings, force=force)
-        return jsonify({"success": True, "path": path})
-    except Exception as e:
-        logger.exception("Transcribe failed: %s", episode_id)
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        session.close()
+    body = request.get_json(silent=True) or {}
+    return _submit_job("transcribe", episode_id, force=body.get("force", False))
 
 
 @api_bp.route("/episodes/<episode_id>/chunk", methods=["POST"])
 def chunk_episode(episode_id: str):
-    from btcedu.core.transcriber import chunk_episode as do_chunk
-
-    session = _get_session()
-    settings = _get_settings()
-    try:
-        body = request.get_json(silent=True) or {}
-        force = body.get("force", False)
-        count = do_chunk(session, episode_id, settings, force=force)
-        return jsonify({"success": True, "count": count})
-    except Exception as e:
-        logger.exception("Chunk failed: %s", episode_id)
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        session.close()
+    body = request.get_json(silent=True) or {}
+    return _submit_job("chunk", episode_id, force=body.get("force", False))
 
 
 @api_bp.route("/episodes/<episode_id>/generate", methods=["POST"])
 def generate_episode(episode_id: str):
-    from btcedu.core.generator import generate_content
-
-    session = _get_session()
-    settings = _get_settings()
-    try:
-        body = request.get_json(silent=True) or {}
-        force = body.get("force", False)
-        dry_run = body.get("dry_run", False)
-        top_k = body.get("top_k", 16)
-
-        # Temporarily override dry_run setting
-        original_dry_run = settings.dry_run
-        settings.dry_run = dry_run
-
-        try:
-            result = generate_content(
-                session, episode_id, settings, force=force, top_k=top_k,
-            )
-            return jsonify({
-                "success": True,
-                "artifacts": len(result.artifacts),
-                "cost_usd": result.total_cost_usd,
-                "input_tokens": result.total_input_tokens,
-                "output_tokens": result.total_output_tokens,
-            })
-        finally:
-            settings.dry_run = original_dry_run
-    except Exception as e:
-        logger.exception("Generate failed: %s", episode_id)
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        session.close()
+    body = request.get_json(silent=True) or {}
+    return _submit_job(
+        "generate",
+        episode_id,
+        force=body.get("force", False),
+        dry_run=body.get("dry_run", False),
+        top_k=body.get("top_k", 16),
+    )
 
 
 @api_bp.route("/episodes/<episode_id>/run", methods=["POST"])
 def run_episode(episode_id: str):
-    from btcedu.core.pipeline import run_episode_pipeline, write_report
-
-    session = _get_session()
-    settings = _get_settings()
-    try:
-        body = request.get_json(silent=True) or {}
-        force = body.get("force", False)
-
-        ep = session.query(Episode).filter(Episode.episode_id == episode_id).first()
-        if not ep:
-            return jsonify({"error": f"Episode not found: {episode_id}"}), 404
-
-        report = run_episode_pipeline(session, ep, settings, force=force)
-        write_report(report, settings.reports_dir)
-
-        return jsonify({
-            "success": report.success,
-            "cost_usd": report.total_cost_usd,
-            "error": report.error,
-            "stages": [
-                {
-                    "stage": sr.stage,
-                    "status": sr.status,
-                    "duration": sr.duration_seconds,
-                    "detail": sr.detail,
-                    "error": sr.error,
-                }
-                for sr in report.stages
-            ],
-        })
-    except Exception as e:
-        logger.exception("Run failed: %s", episode_id)
-        return jsonify({"success": False, "error": str(e)}), 500
-    finally:
-        session.close()
+    body = request.get_json(silent=True) or {}
+    return _submit_job("run", episode_id, force=body.get("force", False))
 
 
 @api_bp.route("/episodes/<episode_id>/retry", methods=["POST"])
 def retry_episode(episode_id: str):
-    from btcedu.core.pipeline import retry_episode as do_retry
-    from btcedu.core.pipeline import write_report
+    return _submit_job("retry", episode_id)
 
+
+# ---------------------------------------------------------------------------
+# Job status + logs
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/jobs/<job_id>")
+def get_job(job_id: str):
+    mgr = _get_job_manager()
+    job = mgr.get(job_id)
+    if not job:
+        return jsonify({"error": "Job not found"}), 404
+
+    data = {
+        "job_id": job.job_id,
+        "episode_id": job.episode_id,
+        "action": job.action,
+        "state": job.state,
+        "stage": job.stage,
+        "message": job.message,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": job.updated_at.isoformat(),
+        "result": job.result,
+    }
+
+    # Include current episode status from DB for real-time progress
     session = _get_session()
-    settings = _get_settings()
     try:
-        report = do_retry(session, episode_id, settings)
-        write_report(report, settings.reports_dir)
-        return jsonify({
-            "success": report.success,
-            "cost_usd": report.total_cost_usd,
-            "error": report.error,
-        })
-    except ValueError as e:
-        return jsonify({"success": False, "error": str(e)}), 400
-    except Exception as e:
-        logger.exception("Retry failed: %s", episode_id)
-        return jsonify({"success": False, "error": str(e)}), 500
+        ep = session.query(Episode).filter(
+            Episode.episode_id == job.episode_id,
+        ).first()
+        data["episode_status"] = ep.status.value if ep else None
     finally:
         session.close()
+
+    return jsonify(data)
+
+
+@api_bp.route("/episodes/<episode_id>/action-log")
+def episode_action_log(episode_id: str):
+    settings = _get_settings()
+    tail = request.args.get("tail", 200, type=int)
+    log_path = Path(settings.logs_dir) / "episodes" / f"{episode_id}.log"
+
+    if not log_path.exists():
+        return jsonify({"lines": []})
+
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    return jsonify({"lines": lines[-tail:]})
 
 
 # ---------------------------------------------------------------------------
@@ -431,7 +396,6 @@ def whats_new():
         ).all()
         for ep in all_eps:
             files = _file_presence(ep.episode_id, settings)
-            missing = [k for k, v in files.items() if not v and k != "audio"]
             if ep.status == EpisodeStatus.DOWNLOADED and not files.get("transcript_raw"):
                 incomplete.append({
                     "episode_id": ep.episode_id,

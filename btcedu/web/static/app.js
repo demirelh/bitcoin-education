@@ -35,7 +35,111 @@
     const el = document.getElementById("toast");
     el.textContent = msg;
     el.className = "toast show " + (ok ? "toast-ok" : "toast-err");
-    setTimeout(() => (el.className = "toast"), 3000);
+    setTimeout(() => (el.className = "toast"), 4000);
+  }
+
+  // ── Job polling ──────────────────────────────────────────────
+  let activeJobId = null;
+  let pollTimer = null;
+  let logPollTimer = null;
+
+  function submitJob(label, endpoint, body) {
+    toast(label + "...");
+    disableActions(true);
+    POST(endpoint, body).then((r) => {
+      if (r.error && !r.job_id) {
+        toast(r.error, false);
+        disableActions(false);
+        return;
+      }
+      if (r.job_id) {
+        activeJobId = r.job_id;
+        showSpinner(label);
+        pollJob(r.job_id, label);
+      }
+    }).catch((err) => {
+      toast("Failed: " + err.message, false);
+      disableActions(false);
+    });
+  }
+
+  function pollJob(jobId, label) {
+    clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      try {
+        const j = await GET("/jobs/" + jobId);
+        if (j.error && !j.state) {
+          clearInterval(pollTimer);
+          hideSpinner();
+          disableActions(false);
+          toast(j.error, false);
+          activeJobId = null;
+          return;
+        }
+        updateSpinner(label + ": " + (j.stage || j.state));
+
+        // Auto-refresh logs tab while running
+        const activeTab = document.querySelector(".tab.active");
+        if (activeTab && activeTab.dataset.tab === "logs") {
+          loadLogTail();
+        }
+
+        if (j.state === "success") {
+          clearInterval(pollTimer);
+          hideSpinner();
+          disableActions(false);
+          activeJobId = null;
+          let msg = label + " complete";
+          if (j.result) {
+            if (j.result.path) msg += ": " + j.result.path.split("/").pop();
+            if (j.result.count) msg += ": " + j.result.count + " chunks";
+            if (j.result.artifacts) msg += ": " + j.result.artifacts + " artifacts";
+            if (j.result.cost_usd) msg += " ($" + j.result.cost_usd.toFixed(4) + ")";
+          }
+          toast(msg);
+          refresh();
+        } else if (j.state === "error") {
+          clearInterval(pollTimer);
+          hideSpinner();
+          disableActions(false);
+          activeJobId = null;
+          toast(j.message || "Job failed", false);
+          refresh();
+        }
+      } catch (err) {
+        // Network error, keep polling
+      }
+    }, 2000);
+  }
+
+  function disableActions(disabled) {
+    document.querySelectorAll(".detail-actions button").forEach((btn) => {
+      btn.disabled = disabled;
+    });
+  }
+
+  function showSpinner(label) {
+    let el = document.getElementById("job-spinner");
+    if (!el) {
+      const actions = document.querySelector(".detail-actions");
+      if (!actions) return;
+      el = document.createElement("span");
+      el.id = "job-spinner";
+      el.className = "spinner-inline";
+      actions.appendChild(el);
+    }
+    el.innerHTML = '<span class="spinner"></span> <span class="spinner-text">' + esc(label) + "</span>";
+    el.style.display = "inline-flex";
+  }
+
+  function updateSpinner(text) {
+    const el = document.querySelector(".spinner-text");
+    if (el) el.textContent = text;
+  }
+
+  function hideSpinner() {
+    const el = document.getElementById("job-spinner");
+    if (el) el.style.display = "none";
   }
 
   // ── Render episode table ─────────────────────────────────────
@@ -56,7 +160,7 @@
       if (selected && selected.episode_id === ep.episode_id) tr.classList.add("selected");
       tr.onclick = () => selectEpisode(ep);
 
-      const pub = ep.published_at ? ep.published_at.slice(0, 10) : "—";
+      const pub = ep.published_at ? ep.published_at.slice(0, 10) : "\u2014";
       const dots = FILE_KEYS.map((k, i) => {
         const present = ep.files && ep.files[k];
         return `<span class="file-dot ${present ? "present" : ""}" title="${FILE_LABELS[i]}"></span>`;
@@ -86,6 +190,7 @@
 
   // ── Detail panel ─────────────────────────────────────────────
   async function selectEpisode(ep) {
+    clearInterval(logPollTimer);
     selected = ep;
     applyFilters(); // re-render to highlight row
 
@@ -95,7 +200,7 @@
         <h2>${esc(ep.title)}</h2>
         <div class="detail-meta">
           <span class="badge badge-${ep.status}">${ep.status}</span>
-          ${ep.episode_id} &middot; ${ep.published_at ? ep.published_at.slice(0, 10) : "—"}
+          ${ep.episode_id} &middot; ${ep.published_at ? ep.published_at.slice(0, 10) : "\u2014"}
           &middot; <a href="${esc(ep.url)}" target="_blank" style="color:var(--accent)">source</a>
           ${ep.error_message ? `<br><span style="color:var(--red)">Error: ${esc(trunc(ep.error_message, 120))}</span>` : ""}
           ${ep.retry_count > 0 ? ` &middot; retries: ${ep.retry_count}` : ""}
@@ -118,6 +223,7 @@
         <div class="tab" data-tab="qa">QA</div>
         <div class="tab" data-tab="publishing">Publishing</div>
         <div class="tab" data-tab="report">Report</div>
+        <div class="tab" data-tab="logs">Logs</div>
       </div>
       <div class="viewer" id="viewer">Click a tab to load content.</div>
     `;
@@ -137,6 +243,22 @@
       t.classList.toggle("active", t.dataset.tab === type);
     });
     const viewer = document.getElementById("viewer");
+
+    // Stop previous log polling
+    clearInterval(logPollTimer);
+
+    if (type === "logs") {
+      viewer.textContent = "Loading logs...";
+      viewer.classList.add("log-viewer");
+      await loadLogTail();
+      // Auto-refresh while a job is active
+      if (activeJobId) {
+        logPollTimer = setInterval(loadLogTail, 2000);
+      }
+      return;
+    }
+
+    viewer.classList.remove("log-viewer");
     viewer.textContent = "Loading...";
     const data = await GET(`/episodes/${selected.episode_id}/files/${type}`);
     if (data.error) {
@@ -146,52 +268,50 @@
     }
   }
 
+  async function loadLogTail() {
+    if (!selected) return;
+    const viewer = document.getElementById("viewer");
+    try {
+      const data = await GET(`/episodes/${selected.episode_id}/action-log?tail=200`);
+      if (data.lines && data.lines.length > 0) {
+        viewer.textContent = data.lines.join("\n");
+        viewer.scrollTop = viewer.scrollHeight;
+      } else {
+        viewer.textContent = "No logs yet for this episode.";
+      }
+    } catch (err) {
+      viewer.textContent = "Failed to load logs.";
+    }
+  }
+
   // ── Actions ──────────────────────────────────────────────────
   window.actions = {
-    async download() {
+    download() {
       if (!selected) return;
-      toast("Downloading...");
-      const r = await POST(`/episodes/${selected.episode_id}/download`, { force: isForce() });
-      r.success ? toast("Downloaded: " + (r.path || "ok")) : toast(r.error, false);
-      refresh();
+      submitJob("Download", `/episodes/${selected.episode_id}/download`, { force: isForce() });
     },
-    async transcribe() {
+    transcribe() {
       if (!selected) return;
-      toast("Transcribing...");
-      const r = await POST(`/episodes/${selected.episode_id}/transcribe`, { force: isForce() });
-      r.success ? toast("Transcribed") : toast(r.error, false);
-      refresh();
+      submitJob("Transcribe", `/episodes/${selected.episode_id}/transcribe`, { force: isForce() });
     },
-    async chunk() {
+    chunk() {
       if (!selected) return;
-      toast("Chunking...");
-      const r = await POST(`/episodes/${selected.episode_id}/chunk`, { force: isForce() });
-      r.success ? toast(`${r.count} chunks`) : toast(r.error, false);
-      refresh();
+      submitJob("Chunk", `/episodes/${selected.episode_id}/chunk`, { force: isForce() });
     },
-    async generate() {
+    generate() {
       if (!selected) return;
-      toast("Generating (this may take minutes)...");
-      const r = await POST(`/episodes/${selected.episode_id}/generate`, {
+      submitJob("Generate", `/episodes/${selected.episode_id}/generate`, {
         force: isForce(),
         dry_run: isDryRun(),
       });
-      r.success ? toast(`${r.artifacts} artifacts, $${(r.cost_usd || 0).toFixed(4)}`) : toast(r.error, false);
-      refresh();
     },
-    async run() {
+    run() {
       if (!selected) return;
-      toast("Running full pipeline...");
-      const r = await POST(`/episodes/${selected.episode_id}/run`, { force: isForce() });
-      r.success ? toast(`Pipeline OK, $${(r.cost_usd || 0).toFixed(4)}`) : toast(r.error || "Failed", false);
-      refresh();
+      submitJob("Run All", `/episodes/${selected.episode_id}/run`, { force: isForce() });
     },
-    async retry() {
+    retry() {
       if (!selected) return;
-      toast("Retrying...");
-      const r = await POST(`/episodes/${selected.episode_id}/retry`);
-      r.success ? toast("Retry succeeded") : toast(r.error, false);
-      refresh();
+      submitJob("Retry", `/episodes/${selected.episode_id}/retry`);
     },
   };
 

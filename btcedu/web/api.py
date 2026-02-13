@@ -115,11 +115,16 @@ def list_episodes():
     session = _get_session()
     settings = _get_settings()
     try:
-        episodes = (
-            session.query(Episode)
-            .order_by(Episode.published_at.desc().nullslast())
-            .all()
-        )
+        # Support optional channel filter
+        channel_id = request.args.get("channel_id")
+
+        query = session.query(Episode)
+
+        if channel_id:
+            query = query.filter(Episode.channel_id == channel_id)
+
+        episodes = query.order_by(Episode.published_at.desc().nullslast()).all()
+
         return jsonify([_episode_to_dict(ep, settings) for ep in episodes])
     finally:
         session.close()
@@ -467,8 +472,11 @@ def batch_start():
 
     data = request.get_json() or {}
     force = data.get("force", False)
+    channel_id = data.get("channel_id")
 
-    batch_job = job_manager.submit_batch(current_app._get_current_object(), force=force)
+    batch_job = job_manager.submit_batch(
+        current_app._get_current_object(), force=force, channel_id=channel_id
+    )
 
     return jsonify({
         "batch_id": batch_job.batch_id,
@@ -544,3 +552,145 @@ def batch_active():
         "remaining_episodes": active.total_episodes - active.completed_episodes - active.failed_episodes,
         "total_cost_usd": active.total_cost_usd,
     })
+
+
+# ---------------------------------------------------------------------------
+# Channel Management
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/channels", methods=["GET"])
+def list_channels():
+    """List all channels."""
+    session = _get_session()
+    try:
+        from btcedu.models.channel import Channel
+
+        channels = session.query(Channel).order_by(Channel.created_at.desc()).all()
+
+        return jsonify({
+            "channels": [
+                {
+                    "id": ch.id,
+                    "channel_id": ch.channel_id,
+                    "name": ch.name,
+                    "youtube_channel_id": ch.youtube_channel_id,
+                    "rss_url": ch.rss_url,
+                    "is_active": ch.is_active,
+                    "created_at": ch.created_at.isoformat(),
+                }
+                for ch in channels
+            ]
+        })
+    finally:
+        session.close()
+
+
+@api_bp.route("/channels", methods=["POST"])
+def create_channel():
+    """Create a new channel."""
+    data = request.get_json() or {}
+
+    name = data.get("name", "").strip()
+    youtube_channel_id = data.get("youtube_channel_id", "").strip()
+    rss_url = data.get("rss_url", "").strip()
+
+    if not name:
+        return jsonify({"error": "Channel name is required"}), 400
+
+    if not youtube_channel_id and not rss_url:
+        return jsonify({"error": "Either youtube_channel_id or rss_url is required"}), 400
+
+    session = _get_session()
+    try:
+        from btcedu.models.channel import Channel
+        import uuid
+
+        # Generate a unique channel_id
+        channel_id = youtube_channel_id or f"channel_{uuid.uuid4().hex[:8]}"
+
+        # Check if channel already exists
+        existing = session.query(Channel).filter(
+            Channel.channel_id == channel_id
+        ).first()
+
+        if existing:
+            return jsonify({"error": f"Channel with ID {channel_id} already exists"}), 409
+
+        channel = Channel(
+            channel_id=channel_id,
+            name=name,
+            youtube_channel_id=youtube_channel_id or None,
+            rss_url=rss_url or None,
+            is_active=True,
+        )
+
+        session.add(channel)
+        session.commit()
+        session.refresh(channel)
+
+        return jsonify({
+            "channel": {
+                "id": channel.id,
+                "channel_id": channel.channel_id,
+                "name": channel.name,
+                "youtube_channel_id": channel.youtube_channel_id,
+                "rss_url": channel.rss_url,
+                "is_active": channel.is_active,
+                "created_at": channel.created_at.isoformat(),
+            }
+        }), 201
+    finally:
+        session.close()
+
+
+@api_bp.route("/channels/<int:channel_id>", methods=["DELETE"])
+def delete_channel(channel_id):
+    """Delete a channel."""
+    session = _get_session()
+    try:
+        from btcedu.models.channel import Channel
+
+        channel = session.query(Channel).filter(Channel.id == channel_id).first()
+
+        if not channel:
+            return jsonify({"error": "Channel not found"}), 404
+
+        # Check if there are episodes associated with this channel
+        episode_count = session.query(Episode).filter(
+            Episode.channel_id == channel.channel_id
+        ).count()
+
+        if episode_count > 0:
+            return jsonify({
+                "error": f"Cannot delete channel with {episode_count} associated episodes"
+            }), 400
+
+        session.delete(channel)
+        session.commit()
+
+        return jsonify({"message": "Channel deleted"}), 200
+    finally:
+        session.close()
+
+
+@api_bp.route("/channels/<int:channel_id>/toggle", methods=["POST"])
+def toggle_channel(channel_id):
+    """Toggle channel active status."""
+    session = _get_session()
+    try:
+        from btcedu.models.channel import Channel
+
+        channel = session.query(Channel).filter(Channel.id == channel_id).first()
+
+        if not channel:
+            return jsonify({"error": "Channel not found"}), 404
+
+        channel.is_active = not channel.is_active
+        session.commit()
+
+        return jsonify({
+            "channel_id": channel.id,
+            "is_active": channel.is_active,
+        })
+    finally:
+        session.close()

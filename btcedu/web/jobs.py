@@ -52,6 +52,7 @@ class BatchJob:
     total_cost_usd: float = 0.0
     episode_ids: list[str] = field(default_factory=list)
     force: bool = False
+    channel_id: str | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
     message: str = ""
@@ -117,14 +118,14 @@ class JobManager:
     # Batch Job Public API
     # ------------------------------------------------------------------
 
-    def submit_batch(self, app: Flask, force: bool = False) -> BatchJob:
+    def submit_batch(self, app: Flask, force: bool = False, channel_id: str | None = None) -> BatchJob:
         """Submit a batch job to process all pending episodes."""
         batch_id = uuid.uuid4().hex[:12]
-        batch_job = BatchJob(batch_id=batch_id, force=force)
+        batch_job = BatchJob(batch_id=batch_id, force=force, channel_id=channel_id)
         with self._lock:
             self._batch_jobs[batch_id] = batch_job
         self._executor.submit(self._execute_batch, batch_job, app)
-        logger.info("Batch job %s submitted", batch_id)
+        logger.info("Batch job %s submitted (channel_id=%s)", batch_id, channel_id)
         return batch_job
 
     def get_batch(self, batch_id: str) -> BatchJob | None:
@@ -414,20 +415,21 @@ class JobManager:
                 from btcedu.models.episode import Episode, EpisodeStatus
 
                 # Query pending episodes (oldest first)
-                pending_episodes = (
-                    session.query(Episode)
-                    .filter(
-                        Episode.status.in_([
-                            EpisodeStatus.NEW,
-                            EpisodeStatus.DOWNLOADED,
-                            EpisodeStatus.TRANSCRIBED,
-                            EpisodeStatus.CHUNKED,
-                            EpisodeStatus.GENERATED,
-                        ])
-                    )
-                    .order_by(Episode.published_at.asc())
-                    .all()
+                query = session.query(Episode).filter(
+                    Episode.status.in_([
+                        EpisodeStatus.NEW,
+                        EpisodeStatus.DOWNLOADED,
+                        EpisodeStatus.TRANSCRIBED,
+                        EpisodeStatus.CHUNKED,
+                        EpisodeStatus.GENERATED,
+                    ])
                 )
+
+                # Filter by channel if specified
+                if batch_job.channel_id:
+                    query = query.filter(Episode.channel_id == batch_job.channel_id)
+
+                pending_episodes = query.order_by(Episode.published_at.asc()).all()
 
                 episode_ids = [ep.episode_id for ep in pending_episodes]
                 total = len(episode_ids)

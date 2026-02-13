@@ -43,6 +43,7 @@ class Episode(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     episode_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="youtube_rss")
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     published_at: Mapped[datetime | None] = mapped_column(

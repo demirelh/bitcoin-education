@@ -448,3 +448,99 @@ def whats_new():
         })
     finally:
         session.close()
+# ---------------------------------------------------------------------------
+# Batch Processing (Process All)
+# ---------------------------------------------------------------------------
+
+@api_bp.route("/batch/start", methods=["POST"])
+def batch_start():
+    """Start a batch job to process all pending episodes."""
+    job_manager = _get_job_manager()
+
+    # Check if there's already an active batch job
+    active = job_manager.active_batch()
+    if active:
+        return jsonify({
+            "error": "A batch job is already running",
+            "batch_id": active.batch_id,
+        }), 409
+
+    data = request.get_json() or {}
+    force = data.get("force", False)
+
+    batch_job = job_manager.submit_batch(current_app._get_current_object(), force=force)
+
+    return jsonify({
+        "batch_id": batch_job.batch_id,
+        "state": batch_job.state,
+        "message": "Batch job started",
+    }), 202
+
+
+@api_bp.route("/batch/<batch_id>", methods=["GET"])
+def batch_status(batch_id):
+    """Get batch job status and progress."""
+    job_manager = _get_job_manager()
+    batch_job = job_manager.get_batch(batch_id)
+
+    if not batch_job:
+        return jsonify({"error": "Batch job not found"}), 404
+
+    return jsonify({
+        "batch_id": batch_job.batch_id,
+        "state": batch_job.state,
+        "current_episode_id": batch_job.current_episode_id,
+        "current_stage": batch_job.current_stage,
+        "total_episodes": batch_job.total_episodes,
+        "completed_episodes": batch_job.completed_episodes,
+        "failed_episodes": batch_job.failed_episodes,
+        "remaining_episodes": batch_job.total_episodes - batch_job.completed_episodes - batch_job.failed_episodes,
+        "total_cost_usd": batch_job.total_cost_usd,
+        "message": batch_job.message,
+        "created_at": batch_job.created_at.isoformat(),
+        "updated_at": batch_job.updated_at.isoformat(),
+    })
+
+
+@api_bp.route("/batch/<batch_id>/stop", methods=["POST"])
+def batch_stop(batch_id):
+    """Request graceful stop of a batch job."""
+    job_manager = _get_job_manager()
+
+    success = job_manager.stop_batch(batch_id)
+
+    if not success:
+        batch_job = job_manager.get_batch(batch_id)
+        if not batch_job:
+            return jsonify({"error": "Batch job not found"}), 404
+        return jsonify({
+            "error": f"Cannot stop batch job in state: {batch_job.state}",
+        }), 400
+
+    return jsonify({
+        "batch_id": batch_id,
+        "message": "Stop requested, will complete current episode",
+    })
+
+
+@api_bp.route("/batch/active", methods=["GET"])
+def batch_active():
+    """Check if there's an active batch job."""
+    job_manager = _get_job_manager()
+    active = job_manager.active_batch()
+
+    if not active:
+        return jsonify({"active": False})
+
+    return jsonify({
+        "active": True,
+        "batch_id": active.batch_id,
+        "state": active.state,
+        "current_episode_id": active.current_episode_id,
+        "current_stage": active.current_stage,
+        "total_episodes": active.total_episodes,
+        "completed_episodes": active.completed_episodes,
+        "failed_episodes": active.failed_episodes,
+        "remaining_episodes": active.total_episodes - active.completed_episodes - active.failed_episodes,
+        "total_cost_usd": active.total_cost_usd,
+    })

@@ -12,6 +12,7 @@
   <div class="topbar">
     <h1>btcedu</h1>
     <button class="btn" onclick="detectEpisodes()">Detect</button>
+    <button class="btn btn-primary" id="batch-btn" onclick="toggleBatch()">Process All</button>
     <button class="btn" onclick="showCost()">Cost</button>
     <button class="btn" onclick="refresh()">Refresh</button>
   </div>
@@ -52,6 +53,24 @@
     <!-- Right: detail panel -->
     <div class="panel" id="detail">
       <div class="empty">Select an episode from the list.</div>
+    </div>
+  </div>
+
+  <!-- Batch progress bar -->
+  <div class="batch-progress" id="batch-progress" style="display:none;">
+    <div class="batch-info">
+      <span class="batch-label">Batch Processing:</span>
+      <span id="batch-status">Starting...</span>
+      <span class="batch-counts">
+        <span id="batch-completed">0</span> completed,
+        <span id="batch-failed">0</span> failed,
+        <span id="batch-remaining">0</span> remaining
+      </span>
+      <span class="batch-cost">Cost: $<span id="batch-cost">0.00</span></span>
+    </div>
+    <div class="batch-current">
+      <span id="batch-episode"></span>
+      <span id="batch-stage"></span>
     </div>
   </div>
 

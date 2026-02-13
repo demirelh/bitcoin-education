@@ -337,3 +337,56 @@ body {
     text-align: center;
     padding: 40px;
 }
+
+/* Batch progress bar */
+.batch-progress {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    padding: 12px 16px;
+    font-size: 12px;
+}
+
+.batch-info {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+}
+
+.batch-label {
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.batch-counts {
+    color: var(--text-dim);
+}
+
+.batch-counts span {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.batch-cost {
+    color: var(--text-dim);
+    margin-left: auto;
+}
+
+.batch-cost span {
+    font-weight: 600;
+    color: var(--green);
+}
+
+.batch-current {
+    display: flex;
+    gap: 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.batch-current span:first-child {
+    color: var(--text);
+}
+

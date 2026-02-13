@@ -418,10 +418,141 @@
     return s && s.length > n ? s.slice(0, n) + "..." : s || "";
   }
 
+  // ── Batch Processing ─────────────────────────────────────────────
+  let activeBatchId = null;
+  let batchPollTimer = null;
+
+  async function toggleBatch() {
+    const btn = document.getElementById("batch-btn");
+
+    if (activeBatchId) {
+      // Stop the batch
+      const r = await POST(`/batch/${activeBatchId}/stop`);
+      if (r.error) {
+        toast("Failed to stop: " + r.error, false);
+      } else {
+        toast("Stopping batch after current episode...");
+      }
+    } else {
+      // Start a new batch
+      const r = await POST("/batch/start");
+      if (r.error) {
+        toast(r.error, false);
+        return;
+      }
+      activeBatchId = r.batch_id;
+      btn.textContent = "Stop";
+      btn.classList.remove("btn-primary");
+      btn.classList.add("btn-danger");
+      showBatchProgress();
+      pollBatch();
+    }
+  }
+  window.toggleBatch = toggleBatch;
+
+  function showBatchProgress() {
+    document.getElementById("batch-progress").style.display = "block";
+  }
+
+  function hideBatchProgress() {
+    document.getElementById("batch-progress").style.display = "none";
+  }
+
+  function updateBatchUI(batch) {
+    document.getElementById("batch-status").textContent = batch.state;
+    document.getElementById("batch-completed").textContent = batch.completed_episodes;
+    document.getElementById("batch-failed").textContent = batch.failed_episodes;
+    document.getElementById("batch-remaining").textContent = batch.remaining_episodes;
+    document.getElementById("batch-cost").textContent = batch.total_cost_usd.toFixed(4);
+
+    if (batch.current_episode_id) {
+      const episode = episodes.find(e => e.episode_id === batch.current_episode_id);
+      const title = episode ? trunc(episode.title, 50) : batch.current_episode_id;
+      document.getElementById("batch-episode").textContent = `Current: ${title}`;
+    } else {
+      document.getElementById("batch-episode").textContent = "";
+    }
+
+    if (batch.current_stage) {
+      document.getElementById("batch-stage").textContent = `Stage: ${batch.current_stage}`;
+    } else {
+      document.getElementById("batch-stage").textContent = "";
+    }
+  }
+
+  function pollBatch() {
+    clearInterval(batchPollTimer);
+    batchPollTimer = setInterval(async () => {
+      if (!activeBatchId) {
+        clearInterval(batchPollTimer);
+        return;
+      }
+
+      try {
+        const batch = await GET(`/batch/${activeBatchId}`);
+        if (batch.error) {
+          clearInterval(batchPollTimer);
+          resetBatchUI();
+          toast("Batch error: " + batch.error, false);
+          return;
+        }
+
+        updateBatchUI(batch);
+
+        if (batch.state === "success") {
+          clearInterval(batchPollTimer);
+          const msg = `Batch complete: ${batch.completed_episodes} succeeded, ${batch.failed_episodes} failed ($${batch.total_cost_usd.toFixed(4)})`;
+          toast(msg);
+          resetBatchUI();
+          refresh();
+        } else if (batch.state === "stopped") {
+          clearInterval(batchPollTimer);
+          toast(`Batch stopped: ${batch.message}`);
+          resetBatchUI();
+          refresh();
+        } else if (batch.state === "error") {
+          clearInterval(batchPollTimer);
+          toast("Batch failed: " + batch.message, false);
+          resetBatchUI();
+          refresh();
+        }
+      } catch (err) {
+        clearInterval(batchPollTimer);
+        resetBatchUI();
+        toast("Batch polling error: " + err.message, false);
+      }
+    }, 2000);
+  }
+
+  function resetBatchUI() {
+    activeBatchId = null;
+    hideBatchProgress();
+    const btn = document.getElementById("batch-btn");
+    btn.textContent = "Process All";
+    btn.classList.remove("btn-danger");
+    btn.classList.add("btn-primary");
+  }
+
+  // Check for active batch on load
+  async function checkActiveBatch() {
+    const r = await GET("/batch/active");
+    if (r.active) {
+      activeBatchId = r.batch_id;
+      const btn = document.getElementById("batch-btn");
+      btn.textContent = "Stop";
+      btn.classList.remove("btn-primary");
+      btn.classList.add("btn-danger");
+      showBatchProgress();
+      updateBatchUI(r);
+      pollBatch();
+    }
+  }
+
   // ── Init ─────────────────────────────────────────────────────
   document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("filter-status").onchange = applyFilters;
     document.getElementById("filter-search").oninput = applyFilters;
     refresh();
+    checkActiveBatch();
   });
 })();

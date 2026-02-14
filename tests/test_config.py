@@ -77,7 +77,9 @@ class TestSettings:
         assert settings.chunk_overlap == 0.20
 
     def test_claude_generation_defaults(self):
-        settings = Settings()
+        # Explicitly set dry_run=False to test the default,
+        # ignoring any DRY_RUN environment variable
+        settings = Settings(dry_run=False)
         assert settings.claude_max_tokens == 4096
         assert settings.claude_temperature == 0.3
         assert settings.dry_run is False

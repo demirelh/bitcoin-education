@@ -10,17 +10,29 @@
 
   <!-- Top bar -->
   <div class="topbar">
-    <h1>btcedu</h1>
-    <div class="channel-selector">
-      <select id="channel-select">
-        <option value="">All Channels</option>
-      </select>
-      <button class="btn btn-sm" onclick="showChannelManager()" title="Manage Channels">+</button>
+    <div class="topbar-row">
+      <h1>btcedu</h1>
+      <div class="channel-selector">
+        <select id="channel-select">
+          <option value="">All Channels</option>
+        </select>
+        <button class="btn btn-sm" onclick="showChannelManager()" title="Manage Channels">+</button>
+      </div>
     </div>
-    <button class="btn" onclick="detectEpisodes()">Detect</button>
-    <button class="btn btn-primary" id="batch-btn" onclick="toggleBatch()">Process All</button>
-    <button class="btn" onclick="showCost()">Cost</button>
-    <button class="btn" onclick="refresh()">Refresh</button>
+    <div class="topbar-row">
+      <button class="btn" onclick="detectEpisodes()">Detect</button>
+      <button class="btn btn-primary" id="batch-btn" onclick="toggleBatch()">Process All</button>
+      <button class="btn" onclick="showCost()">Cost</button>
+      <button class="btn" onclick="refresh()">Refresh</button>
+    </div>
+  </div>
+
+  <!-- Mobile navigation (back button) -->
+  <div class="mobile-nav" id="mobile-nav">
+    <button class="mobile-back" onclick="mobileShowList()">
+      <span>←</span>
+      <span>Episodes</span>
+    </button>
   </div>
 
   <!-- Main layout -->
@@ -40,6 +52,7 @@
         </select>
         <input type="text" id="filter-search" placeholder="Search title / ID...">
       </div>
+      <!-- Desktop table view -->
       <table class="ep-table">
         <thead>
           <tr>
@@ -54,6 +67,10 @@
           <tr><td colspan="5" class="empty">Loading...</td></tr>
         </tbody>
       </table>
+      <!-- Mobile cards view -->
+      <div class="ep-cards" id="ep-cards">
+        <div class="empty">Loading...</div>
+      </div>
     </div>
 
     <!-- Right: detail panel -->

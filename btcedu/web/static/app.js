@@ -566,9 +566,14 @@
     document.getElementById("batch-remaining").textContent = batch.remaining_episodes;
     document.getElementById("batch-cost").textContent = batch.total_cost_usd.toFixed(4);
 
+    // Update progress bar
+    const progressPct = batch.progress_pct || 0;
+    document.getElementById("batch-progress-fill").style.width = progressPct + "%";
+    document.getElementById("batch-progress-text").textContent = progressPct + "%";
+
     if (batch.current_episode_id) {
       const episode = episodes.find(e => e.episode_id === batch.current_episode_id);
-      const title = episode ? trunc(episode.title, 50) : batch.current_episode_id;
+      const title = batch.current_episode_title || (episode ? trunc(episode.title, 50) : batch.current_episode_id);
       document.getElementById("batch-episode").textContent = `Current: ${title}`;
     } else {
       document.getElementById("batch-episode").textContent = "";

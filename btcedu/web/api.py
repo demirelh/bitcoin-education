@@ -584,6 +584,7 @@ def batch_status(batch_id):
             "batch_id": batch_job.batch_id,
             "state": batch_job.state,
             "current_episode_id": batch_job.current_episode_id,
+            "current_episode_title": batch_job.current_episode_title,
             "current_stage": batch_job.current_stage,
             "total_episodes": batch_job.total_episodes,
             "completed_episodes": batch_job.completed_episodes,
@@ -595,6 +596,10 @@ def batch_status(batch_id):
             "message": batch_job.message,
             "created_at": batch_job.created_at.isoformat(),
             "updated_at": batch_job.updated_at.isoformat(),
+            # Progress tracking fields
+            "progress_pct": batch_job.progress_pct,
+            "total_work": batch_job.total_work,
+            "completed_work": batch_job.completed_work,
         }
     )
 
@@ -639,6 +644,7 @@ def batch_active():
             "batch_id": active.batch_id,
             "state": active.state,
             "current_episode_id": active.current_episode_id,
+            "current_episode_title": active.current_episode_title,
             "current_stage": active.current_stage,
             "total_episodes": active.total_episodes,
             "completed_episodes": active.completed_episodes,
@@ -647,6 +653,9 @@ def batch_active():
             - active.completed_episodes
             - active.failed_episodes,
             "total_cost_usd": active.total_cost_usd,
+            "progress_pct": active.progress_pct,
+            "total_work": active.total_work,
+            "completed_work": active.completed_work,
         }
     )
 

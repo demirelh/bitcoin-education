@@ -18,6 +18,16 @@ from flask import Flask
 
 logger = logging.getLogger(__name__)
 
+# Stage weights for progress calculation (percentages)
+# These weights represent the relative time/effort for each stage
+STAGE_WEIGHTS = {
+    "download": 5,
+    "transcribe": 45,
+    "chunk": 10,
+    "generate": 35,
+    "refine": 5,
+}
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -46,6 +56,7 @@ class BatchJob:
     batch_id: str
     state: str = "queued"  # queued|running|stopped|success|error
     current_episode_id: str | None = None
+    current_episode_title: str = ""
     current_stage: str = ""
     total_episodes: int = 0
     completed_episodes: int = 0
@@ -58,6 +69,10 @@ class BatchJob:
     updated_at: datetime = field(default_factory=_utcnow)
     message: str = ""
     stop_requested: bool = False
+    # Progress tracking fields
+    progress_pct: int = 0
+    total_work: float = 0.0
+    completed_work: float = 0.0
 
 
 class JobManager:
@@ -436,6 +451,38 @@ class JobManager:
     # Batch Job Executor
     # ------------------------------------------------------------------
 
+    def _calculate_episode_work(self, episode_status: str, force: bool = False) -> float:
+        """Calculate the total work (in percentage points) for an episode.
+
+        Returns the sum of weights for stages that need to run based on the
+        episode's current status. If force=True, all stages run.
+        """
+        from btcedu.models.episode import EpisodeStatus
+
+        if force:
+            # All stages will run
+            return sum(STAGE_WEIGHTS.values())
+
+        # Map status to completed stages
+        status_to_stages = {
+            EpisodeStatus.NEW: [],
+            EpisodeStatus.DOWNLOADED: ["download"],
+            EpisodeStatus.TRANSCRIBED: ["download", "transcribe"],
+            EpisodeStatus.CHUNKED: ["download", "transcribe", "chunk"],
+            EpisodeStatus.GENERATED: ["download", "transcribe", "chunk", "generate"],
+            EpisodeStatus.REFINED: ["download", "transcribe", "chunk", "generate", "refine"],
+            EpisodeStatus.COMPLETED: ["download", "transcribe", "chunk", "generate", "refine"],
+        }
+
+        completed_stages = status_to_stages.get(episode_status, [])
+        remaining_work = 0.0
+
+        for stage, weight in STAGE_WEIGHTS.items():
+            if stage not in completed_stages:
+                remaining_work += weight
+
+        return remaining_work
+
     def _execute_batch(self, batch_job: BatchJob, app: Flask) -> None:
         """Execute batch job to process all pending episodes."""
         with app.app_context():
@@ -477,16 +524,30 @@ class JobManager:
                         state="success",
                         message="No pending episodes to process",
                         total_episodes=0,
+                        progress_pct=100,
                     )
                     logger.info("Batch job %s: no pending episodes", batch_job.batch_id)
                     return
+
+                # Calculate total work based on each episode's status
+                total_work = 0.0
+                for ep in pending_episodes:
+                    total_work += self._calculate_episode_work(ep.status, batch_job.force)
 
                 self._update_batch(
                     batch_job,
                     total_episodes=total,
                     episode_ids=episode_ids,
+                    total_work=total_work,
+                    completed_work=0.0,
+                    progress_pct=0,
                 )
-                logger.info("Batch job %s: processing %d episodes", batch_job.batch_id, total)
+                logger.info(
+                    "Batch job %s: processing %d episodes (total work: %.1f)",
+                    batch_job.batch_id,
+                    total,
+                    total_work,
+                )
 
                 # Process each episode
                 for idx, episode_id in enumerate(episode_ids):
@@ -505,6 +566,7 @@ class JobManager:
                     self._update_batch(
                         batch_job,
                         current_episode_id=episode_id,
+                        current_episode_title="",
                         current_stage="starting",
                     )
 
@@ -527,6 +589,12 @@ class JobManager:
                             logger.warning("Episode %s not found, skipping", episode_id)
                             continue
 
+                        # Update with episode title
+                        self._update_batch(
+                            batch_job,
+                            current_episode_title=episode.title,
+                        )
+
                         # Clear error if present
                         if episode.error_message:
                             episode.error_message = None
@@ -537,7 +605,12 @@ class JobManager:
                             with self._lock:
                                 if batch_job.stop_requested:
                                     raise InterruptedError("Batch job stopped")
-                            self._update_batch(batch_job, current_stage=stage_name)
+
+                            # Update current stage (stage is about to start)
+                            self._update_batch(
+                                batch_job,
+                                current_stage=stage_name,
+                            )
 
                         report = run_episode_pipeline(
                             session,
@@ -549,22 +622,50 @@ class JobManager:
                         write_report(report, settings.reports_dir)
 
                         if report.success:
+                            # Calculate work done for this episode
+                            # Count stages that actually ran (not skipped)
+                            work_done = sum(
+                                STAGE_WEIGHTS.get(sr.stage, 0)
+                                for sr in report.stages
+                                if sr.status == "success"
+                            )
+                            new_completed = batch_job.completed_work + work_done
+                            progress = 0
+                            if batch_job.total_work > 0:
+                                progress = min(100, int(100 * new_completed / batch_job.total_work))
+
                             self._update_batch(
                                 batch_job,
                                 completed_episodes=batch_job.completed_episodes + 1,
                                 total_cost_usd=batch_job.total_cost_usd + report.total_cost_usd,
+                                completed_work=new_completed,
+                                progress_pct=progress,
                             )
                             logger.info(
-                                "Batch job %s: completed episode %s (%d/%d)",
+                                "Batch job %s: completed episode %s (%d/%d) - progress: %d%%",
                                 batch_job.batch_id,
                                 episode_id,
                                 idx + 1,
                                 total,
+                                progress,
                             )
                         else:
+                            # Episode failed - still count partial work if any stages succeeded
+                            work_done = sum(
+                                STAGE_WEIGHTS.get(sr.stage, 0)
+                                for sr in report.stages
+                                if sr.status == "success"
+                            )
+                            new_completed = batch_job.completed_work + work_done
+                            progress = 0
+                            if batch_job.total_work > 0:
+                                progress = min(100, int(100 * new_completed / batch_job.total_work))
+
                             self._update_batch(
                                 batch_job,
                                 failed_episodes=batch_job.failed_episodes + 1,
+                                completed_work=new_completed,
+                                progress_pct=progress,
                             )
                             logger.warning(
                                 "Batch job %s: episode %s failed: %s",
@@ -599,7 +700,9 @@ class JobManager:
                     batch_job,
                     state="success",
                     current_episode_id=None,
+                    current_episode_title="",
                     current_stage="",
+                    progress_pct=100,
                     message=f"Completed {batch_job.completed_episodes}/{total} episodes",
                 )
                 logger.info(

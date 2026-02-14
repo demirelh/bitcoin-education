@@ -453,6 +453,40 @@ body {
     color: var(--text);
 }
 
+/* Batch progress bar */
+.batch-progress-bar {
+    margin-top: 8px;
+    background: var(--bg);
+    border-radius: 4px;
+    height: 20px;
+    position: relative;
+    overflow: hidden;
+}
+
+.batch-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #4a9eff);
+    transition: width 0.3s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.batch-progress-text {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text);
+    z-index: 1;
+}
+
 /* Channel selector */
 .channel-selector {
     display: flex;

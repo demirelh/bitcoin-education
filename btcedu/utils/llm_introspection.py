@@ -6,6 +6,7 @@ or known to an AI running in a production pipeline.
 
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 
 def generate_llm_provider_report() -> dict:
@@ -652,5 +653,261 @@ def generate_constraints_table() -> str:
     )
     output.append("code inspection, and system context, but cannot independently verify runtime ")
     output.append("infrastructure details.")
+
+    return "\n".join(output)
+
+
+def parse_models_table(table_path: Path | str) -> dict:
+    """
+    Parse MODELS_TABLE.md to extract available models.
+
+    Args:
+        table_path: Path to MODELS_TABLE.md file
+
+    Returns:
+        dict: Parsed model information with providers and models
+    """
+    if isinstance(table_path, str):
+        table_path = Path(table_path)
+
+    if not table_path.exists():
+        raise FileNotFoundError(f"MODELS_TABLE.md not found at {table_path}")
+
+    content = table_path.read_text(encoding="utf-8")
+
+    # Parse the markdown table
+    models_data = {"providers": {}, "all_models": [], "available_models": [], "current_model": None}
+
+    # Find table rows (lines starting with |)
+    lines = content.split("\n")
+    in_table = False
+
+    for line in lines:
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+
+        # Skip header and separator rows
+        if "Provider" in line or "---" in line:
+            in_table = True
+            continue
+
+        if not in_table:
+            continue
+
+        # Parse table row
+        parts = [p.strip() for p in line.split("|")[1:-1]]  # Remove empty first/last
+        if len(parts) < 5:
+            continue
+
+        provider, family, versions, status, model_type = parts
+
+        # Extract individual model versions
+        # Handle patterns like "model1, model2 (+X more)"
+        version_text = versions
+        if "(+" in version_text:
+            # Extract visible versions before (+X more)
+            version_text = version_text.split("(+")[0].strip().rstrip(",")
+
+        model_versions = [v.strip() for v in version_text.split(",") if v.strip()]
+
+        # Initialize provider if not exists
+        if provider not in models_data["providers"]:
+            models_data["providers"][provider] = []
+
+        # Add models to provider list
+        for version in model_versions:
+            model_info = {
+                "model": version,
+                "family": family,
+                "status": status,
+                "type": model_type,
+            }
+            models_data["providers"][provider].append(model_info)
+            models_data["all_models"].append(version)
+
+            # Track available and current models
+            if "✓" in status or "Available" in status:
+                models_data["available_models"].append(version)
+
+            if "CURRENT" in status:
+                models_data["current_model"] = version
+
+    return models_data
+
+
+def generate_runtime_comparison_report(models_table_path: Path | str | None = None) -> str:
+    """
+    Generate a runtime model comparison report using MODELS_TABLE.md as ground truth.
+
+    Args:
+        models_table_path: Path to MODELS_TABLE.md. If None, uses default location.
+
+    Returns:
+        str: Formatted report with JSON summary at the end
+    """
+    # Determine models table path
+    if models_table_path is None:
+        # Try to find it in docs/
+        repo_root = Path(__file__).parent.parent.parent
+        models_table_path = repo_root / "docs" / "MODELS_TABLE.md"
+
+    # Parse the models table (ground truth)
+    models_data = parse_models_table(models_table_path)
+
+    # Determine current runtime model (from system context)
+    runtime_provider = "Anthropic"
+    runtime_model = "claude-sonnet-4-5-20250929"
+    runtime_confidence = "HIGH - based on system context information"
+
+    # Check if runtime model is in the available models
+    runtime_in_repo = runtime_model in models_data["all_models"]
+
+    # Determine model routing capability
+    routing_supported = "YES"
+    routing_confidence = "HIGH - Task tool accepts model parameter (haiku/sonnet/opus)"
+
+    # Build output
+    output = []
+    output.append("# Runtime Model Comparison Report")
+    output.append("")
+    output.append(f"Generated: {datetime.now(UTC).isoformat()}")
+    output.append("")
+    output.append("=" * 80)
+    output.append("SECTION 1 — READ AVAILABLE MODELS (GROUND TRUTH)")
+    output.append("=" * 80)
+    output.append("")
+    output.append(f"Models table source: {models_table_path}")
+    output.append("")
+    output.append(f"**Providers found:** {len(models_data['providers'])}")
+    for provider, models in models_data["providers"].items():
+        output.append(f"  - {provider}: {len(models)} models")
+    output.append("")
+    output.append(f"**Total models:** {len(models_data['all_models'])}")
+    output.append(f"**Available/Current models:** {len(models_data['available_models'])}")
+    output.append("")
+
+    output.append("=" * 80)
+    output.append("SECTION 2 — CURRENT RUNTIME MODEL")
+    output.append("=" * 80)
+    output.append("")
+    output.append(f"**Provider:** {runtime_provider}")
+    output.append(f"**Model identifier:** {runtime_model}")
+    output.append("")
+    output.append("**Can you reliably know this?** YES")
+    output.append("")
+    output.append("I can reliably know the runtime model through system context information ")
+    output.append("provided in my prompt. The system context explicitly states: 'You are powered ")
+    output.append(
+        "by the model named Sonnet 4.5. The exact model ID is claude-sonnet-4-5-20250929.'"
+    )
+    output.append("")
+
+    output.append("=" * 80)
+    output.append("SECTION 3 — MODEL ROUTING")
+    output.append("=" * 80)
+    output.append("")
+    output.append(
+        f"**Does this environment likely support routing between models?** {routing_supported}"
+    )
+    output.append("")
+    output.append("**Reasoning:** Based on available tools, I can observe the Task tool which ")
+    output.append(
+        "allows launching different agents with different model specifications. The Task "
+    )
+    output.append(
+        "tool has a 'model' parameter that accepts 'sonnet', 'opus', or 'haiku', indicating "
+    )
+    output.append(
+        "that the system can route to different Claude models. Additionally, the environment "
+    )
+    output.append(
+        "configuration shows CLAUDE_MODEL and WHISPER_MODEL settings, suggesting multi-provider "
+    )
+    output.append("support.")
+    output.append("")
+
+    output.append("=" * 80)
+    output.append("SECTION 4 — RUNTIME VS AVAILABLE MODELS")
+    output.append("=" * 80)
+    output.append("")
+    output.append(f"**Runtime model:** {runtime_model}")
+    output.append(f"**Is runtime model in MODELS_TABLE.md?** {runtime_in_repo}")
+    output.append("")
+
+    if runtime_in_repo:
+        output.append("The current runtime model IS listed in the available models table.")
+    else:
+        output.append(
+            "WARNING: The current runtime model is NOT listed in the available models table."
+        )
+
+    output.append("")
+    output.append("**Other models from the table that could theoretically be used:**")
+    output.append("")
+
+    # Group by provider
+    for provider, models in models_data["providers"].items():
+        available = [m for m in models if "✓" in m["status"] or "Available" in m["status"]]
+        if available:
+            output.append(f"**{provider}:**")
+            for model in available[:5]:  # Limit to first 5 per provider
+                marker = " (CURRENT)" if model["model"] == runtime_model else ""
+                output.append(f"  - {model['model']}{marker}")
+            if len(available) > 5:
+                output.append(f"  - ... and {len(available) - 5} more")
+            output.append("")
+
+    output.append("=" * 80)
+    output.append("SECTION 5 — LIMITATIONS")
+    output.append("=" * 80)
+    output.append("")
+    output.append("**What prevents full certainty about runtime model access:**")
+    output.append("")
+    output.append("1. **Dependency on System Context** - Runtime model identification relies on ")
+    output.append("   system providing accurate context information.")
+    output.append("")
+    output.append(
+        "2. **No Direct API Access** - Cannot directly query model serving infrastructure "
+    )
+    output.append("   to verify which models are truly available.")
+    output.append("")
+    output.append(
+        "3. **Configuration vs Reality** - MODELS_TABLE.md may not reflect current runtime "
+    )
+    output.append("   configuration, API key validity, or network access.")
+    output.append("")
+
+    # Generate JSON summary
+    output.append("=" * 80)
+    output.append("FINAL_JSON_SUMMARY")
+    output.append("=" * 80)
+    output.append("")
+
+    json_summary = {
+        "runtime_model": {
+            "provider": runtime_provider,
+            "model": runtime_model,
+            "confidence": runtime_confidence,
+        },
+        "runtime_in_repo_models": runtime_in_repo,
+        "model_routing_supported": {"value": routing_supported, "confidence": routing_confidence},
+        "available_providers": list(models_data["providers"].keys()),
+        "available_models": models_data["available_models"],
+        "models_likely_usable": [
+            m["model"]
+            for provider_models in models_data["providers"].values()
+            for m in provider_models
+            if "✓" in m["status"] or "Available" in m["status"]
+        ][:20],  # Limit to 20
+        "notes": (
+            f"This report compares the runtime model ({runtime_model}) against models listed "
+            f"in MODELS_TABLE.md. Found {len(models_data['providers'])} providers and "
+            f"{len(models_data['all_models'])} total models. Runtime model is "
+            f"{'present' if runtime_in_repo else 'NOT present'} in the table."
+        ),
+    }
+
+    output.append(json.dumps(json_summary, indent=2, ensure_ascii=False))
 
     return "\n".join(output)

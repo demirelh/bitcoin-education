@@ -7,6 +7,8 @@ Automated pipeline that transforms German Bitcoin podcast episodes into Turkish 
 
 **Source:** "Der Bitcoin Podcast" by Florian Bruce Boye (YouTube + RSS)
 
+**📖 [Architecture Documentation](docs/ARCHITECTURE.md)** - Comprehensive technical overview for developers
+
 ## Pipeline Stages
 
 ```

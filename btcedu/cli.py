@@ -683,3 +683,28 @@ def web(host: str, port: int, production: bool) -> None:
     app = create_app()
     click.echo(f"Starting dashboard on http://{host}:{port}")
     app.run(host=host, port=port, debug=False)
+
+
+@cli.command()
+@click.option("--json-only", is_flag=True, help="Output only the JSON summary.")
+@click.option("--output", "-o", type=click.Path(), help="Write output to file instead of stdout.")
+def llm_report(json_only: bool, output: str | None) -> None:
+    """Generate LLM provider introspection report.
+
+    This command transparently reports which models and providers are accessible
+    or known to the AI running in this production pipeline.
+    """
+    from btcedu.utils.llm_introspection import format_full_report, generate_json_summary
+
+    if json_only:
+        content = json.dumps(generate_json_summary(), indent=2, ensure_ascii=False)
+    else:
+        content = format_full_report()
+
+    if output:
+        output_path = Path(output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(content, encoding="utf-8")
+        click.echo(f"Report written to: {output_path}")
+    else:
+        click.echo(content)

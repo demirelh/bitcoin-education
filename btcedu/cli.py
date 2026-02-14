@@ -26,6 +26,28 @@ def cli(ctx: click.Context) -> None:
     init_db(settings.database_url)
     ctx.obj["session_factory"] = get_session_factory(settings.database_url)
 
+    # Check for pending migrations on CLI startup
+    _check_pending_migrations(ctx.obj["session_factory"])
+
+
+def _check_pending_migrations(session_factory):
+    """Check and warn if there are pending migrations."""
+    session = session_factory()
+    try:
+        from btcedu.migrations import get_pending_migrations
+        pending = get_pending_migrations(session)
+        if pending:
+            migration_list = ", ".join(m.version for m in pending)
+            logging.warning(
+                f"⚠ Database migration required. Pending: {migration_list}"
+            )
+            logging.warning("  Run: btcedu migrate")
+    except Exception:
+        # Silently ignore errors during migration check (e.g., if schema_migrations table doesn't exist yet)
+        pass
+    finally:
+        session.close()
+
 
 @cli.command()
 @click.pass_context
@@ -527,6 +549,68 @@ def cost(ctx: click.Context, episode_id: str | None) -> None:
 def init_db_cmd(ctx: click.Context) -> None:
     """Initialize the database (create tables)."""
     click.echo("Database initialized successfully.")
+
+
+@cli.command()
+@click.option("--dry-run", is_flag=True, default=False, help="Show what would be applied without making changes.")
+@click.pass_context
+def migrate(ctx: click.Context, dry_run: bool) -> None:
+    """Run pending database migrations."""
+    from btcedu.migrations import run_migrations, get_pending_migrations
+
+    session = ctx.obj["session_factory"]()
+    try:
+        pending = get_pending_migrations(session)
+
+        if not pending:
+            click.echo("✓ Database is up to date. No migrations needed.")
+            return
+
+        click.echo(f"Found {len(pending)} pending migration(s):")
+        for migration in pending:
+            click.echo(f"  • {migration.version}: {migration.description}")
+
+        if dry_run:
+            click.echo("\n[DRY RUN] No changes were made.")
+            return
+
+        click.echo("\nApplying migrations...")
+        run_migrations(session, dry_run=False)
+        click.echo("\n✓ All migrations completed successfully!")
+    except Exception as e:
+        click.echo(f"\n✗ Migration failed: {e}", err=True)
+        sys.exit(1)
+    finally:
+        session.close()
+
+
+@cli.command(name="migrate-status")
+@click.pass_context
+def migrate_status(ctx: click.Context) -> None:
+    """Show migration status (applied and pending)."""
+    from btcedu.migrations import get_applied_migrations, get_pending_migrations
+
+    session = ctx.obj["session_factory"]()
+    try:
+        applied = get_applied_migrations(session)
+        pending = get_pending_migrations(session)
+
+        if applied:
+            click.echo(f"Applied migrations ({len(applied)}):")
+            for version in applied:
+                click.echo(f"  ✓ {version}")
+        else:
+            click.echo("No migrations applied yet.")
+
+        if pending:
+            click.echo(f"\nPending migrations ({len(pending)}):")
+            for migration in pending:
+                click.echo(f"  • {migration.version}: {migration.description}")
+            click.echo("\nRun 'btcedu migrate' to apply pending migrations.")
+        else:
+            click.echo("\n✓ Database is up to date.")
+    finally:
+        session.close()
 
 
 @cli.command()

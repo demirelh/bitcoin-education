@@ -30,6 +30,54 @@ def health():
     })
 
 
+@api_bp.route("/debug/db-schema")
+def debug_db_schema():
+    """Return current database schema for debugging."""
+    session = _get_session()
+    try:
+        from sqlalchemy import text
+
+        # Get all tables
+        result = session.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
+        )
+        tables = [row[0] for row in result.fetchall()]
+
+        schema = {}
+        for table in tables:
+            # Get columns for each table
+            result = session.execute(text(f"PRAGMA table_info({table})"))
+            columns = []
+            for row in result.fetchall():
+                columns.append({
+                    "name": row[1],
+                    "type": row[2],
+                    "nullable": row[3] == 0,
+                    "default": row[4],
+                    "pk": row[5] == 1
+                })
+            schema[table] = columns
+
+        # Get indexes
+        indexes = {}
+        for table in tables:
+            result = session.execute(text(f"PRAGMA index_list({table})"))
+            table_indexes = [row[1] for row in result.fetchall()]
+            if table_indexes:
+                indexes[table] = table_indexes
+
+        return jsonify({
+            "tables": list(schema.keys()),
+            "schema": schema,
+            "indexes": indexes
+        })
+    except Exception as e:
+        logger.exception("Failed to get database schema")
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
 def _get_session():
     return current_app.config["session_factory"]()
 

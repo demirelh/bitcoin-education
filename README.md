@@ -38,8 +38,27 @@ cp .env.example .env
 # 3. Initialize database
 btcedu init-db
 
-# 4. Run the pipeline
+# 4. Run database migrations (if updating from older version)
+btcedu migrate
+
+# 5. Run the pipeline
 btcedu run-latest
+```
+
+## Updating to a New Version
+
+After pulling new code, always run migrations to update the database schema:
+
+```bash
+git pull
+btcedu migrate
+sudo systemctl restart btcedu-web  # If using systemd
+```
+
+Check migration status at any time:
+
+```bash
+btcedu migrate-status
 ```
 
 ## CLI Commands
@@ -72,6 +91,16 @@ btcedu run-latest
 | `btcedu cost [--episode-id ID]` | API usage costs breakdown |
 | `btcedu report --episode-id ID` | Show latest pipeline report |
 | `btcedu journal [--tail N]` | Show project progress log |
+| `btcedu migrate-status` | Check database migration status |
+
+### Database Management
+
+| Command | Description |
+|---------|-------------|
+| `btcedu init-db` | Initialize database (create tables) |
+| `btcedu migrate` | Run pending database migrations |
+| `btcedu migrate --dry-run` | Preview migrations without applying |
+| `btcedu migrate-status` | Show applied and pending migrations |
 
 All automation commands exit with code 0 on success, 1 on any failure.
 

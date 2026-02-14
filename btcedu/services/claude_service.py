@@ -3,8 +3,8 @@
 import hashlib
 import json
 import logging
-from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -89,7 +89,10 @@ def call_claude(
 
     logger.info(
         "Claude call: %d in / %d out tokens, $%.4f (%s)",
-        input_tokens, output_tokens, cost, settings.claude_model,
+        input_tokens,
+        output_tokens,
+        cost,
+        settings.claude_model,
     )
 
     return ClaudeResponse(
@@ -115,14 +118,12 @@ def _write_dry_run(
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_message}],
         "dry_run": True,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
     }
 
     if output_path:
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        output_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         logger.info("Dry-run payload written: %s", output_path)
 
     return ClaudeResponse(

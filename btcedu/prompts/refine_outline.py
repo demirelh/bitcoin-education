@@ -1,9 +1,7 @@
 """Outline refinement prompt template — improves v1 outline using QA feedback."""
 
 
-def build_user_prompt(
-    episode_title: str, episode_id: str, outline_text: str, qa_text: str
-) -> str:
+def build_user_prompt(episode_title: str, episode_id: str, outline_text: str, qa_text: str) -> str:
     """Build user prompt for outline refinement.
 
     Args:

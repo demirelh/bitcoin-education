@@ -104,8 +104,6 @@ class TestSettings:
             assert "deprecated" in str(w[0].message).lower()
 
     def test_anthropic_takes_precedence_over_claude(self):
-        settings = Settings(
-            anthropic_api_key="sk-ant-new", claude_api_key="sk-ant-old"
-        )
+        settings = Settings(anthropic_api_key="sk-ant-new", claude_api_key="sk-ant-old")
         assert settings.anthropic_api_key == "sk-ant-new"
         assert settings.claude_api_key == ""  # cleared after migration

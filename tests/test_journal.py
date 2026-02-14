@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from btcedu.utils.journal import journal_append, journal_event, redact
 
 

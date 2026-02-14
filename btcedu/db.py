@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from btcedu.config import get_settings
@@ -28,8 +28,10 @@ def init_db(database_url: str | None = None) -> None:
 def _init_fts(engine) -> None:
     """Create FTS5 virtual table for chunk full-text search."""
     with engine.connect() as conn:
-        conn.execute(text(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts "
-            "USING fts5(chunk_id UNINDEXED, episode_id UNINDEXED, text)"
-        ))
+        conn.execute(
+            text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts "
+                "USING fts5(chunk_id UNINDEXED, episode_id UNINDEXED, text)"
+            )
+        )
         conn.commit()

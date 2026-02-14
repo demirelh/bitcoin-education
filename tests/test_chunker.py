@@ -1,7 +1,6 @@
 """Tests for chunking logic: size, overlap, persistence, FTS search."""
-from pathlib import Path
 
-from sqlalchemy import text as sql_text
+from pathlib import Path
 
 from btcedu.config import Settings
 from btcedu.core.chunker import (
@@ -77,7 +76,9 @@ class TestChunkText:
         chunks = chunk_text(SAMPLE_TRANSCRIPT, "ep001", chunk_size=1500)
         for c in chunks:
             assert c.token_estimate > 0
-            assert c.token_estimate == len(c.text) // 4 or c.token_estimate == max(1, len(c.text) // 4)
+            assert c.token_estimate == len(c.text) // 4 or c.token_estimate == max(
+                1, len(c.text) // 4
+            )
 
     def test_deterministic(self):
         """Same input should produce same output."""
@@ -201,15 +202,17 @@ class TestFTSSearch:
         persist_chunks(db_session, chunks, "ep001")
 
         # Re-persist with different content
-        new_chunks = [ChunkRecord(
-            chunk_id="ep001_000",
-            episode_id="ep001",
-            ordinal=0,
-            text="Completely different text about Lightning.",
-            token_estimate=10,
-            start_char=0,
-            end_char=42,
-        )]
+        new_chunks = [
+            ChunkRecord(
+                chunk_id="ep001_000",
+                episode_id="ep001",
+                ordinal=0,
+                text="Completely different text about Lightning.",
+                token_estimate=10,
+                start_char=0,
+                end_char=42,
+            )
+        ]
         persist_chunks(db_session, new_chunks, "ep001")
 
         # Old content should not be findable

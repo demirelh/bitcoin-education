@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ChunkRecord:
     """A single chunk with metadata."""
+
     chunk_id: str
     episode_id: str
     ordinal: int
@@ -82,15 +83,17 @@ def chunk_text(
         chunk_text_str = text[pos:end].strip()
         if chunk_text_str:
             chunk_id = f"{episode_id}_{ordinal:03d}"
-            chunks.append(ChunkRecord(
-                chunk_id=chunk_id,
-                episode_id=episode_id,
-                ordinal=ordinal,
-                text=chunk_text_str,
-                token_estimate=estimate_tokens(chunk_text_str),
-                start_char=pos,
-                end_char=end,
-            ))
+            chunks.append(
+                ChunkRecord(
+                    chunk_id=chunk_id,
+                    episode_id=episode_id,
+                    ordinal=ordinal,
+                    text=chunk_text_str,
+                    token_estimate=estimate_tokens(chunk_text_str),
+                    start_char=pos,
+                    end_char=end,
+                )
+            )
             ordinal += 1
 
         # Advance by step, but if we broke at a sentence, adjust
@@ -105,7 +108,7 @@ def chunk_text(
             if remainder and chunks:
                 # Extend the last chunk to include remainder
                 last = chunks[-1]
-                extended = text[last.start_char:len(text)].strip()
+                extended = text[last.start_char : len(text)].strip()
                 chunks[-1] = ChunkRecord(
                     chunk_id=last.chunk_id,
                     episode_id=last.episode_id,
@@ -176,8 +179,7 @@ def persist_chunks(
     for cr in chunks:
         session.execute(
             sql_text(
-                "INSERT INTO chunks_fts (chunk_id, episode_id, text) "
-                "VALUES (:cid, :eid, :txt)"
+                "INSERT INTO chunks_fts (chunk_id, episode_id, text) VALUES (:cid, :eid, :txt)"
             ),
             {"cid": cr.chunk_id, "eid": cr.episode_id, "txt": cr.text},
         )
@@ -210,7 +212,4 @@ def search_chunks_fts(session: Session, query: str, episode_id: str | None = Non
             {"q": query},
         ).fetchall()
 
-    return [
-        {"chunk_id": r[0], "episode_id": r[1], "snippet": r[2]}
-        for r in rows
-    ]
+    return [{"chunk_id": r[0], "episode_id": r[1], "snippet": r[2]} for r in rows]

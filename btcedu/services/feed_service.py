@@ -4,7 +4,7 @@ import logging
 import shutil
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import feedparser
@@ -20,7 +20,8 @@ def _struct_to_datetime(st: object) -> datetime | None:
         return None
     try:
         from calendar import timegm
-        return datetime.fromtimestamp(timegm(st), tz=timezone.utc)
+
+        return datetime.fromtimestamp(timegm(st), tz=UTC)
     except Exception:
         return None
 
@@ -94,6 +95,7 @@ def fetch_feed(url: str, timeout: int = 30) -> str:
     for testability. In practice, we parse directly.
     """
     import urllib.request
+
     req = urllib.request.Request(url, headers={"User-Agent": "btcedu/0.1"})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return resp.read().decode("utf-8")
@@ -121,8 +123,12 @@ def fetch_channel_videos_ytdlp(channel_id: str, timeout: int = 120) -> list[Epis
     ytdlp = _find_ytdlp()
 
     cmd = [
-        ytdlp, "--flat-playlist", "-J", "--no-warnings",
-        "--extractor-args", "youtubetab:approximate_date",
+        ytdlp,
+        "--flat-playlist",
+        "-J",
+        "--no-warnings",
+        "--extractor-args",
+        "youtubetab:approximate_date",
         url,
     ]
     logger.info("Listing channel videos: %s", url)
@@ -130,9 +136,7 @@ def fetch_channel_videos_ytdlp(channel_id: str, timeout: int = 120) -> list[Epis
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
     if result.returncode != 0:
-        raise RuntimeError(
-            f"yt-dlp failed (exit {result.returncode}): {result.stderr.strip()}"
-        )
+        raise RuntimeError(f"yt-dlp failed (exit {result.returncode}): {result.stderr.strip()}")
 
     data = json.loads(result.stdout)
     entries = data.get("entries") or []
@@ -144,7 +148,11 @@ def fetch_channel_videos_ytdlp(channel_id: str, timeout: int = 120) -> list[Epis
             continue
 
         title = entry.get("title") or "Untitled"
-        raw_url = entry.get("url") or entry.get("webpage_url") or f"https://www.youtube.com/watch?v={video_id}"
+        raw_url = (
+            entry.get("url")
+            or entry.get("webpage_url")
+            or f"https://www.youtube.com/watch?v={video_id}"
+        )
 
         published_at = None
         # Try upload_date first (YYYYMMDD string)
@@ -155,7 +163,7 @@ def fetch_channel_videos_ytdlp(channel_id: str, timeout: int = 120) -> list[Epis
                     int(upload_date_str[:4]),
                     int(upload_date_str[4:6]),
                     int(upload_date_str[6:8]),
-                    tzinfo=timezone.utc,
+                    tzinfo=UTC,
                 )
             except (ValueError, TypeError):
                 pass
@@ -164,7 +172,7 @@ def fetch_channel_videos_ytdlp(channel_id: str, timeout: int = 120) -> list[Epis
             ts = entry.get("timestamp") or entry.get("release_timestamp")
             if ts is not None:
                 try:
-                    published_at = datetime.fromtimestamp(int(ts), tz=timezone.utc)
+                    published_at = datetime.fromtimestamp(int(ts), tz=UTC)
                 except (ValueError, TypeError, OSError):
                     pass
 
@@ -179,5 +187,5 @@ def fetch_channel_videos_ytdlp(channel_id: str, timeout: int = 120) -> list[Epis
         )
 
     # Sort newest first
-    episodes.sort(key=lambda e: e.published_at or datetime.min.replace(tzinfo=timezone.utc), reverse=True)
+    episodes.sort(key=lambda e: e.published_at or datetime.min.replace(tzinfo=UTC), reverse=True)
     return episodes

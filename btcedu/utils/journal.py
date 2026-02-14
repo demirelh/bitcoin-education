@@ -1,7 +1,7 @@
 """Project journal: append-only progress log with secret redaction."""
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 JOURNAL_PATH = Path("docs/PROGRESS_LOG.md")
@@ -48,7 +48,7 @@ def journal_append(section_title: str, body: str, journal_path: Path | None = No
     path = journal_path or JOURNAL_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
     safe_body = redact(body)
 
     entry = f"\n## {section_title}\n_{ts}_\n\n{safe_body}\n\n---\n"

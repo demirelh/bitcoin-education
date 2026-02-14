@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+
+    - name: Run ruff linter
+      run: |
+        ruff check btcedu/ tests/
+
+    - name: Run ruff formatter check
+      run: |
+        ruff format --check btcedu/ tests/
+
+    - name: Run tests with pytest
+      env:
+        ANTHROPIC_API_KEY: dummy
+        OPENAI_API_KEY: dummy
+        WHISPER_API_KEY: dummy
+        DRY_RUN: true
+      run: |
+        pytest tests/ -v --tb=short
+
+    - name: Generate coverage report
+      if: matrix.python-version == '3.13'
+      env:
+        ANTHROPIC_API_KEY: dummy
+        OPENAI_API_KEY: dummy
+        WHISPER_API_KEY: dummy
+        DRY_RUN: true
+      run: |
+        pip install pytest-cov
+        pytest tests/ --cov=btcedu --cov-report=xml --cov-report=term
+
+    - name: Upload coverage reports
+      if: matrix.python-version == '3.13'
+      uses: codecov/codecov-action@v5
+      with:
+        files: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+      continue-on-error: true

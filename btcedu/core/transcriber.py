@@ -1,4 +1,5 @@
 """Core logic for transcription and chunking pipeline stages."""
+
 import logging
 from pathlib import Path
 
@@ -29,11 +30,7 @@ def transcribe_episode(
     """
     from btcedu.services.transcription_service import clean_transcript, transcribe_audio
 
-    episode = (
-        session.query(Episode)
-        .filter(Episode.episode_id == episode_id)
-        .first()
-    )
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
@@ -104,11 +101,7 @@ def chunk_episode(
     Raises:
         ValueError: If episode not found or not in TRANSCRIBED state.
     """
-    episode = (
-        session.query(Episode)
-        .filter(Episode.episode_id == episode_id)
-        .first()
-    )
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 

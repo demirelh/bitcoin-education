@@ -3,7 +3,7 @@
 import logging
 import time
 import traceback
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
@@ -48,16 +48,16 @@ def create_app(settings=None) -> Flask:
         # Log full stack trace to web_errors.log
         error_log = Path(logs_dir) / "web_errors.log"
         try:
-            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
             with open(error_log, "a", encoding="utf-8") as f:
-                f.write(f"\n{'='*80}\n")
+                f.write(f"\n{'=' * 80}\n")
                 f.write(f"Timestamp: {ts}\n")
                 f.write(f"Method: {request.method}\n")
                 f.write(f"Path: {request.path}\n")
                 f.write(f"Error: {str(e)}\n")
-                f.write(f"Traceback:\n")
+                f.write("Traceback:\n")
                 f.write(traceback.format_exc())
-                f.write(f"{'='*80}\n")
+                f.write(f"{'=' * 80}\n")
         except OSError:
             pass
 
@@ -67,17 +67,16 @@ def create_app(settings=None) -> Flask:
         # Check if it's a database schema error
         error_str = str(e).lower()
         if "no such column" in error_str or "no such table" in error_str:
-            return jsonify({
-                "error": "Database schema out of date",
-                "hint": "Run `btcedu migrate` on the server to update the database schema.",
-                "details": str(e)
-            }), 500
+            return jsonify(
+                {
+                    "error": "Database schema out of date",
+                    "hint": "Run `btcedu migrate` on the server to update the database schema.",
+                    "details": str(e),
+                }
+            ), 500
 
         # Return generic error response
-        return jsonify({
-            "error": "Internal server error",
-            "details": str(e)
-        }), 500
+        return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
     @app.before_request
     def _start_timer():
@@ -88,6 +87,7 @@ def create_app(settings=None) -> Flask:
         """Check if migrations are needed on startup (once)."""
         if not hasattr(app, "_migrations_checked"):
             from btcedu.migrations import get_pending_migrations
+
             session = app.config["session_factory"]()
             try:
                 pending = get_pending_migrations(session)
@@ -115,9 +115,13 @@ def create_app(settings=None) -> Flask:
         )
         try:
             web_log = Path(logs_dir) / "web.log"
-            ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            ts = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S")
             with open(web_log, "a", encoding="utf-8") as f:
-                f.write(f"{ts} {request.method} {request.path} {response.status_code} {duration_ms:.0f}ms\n")
+                log_line = (
+                    f"{ts} {request.method} {request.path} "
+                    f"{response.status_code} {duration_ms:.0f}ms\n"
+                )
+                f.write(log_line)
         except OSError:
             pass
         return response

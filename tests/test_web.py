@@ -42,10 +42,12 @@ def test_db():
     )
     Base.metadata.create_all(engine)
     with engine.connect() as conn:
-        conn.execute(text(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts "
-            "USING fts5(chunk_id UNINDEXED, episode_id UNINDEXED, text)"
-        ))
+        conn.execute(
+            text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts "
+                "USING fts5(chunk_id UNINDEXED, episode_id UNINDEXED, text)"
+            )
+        )
         conn.commit()
     factory = sessionmaker(bind=engine)
     return engine, factory
@@ -122,6 +124,7 @@ def client(app):
 # Health, static assets, and observability
 # ---------------------------------------------------------------------------
 
+
 class TestHealthAndStaticAssets:
     def test_health_endpoint(self, client):
         r = client.get("/api/health")
@@ -167,8 +170,8 @@ class TestHealthAndStaticAssets:
 # Episode list + detail
 # ---------------------------------------------------------------------------
 
-class TestEpisodeEndpoints:
 
+class TestEpisodeEndpoints:
     def test_get_episodes_returns_json(self, client):
         r = client.get("/api/episodes")
         assert r.status_code == 200
@@ -219,6 +222,7 @@ class TestEpisodeEndpoints:
 # ---------------------------------------------------------------------------
 # Pipeline action endpoints (now return 202 + job_id)
 # ---------------------------------------------------------------------------
+
 
 class TestPipelineActions:
     def test_detect_endpoint_sync(self, client):
@@ -275,6 +279,7 @@ class TestPipelineActions:
 # ---------------------------------------------------------------------------
 # Job lifecycle and logs
 # ---------------------------------------------------------------------------
+
 
 class TestJobsAndLogs:
     def test_job_lifecycle_queued_to_success(self, client, app):
@@ -364,8 +369,7 @@ class TestJobsAndLogs:
         log_dir = Path(test_settings.logs_dir) / "episodes"
         log_dir.mkdir(parents=True, exist_ok=True)
         (log_dir / "ep001.log").write_text(
-            "2026-02-12 10:00:00 [download] Starting...\n"
-            "2026-02-12 10:00:05 [download] Complete\n",
+            "2026-02-12 10:00:00 [download] Starting...\n2026-02-12 10:00:05 [download] Complete\n",
             encoding="utf-8",
         )
 
@@ -417,6 +421,7 @@ class TestJobsAndLogs:
 # File viewer
 # ---------------------------------------------------------------------------
 
+
 class TestFileViewer:
     def test_file_transcript(self, client, test_settings, tmp_path):
         # Create a fake transcript file
@@ -453,7 +458,8 @@ class TestFileViewer:
         rep_dir.mkdir(parents=True)
         report_data = {"success": True, "episode_id": "ep001"}
         (rep_dir / "report_20260101_120000.json").write_text(
-            json.dumps(report_data), encoding="utf-8",
+            json.dumps(report_data),
+            encoding="utf-8",
         )
 
         r = client.get("/api/episodes/ep001/files/report")
@@ -465,6 +471,7 @@ class TestFileViewer:
 # ---------------------------------------------------------------------------
 # Cost + What's new
 # ---------------------------------------------------------------------------
+
 
 class TestCostAndWhatsNew:
     def test_cost_endpoint(self, client):

@@ -8,7 +8,6 @@ import pytest
 
 from btcedu.config import Settings
 from btcedu.core.generator import (
-    ARTIFACT_FILENAMES,
     build_query_terms,
     format_chunks_for_prompt,
     generate_content,
@@ -67,9 +66,9 @@ class TestBuildQueryTerms:
         terms = build_query_terms("Bitcoin und die Zukunft des Geldes")
         # Stopwords should not appear (neither quoted nor unquoted)
         joined = " ".join(terms)
-        assert "und" not in joined.replace('"', '').split()
-        assert "die" not in joined.replace('"', '').split()
-        assert "des" not in joined.replace('"', '').split()
+        assert "und" not in joined.replace('"', "").split()
+        assert "die" not in joined.replace('"', "").split()
+        assert "des" not in joined.replace('"', "").split()
 
     def test_keeps_bitcoin_terms(self):
         terms = build_query_terms("Blockchain und Lightning Network")
@@ -101,9 +100,7 @@ class TestRetrieveChunks:
         assert all("chunk_id" in c for c in chunks)
 
     def test_falls_back_to_ordinal(self, db_session, chunked_episode):
-        chunks = retrieve_chunks(
-            db_session, "ep001", ["xyzzythisnotexist"], top_k=16
-        )
+        chunks = retrieve_chunks(db_session, "ep001", ["xyzzythisnotexist"], top_k=16)
         assert len(chunks) > 0  # Should fall back to ordinal
 
     def test_respects_top_k(self, db_session, chunked_episode):
@@ -122,9 +119,7 @@ class TestRetrieveChunks:
 class TestSaveRetrievalSnapshot:
     def test_creates_snapshot_file(self, tmp_path, db_session, chunked_episode):
         chunks = retrieve_chunks(db_session, "ep001", ["Bitcoin"], top_k=5)
-        path = save_retrieval_snapshot(
-            chunks, "outline", tmp_path, ["Bitcoin"], top_k=5
-        )
+        path = save_retrieval_snapshot(chunks, "outline", tmp_path, ["Bitcoin"], top_k=5)
         assert Path(path).exists()
         data = json.loads(Path(path).read_text())
         assert data["artifact_type"] == "outline"
@@ -176,11 +171,7 @@ class TestGenerateContent:
 
         result = generate_content(db_session, "ep001", settings)
 
-        run = (
-            db_session.query(PipelineRun)
-            .filter_by(stage=PipelineStage.GENERATE)
-            .first()
-        )
+        run = db_session.query(PipelineRun).filter_by(stage=PipelineStage.GENERATE).first()
         assert run is not None
         assert run.status == RunStatus.SUCCESS
         assert run.input_tokens == result.total_input_tokens
@@ -205,7 +196,6 @@ class TestGenerateContent:
 
         # First run creates all
         generate_content(db_session, "ep001", settings)
-        call_count_first = mock_claude.call_count
 
         # Reset episode status for second run
         ep = db_session.query(Episode).filter_by(episode_id="ep001").first()
@@ -370,8 +360,13 @@ class TestClaudeService:
 class TestFormatChunks:
     def test_includes_citation_ids(self):
         chunks = [
-            {"chunk_id": "ep001_001", "episode_id": "ep001", "ordinal": 1,
-             "text": "Test text", "rank": 0},
+            {
+                "chunk_id": "ep001_001",
+                "episode_id": "ep001",
+                "ordinal": 1,
+                "text": "Test text",
+                "rank": 0,
+            },
         ]
         formatted = format_chunks_for_prompt(chunks, "ep001")
         assert "[ep001_C0001]" in formatted
@@ -395,8 +390,12 @@ def _create_generated_episode(db_session, tmp_path):
 
     output_dir = tmp_path / "outputs" / "ep_gen"
     output_dir.mkdir(parents=True)
-    (output_dir / "outline.tr.md").write_text("# Outline v1\n- Punkt 1 [ep_gen_C0001]", encoding="utf-8")
-    (output_dir / "script.long.tr.md").write_text("# Script v1\nBitcoin bir [ep_gen_C0001]...", encoding="utf-8")
+    (output_dir / "outline.tr.md").write_text(
+        "# Outline v1\n- Punkt 1 [ep_gen_C0001]", encoding="utf-8"
+    )
+    (output_dir / "script.long.tr.md").write_text(
+        "# Script v1\nBitcoin bir [ep_gen_C0001]...", encoding="utf-8"
+    )
     (output_dir / "qa.json").write_text('{"claims": [{"status": "supported"}]}', encoding="utf-8")
 
     return ep
@@ -434,11 +433,7 @@ class TestRefineContent:
 
         refine_content(db_session, "ep_gen", settings)
 
-        run = (
-            db_session.query(PipelineRun)
-            .filter_by(stage=PipelineStage.REFINE)
-            .first()
-        )
+        run = db_session.query(PipelineRun).filter_by(stage=PipelineStage.REFINE).first()
         assert run is not None
         assert run.status == RunStatus.SUCCESS
         assert run.estimated_cost_usd > 0

@@ -1,7 +1,7 @@
 """Tests for Phase 5 pipeline orchestration."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -44,7 +44,7 @@ def new_episode(db_session):
         title="Bitcoin und Lightning Netzwerk",
         url="https://youtube.com/watch?v=ep_new",
         status=EpisodeStatus.NEW,
-        published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+        published_at=datetime(2025, 6, 1, tzinfo=UTC),
     )
     db_session.add(ep)
     db_session.commit()
@@ -60,7 +60,7 @@ def failed_episode(db_session):
         title="Bitcoin Mining Erklaert",
         url="https://youtube.com/watch?v=ep_fail",
         status=EpisodeStatus.CHUNKED,
-        published_at=datetime(2025, 5, 15, tzinfo=timezone.utc),
+        published_at=datetime(2025, 5, 15, tzinfo=UTC),
         error_message="Stage 'generate' failed: API timeout",
         retry_count=1,
     )
@@ -100,13 +100,15 @@ class TestRunEpisodePipeline:
             title="Test Chunked",
             url="https://youtube.com/watch?v=ep_chunked",
             status=EpisodeStatus.CHUNKED,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
 
         mock_stage.return_value = StageResult(
-            "generate", "success", 0.5,
+            "generate",
+            "success",
+            0.5,
             detail="6 artifacts ($0.0375)",
         )
         settings = _make_settings(tmp_path)
@@ -124,9 +126,14 @@ class TestRunEpisodePipeline:
         assert len(skipped) == 4
 
     @patch("btcedu.core.pipeline._run_stage")
-    def test_records_failure_and_increments_retry(self, mock_stage, db_session, new_episode, tmp_path):
+    def test_records_failure_and_increments_retry(
+        self, mock_stage, db_session, new_episode, tmp_path
+    ):
         mock_stage.return_value = StageResult(
-            "download", "failed", 0.1, error="Connection timeout",
+            "download",
+            "failed",
+            0.1,
+            error="Connection timeout",
         )
         settings = _make_settings(tmp_path)
 
@@ -144,7 +151,10 @@ class TestRunEpisodePipeline:
     def test_stops_on_failure(self, mock_stage, db_session, new_episode, tmp_path):
         """Pipeline should stop after first failed stage."""
         mock_stage.return_value = StageResult(
-            "download", "failed", 0.1, error="fail",
+            "download",
+            "failed",
+            0.1,
+            error="fail",
         )
         settings = _make_settings(tmp_path)
 
@@ -161,7 +171,10 @@ class TestRunEpisodePipeline:
     def test_clears_error_on_success(self, mock_stage, db_session, failed_episode, tmp_path):
         """Successful pipeline run clears previous error_message."""
         mock_stage.return_value = StageResult(
-            "generate", "success", 0.5, detail="6 artifacts ($0.0375)",
+            "generate",
+            "success",
+            0.5,
+            detail="6 artifacts ($0.0375)",
         )
         settings = _make_settings(tmp_path)
 
@@ -180,16 +193,20 @@ class TestRunPending:
     def test_processes_in_published_at_order(self, mock_run, db_session, tmp_path):
         """Episodes should be processed oldest first."""
         ep1 = Episode(
-            episode_id="ep_old", source="youtube_rss", title="Old",
+            episode_id="ep_old",
+            source="youtube_rss",
+            title="Old",
             url="https://youtube.com/watch?v=old",
             status=EpisodeStatus.NEW,
-            published_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         ep2 = Episode(
-            episode_id="ep_new", source="youtube_rss", title="New",
+            episode_id="ep_new",
+            source="youtube_rss",
+            title="New",
             url="https://youtube.com/watch?v=new",
             status=EpisodeStatus.NEW,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add_all([ep2, ep1])  # Add in wrong order
         db_session.commit()
@@ -207,12 +224,16 @@ class TestRunPending:
     @patch("btcedu.core.pipeline.run_episode_pipeline")
     def test_respects_max_limit(self, mock_run, db_session, tmp_path):
         for i in range(5):
-            db_session.add(Episode(
-                episode_id=f"ep_{i}", source="youtube_rss", title=f"Ep {i}",
-                url=f"https://youtube.com/watch?v={i}",
-                status=EpisodeStatus.NEW,
-                published_at=datetime(2025, 1, i + 1, tzinfo=timezone.utc),
-            ))
+            db_session.add(
+                Episode(
+                    episode_id=f"ep_{i}",
+                    source="youtube_rss",
+                    title=f"Ep {i}",
+                    url=f"https://youtube.com/watch?v={i}",
+                    status=EpisodeStatus.NEW,
+                    published_at=datetime(2025, 1, i + 1, tzinfo=UTC),
+                )
+            )
         db_session.commit()
 
         mock_run.return_value = PipelineReport(episode_id="mock", title="mock", success=True)
@@ -226,16 +247,20 @@ class TestRunPending:
     @patch("btcedu.core.pipeline.run_episode_pipeline")
     def test_respects_since_filter(self, mock_run, db_session, tmp_path):
         ep_old = Episode(
-            episode_id="ep_old", source="youtube_rss", title="Old",
+            episode_id="ep_old",
+            source="youtube_rss",
+            title="Old",
             url="https://youtube.com/watch?v=old",
             status=EpisodeStatus.NEW,
-            published_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         ep_new = Episode(
-            episode_id="ep_new", source="youtube_rss", title="New",
+            episode_id="ep_new",
+            source="youtube_rss",
+            title="New",
             url="https://youtube.com/watch?v=new",
             status=EpisodeStatus.NEW,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add_all([ep_old, ep_new])
         db_session.commit()
@@ -243,7 +268,7 @@ class TestRunPending:
         mock_run.return_value = PipelineReport(episode_id="mock", title="mock", success=True)
         settings = _make_settings(tmp_path)
 
-        since = datetime(2025, 3, 1, tzinfo=timezone.utc)
+        since = datetime(2025, 3, 1, tzinfo=UTC)
         reports = run_pending(db_session, settings, since=since)
 
         assert len(reports) == 1
@@ -253,10 +278,12 @@ class TestRunPending:
     def test_includes_generated_episodes(self, mock_run, db_session, tmp_path):
         """GENERATED episodes are pending (need refine stage)."""
         ep = Episode(
-            episode_id="ep_gen", source="youtube_rss", title="Generated",
+            episode_id="ep_gen",
+            source="youtube_rss",
+            title="Generated",
             url="https://youtube.com/watch?v=gen",
             status=EpisodeStatus.GENERATED,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
@@ -271,10 +298,12 @@ class TestRunPending:
     @patch("btcedu.core.pipeline.run_episode_pipeline")
     def test_skips_refined_episodes(self, mock_run, db_session, tmp_path):
         ep = Episode(
-            episode_id="ep_done", source="youtube_rss", title="Done",
+            episode_id="ep_done",
+            source="youtube_rss",
+            title="Done",
             url="https://youtube.com/watch?v=done",
             status=EpisodeStatus.REFINED,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
@@ -298,22 +327,28 @@ class TestRunLatest:
         mock_detect.return_value = DetectResult(found=2, new=1, total=2)
 
         ep_old = Episode(
-            episode_id="ep_old", source="youtube_rss", title="Old",
+            episode_id="ep_old",
+            source="youtube_rss",
+            title="Old",
             url="https://youtube.com/watch?v=old",
             status=EpisodeStatus.NEW,
-            published_at=datetime(2025, 1, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 1, 1, tzinfo=UTC),
         )
         ep_new = Episode(
-            episode_id="ep_newest", source="youtube_rss", title="Newest",
+            episode_id="ep_newest",
+            source="youtube_rss",
+            title="Newest",
             url="https://youtube.com/watch?v=newest",
             status=EpisodeStatus.NEW,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add_all([ep_old, ep_new])
         db_session.commit()
 
         mock_run.return_value = PipelineReport(
-            episode_id="ep_newest", title="Newest", success=True,
+            episode_id="ep_newest",
+            title="Newest",
+            success=True,
         )
         settings = _make_settings(tmp_path)
 
@@ -346,7 +381,10 @@ class TestRetryEpisode:
     def test_retries_from_failed_stage(self, mock_stage, db_session, failed_episode, tmp_path):
         """Failed CHUNKED episode should retry from generate stage."""
         mock_stage.return_value = StageResult(
-            "generate", "success", 0.5, detail="6 artifacts ($0.0375)",
+            "generate",
+            "success",
+            0.5,
+            detail="6 artifacts ($0.0375)",
         )
         settings = _make_settings(tmp_path)
 
@@ -361,10 +399,12 @@ class TestRetryEpisode:
 
     def test_rejects_non_failed_episode(self, db_session, tmp_path):
         ep = Episode(
-            episode_id="ep_ok", source="youtube_rss", title="OK",
+            episode_id="ep_ok",
+            source="youtube_rss",
+            title="OK",
             url="https://youtube.com/watch?v=ok",
             status=EpisodeStatus.NEW,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
@@ -416,15 +456,25 @@ class TestWriteReport:
         path = write_report(report, str(tmp_path / "reports"))
 
         data = json.loads(Path(path).read_text())
-        required = {"episode_id", "title", "started_at", "completed_at",
-                     "success", "error", "total_cost_usd", "stages"}
+        required = {
+            "episode_id",
+            "title",
+            "started_at",
+            "completed_at",
+            "success",
+            "error",
+            "total_cost_usd",
+            "stages",
+        }
         assert required.issubset(data.keys())
         assert data["error"] == "Stage 'download' failed: timeout"
 
     def test_report_dir_created(self, tmp_path):
         """Reports dir is created if it doesn't exist."""
         report = PipelineReport(
-            episode_id="ep003", title="New Dir Test", success=True,
+            episode_id="ep003",
+            title="New Dir Test",
+            success=True,
         )
         report.completed_at = report.started_at
 
@@ -450,10 +500,12 @@ class TestResolvePipelinePlan:
 
     def test_downloaded_skips_download(self, db_session):
         ep = Episode(
-            episode_id="ep_dl", source="youtube_rss", title="Downloaded",
+            episode_id="ep_dl",
+            source="youtube_rss",
+            title="Downloaded",
             url="https://youtube.com/watch?v=dl",
             status=EpisodeStatus.DOWNLOADED,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
@@ -467,10 +519,12 @@ class TestResolvePipelinePlan:
 
     def test_chunked_skips_three(self, db_session):
         ep = Episode(
-            episode_id="ep_ch", source="youtube_rss", title="Chunked",
+            episode_id="ep_ch",
+            source="youtube_rss",
+            title="Chunked",
             url="https://youtube.com/watch?v=ch",
             status=EpisodeStatus.CHUNKED,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
@@ -483,10 +537,12 @@ class TestResolvePipelinePlan:
 
     def test_generated_runs_refine(self, db_session):
         ep = Episode(
-            episode_id="ep_gen", source="youtube_rss", title="Generated",
+            episode_id="ep_gen",
+            source="youtube_rss",
+            title="Generated",
             url="https://youtube.com/watch?v=gen",
             status=EpisodeStatus.GENERATED,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
@@ -499,10 +555,12 @@ class TestResolvePipelinePlan:
 
     def test_refined_skips_all(self, db_session):
         ep = Episode(
-            episode_id="ep_ref", source="youtube_rss", title="Refined",
+            episode_id="ep_ref",
+            source="youtube_rss",
+            title="Refined",
             url="https://youtube.com/watch?v=ref",
             status=EpisodeStatus.REFINED,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
@@ -512,10 +570,12 @@ class TestResolvePipelinePlan:
 
     def test_force_overrides_skips(self, db_session):
         ep = Episode(
-            episode_id="ep_force", source="youtube_rss", title="Force",
+            episode_id="ep_force",
+            source="youtube_rss",
+            title="Force",
             url="https://youtube.com/watch?v=force",
             status=EpisodeStatus.REFINED,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
@@ -529,7 +589,8 @@ class TestResolvePipelinePlan:
     def test_plan_with_error_still_resolves(self, db_session, failed_episode):
         """Pipeline plan ignores error_message — only looks at status."""
         plan = resolve_pipeline_plan(db_session, failed_episode)
-        # failed_episode is CHUNKED, so download/transcribe/chunk skip, generate runs, refine pending
+        # failed_episode is CHUNKED, so download/transcribe/chunk skip,
+        # generate runs, refine pending
         skipped = [p for p in plan if p.decision == "skip"]
         assert len(skipped) == 3
         assert plan[3].decision == "run"
@@ -541,21 +602,28 @@ class TestResolvePipelinePlan:
     def test_stage_callback_invoked(self, mock_stage, db_session, tmp_path):
         """stage_callback is called before each stage that runs."""
         ep = Episode(
-            episode_id="ep_cb", source="youtube_rss", title="Callback",
+            episode_id="ep_cb",
+            source="youtube_rss",
+            title="Callback",
             url="https://youtube.com/watch?v=cb",
             status=EpisodeStatus.CHUNKED,
-            published_at=datetime(2025, 6, 1, tzinfo=timezone.utc),
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
 
         mock_stage.return_value = StageResult(
-            "generate", "success", 0.5, detail="6 artifacts ($0.0375)",
+            "generate",
+            "success",
+            0.5,
+            detail="6 artifacts ($0.0375)",
         )
         settings = _make_settings(tmp_path)
         called_stages = []
         run_episode_pipeline(
-            db_session, ep, settings,
+            db_session,
+            ep,
+            settings,
             stage_callback=lambda s: called_stages.append(s),
         )
         assert called_stages == ["generate"]

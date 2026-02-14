@@ -97,6 +97,7 @@ def _transcribe_chunked(
 def clean_transcript(raw_text: str) -> str:
     """Basic transcript cleanup: normalize whitespace, strip artifacts."""
     import re
+
     # Collapse multiple blank lines
     text = re.sub(r"\n{3,}", "\n\n", raw_text)
     # Strip leading/trailing whitespace per line

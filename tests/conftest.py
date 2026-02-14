@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from btcedu.db import Base
 
@@ -17,10 +17,12 @@ def db_engine():
     Base.metadata.create_all(engine)
     # Create FTS5 virtual table
     with engine.connect() as conn:
-        conn.execute(text(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts "
-            "USING fts5(chunk_id UNINDEXED, episode_id UNINDEXED, text)"
-        ))
+        conn.execute(
+            text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts "
+                "USING fts5(chunk_id UNINDEXED, episode_id UNINDEXED, text)"
+            )
+        )
         conn.commit()
     yield engine
     engine.dispose()

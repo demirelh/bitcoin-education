@@ -1,7 +1,8 @@
 """Phase 2 tests: feed parsing, detection (idempotent), download, backfill."""
+
 import hashlib
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -168,11 +169,7 @@ class TestDetectFromContent:
 
     def test_stores_correct_fields(self, db_session):
         detect_from_content(db_session, SAMPLE_FEED, "youtube_rss")
-        ep = (
-            db_session.query(Episode)
-            .filter(Episode.episode_id == "dQw4w9WgXcQ")
-            .first()
-        )
+        ep = db_session.query(Episode).filter(Episode.episode_id == "dQw4w9WgXcQ").first()
         assert ep is not None
         assert "Bitcoin und die Zukunft des Geldes" in ep.title
         assert ep.url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
@@ -302,34 +299,36 @@ class TestDownloadEpisode:
 # ── yt-dlp channel listing ────────────────────────────────────────
 
 # Minimal yt-dlp --flat-playlist -J output for testing
-YTDLP_PLAYLIST_JSON = json.dumps({
-    "entries": [
-        {
-            "id": "vid001",
-            "title": "Bitcoin Grundlagen",
-            "upload_date": "20240615",
-            "url": "https://www.youtube.com/watch?v=vid001",
-        },
-        {
-            "id": "vid002",
-            "title": "Lightning Network erklärt",
-            "timestamp": 1717200000,  # 2024-06-01 UTC (approximate_date)
-            "url": "https://www.youtube.com/watch?v=vid002",
-        },
-        {
-            "id": "vid003",
-            "title": "Mining Deep Dive",
-            "upload_date": "20231215",
-            "url": "https://www.youtube.com/watch?v=vid003",
-        },
-        {
-            "id": "vid004",
-            "title": "Sehr altes Video",
-            "url": "https://www.youtube.com/watch?v=vid004",
-            # no upload_date, no timestamp
-        },
-    ]
-})
+YTDLP_PLAYLIST_JSON = json.dumps(
+    {
+        "entries": [
+            {
+                "id": "vid001",
+                "title": "Bitcoin Grundlagen",
+                "upload_date": "20240615",
+                "url": "https://www.youtube.com/watch?v=vid001",
+            },
+            {
+                "id": "vid002",
+                "title": "Lightning Network erklärt",
+                "timestamp": 1717200000,  # 2024-06-01 UTC (approximate_date)
+                "url": "https://www.youtube.com/watch?v=vid002",
+            },
+            {
+                "id": "vid003",
+                "title": "Mining Deep Dive",
+                "upload_date": "20231215",
+                "url": "https://www.youtube.com/watch?v=vid003",
+            },
+            {
+                "id": "vid004",
+                "title": "Sehr altes Video",
+                "url": "https://www.youtube.com/watch?v=vid004",
+                # no upload_date, no timestamp
+            },
+        ]
+    }
+)
 
 
 def _make_subprocess_result(stdout="", stderr="", returncode=0):
@@ -358,7 +357,7 @@ class TestFetchChannelVideosYtdlp:
         # Check first episode (sorted newest first, vid001 has latest date)
         ep1 = next(e for e in episodes if e.episode_id == "vid001")
         assert ep1.title == "Bitcoin Grundlagen"
-        assert ep1.published_at == datetime(2024, 6, 15, tzinfo=timezone.utc)
+        assert ep1.published_at == datetime(2024, 6, 15, tzinfo=UTC)
         assert ep1.source == "youtube_backfill"
         assert "vid001" in ep1.url
 
@@ -406,6 +405,7 @@ class TestFetchChannelVideosYtdlp:
 
 def _make_backfill_settings(**kwargs):
     from btcedu.config import Settings
+
     return Settings(podcast_youtube_channel_id="UC_test_channel", **kwargs)
 
 
@@ -413,12 +413,20 @@ class TestBackfillEpisodes:
     @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
     def test_inserts_all_videos(self, mock_fetch, db_session):
         mock_fetch.return_value = [
-            EpisodeInfo(episode_id="vid001", title="Ep 1",
-                        published_at=datetime(2024, 6, 15, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=vid001", source="youtube_backfill"),
-            EpisodeInfo(episode_id="vid002", title="Ep 2",
-                        published_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=vid002", source="youtube_backfill"),
+            EpisodeInfo(
+                episode_id="vid001",
+                title="Ep 1",
+                published_at=datetime(2024, 6, 15, tzinfo=UTC),
+                url="https://youtube.com/watch?v=vid001",
+                source="youtube_backfill",
+            ),
+            EpisodeInfo(
+                episode_id="vid002",
+                title="Ep 2",
+                published_at=datetime(2024, 6, 1, tzinfo=UTC),
+                url="https://youtube.com/watch?v=vid002",
+                source="youtube_backfill",
+            ),
         ]
         settings = _make_backfill_settings()
         result = backfill_episodes(db_session, settings)
@@ -431,9 +439,13 @@ class TestBackfillEpisodes:
     @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
     def test_idempotent(self, mock_fetch, db_session):
         eps = [
-            EpisodeInfo(episode_id="vid001", title="Ep 1",
-                        published_at=datetime(2024, 6, 15, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=vid001", source="youtube_backfill"),
+            EpisodeInfo(
+                episode_id="vid001",
+                title="Ep 1",
+                published_at=datetime(2024, 6, 15, tzinfo=UTC),
+                url="https://youtube.com/watch?v=vid001",
+                source="youtube_backfill",
+            ),
         ]
         mock_fetch.return_value = eps
         settings = _make_backfill_settings()
@@ -447,12 +459,20 @@ class TestBackfillEpisodes:
     @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
     def test_since_filter(self, mock_fetch, db_session):
         mock_fetch.return_value = [
-            EpisodeInfo(episode_id="new1", title="New",
-                        published_at=datetime(2024, 6, 15, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=new1", source="youtube_backfill"),
-            EpisodeInfo(episode_id="old1", title="Old",
-                        published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=old1", source="youtube_backfill"),
+            EpisodeInfo(
+                episode_id="new1",
+                title="New",
+                published_at=datetime(2024, 6, 15, tzinfo=UTC),
+                url="https://youtube.com/watch?v=new1",
+                source="youtube_backfill",
+            ),
+            EpisodeInfo(
+                episode_id="old1",
+                title="Old",
+                published_at=datetime(2023, 1, 1, tzinfo=UTC),
+                url="https://youtube.com/watch?v=old1",
+                source="youtube_backfill",
+            ),
         ]
         settings = _make_backfill_settings()
         result = backfill_episodes(db_session, settings, since=date(2024, 1, 1))
@@ -464,12 +484,20 @@ class TestBackfillEpisodes:
     @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
     def test_until_filter(self, mock_fetch, db_session):
         mock_fetch.return_value = [
-            EpisodeInfo(episode_id="new1", title="New",
-                        published_at=datetime(2024, 6, 15, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=new1", source="youtube_backfill"),
-            EpisodeInfo(episode_id="old1", title="Old",
-                        published_at=datetime(2023, 1, 1, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=old1", source="youtube_backfill"),
+            EpisodeInfo(
+                episode_id="new1",
+                title="New",
+                published_at=datetime(2024, 6, 15, tzinfo=UTC),
+                url="https://youtube.com/watch?v=new1",
+                source="youtube_backfill",
+            ),
+            EpisodeInfo(
+                episode_id="old1",
+                title="Old",
+                published_at=datetime(2023, 1, 1, tzinfo=UTC),
+                url="https://youtube.com/watch?v=old1",
+                source="youtube_backfill",
+            ),
         ]
         settings = _make_backfill_settings()
         result = backfill_episodes(db_session, settings, until=date(2023, 12, 31))
@@ -481,9 +509,13 @@ class TestBackfillEpisodes:
     @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
     def test_max_count(self, mock_fetch, db_session):
         mock_fetch.return_value = [
-            EpisodeInfo(episode_id=f"vid{i:03d}", title=f"Ep {i}",
-                        published_at=datetime(2024, 1, i + 1, tzinfo=timezone.utc),
-                        url=f"https://youtube.com/watch?v=vid{i:03d}", source="youtube_backfill")
+            EpisodeInfo(
+                episode_id=f"vid{i:03d}",
+                title=f"Ep {i}",
+                published_at=datetime(2024, 1, i + 1, tzinfo=UTC),
+                url=f"https://youtube.com/watch?v=vid{i:03d}",
+                source="youtube_backfill",
+            )
             for i in range(10)
         ]
         settings = _make_backfill_settings()
@@ -496,9 +528,13 @@ class TestBackfillEpisodes:
     @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
     def test_dry_run_no_commit(self, mock_fetch, db_session):
         mock_fetch.return_value = [
-            EpisodeInfo(episode_id="vid001", title="Ep 1",
-                        published_at=datetime(2024, 6, 15, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=vid001", source="youtube_backfill"),
+            EpisodeInfo(
+                episode_id="vid001",
+                title="Ep 1",
+                published_at=datetime(2024, 6, 15, tzinfo=UTC),
+                url="https://youtube.com/watch?v=vid001",
+                source="youtube_backfill",
+            ),
         ]
         settings = _make_backfill_settings()
         result = backfill_episodes(db_session, settings, dry_run=True)
@@ -510,7 +546,8 @@ class TestBackfillEpisodes:
     def test_does_not_modify_existing(self, mock_fetch, db_session):
         # Pre-seed an episode with a specific title
         existing = Episode(
-            episode_id="vid001", source="youtube_rss",
+            episode_id="vid001",
+            source="youtube_rss",
             title="Original Title",
             url="https://youtube.com/watch?v=vid001",
             status=EpisodeStatus.GENERATED,
@@ -519,12 +556,20 @@ class TestBackfillEpisodes:
         db_session.commit()
 
         mock_fetch.return_value = [
-            EpisodeInfo(episode_id="vid001", title="Different Title From Backfill",
-                        published_at=datetime(2024, 6, 15, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=vid001", source="youtube_backfill"),
-            EpisodeInfo(episode_id="vid002", title="New Episode",
-                        published_at=datetime(2024, 6, 1, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=vid002", source="youtube_backfill"),
+            EpisodeInfo(
+                episode_id="vid001",
+                title="Different Title From Backfill",
+                published_at=datetime(2024, 6, 15, tzinfo=UTC),
+                url="https://youtube.com/watch?v=vid001",
+                source="youtube_backfill",
+            ),
+            EpisodeInfo(
+                episode_id="vid002",
+                title="New Episode",
+                published_at=datetime(2024, 6, 1, tzinfo=UTC),
+                url="https://youtube.com/watch?v=vid002",
+                source="youtube_backfill",
+            ),
         ]
         settings = _make_backfill_settings()
         result = backfill_episodes(db_session, settings)
@@ -540,6 +585,7 @@ class TestBackfillEpisodes:
     @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
     def test_no_channel_id_raises(self, mock_fetch, db_session):
         from btcedu.config import Settings
+
         settings = Settings(podcast_youtube_channel_id="")
 
         with pytest.raises(ValueError, match="No YouTube channel ID"):
@@ -551,12 +597,20 @@ class TestBackfillEpisodes:
     def test_date_filter_skips_undated(self, mock_fetch, db_session):
         """Episodes without upload_date are skipped when date filters are active."""
         mock_fetch.return_value = [
-            EpisodeInfo(episode_id="dated", title="Has Date",
-                        published_at=datetime(2024, 6, 15, tzinfo=timezone.utc),
-                        url="https://youtube.com/watch?v=dated", source="youtube_backfill"),
-            EpisodeInfo(episode_id="undated", title="No Date",
-                        published_at=None,
-                        url="https://youtube.com/watch?v=undated", source="youtube_backfill"),
+            EpisodeInfo(
+                episode_id="dated",
+                title="Has Date",
+                published_at=datetime(2024, 6, 15, tzinfo=UTC),
+                url="https://youtube.com/watch?v=dated",
+                source="youtube_backfill",
+            ),
+            EpisodeInfo(
+                episode_id="undated",
+                title="No Date",
+                published_at=None,
+                url="https://youtube.com/watch?v=undated",
+                source="youtube_backfill",
+            ),
         ]
         settings = _make_backfill_settings()
         result = backfill_episodes(db_session, settings, since=date(2024, 1, 1))

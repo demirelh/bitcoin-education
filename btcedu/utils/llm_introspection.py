@@ -492,6 +492,41 @@ def format_full_report() -> str:
             if family.get("open_source"):
                 output.append("  - Open Source: Yes")
 
+    # Available Models Summary Table
+    output.append("\n" + "=" * 80)
+    output.append("\n## AVAILABLE MODELS SUMMARY")
+    output.append("=" * 80)
+    output.append("\n")
+    output.append("### Models Table")
+    output.append("\n")
+    output.append("| Provider | Model Family | Versions | Status | Type |")
+    output.append("|----------|-------------|----------|--------|------|")
+
+    # Add Claude models
+    s4 = report["sections"]["claude_model_family"]
+    for model in s4["models"]:
+        family = model["family"]
+        versions = ", ".join(model["versions"][:2])  # First 2 versions to keep table readable
+        if len(model["versions"]) > 2:
+            versions += f" (+{len(model['versions']) - 2} more)"
+        status = "✓ CURRENT" if model.get("currently_running") else "Available"
+        model_type = "Text Generation"
+        output.append(f"| Anthropic | Claude {family} | {versions} | {status} | {model_type} |")
+
+    # Add other provider models
+    for provider_family in s5["model_families"]:
+        provider = provider_family["provider"]
+        for family in provider_family["families"]:
+            family_name = family["name"]
+            versions = ", ".join(family["versions"][:2])
+            if len(family["versions"]) > 2:
+                versions += f" (+{len(family['versions']) - 2} more)"
+            status = "✓ Available" if provider == "OpenAI" else "Known"
+            model_type = family["type"].title()
+            if family.get("open_source"):
+                model_type += " (OSS)"
+            output.append(f"| {provider} | {family_name} | {versions} | {status} | {model_type} |")
+
     # SECTION 6
     output.append("\n" + "=" * 80)
     output.append("\n## SECTION 6 — LIMITATIONS")
@@ -500,10 +535,14 @@ def format_full_report() -> str:
     s6 = report["sections"]["limitations"]
     output.append(f"\n**Question:** {s6['question']}")
     output.append("\n")
-
+    output.append("### Constraints Table")
+    output.append("\n")
+    output.append("| Constraint Category | Explanation |")
+    output.append("|---------------------|-------------|")
     for limitation in s6["limitations"]:
-        output.append(f"\n### {limitation['category']}")
-        output.append(f"{limitation['explanation']}")
+        category = limitation["category"]
+        explanation = limitation["explanation"].replace("\n", " ")
+        output.append(f"| {category} | {explanation} |")
 
     # FINAL JSON SUMMARY
     output.append("\n" + "=" * 80)

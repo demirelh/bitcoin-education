@@ -593,4 +593,3 @@ class TestBatchJobProgress:
 
         total = sum(STAGE_WEIGHTS.values())
         assert total == 100
-

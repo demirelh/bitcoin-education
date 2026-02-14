@@ -210,6 +210,30 @@ Features:
 
 The dashboard reads settings from `.env` server-side only (no secrets exposed to the browser).
 
+### Mobile Scroll Regression Checklist
+
+When making CSS/layout changes, verify mobile scrolling still works correctly:
+
+**iPhone Safari (or Chrome mobile emulation):**
+- [ ] Page loads without horizontal scrollbar
+- [ ] Episode list scrolls smoothly (up/down)
+- [ ] Can select an episode and view detail page
+- [ ] Can scroll back to top of episode list
+- [ ] Transcript/script/logs viewers scroll independently within their panels
+- [ ] Address bar show/hide doesn't break layout or scrolling
+- [ ] Device rotation (portrait ↔ landscape) works without scroll traps
+- [ ] Modal dialogs (Cost, Channels) scroll properly when content overflows
+- [ ] No "stuck" or trapped scroll positions
+- [ ] Bottom batch progress bar (if visible) doesn't block content
+
+**Quick test:** Load dashboard on iPhone → scroll episode list → select episode → scroll transcript → rotate device → back to list → scroll to bottom
+
+**Known issues fixed (2025-02-14):**
+- Body overflow: hidden prevented page scrolling
+- Fixed-height containers with overflow: hidden created scroll traps
+- Static 100vh didn't account for iOS Safari dynamic viewport
+- Missing -webkit-overflow-scrolling: touch for momentum scrolling
+
 ## Progress Log
 
 Development progress is tracked in `docs/PROGRESS_LOG.md`. This append-only journal records plans, implementation milestones, and how to resume work in a new session.

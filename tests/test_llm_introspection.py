@@ -4,8 +4,10 @@ import json
 
 from btcedu.utils.llm_introspection import (
     format_full_report,
+    generate_constraints_table,
     generate_json_summary,
     generate_llm_provider_report,
+    generate_models_table,
 )
 
 
@@ -140,3 +142,76 @@ def test_report_contains_claude_models():
     assert "opus" in models_str.lower()
     assert "sonnet" in models_str.lower()
     assert "haiku" in models_str.lower()
+
+
+def test_generate_models_table():
+    """Test that the models table generates correctly."""
+    table = generate_models_table()
+
+    assert isinstance(table, str)
+    assert len(table) > 0
+
+    # Check table structure
+    assert "# Available Models Table" in table
+    assert "| Provider | Model Family | Versions | Status | Type |" in table
+    assert "Anthropic | Claude" in table
+    assert "OpenAI" in table
+
+    # Check legends exist
+    assert "## Status Legend" in table
+    assert "## Type Legend" in table
+
+
+def test_generate_constraints_table():
+    """Test that the constraints table generates correctly."""
+    table = generate_constraints_table()
+
+    assert isinstance(table, str)
+    assert len(table) > 0
+
+    # Check table structure
+    assert "# Constraints Table" in table
+    assert "| Constraint Category | Explanation |" in table
+
+    # Check that constraint categories are present
+    assert "Dependency on System Context" in table
+    assert "No Direct API Access" in table
+    assert "Configuration vs Runtime Reality" in table
+    assert "Code Inspection Limitations" in table
+    assert "Model Routing Internals" in table
+    assert "Temporal Limitations" in table
+
+    # Check summary exists
+    assert "## Summary" in table
+
+
+def test_models_table_markdown_valid():
+    """Test that models table is valid markdown."""
+    table = generate_models_table()
+
+    # Count table rows (should have header + separator + data rows)
+    lines = table.split("\n")
+    table_lines = [line for line in lines if line.startswith("|")]
+
+    # Should have at least header row + separator + some data
+    assert len(table_lines) >= 3
+
+    # Verify header and separator format
+    assert table_lines[0].count("|") >= 5  # At least 5 columns
+    assert table_lines[1].count("-") > 0  # Separator row
+
+
+def test_constraints_table_markdown_valid():
+    """Test that constraints table is valid markdown."""
+    table = generate_constraints_table()
+
+    # Count table rows
+    lines = table.split("\n")
+    table_lines = [line for line in lines if line.startswith("|")]
+
+    # Should have header + separator + 6 constraint rows
+    assert len(table_lines) >= 8
+
+    # Verify all 6 constraints are in the table
+    constraint_count = sum(1 for line in table_lines if "| " in line and line != table_lines[0] and line != table_lines[1])
+    assert constraint_count == 6

@@ -552,3 +552,105 @@ def format_full_report() -> str:
     output.append(json.dumps(json_summary, indent=2, ensure_ascii=False))
 
     return "\n".join(output)
+
+
+def generate_models_table() -> str:
+    """
+    Generate standalone models table in markdown format.
+
+    Returns:
+        str: Markdown formatted models table
+    """
+    report = generate_llm_provider_report()
+    output = []
+
+    output.append("# Available Models Table")
+    output.append("")
+    output.append("This table summarizes all LLM models known to the system.")
+    output.append("")
+    output.append("| Provider | Model Family | Versions | Status | Type |")
+    output.append("|----------|-------------|----------|--------|------|")
+
+    # Add Claude models
+    s4 = report["sections"]["claude_model_family"]
+    for model in s4["models"]:
+        family = model["family"]
+        versions = ", ".join(model["versions"][:2])
+        if len(model["versions"]) > 2:
+            versions += f" (+{len(model['versions']) - 2} more)"
+        status = "✓ CURRENT" if model.get("currently_running") else "Available"
+        model_type = "Text Generation"
+        output.append(f"| Anthropic | Claude {family} | {versions} | {status} | {model_type} |")
+
+    # Add other provider models
+    s5 = report["sections"]["non_claude_models"]
+    for provider_family in s5["model_families"]:
+        provider = provider_family["provider"]
+        for family in provider_family["families"]:
+            family_name = family["name"]
+            versions = ", ".join(family["versions"][:2])
+            if len(family["versions"]) > 2:
+                versions += f" (+{len(family['versions']) - 2} more)"
+            status = "✓ Available" if provider == "OpenAI" else "Known"
+            model_type = family["type"].title()
+            if family.get("open_source"):
+                model_type += " (OSS)"
+            output.append(f"| {provider} | {family_name} | {versions} | {status} | {model_type} |")
+
+    output.append("")
+    output.append("## Status Legend")
+    output.append("")
+    output.append("- **✓ CURRENT**: Currently running model")
+    output.append("- **✓ Available**: Confirmed available through API keys and configuration")
+    output.append("- **Available**: Known to be available")
+    output.append("- **Known**: Model exists but not confirmed available in this system")
+    output.append("")
+    output.append("## Type Legend")
+    output.append("")
+    output.append("- **Text Generation**: General text generation models")
+    output.append("- **Text**: Text-only models")
+    output.append("- **Reasoning**: Advanced reasoning models")
+    output.append("- **Audio-To-Text**: Speech-to-text transcription models")
+    output.append("- **Multimodal**: Models that handle multiple input types (text, images, etc.)")
+    output.append("- **(OSS)**: Open Source Software")
+
+    return "\n".join(output)
+
+
+def generate_constraints_table() -> str:
+    """
+    Generate standalone constraints table in markdown format.
+
+    Returns:
+        str: Markdown formatted constraints table
+    """
+    report = generate_llm_provider_report()
+    output = []
+
+    output.append("# Constraints Table")
+    output.append("")
+    output.append("This table lists the constraints and limitations that prevent full certainty")
+    output.append("about model access and availability.")
+    output.append("")
+    output.append("| Constraint Category | Explanation |")
+    output.append("|---------------------|-------------|")
+
+    s6 = report["sections"]["limitations"]
+    for limitation in s6["limitations"]:
+        category = limitation["category"]
+        explanation = limitation["explanation"].replace("\n", " ")
+        output.append(f"| {category} | {explanation} |")
+
+    output.append("")
+    output.append("## Summary")
+    output.append("")
+    output.append(
+        "These constraints highlight the inherent limitations in determining exact model "
+    )
+    output.append(
+        "availability and capabilities at runtime. The system relies on configuration files, "
+    )
+    output.append("code inspection, and system context, but cannot independently verify runtime ")
+    output.append("infrastructure details.")
+
+    return "\n".join(output)

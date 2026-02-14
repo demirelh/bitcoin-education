@@ -1,0 +1,30 @@
+name: Deploy
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -p 22 lnodebtc.duckdns.org >> ~/.ssh/known_hosts
+
+      - name: Run deploy script
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -p 22 -i ~/.ssh/id_ed25519 pi@lnodebtc.duckdns.org \
+            "bash /home/pi/AI-Startup-Lab/bitcoin-education/run.sh"

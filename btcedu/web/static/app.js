@@ -4,6 +4,8 @@
 
   let episodes = [];
   let selected = null;
+  let channels = [];
+  let selectedChannelId = null;
 
   // ── API helpers ──────────────────────────────────────────────
   // Use relative URL so requests stay within the reverse-proxy prefix
@@ -382,7 +384,13 @@
   // ── Refresh ──────────────────────────────────────────────────
   async function refresh() {
     try {
-      const data = await GET("/episodes");
+      // Build query with optional channel filter
+      let url = "/episodes";
+      if (selectedChannelId) {
+        url += `?channel_id=${encodeURIComponent(selectedChannelId)}`;
+      }
+
+      const data = await GET(url);
       if (data.error) {
         showError("API error: " + data.error);
         return;
@@ -418,10 +426,316 @@
     return s && s.length > n ? s.slice(0, n) + "..." : s || "";
   }
 
+  // ── Batch Processing ─────────────────────────────────────────────
+  let activeBatchId = null;
+  let batchPollTimer = null;
+
+  async function toggleBatch() {
+    const btn = document.getElementById("batch-btn");
+
+    if (activeBatchId) {
+      // Stop the batch
+      const r = await POST(`/batch/${activeBatchId}/stop`);
+      if (r.error) {
+        toast("Failed to stop: " + r.error, false);
+      } else {
+        toast("Stopping batch after current episode...");
+      }
+    } else {
+      // Start a new batch
+      const body = {};
+      if (selectedChannelId) {
+        body.channel_id = selectedChannelId;
+      }
+      const r = await POST("/batch/start", body);
+      if (r.error) {
+        toast(r.error, false);
+        return;
+      }
+      activeBatchId = r.batch_id;
+      btn.textContent = "Stop";
+      btn.classList.remove("btn-primary");
+      btn.classList.add("btn-danger");
+      showBatchProgress();
+      pollBatch();
+    }
+  }
+  window.toggleBatch = toggleBatch;
+
+  function showBatchProgress() {
+    document.getElementById("batch-progress").style.display = "block";
+  }
+
+  function hideBatchProgress() {
+    document.getElementById("batch-progress").style.display = "none";
+  }
+
+  function updateBatchUI(batch) {
+    document.getElementById("batch-status").textContent = batch.state;
+    document.getElementById("batch-completed").textContent = batch.completed_episodes;
+    document.getElementById("batch-failed").textContent = batch.failed_episodes;
+    document.getElementById("batch-remaining").textContent = batch.remaining_episodes;
+    document.getElementById("batch-cost").textContent = batch.total_cost_usd.toFixed(4);
+
+    if (batch.current_episode_id) {
+      const episode = episodes.find(e => e.episode_id === batch.current_episode_id);
+      const title = episode ? trunc(episode.title, 50) : batch.current_episode_id;
+      document.getElementById("batch-episode").textContent = `Current: ${title}`;
+    } else {
+      document.getElementById("batch-episode").textContent = "";
+    }
+
+    if (batch.current_stage) {
+      document.getElementById("batch-stage").textContent = `Stage: ${batch.current_stage}`;
+    } else {
+      document.getElementById("batch-stage").textContent = "";
+    }
+  }
+
+  function pollBatch() {
+    clearInterval(batchPollTimer);
+    batchPollTimer = setInterval(async () => {
+      if (!activeBatchId) {
+        clearInterval(batchPollTimer);
+        return;
+      }
+
+      try {
+        const batch = await GET(`/batch/${activeBatchId}`);
+        if (batch.error) {
+          clearInterval(batchPollTimer);
+          resetBatchUI();
+          toast("Batch error: " + batch.error, false);
+          return;
+        }
+
+        updateBatchUI(batch);
+
+        if (batch.state === "success") {
+          clearInterval(batchPollTimer);
+          const msg = `Batch complete: ${batch.completed_episodes} succeeded, ${batch.failed_episodes} failed ($${batch.total_cost_usd.toFixed(4)})`;
+          toast(msg);
+          resetBatchUI();
+          refresh();
+        } else if (batch.state === "stopped") {
+          clearInterval(batchPollTimer);
+          toast(`Batch stopped: ${batch.message}`);
+          resetBatchUI();
+          refresh();
+        } else if (batch.state === "error") {
+          clearInterval(batchPollTimer);
+          toast("Batch failed: " + batch.message, false);
+          resetBatchUI();
+          refresh();
+        }
+      } catch (err) {
+        clearInterval(batchPollTimer);
+        resetBatchUI();
+        toast("Batch polling error: " + err.message, false);
+      }
+    }, 2000);
+  }
+
+  function resetBatchUI() {
+    activeBatchId = null;
+    hideBatchProgress();
+    const btn = document.getElementById("batch-btn");
+    btn.textContent = "Process All";
+    btn.classList.remove("btn-danger");
+    btn.classList.add("btn-primary");
+  }
+
+  // Check for active batch on load
+  async function checkActiveBatch() {
+    const r = await GET("/batch/active");
+    if (r.active) {
+      activeBatchId = r.batch_id;
+      const btn = document.getElementById("batch-btn");
+      btn.textContent = "Stop";
+      btn.classList.remove("btn-primary");
+      btn.classList.add("btn-danger");
+      showBatchProgress();
+      updateBatchUI(r);
+      pollBatch();
+    }
+  }
+
+  // ── Channel Management ───────────────────────────────────────────
+  async function loadChannels() {
+    try {
+      const r = await GET("/channels");
+      if (r.error) {
+        console.error("Failed to load channels:", r.error);
+        return;
+      }
+      channels = r.channels || [];
+      updateChannelSelector();
+    } catch (err) {
+      console.error("Failed to load channels:", err);
+    }
+  }
+
+  function updateChannelSelector() {
+    const select = document.getElementById("channel-select");
+    const currentValue = select.value;
+
+    // Clear and rebuild options
+    select.innerHTML = '<option value="">All Channels</option>';
+
+    channels.forEach(ch => {
+      if (ch.is_active) {
+        const opt = document.createElement("option");
+        opt.value = ch.channel_id;
+        opt.textContent = ch.name;
+        select.appendChild(opt);
+      }
+    });
+
+    // Restore selection if still valid
+    if (currentValue && Array.from(select.options).some(o => o.value === currentValue)) {
+      select.value = currentValue;
+    }
+
+    // Update selectedChannelId
+    selectedChannelId = select.value || null;
+  }
+
+  async function onChannelChange() {
+    const select = document.getElementById("channel-select");
+    selectedChannelId = select.value || null;
+    refresh();
+  }
+
+  function showChannelManager() {
+    document.getElementById("channel-modal").style.display = "flex";
+    loadChannelList();
+  }
+  window.showChannelManager = showChannelManager;
+
+  function closeChannelManager() {
+    document.getElementById("channel-modal").style.display = "none";
+    // Clear form
+    document.getElementById("new-channel-name").value = "";
+    document.getElementById("new-channel-youtube-id").value = "";
+    document.getElementById("new-channel-rss").value = "";
+  }
+  window.closeChannelManager = closeChannelManager;
+
+  async function loadChannelList() {
+    const tbody = document.getElementById("channel-list-body");
+
+    try {
+      const r = await GET("/channels");
+      if (r.error) {
+        tbody.innerHTML = `<tr><td colspan="4" class="empty" style="color:var(--red)">${esc(r.error)}</td></tr>`;
+        return;
+      }
+
+      channels = r.channels || [];
+
+      if (channels.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="4" class="empty">No channels configured</td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = channels.map(ch => `
+        <tr>
+          <td>${esc(ch.name)}</td>
+          <td>${esc(ch.youtube_channel_id || ch.rss_url || ch.channel_id)}</td>
+          <td>
+            <span style="color: ${ch.is_active ? 'var(--green)' : 'var(--text-dim)'}">
+              ${ch.is_active ? '✓' : '✗'}
+            </span>
+          </td>
+          <td>
+            <button class="btn btn-sm" onclick="toggleChannelActive(${ch.id})">
+              ${ch.is_active ? 'Deactivate' : 'Activate'}
+            </button>
+            <button class="btn btn-sm btn-danger" onclick="deleteChannel(${ch.id})">Delete</button>
+          </td>
+        </tr>
+      `).join("");
+    } catch (err) {
+      tbody.innerHTML = `<tr><td colspan="4" class="empty" style="color:var(--red)">Error: ${esc(err.message)}</td></tr>`;
+    }
+  }
+
+  async function addChannel() {
+    const name = document.getElementById("new-channel-name").value.trim();
+    const youtubeId = document.getElementById("new-channel-youtube-id").value.trim();
+    const rssUrl = document.getElementById("new-channel-rss").value.trim();
+
+    if (!name) {
+      toast("Channel name is required", false);
+      return;
+    }
+
+    if (!youtubeId && !rssUrl) {
+      toast("Either YouTube Channel ID or RSS URL is required", false);
+      return;
+    }
+
+    const r = await POST("/channels", {
+      name,
+      youtube_channel_id: youtubeId || null,
+      rss_url: rssUrl || null,
+    });
+
+    if (r.error) {
+      toast("Failed to add channel: " + r.error, false);
+      return;
+    }
+
+    toast("Channel added successfully");
+    loadChannels();
+    loadChannelList();
+
+    // Clear form
+    document.getElementById("new-channel-name").value = "";
+    document.getElementById("new-channel-youtube-id").value = "";
+    document.getElementById("new-channel-rss").value = "";
+  }
+  window.addChannel = addChannel;
+
+  async function deleteChannel(channelId) {
+    if (!confirm("Are you sure you want to delete this channel?")) {
+      return;
+    }
+
+    const r = await api("DELETE", `/channels/${channelId}`);
+
+    if (r.error) {
+      toast("Failed to delete channel: " + r.error, false);
+      return;
+    }
+
+    toast("Channel deleted");
+    loadChannels();
+    loadChannelList();
+  }
+  window.deleteChannel = deleteChannel;
+
+  async function toggleChannelActive(channelId) {
+    const r = await POST(`/channels/${channelId}/toggle`);
+
+    if (r.error) {
+      toast("Failed to toggle channel: " + r.error, false);
+      return;
+    }
+
+    toast(r.is_active ? "Channel activated" : "Channel deactivated");
+    loadChannels();
+    loadChannelList();
+  }
+  window.toggleChannelActive = toggleChannelActive;
+
   // ── Init ─────────────────────────────────────────────────────
   document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("filter-status").onchange = applyFilters;
     document.getElementById("filter-search").oninput = applyFilters;
+    document.getElementById("channel-select").onchange = onChannelChange;
+    loadChannels();
     refresh();
+    checkActiveBatch();
   });
 })();

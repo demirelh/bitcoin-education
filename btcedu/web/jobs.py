@@ -39,6 +39,26 @@ class Job:
     result: dict | None = None
 
 
+@dataclass
+class BatchJob:
+    """Batch job for processing all pending episodes."""
+    batch_id: str
+    state: str = "queued"  # queued|running|stopped|success|error
+    current_episode_id: str | None = None
+    current_stage: str = ""
+    total_episodes: int = 0
+    completed_episodes: int = 0
+    failed_episodes: int = 0
+    total_cost_usd: float = 0.0
+    episode_ids: list[str] = field(default_factory=list)
+    force: bool = False
+    channel_id: str | None = None
+    created_at: datetime = field(default_factory=_utcnow)
+    updated_at: datetime = field(default_factory=_utcnow)
+    message: str = ""
+    stop_requested: bool = False
+
+
 class JobManager:
 
     def __init__(self, logs_dir: str):
@@ -46,6 +66,7 @@ class JobManager:
             max_workers=1, thread_name_prefix="btcedu-job",
         )
         self._jobs: dict[str, Job] = {}
+        self._batch_jobs: dict[str, BatchJob] = {}
         self._lock = threading.Lock()
         self._logs_dir = logs_dir
         Path(logs_dir).mkdir(parents=True, exist_ok=True)
@@ -94,6 +115,44 @@ class JobManager:
         self._executor.shutdown(wait=False)
 
     # ------------------------------------------------------------------
+    # Batch Job Public API
+    # ------------------------------------------------------------------
+
+    def submit_batch(self, app: Flask, force: bool = False, channel_id: str | None = None) -> BatchJob:
+        """Submit a batch job to process all pending episodes."""
+        batch_id = uuid.uuid4().hex[:12]
+        batch_job = BatchJob(batch_id=batch_id, force=force, channel_id=channel_id)
+        with self._lock:
+            self._batch_jobs[batch_id] = batch_job
+        self._executor.submit(self._execute_batch, batch_job, app)
+        logger.info("Batch job %s submitted (channel_id=%s)", batch_id, channel_id)
+        return batch_job
+
+    def get_batch(self, batch_id: str) -> BatchJob | None:
+        """Get batch job status."""
+        with self._lock:
+            return self._batch_jobs.get(batch_id)
+
+    def stop_batch(self, batch_id: str) -> bool:
+        """Request graceful stop of a batch job."""
+        with self._lock:
+            batch_job = self._batch_jobs.get(batch_id)
+            if batch_job and batch_job.state == "running":
+                batch_job.stop_requested = True
+                batch_job.updated_at = _utcnow()
+                logger.info("Batch job %s stop requested", batch_id)
+                return True
+        return False
+
+    def active_batch(self) -> BatchJob | None:
+        """Check if there's an active batch job."""
+        with self._lock:
+            for batch_job in self._batch_jobs.values():
+                if batch_job.state in ("queued", "running"):
+                    return batch_job
+        return None
+
+    # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
@@ -102,6 +161,13 @@ class JobManager:
             for key, value in kwargs.items():
                 setattr(job, key, value)
             job.updated_at = _utcnow()
+
+    def _update_batch(self, batch_job: BatchJob, **kwargs) -> None:
+        """Update batch job fields thread-safely."""
+        with self._lock:
+            for key, value in kwargs.items():
+                setattr(batch_job, key, value)
+            batch_job.updated_at = _utcnow()
 
     def _log(self, job: Job, msg: str) -> None:
         ts = _utcnow().strftime("%Y-%m-%d %H:%M:%S")
@@ -330,3 +396,175 @@ class JobManager:
             self._log(job, f"Retry succeeded: ${report.total_cost_usd:.4f}")
         else:
             raise RuntimeError(report.error or "Retry failed")
+
+    # ------------------------------------------------------------------
+    # Batch Job Executor
+    # ------------------------------------------------------------------
+
+    def _execute_batch(self, batch_job: BatchJob, app: Flask) -> None:
+        """Execute batch job to process all pending episodes."""
+        with app.app_context():
+            session_factory = app.config["session_factory"]
+            settings = app.config["settings"]
+            session = session_factory()
+
+            self._update_batch(batch_job, state="running")
+            logger.info("Batch job %s started", batch_job.batch_id)
+
+            try:
+                from btcedu.models.episode import Episode, EpisodeStatus
+
+                # Query pending episodes (oldest first)
+                query = session.query(Episode).filter(
+                    Episode.status.in_([
+                        EpisodeStatus.NEW,
+                        EpisodeStatus.DOWNLOADED,
+                        EpisodeStatus.TRANSCRIBED,
+                        EpisodeStatus.CHUNKED,
+                        EpisodeStatus.GENERATED,
+                    ])
+                )
+
+                # Filter by channel if specified
+                if batch_job.channel_id:
+                    query = query.filter(Episode.channel_id == batch_job.channel_id)
+
+                pending_episodes = query.order_by(Episode.published_at.asc()).all()
+
+                episode_ids = [ep.episode_id for ep in pending_episodes]
+                total = len(episode_ids)
+
+                if total == 0:
+                    self._update_batch(
+                        batch_job,
+                        state="success",
+                        message="No pending episodes to process",
+                        total_episodes=0,
+                    )
+                    logger.info("Batch job %s: no pending episodes", batch_job.batch_id)
+                    return
+
+                self._update_batch(
+                    batch_job,
+                    total_episodes=total,
+                    episode_ids=episode_ids,
+                )
+                logger.info("Batch job %s: processing %d episodes", batch_job.batch_id, total)
+
+                # Process each episode
+                for idx, episode_id in enumerate(episode_ids):
+                    # Check if stop was requested
+                    with self._lock:
+                        if batch_job.stop_requested:
+                            self._update_batch(
+                                batch_job,
+                                state="stopped",
+                                message=f"Stopped after {idx} of {total} episodes",
+                            )
+                            logger.info("Batch job %s stopped by request", batch_job.batch_id)
+                            return
+
+                    # Update progress
+                    self._update_batch(
+                        batch_job,
+                        current_episode_id=episode_id,
+                        current_stage="starting",
+                    )
+
+                    # Process the episode
+                    try:
+                        from btcedu.core.pipeline import (
+                            run_episode_pipeline, write_report,
+                        )
+
+                        episode = session.query(Episode).filter(
+                            Episode.episode_id == episode_id,
+                        ).first()
+
+                        if not episode:
+                            logger.warning("Episode %s not found, skipping", episode_id)
+                            continue
+
+                        # Clear error if present
+                        if episode.error_message:
+                            episode.error_message = None
+                            session.commit()
+
+                        def on_stage(stage_name):
+                            # Check for stop during stage execution
+                            with self._lock:
+                                if batch_job.stop_requested:
+                                    raise InterruptedError("Batch job stopped")
+                            self._update_batch(batch_job, current_stage=stage_name)
+
+                        report = run_episode_pipeline(
+                            session, episode, settings,
+                            force=batch_job.force, stage_callback=on_stage,
+                        )
+                        write_report(report, settings.reports_dir)
+
+                        if report.success:
+                            self._update_batch(
+                                batch_job,
+                                completed_episodes=batch_job.completed_episodes + 1,
+                                total_cost_usd=batch_job.total_cost_usd + report.total_cost_usd,
+                            )
+                            logger.info(
+                                "Batch job %s: completed episode %s (%d/%d)",
+                                batch_job.batch_id, episode_id, idx + 1, total,
+                            )
+                        else:
+                            self._update_batch(
+                                batch_job,
+                                failed_episodes=batch_job.failed_episodes + 1,
+                            )
+                            logger.warning(
+                                "Batch job %s: episode %s failed: %s",
+                                batch_job.batch_id, episode_id, report.error,
+                            )
+
+                    except InterruptedError:
+                        # Stop was requested during stage execution
+                        self._update_batch(
+                            batch_job,
+                            state="stopped",
+                            message=f"Stopped during episode {episode_id} ({idx + 1}/{total})",
+                        )
+                        logger.info("Batch job %s interrupted", batch_job.batch_id)
+                        return
+
+                    except Exception as e:
+                        logger.exception(
+                            "Batch job %s: episode %s failed with exception",
+                            batch_job.batch_id, episode_id,
+                        )
+                        self._update_batch(
+                            batch_job,
+                            failed_episodes=batch_job.failed_episodes + 1,
+                        )
+
+                # All episodes processed
+                self._update_batch(
+                    batch_job,
+                    state="success",
+                    current_episode_id=None,
+                    current_stage="",
+                    message=f"Completed {batch_job.completed_episodes}/{total} episodes",
+                )
+                logger.info(
+                    "Batch job %s completed: %d succeeded, %d failed, $%.4f total cost",
+                    batch_job.batch_id,
+                    batch_job.completed_episodes,
+                    batch_job.failed_episodes,
+                    batch_job.total_cost_usd,
+                )
+
+            except Exception as e:
+                logger.exception("Batch job %s failed", batch_job.batch_id)
+                self._update_batch(
+                    batch_job,
+                    state="error",
+                    message=str(e),
+                )
+            finally:
+                session.close()

@@ -11,7 +11,14 @@
   <!-- Top bar -->
   <div class="topbar">
     <h1>btcedu</h1>
+    <div class="channel-selector">
+      <select id="channel-select">
+        <option value="">All Channels</option>
+      </select>
+      <button class="btn btn-sm" onclick="showChannelManager()" title="Manage Channels">+</button>
+    </div>
     <button class="btn" onclick="detectEpisodes()">Detect</button>
+    <button class="btn btn-primary" id="batch-btn" onclick="toggleBatch()">Process All</button>
     <button class="btn" onclick="showCost()">Cost</button>
     <button class="btn" onclick="refresh()">Refresh</button>
   </div>
@@ -55,6 +62,24 @@
     </div>
   </div>
 
+  <!-- Batch progress bar -->
+  <div class="batch-progress" id="batch-progress" style="display:none;">
+    <div class="batch-info">
+      <span class="batch-label">Batch Processing:</span>
+      <span id="batch-status">Starting...</span>
+      <span class="batch-counts">
+        <span id="batch-completed">0</span> completed,
+        <span id="batch-failed">0</span> failed,
+        <span id="batch-remaining">0</span> remaining
+      </span>
+      <span class="batch-cost">Cost: $<span id="batch-cost">0.00</span></span>
+    </div>
+    <div class="batch-current">
+      <span id="batch-episode"></span>
+      <span id="batch-stage"></span>
+    </div>
+  </div>
+
   <!-- What's new bar -->
   <div class="whats-new" id="whats-new">Loading...</div>
 
@@ -70,6 +95,40 @@
       </table>
       <p id="cost-total" style="margin-top:12px;color:var(--text-dim);font-size:12px;"></p>
       <button class="btn" onclick="closeCost()" style="margin-top:12px;">Close</button>
+    </div>
+  </div>
+
+  <!-- Channel Manager modal -->
+  <div class="modal-overlay" id="channel-modal" style="display:none;" onclick="closeChannelManager()">
+    <div class="modal" onclick="event.stopPropagation()">
+      <h3>Manage Channels</h3>
+
+      <div class="channel-form">
+        <h4>Add New Channel</h4>
+        <input type="text" id="new-channel-name" placeholder="Channel Name" class="modal-input">
+        <input type="text" id="new-channel-youtube-id" placeholder="YouTube Channel ID (optional)" class="modal-input">
+        <input type="text" id="new-channel-rss" placeholder="RSS URL (optional)" class="modal-input">
+        <button class="btn btn-primary" onclick="addChannel()">Add Channel</button>
+      </div>
+
+      <div class="channel-list">
+        <h4>Existing Channels</h4>
+        <table class="channel-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Channel ID</th>
+              <th>Active</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="channel-list-body">
+            <tr><td colspan="4" class="empty">Loading...</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <button class="btn" onclick="closeChannelManager()" style="margin-top:12px;">Close</button>
     </div>
   </div>
 

@@ -28,7 +28,7 @@ def generate_llm_provider_report() -> dict:
             "generated_at": datetime.now(UTC).isoformat(),
             "report_version": "1.0.0",
         },
-        "sections": {}
+        "sections": {},
     }
 
     # SECTION 1: Current Runtime Model
@@ -41,8 +41,8 @@ def generate_llm_provider_report() -> dict:
                 "explanation": (
                     "Based on system context, I am running as Claude Sonnet 4.5. "
                     "The exact model ID is claude-sonnet-4-5-20250929."
-                )
-            }
+                ),
+            },
         },
         "question_2": {
             "question": "Can you reliably know the runtime model?",
@@ -57,8 +57,8 @@ def generate_llm_provider_report() -> dict:
                 "The system context explicitly states: 'You are powered by the model named "
                 "Sonnet 4.5. The exact model ID is claude-sonnet-4-5-20250929.' This is "
                 "provided as part of my initialization context."
-            )
-        }
+            ),
+        },
     }
 
     # SECTION 2: Model Routing Capability
@@ -74,7 +74,7 @@ def generate_llm_provider_report() -> dict:
             "shows CLAUDE_MODEL and WHISPER_MODEL settings, suggesting multi-provider support. "
             "The claude_service.py uses the configured claude_model from settings, allowing "
             "runtime model selection."
-        )
+        ),
     }
 
     # SECTION 3: Known LLM Providers
@@ -90,7 +90,7 @@ def generate_llm_provider_report() -> dict:
                     "Direct evidence: I am Claude, running on Anthropic infrastructure. "
                     "The codebase imports 'anthropic' package and uses ANTHROPIC_API_KEY. "
                     "The claude_service.py actively uses Anthropic's Messages API."
-                )
+                ),
             },
             {
                 "name": "OpenAI",
@@ -101,7 +101,7 @@ def generate_llm_provider_report() -> dict:
                     "The codebase imports 'openai' package and uses OPENAI_API_KEY and "
                     "WHISPER_API_KEY. The transcription_service.py likely uses OpenAI's "
                     "Whisper API for audio transcription."
-                )
+                ),
             },
             {
                 "name": "Google",
@@ -111,7 +111,7 @@ def generate_llm_provider_report() -> dict:
                 "evidence": (
                     "I am aware Google offers Gemini models, but I see no evidence "
                     "(API keys, imports, or configuration) that this system uses them."
-                )
+                ),
             },
             {
                 "name": "Meta",
@@ -121,37 +121,37 @@ def generate_llm_provider_report() -> dict:
                 "evidence": (
                     "Meta's Llama models are open-source and widely known, but there's "
                     "no evidence in configuration or code that this system uses them."
-                )
+                ),
             },
             {
                 "name": "Mistral AI",
                 "models": ["Mistral", "Mixtral"],
                 "know_exists": True,
                 "possibly_used_by_system": False,
-                "evidence": "No API keys or imports suggest Mistral AI usage."
+                "evidence": "No API keys or imports suggest Mistral AI usage.",
             },
             {
                 "name": "Cohere",
                 "models": ["Command", "Command R", "Command R+"],
                 "know_exists": True,
                 "possibly_used_by_system": False,
-                "evidence": "No evidence of Cohere integration in the codebase."
+                "evidence": "No evidence of Cohere integration in the codebase.",
             },
             {
                 "name": "xAI",
                 "models": ["Grok"],
                 "know_exists": True,
                 "possibly_used_by_system": False,
-                "evidence": "No evidence of xAI/Grok integration."
+                "evidence": "No evidence of xAI/Grok integration.",
             },
             {
                 "name": "Perplexity",
                 "models": ["Perplexity models"],
                 "know_exists": True,
                 "possibly_used_by_system": False,
-                "evidence": "No evidence of Perplexity integration."
-            }
-        ]
+                "evidence": "No evidence of Perplexity integration.",
+            },
+        ],
     }
 
     # SECTION 4: Claude Model Family
@@ -160,16 +160,13 @@ def generate_llm_provider_report() -> dict:
         "models": [
             {
                 "family": "Opus",
-                "versions": [
-                    "claude-opus-4-5-20251101",
-                    "claude-3-opus-20240229"
-                ],
+                "versions": ["claude-opus-4-5-20251101", "claude-3-opus-20240229"],
                 "description": "Most capable Claude model, best for complex tasks",
                 "known": True,
                 "context_note": (
                     "System context indicates Claude Opus 4.5 (claude-opus-4-5-20251101) "
                     "is the most recent frontier Claude model."
-                )
+                ),
             },
             {
                 "family": "Sonnet",
@@ -178,7 +175,7 @@ def generate_llm_provider_report() -> dict:
                     "claude-sonnet-4-20250514",
                     "claude-3-5-sonnet-20241022",
                     "claude-3-5-sonnet-20240620",
-                    "claude-3-sonnet-20240229"
+                    "claude-3-sonnet-20240229",
                 ],
                 "description": "Balanced intelligence and speed, currently executing this response",
                 "known": True,
@@ -186,18 +183,15 @@ def generate_llm_provider_report() -> dict:
                 "context_note": (
                     "I am currently running as Sonnet 4.5. The .env.example shows "
                     "claude-sonnet-4-20250514 as the configured model for content generation."
-                )
+                ),
             },
             {
                 "family": "Haiku",
-                "versions": [
-                    "claude-3-5-haiku-20241022",
-                    "claude-3-haiku-20240307"
-                ],
+                "versions": ["claude-3-5-haiku-20241022", "claude-3-haiku-20240307"],
                 "description": "Fastest Claude model, optimized for quick tasks",
-                "known": True
-            }
-        ]
+                "known": True,
+            },
+        ],
     }
 
     # SECTION 5: Non-Claude Models
@@ -210,34 +204,22 @@ def generate_llm_provider_report() -> dict:
                     {
                         "name": "GPT-4o",
                         "versions": ["gpt-4o", "gpt-4o-mini", "gpt-4o-2024-11-20"],
-                        "type": "text"
+                        "type": "text",
                     },
                     {
                         "name": "o1",
                         "versions": ["o1", "o1-mini", "o1-preview"],
-                        "type": "reasoning"
+                        "type": "reasoning",
                     },
                     {
                         "name": "GPT-4 Turbo",
                         "versions": ["gpt-4-turbo", "gpt-4-turbo-2024-04-09"],
-                        "type": "text"
+                        "type": "text",
                     },
-                    {
-                        "name": "GPT-4",
-                        "versions": ["gpt-4", "gpt-4-0613"],
-                        "type": "text"
-                    },
-                    {
-                        "name": "GPT-3.5 Turbo",
-                        "versions": ["gpt-3.5-turbo"],
-                        "type": "text"
-                    },
-                    {
-                        "name": "Whisper",
-                        "versions": ["whisper-1"],
-                        "type": "audio-to-text"
-                    }
-                ]
+                    {"name": "GPT-4", "versions": ["gpt-4", "gpt-4-0613"], "type": "text"},
+                    {"name": "GPT-3.5 Turbo", "versions": ["gpt-3.5-turbo"], "type": "text"},
+                    {"name": "Whisper", "versions": ["whisper-1"], "type": "audio-to-text"},
+                ],
             },
             {
                 "provider": "Google",
@@ -245,14 +227,14 @@ def generate_llm_provider_report() -> dict:
                     {
                         "name": "Gemini 2.0",
                         "versions": ["gemini-2.0-flash", "gemini-2.0-pro"],
-                        "type": "multimodal"
+                        "type": "multimodal",
                     },
                     {
                         "name": "Gemini 1.5",
                         "versions": ["gemini-1.5-pro", "gemini-1.5-flash"],
-                        "type": "multimodal"
-                    }
-                ]
+                        "type": "multimodal",
+                    },
+                ],
             },
             {
                 "provider": "Meta",
@@ -261,32 +243,28 @@ def generate_llm_provider_report() -> dict:
                         "name": "Llama 3.3",
                         "versions": ["llama-3.3-70b"],
                         "type": "text",
-                        "open_source": True
+                        "open_source": True,
                     },
                     {
                         "name": "Llama 3.1",
                         "versions": ["llama-3.1-405b", "llama-3.1-70b", "llama-3.1-8b"],
                         "type": "text",
-                        "open_source": True
-                    }
-                ]
+                        "open_source": True,
+                    },
+                ],
             },
             {
                 "provider": "Mistral AI",
                 "families": [
-                    {
-                        "name": "Mistral Large",
-                        "versions": ["mistral-large-2411"],
-                        "type": "text"
-                    },
+                    {"name": "Mistral Large", "versions": ["mistral-large-2411"], "type": "text"},
                     {
                         "name": "Mixtral",
                         "versions": ["mixtral-8x7b", "mixtral-8x22b"],
-                        "type": "text"
-                    }
-                ]
-            }
-        ]
+                        "type": "text",
+                    },
+                ],
+            },
+        ],
     }
 
     # SECTION 6: Limitations
@@ -300,7 +278,7 @@ def generate_llm_provider_report() -> dict:
                     "system providing accurate context information in my prompt. If this "
                     "information is incorrect or omitted, I cannot independently verify "
                     "which model I am."
-                )
+                ),
             },
             {
                 "category": "No Direct API Access",
@@ -308,7 +286,7 @@ def generate_llm_provider_report() -> dict:
                     "I cannot directly query the model serving infrastructure or make API "
                     "calls to verify which models are truly available at runtime. I can only "
                     "infer from configuration files, code, and environment variables."
-                )
+                ),
             },
             {
                 "category": "Configuration vs Runtime Reality",
@@ -317,7 +295,7 @@ def generate_llm_provider_report() -> dict:
                     "runtime configuration may differ. The real .env file may specify "
                     "different models, API keys may be invalid, or the deployment may use "
                     "different settings than what's documented."
-                )
+                ),
             },
             {
                 "category": "Code Inspection Limitations",
@@ -327,7 +305,7 @@ def generate_llm_provider_report() -> dict:
                     "actually installed, (2) if API keys are valid, (3) if network access "
                     "permits reaching these services, or (4) what models are available "
                     "through these APIs at runtime."
-                )
+                ),
             },
             {
                 "category": "Model Routing Internals",
@@ -335,7 +313,7 @@ def generate_llm_provider_report() -> dict:
                     "The Task tool indicates model routing capability (haiku/sonnet/opus), "
                     "but I don't have visibility into the internal routing logic, fallback "
                     "mechanisms, or whether all specified models are actually available."
-                )
+                ),
             },
             {
                 "category": "Temporal Limitations",
@@ -343,9 +321,9 @@ def generate_llm_provider_report() -> dict:
                     "My knowledge cutoff is January 2025. Newer models released after this "
                     "date would not be in my training data, though I may learn about them "
                     "through system context or documentation in the codebase."
-                )
-            }
-        ]
+                ),
+            },
+        ],
     }
 
     return report
@@ -362,11 +340,11 @@ def generate_json_summary() -> dict:
         "current_runtime_model": {
             "provider": "Anthropic",
             "model": "claude-sonnet-4-5-20250929",
-            "confidence": "HIGH - based on system context information"
+            "confidence": "HIGH - based on system context information",
         },
         "model_routing_supported": {
             "value": "YES",
-            "confidence": "HIGH - Task tool accepts model parameter (haiku/sonnet/opus)"
+            "confidence": "HIGH - Task tool accepts model parameter (haiku/sonnet/opus)",
         },
         "providers_known": [
             "Anthropic",
@@ -376,11 +354,11 @@ def generate_json_summary() -> dict:
             "Mistral AI",
             "Cohere",
             "xAI",
-            "Perplexity"
+            "Perplexity",
         ],
         "providers_likely_available": [
             "Anthropic (Claude) - CONFIRMED via API key and code usage",
-            "OpenAI (Whisper) - CONFIRMED via API key and transcription service"
+            "OpenAI (Whisper) - CONFIRMED via API key and transcription service",
         ],
         "claude_models_known": [
             "claude-opus-4-5-20251101",
@@ -391,22 +369,21 @@ def generate_json_summary() -> dict:
             "claude-3-5-sonnet-20240620",
             "claude-3-sonnet-20240229",
             "claude-3-5-haiku-20241022",
-            "claude-3-haiku-20240307"
+            "claude-3-haiku-20240307",
         ],
         "claude_models_likely_accessible": [
             "claude-sonnet-4-5-20250929 (currently running)",
             "claude-opus-4-5-20251101 (available via Task tool)",
-            "claude-3-5-haiku-20241022 (available via Task tool)"
+            "claude-3-5-haiku-20241022 (available via Task tool)",
         ],
         "other_models_known": [
-            "OpenAI: gpt-4o, gpt-4o-mini, o1, o1-mini, gpt-4-turbo, gpt-4, gpt-3.5-turbo, whisper-1",
+            "OpenAI: gpt-4o, gpt-4o-mini, o1, o1-mini, gpt-4-turbo, gpt-4, "
+            "gpt-3.5-turbo, whisper-1",
             "Google: gemini-2.0-flash, gemini-2.0-pro, gemini-1.5-pro, gemini-1.5-flash",
             "Meta: llama-3.3-70b, llama-3.1-405b, llama-3.1-70b, llama-3.1-8b",
-            "Mistral: mistral-large-2411, mixtral-8x7b, mixtral-8x22b"
+            "Mistral: mistral-large-2411, mixtral-8x7b, mixtral-8x22b",
         ],
-        "other_models_likely_accessible": [
-            "whisper-1 (OpenAI Whisper for audio transcription)"
-        ],
+        "other_models_likely_accessible": ["whisper-1 (OpenAI Whisper for audio transcription)"],
         "notes": (
             "This report is generated by Claude Sonnet 4.5 (claude-sonnet-4-5-20250929) "
             "running within the bitcoin-education pipeline. Certainty is limited by: "
@@ -416,7 +393,7 @@ def generate_json_summary() -> dict:
             "(4) no verification of API key validity or network access. "
             "Confirmed providers: Anthropic (direct usage) and OpenAI (Whisper for transcription). "
             "Model routing is supported via Task tool with haiku/sonnet/opus options."
-        )
+        ),
     }
 
 
@@ -434,16 +411,17 @@ def format_full_report() -> str:
     output.append("# LLM Provider Introspection Report")
     output.append(f"\nGenerated: {report['metadata']['generated_at']}")
     output.append(f"Report Version: {report['metadata']['report_version']}")
-    output.append("\n" + "="*80)
+    output.append("\n" + "=" * 80)
 
     # SECTION 1
     output.append("\n## SECTION 1 — CURRENT RUNTIME MODEL")
-    output.append("="*80)
+    output.append("=" * 80)
 
     s1 = report["sections"]["current_runtime_model"]
     output.append("\n### 1) Which exact model is generating this response right now?")
     output.append(f"\n**Provider:** {s1['question_1']['answer']['provider']}")
-    output.append(f"**Full model identifier:** {s1['question_1']['answer']['full_model_identifier']}")
+    model_id = s1["question_1"]["answer"]["full_model_identifier"]
+    output.append(f"**Full model identifier:** {model_id}")
     output.append(f"\n**Explanation:** {s1['question_1']['answer']['explanation']}")
 
     output.append("\n### 2) Can you reliably know the runtime model?")
@@ -452,9 +430,9 @@ def format_full_report() -> str:
     output.append(f"\n**How:** {s1['question_2']['how']}")
 
     # SECTION 2
-    output.append("\n" + "="*80)
+    output.append("\n" + "=" * 80)
     output.append("\n## SECTION 2 — MODEL ROUTING CAPABILITY")
-    output.append("="*80)
+    output.append("=" * 80)
 
     s2 = report["sections"]["model_routing_capability"]
     output.append(f"\n**Question:** {s2['question']}")
@@ -463,9 +441,9 @@ def format_full_report() -> str:
     output.append(f"\n**Reasoning:** {s2['reasoning']}")
 
     # SECTION 3
-    output.append("\n" + "="*80)
+    output.append("\n" + "=" * 80)
     output.append("\n## SECTION 3 — KNOWN LLM PROVIDERS")
-    output.append("="*80)
+    output.append("=" * 80)
 
     s3 = report["sections"]["known_llm_providers"]
     output.append(f"\n**Question:** {s3['question']}")
@@ -475,13 +453,14 @@ def format_full_report() -> str:
         output.append(f"\n### {provider['name']}")
         output.append(f"**Models:** {', '.join(provider['models'])}")
         output.append(f"**Do you KNOW this provider exists?** {provider['know_exists']}")
-        output.append(f"**Is it POSSIBLE this system uses it?** {provider['possibly_used_by_system']}")
+        possibly_used = provider["possibly_used_by_system"]
+        output.append(f"**Is it POSSIBLE this system uses it?** {possibly_used}")
         output.append(f"**Evidence:** {provider['evidence']}")
 
     # SECTION 4
-    output.append("\n" + "="*80)
+    output.append("\n" + "=" * 80)
     output.append("\n## SECTION 4 — CLAUDE MODEL FAMILY")
-    output.append("="*80)
+    output.append("=" * 80)
 
     s4 = report["sections"]["claude_model_family"]
     output.append(f"\n**Question:** {s4['question']}")
@@ -497,9 +476,9 @@ def format_full_report() -> str:
             output.append(f"**Note:** {model['context_note']}")
 
     # SECTION 5
-    output.append("\n" + "="*80)
+    output.append("\n" + "=" * 80)
     output.append("\n## SECTION 5 — NON-CLAUDE MODELS")
-    output.append("="*80)
+    output.append("=" * 80)
 
     s5 = report["sections"]["non_claude_models"]
     output.append(f"\n**Question:** {s5['question']}")
@@ -514,9 +493,9 @@ def format_full_report() -> str:
                 output.append("  - Open Source: Yes")
 
     # SECTION 6
-    output.append("\n" + "="*80)
+    output.append("\n" + "=" * 80)
     output.append("\n## SECTION 6 — LIMITATIONS")
-    output.append("="*80)
+    output.append("=" * 80)
 
     s6 = report["sections"]["limitations"]
     output.append(f"\n**Question:** {s6['question']}")
@@ -527,9 +506,9 @@ def format_full_report() -> str:
         output.append(f"{limitation['explanation']}")
 
     # FINAL JSON SUMMARY
-    output.append("\n" + "="*80)
+    output.append("\n" + "=" * 80)
     output.append("\n## FINAL_JSON_SUMMARY")
-    output.append("="*80)
+    output.append("=" * 80)
     output.append("\n")
     output.append(json.dumps(json_summary, indent=2, ensure_ascii=False))
 

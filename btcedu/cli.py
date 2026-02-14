@@ -685,14 +685,17 @@ def web(host: str, port: int, production: bool) -> None:
     app.run(host=host, port=port, debug=False)
 
 
-@cli.command()
+@cli.command(context_settings={"allow_interspersed_args": False, "ignore_unknown_options": True})
 @click.option("--json-only", is_flag=True, help="Output only the JSON summary.")
 @click.option("--output", "-o", type=click.Path(), help="Write output to file instead of stdout.")
-def llm_report(json_only: bool, output: str | None) -> None:
+@click.pass_context
+def llm_report(ctx: click.Context, json_only: bool, output: str | None) -> None:
     """Generate LLM provider introspection report.
 
     This command transparently reports which models and providers are accessible
     or known to the AI running in this production pipeline.
+
+    Note: This command does not require database access.
     """
     from btcedu.utils.llm_introspection import format_full_report, generate_json_summary
 

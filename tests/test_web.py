@@ -495,3 +495,102 @@ class TestCostAndWhatsNew:
         # ep003 has error_message
         failed_ids = [e["episode_id"] for e in data["failed"]]
         assert "ep003" in failed_ids
+
+
+# ---------------------------------------------------------------------------
+# Batch job progress tracking
+# ---------------------------------------------------------------------------
+
+
+class TestBatchJobProgress:
+    def test_calculate_episode_work_new_episode(self, app):
+        """NEW episode should require all stages (100 units of work)."""
+        from btcedu.models.episode import EpisodeStatus
+        from btcedu.web.jobs import STAGE_WEIGHTS
+
+        job_manager = app.config["job_manager"]
+        work = job_manager._calculate_episode_work(EpisodeStatus.NEW, force=False)
+        expected = sum(STAGE_WEIGHTS.values())
+        assert work == expected
+        assert work == 100  # 5 + 45 + 10 + 35 + 5
+
+    def test_calculate_episode_work_downloaded(self, app):
+        """DOWNLOADED episode should skip download stage."""
+        from btcedu.models.episode import EpisodeStatus
+        from btcedu.web.jobs import STAGE_WEIGHTS
+
+        job_manager = app.config["job_manager"]
+        work = job_manager._calculate_episode_work(EpisodeStatus.DOWNLOADED, force=False)
+        expected = sum(STAGE_WEIGHTS.values()) - STAGE_WEIGHTS["download"]
+        assert work == expected
+        assert work == 95  # 100 - 5
+
+    def test_calculate_episode_work_chunked(self, app):
+        """CHUNKED episode should only need generate + refine."""
+        from btcedu.models.episode import EpisodeStatus
+        from btcedu.web.jobs import STAGE_WEIGHTS
+
+        job_manager = app.config["job_manager"]
+        work = job_manager._calculate_episode_work(EpisodeStatus.CHUNKED, force=False)
+        expected = STAGE_WEIGHTS["generate"] + STAGE_WEIGHTS["refine"]
+        assert work == expected
+        assert work == 40  # 35 + 5
+
+    def test_calculate_episode_work_generated(self, app):
+        """GENERATED episode should only need refine stage."""
+        from btcedu.models.episode import EpisodeStatus
+        from btcedu.web.jobs import STAGE_WEIGHTS
+
+        job_manager = app.config["job_manager"]
+        work = job_manager._calculate_episode_work(EpisodeStatus.GENERATED, force=False)
+        expected = STAGE_WEIGHTS["refine"]
+        assert work == expected
+        assert work == 5
+
+    def test_calculate_episode_work_force_mode(self, app):
+        """Force mode should include all stages regardless of status."""
+        from btcedu.models.episode import EpisodeStatus
+        from btcedu.web.jobs import STAGE_WEIGHTS
+
+        job_manager = app.config["job_manager"]
+        work = job_manager._calculate_episode_work(EpisodeStatus.GENERATED, force=True)
+        expected = sum(STAGE_WEIGHTS.values())
+        assert work == expected
+        assert work == 100
+
+    def test_batch_job_has_progress_fields(self, client):
+        """Batch job status should include progress fields."""
+        with patch("btcedu.core.pipeline.run_episode_pipeline") as mock_run:
+            from btcedu.core.pipeline import PipelineReport
+
+            # Mock successful pipeline run
+            mock_run.return_value = PipelineReport(
+                episode_id="ep002",
+                title="Test",
+                success=True,
+                total_cost_usd=0.05,
+            )
+
+            r = client.post("/api/batch/start", json={})
+            assert r.status_code == 202
+            batch_id = r.get_json()["batch_id"]
+            time.sleep(1.0)
+
+            r2 = client.get(f"/api/batch/{batch_id}")
+            assert r2.status_code == 200
+            data = r2.get_json()
+            assert "progress_pct" in data
+            assert "total_work" in data
+            assert "completed_work" in data
+            assert "current_episode_title" in data
+            assert isinstance(data["progress_pct"], int)
+            assert data["progress_pct"] >= 0
+            assert data["progress_pct"] <= 100
+
+    def test_stage_weights_sum_to_100(self):
+        """Stage weights should sum to 100% for a full pipeline."""
+        from btcedu.web.jobs import STAGE_WEIGHTS
+
+        total = sum(STAGE_WEIGHTS.values())
+        assert total == 100
+

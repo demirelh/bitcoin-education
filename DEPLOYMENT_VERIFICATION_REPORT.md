@@ -349,3 +349,88 @@ The GitHub Actions deployment workflow is **well-structured and secure**, passin
 4. Monitor service restart in journalctl logs
 
 Once the service is installed, the deployment will be fully functional and meet all 10 requirements.
+
+---
+
+## Completion Instructions
+
+Complete documentation has been created to guide the server-side installation:
+
+### 📖 Documentation Resources
+
+1. **[docs/SERVER_DEPLOYMENT_GUIDE.md](docs/SERVER_DEPLOYMENT_GUIDE.md)** - Comprehensive installation guide
+   - Prerequisites checklist
+   - Step-by-step installation instructions
+   - Sudo configuration for non-interactive restarts
+   - Complete verification checklist
+   - Troubleshooting guide for common issues
+   - Monitoring and maintenance commands
+
+2. **[deploy/README.md](deploy/README.md)** - Quick reference for deployment files
+   - Quick start commands
+   - Deployment architecture diagram
+   - Service details and configuration
+   - Automated deployment flow explanation
+
+### ⚡ Quick Installation Commands
+
+Run these commands **on the server (lnodebtc.duckdns.org) as user pi**:
+
+```bash
+# Navigate to project directory
+cd /home/pi/AI-Startup-Lab/bitcoin-education
+
+# Option 1: Automated installation (recommended)
+./deploy/setup-web.sh
+
+# Option 2: Manual installation
+sudo cp deploy/btcedu-web.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now btcedu-web.service
+
+# Configure passwordless sudo for automated restarts
+echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart btcedu-web, /bin/systemctl status btcedu-web, /bin/systemctl stop btcedu-web, /bin/systemctl start btcedu-web, /bin/systemctl is-active btcedu-web" | sudo tee /etc/sudoers.d/pi-btcedu
+sudo chmod 0440 /etc/sudoers.d/pi-btcedu
+
+# Verify installation
+sudo systemctl status btcedu-web.service
+curl http://127.0.0.1:8091/api/health
+sudo journalctl -u btcedu-web -n 20
+
+# Test automated deployment
+# Push to main or trigger workflow manually at:
+# https://github.com/demirelh/bitcoin-education/actions/workflows/deploy.yml
+```
+
+### ✅ Final Verification
+
+After installation, verify all 10 requirements are met:
+
+1. Workflow triggers on push to main ✅ **PASS** (already working)
+2. Supports workflow_dispatch ✅ **PASS** (already working)
+3. Concurrency control ✅ **PASS** (already working)
+4. Strict host key checking ✅ **PASS** (already working)
+5. Uses DEPLOY_SSH_KEY secret ✅ **PASS** (already working)
+6. Runs correct deploy script ✅ **PASS** (already working)
+7. Fails fast with clear logs ✅ **PASS** (already working)
+8. SSH key in authorized_keys ✅ **PASS** (already working)
+9. Service restarts via run.sh ⏳ **Will PASS after installation**
+10. Non-interactive sudo works ⏳ **Will PASS after sudo configuration**
+
+Once the service is installed and sudo is configured, run a final end-to-end test:
+
+```bash
+# On your local machine
+echo "# Deployment test" >> README.md
+git add README.md
+git commit -m "Test: verify automated deployment"
+git push origin main
+
+# Watch the deployment at:
+# https://github.com/demirelh/bitcoin-education/actions
+
+# On the server, verify service restarted
+sudo journalctl -u btcedu-web -n 30 | grep -i restart
+```
+
+**Expected result:** GitHub Actions workflow completes successfully, service restarts automatically, and the application is updated without manual intervention. 🎉

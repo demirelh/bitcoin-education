@@ -17,6 +17,14 @@
     }
   }
 
+  // ── iOS viewport height fix ─────────────────────────────────
+  // Set CSS custom property for 1% of viewport height
+  // Workaround for iOS Safari's dynamic viewport (address bar show/hide)
+  function setViewportHeight() {
+    const vh = window.innerHeight * 0.01;
+    document.documentElement.style.setProperty('--vh', `${vh}px`);
+  }
+
   function mobileShowList() {
     if (isMobileView) {
       document.body.classList.remove("mobile-detail-view");
@@ -819,6 +827,11 @@
     // Mobile view detection
     updateMobileView();
     window.addEventListener("resize", updateMobileView);
+
+    // iOS viewport height fix
+    setViewportHeight();
+    window.addEventListener("resize", setViewportHeight);
+    window.addEventListener("orientationchange", setViewportHeight);
 
     // Start in list view on mobile
     if (isMobileView) {

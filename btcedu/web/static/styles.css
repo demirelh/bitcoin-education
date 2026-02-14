@@ -15,6 +15,8 @@
     --purple: #bc8cff;
     --radius: 6px;
     --shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    /* iOS viewport height fallback - set by JS */
+    --vh: 1vh;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -25,7 +27,8 @@ body {
     color: var(--text);
     font-size: 14px;
     line-height: 1.5;
-    overflow: hidden;
+    /* Allow body to scroll on desktop */
+    overflow-y: auto;
 }
 
 /* Top bar */
@@ -96,11 +99,15 @@ body {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 0;
-    height: calc(100vh - 105px); /* Account for topbar and batch progress */
-    overflow: hidden;
+    /* Use dynamic viewport height for iOS Safari support */
+    min-height: 100dvh; /* Modern browsers */
+    min-height: calc(var(--vh, 1vh) * 100); /* iOS fallback */
+    height: auto;
 }
 .panel {
     overflow-y: auto;
+    /* Enable iOS momentum scrolling */
+    -webkit-overflow-scrolling: touch;
     padding: 12px;
     background: var(--bg);
 }
@@ -249,7 +256,11 @@ body {
     border-radius: var(--radius);
     padding: 12px;
     overflow: auto;
-    max-height: calc(100vh - 280px);
+    /* Enable iOS momentum scrolling */
+    -webkit-overflow-scrolling: touch;
+    /* Use dynamic viewport height */
+    max-height: 60vh;
+    max-height: calc(var(--vh, 1vh) * 60);
     font-family: "SF Mono", "Fira Code", "Consolas", monospace;
     font-size: 12px;
     white-space: pre-wrap;
@@ -297,7 +308,10 @@ body {
     max-width: 600px;
     width: 90%;
     max-height: 85vh;
+    max-height: calc(var(--vh, 1vh) * 85);
     overflow-y: auto;
+    /* Enable iOS momentum scrolling */
+    -webkit-overflow-scrolling: touch;
     box-shadow: var(--shadow);
     animation: slideUp 0.3s ease;
 }
@@ -638,6 +652,13 @@ body {
 
 /* Mobile-first responsive design */
 @media (max-width: 768px) {
+    /* Allow body to scroll naturally on mobile */
+    body {
+        overflow-y: auto;
+        /* Prevent horizontal scroll */
+        overflow-x: hidden;
+    }
+
     /* Sticky header with safe area insets */
     .topbar {
         position: sticky;
@@ -699,12 +720,13 @@ body {
         border-color: var(--accent);
     }
 
-    /* Single column layout */
+    /* Single column layout - let body scroll naturally */
     .main {
         display: flex;
         flex-direction: column;
         height: auto;
-        min-height: calc(100vh - 140px);
+        min-height: auto;
+        /* No fixed height - let content determine height */
     }
 
     /* Hide desktop table, show cards */
@@ -716,9 +738,12 @@ body {
         display: flex;
     }
 
-    /* Panel adjustments */
+    /* Panel adjustments - no fixed heights, natural scrolling */
     .panel {
         padding: 16px;
+        /* Remove overflow constraints on mobile */
+        overflow-y: visible;
+        height: auto;
     }
 
     .panel-left {
@@ -811,11 +836,15 @@ body {
         z-index: 1;
     }
 
-    /* Content viewer */
+    /* Content viewer - allow natural scrolling within its container */
     .viewer {
-        max-height: none;
+        max-height: 70vh;
+        max-height: calc(var(--vh, 1vh) * 70);
         min-height: 300px;
         font-size: 13px;
+        /* Enable smooth momentum scrolling on iOS */
+        -webkit-overflow-scrolling: touch;
+        overflow-y: auto;
     }
 
     /* Batch progress - bottom drawer style */
@@ -851,6 +880,7 @@ body {
         max-width: none;
         padding: 20px;
         max-height: 90vh;
+        max-height: calc(var(--vh, 1vh) * 90);
     }
 
     .modal h3 {
@@ -870,12 +900,7 @@ body {
         text-align: center;
     }
 
-    /* Prevent body scroll when detail view is active */
-    body.mobile-detail-active {
-        overflow: hidden;
-    }
-
-    /* Mobile view state management */
+    /* Mobile view state management - hide panels not in current view */
     .mobile-list-view .panel:not(.panel-left) {
         display: none;
     }

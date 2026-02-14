@@ -1,6 +1,6 @@
 """ContentArtifact ORM model for tracking generated artifacts."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -9,7 +9,7 @@ from btcedu.db import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class ContentArtifact(Base):
@@ -21,9 +21,7 @@ class ContentArtifact(Base):
     file_path: Mapped[str] = mapped_column(String(500), nullable=False)
     model: Mapped[str] = mapped_column(String(64), nullable=False)
     prompt_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-    retrieval_snapshot_path: Mapped[str | None] = mapped_column(
-        String(500), nullable=True
-    )
+    retrieval_snapshot_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

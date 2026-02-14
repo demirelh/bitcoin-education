@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import date
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DetectResult:
     """Summary of a detection run."""
+
     found: int = 0
     new: int = 0
     total: int = 0
@@ -35,17 +36,16 @@ def detect_episodes(session: Session, settings: Settings) -> DetectResult:
     """
     feed_url = settings.rss_url
     if not feed_url:
-        raise ValueError("No feed URL configured. Set PODCAST_YOUTUBE_CHANNEL_ID or PODCAST_RSS_URL.")
+        raise ValueError(
+            "No feed URL configured. Set PODCAST_YOUTUBE_CHANNEL_ID or PODCAST_RSS_URL."
+        )
 
     feed_content = fetch_feed(feed_url)
     episodes = parse_feed(feed_content, settings.source_type)
 
     result = DetectResult(found=len(episodes))
 
-    existing_ids = {
-        row[0]
-        for row in session.query(Episode.episode_id).all()
-    }
+    existing_ids = {row[0] for row in session.query(Episode.episode_id).all()}
 
     for ep_info in episodes:
         if ep_info.episode_id in existing_ids:
@@ -66,9 +66,7 @@ def detect_episodes(session: Session, settings: Settings) -> DetectResult:
     return result
 
 
-def detect_from_content(
-    session: Session, feed_content: str, source_type: str
-) -> DetectResult:
+def detect_from_content(session: Session, feed_content: str, source_type: str) -> DetectResult:
     """Detect episodes from already-fetched feed content.
 
     Useful for testing without network access.
@@ -76,10 +74,7 @@ def detect_from_content(
     episodes = parse_feed(feed_content, source_type)
     result = DetectResult(found=len(episodes))
 
-    existing_ids = {
-        row[0]
-        for row in session.query(Episode.episode_id).all()
-    }
+    existing_ids = {row[0] for row in session.query(Episode.episode_id).all()}
 
     for ep_info in episodes:
         if ep_info.episode_id in existing_ids:
@@ -127,9 +122,7 @@ def backfill_episodes(
     """
     channel_id = settings.podcast_youtube_channel_id
     if not channel_id:
-        raise ValueError(
-            "No YouTube channel ID configured. Set PODCAST_YOUTUBE_CHANNEL_ID."
-        )
+        raise ValueError("No YouTube channel ID configured. Set PODCAST_YOUTUBE_CHANNEL_ID.")
 
     all_videos = fetch_channel_videos_ytdlp(channel_id)
     result = DetectResult(found=len(all_videos))
@@ -148,9 +141,7 @@ def backfill_episodes(
             continue
         filtered.append(ep)
 
-    existing_ids = {
-        row[0] for row in session.query(Episode.episode_id).all()
-    }
+    existing_ids = {row[0] for row in session.query(Episode.episode_id).all()}
 
     inserted = 0
     for ep_info in filtered:
@@ -161,7 +152,9 @@ def backfill_episodes(
 
         if dry_run:
             pub = ep_info.published_at.strftime("%Y-%m-%d") if ep_info.published_at else "unknown"
-            logger.info("[dry-run] Would insert: %s  %s  (%s)", ep_info.episode_id, ep_info.title, pub)
+            logger.info(
+                "[dry-run] Would insert: %s  %s  (%s)", ep_info.episode_id, ep_info.title, pub
+            )
         else:
             episode = Episode(
                 episode_id=ep_info.episode_id,
@@ -205,11 +198,7 @@ def download_episode(
     """
     from btcedu.services.download_service import download_audio
 
-    episode = (
-        session.query(Episode)
-        .filter(Episode.episode_id == episode_id)
-        .first()
-    )
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 

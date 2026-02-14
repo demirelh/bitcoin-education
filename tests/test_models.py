@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from btcedu.models.episode import (
     Episode,
@@ -161,7 +161,7 @@ class TestPydanticSchemas:
         assert pkg.citations == []
 
     def test_pipeline_status(self):
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         status = PipelineStatus(
             episode_id=1,
             video_id="abc123",

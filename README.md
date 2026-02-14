@@ -1,5 +1,8 @@
 # btcedu - Bitcoin Education Automation
 
+[![CI](https://github.com/demirelh/bitcoin-education/actions/workflows/ci.yml/badge.svg)](https://github.com/demirelh/bitcoin-education/actions/workflows/ci.yml)
+[![Security](https://github.com/demirelh/bitcoin-education/actions/workflows/security.yml/badge.svg)](https://github.com/demirelh/bitcoin-education/actions/workflows/security.yml)
+
 Automated pipeline that transforms German Bitcoin podcast episodes into Turkish educational YouTube content packages.
 
 **Source:** "Der Bitcoin Podcast" by Florian Bruce Boye (YouTube + RSS)
@@ -370,9 +373,50 @@ source .venv/bin/activate
 python -m pytest tests/ -v
 ```
 
+## Development
+
+### Running Checks Locally
+
+Before committing, run these checks to ensure code quality:
+
+```bash
+# Activate virtual environment
+source .venv/bin/activate
+
+# Run linter
+ruff check btcedu/ tests/
+
+# Auto-fix linting issues
+ruff check btcedu/ tests/ --fix
+
+# Check code formatting
+ruff format --check btcedu/ tests/
+
+# Format code
+ruff format btcedu/ tests/
+
+# Run tests
+ANTHROPIC_API_KEY=dummy OPENAI_API_KEY=dummy WHISPER_API_KEY=dummy DRY_RUN=true pytest tests/ -v
+```
+
+### Pre-commit Hooks (Optional)
+
+Install pre-commit hooks to automatically run checks before each commit:
+
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+Now checks will run automatically on `git commit`. To run manually on all files:
+
+```bash
+pre-commit run --all-files
+```
+
 ## System Requirements
 
-- Python 3.11+
+- Python 3.12+
 - ffmpeg (for audio splitting via pydub)
 - SQLite with FTS5 support (standard on most systems)
 

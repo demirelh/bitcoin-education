@@ -3,11 +3,10 @@
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-
-from typing import Callable
 
 from sqlalchemy.orm import Session
 
@@ -39,12 +38,13 @@ _STAGES = [
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
 class StagePlan:
     """One stage decision in a pipeline plan (produced before execution)."""
+
     stage: str
     decision: str  # "run", "skip", "pending"
     reason: str
@@ -93,11 +93,15 @@ def resolve_pipeline_plan(
         if current_order > required_order and not force:
             plan.append(StagePlan(stage_name, "skip", "already completed"))
         elif current_order == required_order or force:
-            plan.append(StagePlan(
-                stage_name, "run",
-                f"forced" if force and current_order > required_order
-                else f"status={episode.status.value}",
-            ))
+            plan.append(
+                StagePlan(
+                    stage_name,
+                    "run",
+                    "forced"
+                    if force and current_order > required_order
+                    else f"status={episode.status.value}",
+                )
+            )
             will_advance = True
         elif will_advance:
             plan.append(StagePlan(stage_name, "pending", "after prior stages"))
@@ -145,7 +149,9 @@ def _run_stage(
             result = generate_content(session, episode.episode_id, settings, force=force)
             elapsed = time.monotonic() - t0
             return StageResult(
-                "generate", "success", elapsed,
+                "generate",
+                "success",
+                elapsed,
                 detail=f"{len(result.artifacts)} artifacts (${result.total_cost_usd:.4f})",
             )
 
@@ -155,7 +161,9 @@ def _run_stage(
             result = refine_content(session, episode.episode_id, settings, force=force)
             elapsed = time.monotonic() - t0
             return StageResult(
-                "refine", "success", elapsed,
+                "refine",
+                "success",
+                elapsed,
                 detail=f"{len(result.artifacts)} artifacts (${result.total_cost_usd:.4f})",
             )
 
@@ -197,7 +205,9 @@ def run_episode_pipeline(
     plan_lines = [f"  {p.stage}: {p.decision} ({p.reason})" for p in plan]
     logger.info(
         "Pipeline plan for %s (status: %s):\n%s",
-        episode.episode_id, episode.status.value, "\n".join(plan_lines),
+        episode.episode_id,
+        episode.status.value,
+        "\n".join(plan_lines),
     )
 
     logger.info("Pipeline start: %s (%s)", episode.episode_id, episode.title)
@@ -218,9 +228,7 @@ def run_episode_pipeline(
 
         # Skip if episode status doesn't match this stage's requirement
         if current_order < required_order and not force:
-            report.stages.append(
-                StageResult(stage_name, "skipped", 0.0, detail="not ready")
-            )
+            report.stages.append(StageResult(stage_name, "skipped", 0.0, detail="not ready"))
             continue
 
         logger.info("  Stage: %s", stage_name)
@@ -295,13 +303,15 @@ def run_pending(
     query = (
         session.query(Episode)
         .filter(
-            Episode.status.in_([
-                EpisodeStatus.NEW,
-                EpisodeStatus.DOWNLOADED,
-                EpisodeStatus.TRANSCRIBED,
-                EpisodeStatus.CHUNKED,
-                EpisodeStatus.GENERATED,
-            ])
+            Episode.status.in_(
+                [
+                    EpisodeStatus.NEW,
+                    EpisodeStatus.DOWNLOADED,
+                    EpisodeStatus.TRANSCRIBED,
+                    EpisodeStatus.CHUNKED,
+                    EpisodeStatus.GENERATED,
+                ]
+            )
         )
         .order_by(Episode.published_at.asc())
     )
@@ -345,20 +355,24 @@ def run_latest(
     detect_result = detect_episodes(session, settings)
     logger.info(
         "Detection: found=%d, new=%d, total=%d",
-        detect_result.found, detect_result.new, detect_result.total,
+        detect_result.found,
+        detect_result.new,
+        detect_result.total,
     )
 
     # Find newest pending episode
     episode = (
         session.query(Episode)
         .filter(
-            Episode.status.in_([
-                EpisodeStatus.NEW,
-                EpisodeStatus.DOWNLOADED,
-                EpisodeStatus.TRANSCRIBED,
-                EpisodeStatus.CHUNKED,
-                EpisodeStatus.GENERATED,
-            ])
+            Episode.status.in_(
+                [
+                    EpisodeStatus.NEW,
+                    EpisodeStatus.DOWNLOADED,
+                    EpisodeStatus.TRANSCRIBED,
+                    EpisodeStatus.CHUNKED,
+                    EpisodeStatus.GENERATED,
+                ]
+            )
         )
         .order_by(Episode.published_at.desc())
         .first()
@@ -392,11 +406,7 @@ def retry_episode(
     Raises:
         ValueError: If episode not found or not in a failed state.
     """
-    episode = (
-        session.query(Episode)
-        .filter(Episode.episode_id == episode_id)
-        .first()
-    )
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
@@ -409,15 +419,16 @@ def retry_episode(
 
     logger.info(
         "Retrying %s from status '%s' (attempt %d)",
-        episode_id, episode.status.value, episode.retry_count + 1,
+        episode_id,
+        episode.status.value,
+        episode.retry_count + 1,
     )
 
     # Clear error to allow pipeline to proceed
     episode.error_message = None
     session.commit()
 
-    return run_episode_pipeline(session, episode, settings,
-                                stage_callback=stage_callback)
+    return run_episode_pipeline(session, episode, settings, stage_callback=stage_callback)
 
 
 def write_report(report: PipelineReport, reports_dir: str) -> str:

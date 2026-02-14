@@ -11,7 +11,7 @@ import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -42,6 +42,7 @@ class Job:
 @dataclass
 class BatchJob:
     """Batch job for processing all pending episodes."""
+
     batch_id: str
     state: str = "queued"  # queued|running|stopped|success|error
     current_episode_id: str | None = None
@@ -60,10 +61,10 @@ class BatchJob:
 
 
 class JobManager:
-
     def __init__(self, logs_dir: str):
         self._executor = ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="btcedu-job",
+            max_workers=1,
+            thread_name_prefix="btcedu-job",
         )
         self._jobs: dict[str, Job] = {}
         self._batch_jobs: dict[str, BatchJob] = {}
@@ -118,7 +119,9 @@ class JobManager:
     # Batch Job Public API
     # ------------------------------------------------------------------
 
-    def submit_batch(self, app: Flask, force: bool = False, channel_id: str | None = None) -> BatchJob:
+    def submit_batch(
+        self, app: Flask, force: bool = False, channel_id: str | None = None
+    ) -> BatchJob:
         """Submit a batch job to process all pending episodes."""
         batch_id = uuid.uuid4().hex[:12]
         batch_job = BatchJob(batch_id=batch_id, force=force, channel_id=channel_id)
@@ -260,22 +263,27 @@ class JobManager:
         settings.dry_run = job.dry_run
         try:
             result = generate_content(
-                session, job.episode_id, settings,
-                force=job.force, top_k=job.top_k,
+                session,
+                job.episode_id,
+                settings,
+                force=job.force,
+                top_k=job.top_k,
             )
         finally:
             settings.dry_run = original_dry_run
-        self._update(job, result={
-            "success": True,
-            "artifacts": len(result.artifacts),
-            "cost_usd": result.total_cost_usd,
-            "input_tokens": result.total_input_tokens,
-            "output_tokens": result.total_output_tokens,
-        })
+        self._update(
+            job,
+            result={
+                "success": True,
+                "artifacts": len(result.artifacts),
+                "cost_usd": result.total_cost_usd,
+                "input_tokens": result.total_input_tokens,
+                "output_tokens": result.total_output_tokens,
+            },
+        )
         self._log(
             job,
-            f"Generation complete: {len(result.artifacts)} artifacts, "
-            f"${result.total_cost_usd:.4f}",
+            f"Generation complete: {len(result.artifacts)} artifacts, ${result.total_cost_usd:.4f}",
         )
 
     def _do_refine(self, job, session, settings):
@@ -284,30 +292,41 @@ class JobManager:
         self._update(job, stage="refining")
         self._log(job, "Refining content (v1 -> v2)...")
         result = refine_content(
-            session, job.episode_id, settings, force=job.force,
+            session,
+            job.episode_id,
+            settings,
+            force=job.force,
         )
-        self._update(job, result={
-            "success": True,
-            "artifacts": len(result.artifacts),
-            "cost_usd": result.total_cost_usd,
-            "input_tokens": result.total_input_tokens,
-            "output_tokens": result.total_output_tokens,
-        })
+        self._update(
+            job,
+            result={
+                "success": True,
+                "artifacts": len(result.artifacts),
+                "cost_usd": result.total_cost_usd,
+                "input_tokens": result.total_input_tokens,
+                "output_tokens": result.total_output_tokens,
+            },
+        )
         self._log(
             job,
-            f"Refinement complete: {len(result.artifacts)} artifacts, "
-            f"${result.total_cost_usd:.4f}",
+            f"Refinement complete: {len(result.artifacts)} artifacts, ${result.total_cost_usd:.4f}",
         )
 
     def _do_full_pipeline(self, job, session, settings):
         from btcedu.core.pipeline import (
-            resolve_pipeline_plan, run_episode_pipeline, write_report,
+            resolve_pipeline_plan,
+            run_episode_pipeline,
+            write_report,
         )
         from btcedu.models.episode import Episode
 
-        episode = session.query(Episode).filter(
-            Episode.episode_id == job.episode_id,
-        ).first()
+        episode = (
+            session.query(Episode)
+            .filter(
+                Episode.episode_id == job.episode_id,
+            )
+            .first()
+        )
         if not episode:
             raise ValueError(f"Episode not found: {job.episode_id}")
 
@@ -335,38 +354,48 @@ class JobManager:
         # Execute via the same function CLI uses
         self._update(job, stage=run_stages[0].stage)
         report = run_episode_pipeline(
-            session, episode, settings,
-            force=job.force, stage_callback=on_stage,
+            session,
+            episode,
+            settings,
+            force=job.force,
+            stage_callback=on_stage,
         )
         write_report(report, settings.reports_dir)
 
         if report.success:
-            self._update(job, result={
-                "success": True,
-                "cost_usd": report.total_cost_usd,
-                "stages_run": [sr.stage for sr in report.stages if sr.status == "success"],
-                "stages_skipped": [sr.stage for sr in report.stages if sr.status == "skipped"],
-            })
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "cost_usd": report.total_cost_usd,
+                    "stages_run": [sr.stage for sr in report.stages if sr.status == "success"],
+                    "stages_skipped": [sr.stage for sr in report.stages if sr.status == "skipped"],
+                },
+            )
             self._log(job, f"Pipeline complete: ${report.total_cost_usd:.4f}")
         else:
             raise RuntimeError(report.error or "Pipeline failed")
 
     def _do_retry(self, job, session, settings):
         from btcedu.core.pipeline import (
-            resolve_pipeline_plan, retry_episode, write_report,
+            resolve_pipeline_plan,
+            retry_episode,
+            write_report,
         )
         from btcedu.models.episode import Episode, EpisodeStatus
 
-        episode = session.query(Episode).filter(
-            Episode.episode_id == job.episode_id,
-        ).first()
+        episode = (
+            session.query(Episode)
+            .filter(
+                Episode.episode_id == job.episode_id,
+            )
+            .first()
+        )
         if not episode:
             raise ValueError(f"Episode not found: {job.episode_id}")
 
         if not episode.error_message and episode.status != EpisodeStatus.FAILED:
-            raise ValueError(
-                f"Nothing to retry (status={episode.status.value}, no error)"
-            )
+            raise ValueError(f"Nothing to retry (status={episode.status.value}, no error)")
 
         self._update(job, stage="planning")
         self._log(job, f"Retrying from status: {episode.status.value}")
@@ -383,16 +412,22 @@ class JobManager:
 
         self._update(job, stage="retrying")
         report = retry_episode(
-            session, job.episode_id, settings, stage_callback=on_stage,
+            session,
+            job.episode_id,
+            settings,
+            stage_callback=on_stage,
         )
         write_report(report, settings.reports_dir)
 
         if report.success:
-            self._update(job, result={
-                "success": True,
-                "cost_usd": report.total_cost_usd,
-                "stages_run": [sr.stage for sr in report.stages if sr.status == "success"],
-            })
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "cost_usd": report.total_cost_usd,
+                    "stages_run": [sr.stage for sr in report.stages if sr.status == "success"],
+                },
+            )
             self._log(job, f"Retry succeeded: ${report.total_cost_usd:.4f}")
         else:
             raise RuntimeError(report.error or "Retry failed")
@@ -416,13 +451,15 @@ class JobManager:
 
                 # Query pending episodes (oldest first)
                 query = session.query(Episode).filter(
-                    Episode.status.in_([
-                        EpisodeStatus.NEW,
-                        EpisodeStatus.DOWNLOADED,
-                        EpisodeStatus.TRANSCRIBED,
-                        EpisodeStatus.CHUNKED,
-                        EpisodeStatus.GENERATED,
-                    ])
+                    Episode.status.in_(
+                        [
+                            EpisodeStatus.NEW,
+                            EpisodeStatus.DOWNLOADED,
+                            EpisodeStatus.TRANSCRIBED,
+                            EpisodeStatus.CHUNKED,
+                            EpisodeStatus.GENERATED,
+                        ]
+                    )
                 )
 
                 # Filter by channel if specified
@@ -474,12 +511,17 @@ class JobManager:
                     # Process the episode
                     try:
                         from btcedu.core.pipeline import (
-                            run_episode_pipeline, write_report,
+                            run_episode_pipeline,
+                            write_report,
                         )
 
-                        episode = session.query(Episode).filter(
-                            Episode.episode_id == episode_id,
-                        ).first()
+                        episode = (
+                            session.query(Episode)
+                            .filter(
+                                Episode.episode_id == episode_id,
+                            )
+                            .first()
+                        )
 
                         if not episode:
                             logger.warning("Episode %s not found, skipping", episode_id)
@@ -498,8 +540,11 @@ class JobManager:
                             self._update_batch(batch_job, current_stage=stage_name)
 
                         report = run_episode_pipeline(
-                            session, episode, settings,
-                            force=batch_job.force, stage_callback=on_stage,
+                            session,
+                            episode,
+                            settings,
+                            force=batch_job.force,
+                            stage_callback=on_stage,
                         )
                         write_report(report, settings.reports_dir)
 
@@ -511,7 +556,10 @@ class JobManager:
                             )
                             logger.info(
                                 "Batch job %s: completed episode %s (%d/%d)",
-                                batch_job.batch_id, episode_id, idx + 1, total,
+                                batch_job.batch_id,
+                                episode_id,
+                                idx + 1,
+                                total,
                             )
                         else:
                             self._update_batch(
@@ -520,7 +568,9 @@ class JobManager:
                             )
                             logger.warning(
                                 "Batch job %s: episode %s failed: %s",
-                                batch_job.batch_id, episode_id, report.error,
+                                batch_job.batch_id,
+                                episode_id,
+                                report.error,
                             )
 
                     except InterruptedError:
@@ -533,10 +583,11 @@ class JobManager:
                         logger.info("Batch job %s interrupted", batch_job.batch_id)
                         return
 
-                    except Exception as e:
+                    except Exception:
                         logger.exception(
                             "Batch job %s: episode %s failed with exception",
-                            batch_job.batch_id, episode_id,
+                            batch_job.batch_id,
+                            episode_id,
                         )
                         self._update_batch(
                             batch_job,

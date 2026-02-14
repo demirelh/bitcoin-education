@@ -1,5 +1,6 @@
 """Schema migration tracking model."""
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column
@@ -8,7 +9,7 @@ from btcedu.db import Base
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class SchemaMigration(Base):

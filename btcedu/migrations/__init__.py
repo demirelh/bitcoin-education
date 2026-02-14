@@ -1,8 +1,8 @@
 """Database migration system for btcedu."""
+
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
-from typing import Any
+from datetime import UTC, datetime
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -38,9 +38,9 @@ class Migration(ABC):
 
     def is_applied(self, session: Session) -> bool:
         """Check if this migration has been applied."""
-        result = session.query(SchemaMigration).filter(
-            SchemaMigration.version == self.version
-        ).first()
+        result = (
+            session.query(SchemaMigration).filter(SchemaMigration.version == self.version).first()
+        )
         return result is not None
 
     def mark_applied(self, session: Session) -> None:
@@ -50,10 +50,7 @@ class Migration(ABC):
             logger.info(f"Migration {self.version} already marked as applied")
             return
 
-        migration = SchemaMigration(
-            version=self.version,
-            applied_at=datetime.now(timezone.utc)
-        )
+        migration = SchemaMigration(version=self.version, applied_at=datetime.now(UTC))
         session.add(migration)
         session.commit()
         logger.info(f"Marked migration {self.version} as applied")
@@ -106,9 +103,7 @@ class AddChannelsSupportMigration(Migration):
         columns = [row[1] for row in result.fetchall()]
 
         if "channel_id" not in columns:
-            session.execute(
-                text("ALTER TABLE episodes ADD COLUMN channel_id VARCHAR(64)")
-            )
+            session.execute(text("ALTER TABLE episodes ADD COLUMN channel_id VARCHAR(64)"))
             session.commit()
             logger.info("✓ Added channel_id column to episodes")
         else:
@@ -117,11 +112,10 @@ class AddChannelsSupportMigration(Migration):
         # Step 3: Create default channel from existing config
         logger.info("Step 3/6: Creating default channel...")
         from btcedu.config import get_settings
+
         settings = get_settings()
 
-        result = session.execute(
-            text("SELECT COUNT(*) FROM channels WHERE channel_id = 'default'")
-        )
+        result = session.execute(text("SELECT COUNT(*) FROM channels WHERE channel_id = 'default'"))
         count = result.scalar()
 
         if count == 0:
@@ -134,16 +128,19 @@ class AddChannelsSupportMigration(Migration):
 
             session.execute(
                 text("""
-                    INSERT INTO channels (channel_id, name, youtube_channel_id, rss_url, is_active, created_at, updated_at)
-                    VALUES (:channel_id, :name, :youtube_channel_id, :rss_url, 1, :now, :now)
+                    INSERT INTO channels
+                    (channel_id, name, youtube_channel_id, rss_url,
+                     is_active, created_at, updated_at)
+                    VALUES (:channel_id, :name, :youtube_channel_id,
+                            :rss_url, 1, :now, :now)
                 """),
                 {
                     "channel_id": "default",
                     "name": "Default Channel",
                     "youtube_channel_id": settings.podcast_youtube_channel_id or None,
                     "rss_url": feed_url,
-                    "now": datetime.now(timezone.utc)
-                }
+                    "now": datetime.now(UTC),
+                },
             )
             session.commit()
             logger.info("✓ Created default channel")
@@ -152,9 +149,7 @@ class AddChannelsSupportMigration(Migration):
 
         # Step 4: Backfill existing episodes
         logger.info("Step 4/6: Backfilling existing episodes with default channel_id...")
-        result = session.execute(
-            text("SELECT COUNT(*) FROM episodes WHERE channel_id IS NULL")
-        )
+        result = session.execute(text("SELECT COUNT(*) FROM episodes WHERE channel_id IS NULL"))
         null_count = result.scalar()
 
         if null_count > 0:
@@ -169,12 +164,13 @@ class AddChannelsSupportMigration(Migration):
         # Step 5: Add index on channel_id
         logger.info("Step 5/6: Creating index on episodes.channel_id...")
         result = session.execute(
-            text("SELECT name FROM sqlite_master WHERE type='index' AND name='idx_episodes_channel_id'")
+            text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='index' AND name='idx_episodes_channel_id'"
+            )
         )
         if not result.fetchone():
-            session.execute(
-                text("CREATE INDEX idx_episodes_channel_id ON episodes(channel_id)")
-            )
+            session.execute(text("CREATE INDEX idx_episodes_channel_id ON episodes(channel_id)"))
             session.commit()
             logger.info("✓ Created index on episodes.channel_id")
         else:
@@ -215,7 +211,6 @@ def get_applied_migrations(session: Session) -> list[str]:
 
 def _ensure_migrations_table(session: Session) -> None:
     """Ensure the schema_migrations table exists."""
-    from btcedu.db import Base
     engine = session.get_bind()
     SchemaMigration.__table__.create(engine, checkfirst=True)
 

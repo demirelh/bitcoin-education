@@ -28,7 +28,7 @@ def download_audio(
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
-    output_template = str(out_path / f"audio.%(ext)s")
+    output_template = str(out_path / "audio.%(ext)s")
 
     # Prefer yt-dlp from the same venv as the running Python interpreter,
     # so it works even when PATH doesn't include the venv bin directory
@@ -38,8 +38,10 @@ def download_audio(
     cmd = [
         ytdlp,
         "--extract-audio",
-        "--audio-format", audio_format,
-        "--output", output_template,
+        "--audio-format",
+        audio_format,
+        "--output",
+        output_template,
         "--no-playlist",
         "--quiet",
         "--no-warnings",
@@ -51,9 +53,7 @@ def download_audio(
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
 
     if result.returncode != 0:
-        raise RuntimeError(
-            f"yt-dlp failed (exit {result.returncode}): {result.stderr.strip()}"
-        )
+        raise RuntimeError(f"yt-dlp failed (exit {result.returncode}): {result.stderr.strip()}")
 
     # Find the actual output file
     audio_file = out_path / f"audio.{audio_format}"

@@ -1,16 +1,17 @@
 """Tests for database migrations."""
+
+from datetime import UTC
+
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from btcedu.db import Base
 from btcedu.migrations import (
     AddChannelsSupportMigration,
     get_applied_migrations,
     get_pending_migrations,
     run_migrations,
 )
-from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.models.migration import SchemaMigration
 
 
@@ -22,7 +23,8 @@ def old_db_engine():
     # Create only the base tables without channels
     with engine.connect() as conn:
         # Create episodes table WITHOUT channel_id column (old schema)
-        conn.execute(text("""
+        conn.execute(
+            text("""
             CREATE TABLE episodes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 episode_id VARCHAR(64) UNIQUE NOT NULL,
@@ -40,10 +42,12 @@ def old_db_engine():
                 error_message TEXT,
                 retry_count INTEGER NOT NULL DEFAULT 0
             )
-        """))
+        """)
+        )
 
         # Create pipeline_runs table
-        conn.execute(text("""
+        conn.execute(
+            text("""
             CREATE TABLE pipeline_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 episode_id INTEGER NOT NULL,
@@ -57,10 +61,12 @@ def old_db_engine():
                 error_message TEXT,
                 FOREIGN KEY (episode_id) REFERENCES episodes(id)
             )
-        """))
+        """)
+        )
 
         # Create chunks table
-        conn.execute(text("""
+        conn.execute(
+            text("""
             CREATE TABLE chunks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chunk_id VARCHAR(64) UNIQUE NOT NULL,
@@ -71,24 +77,29 @@ def old_db_engine():
                 start_char INTEGER NOT NULL,
                 end_char INTEGER NOT NULL
             )
-        """))
+        """)
+        )
 
         # Create index
         conn.execute(text("CREATE INDEX idx_chunks_episode_id ON chunks(episode_id)"))
 
         # Create FTS5 table
-        conn.execute(text(
-            "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts "
-            "USING fts5(chunk_id UNINDEXED, episode_id UNINDEXED, text)"
-        ))
+        conn.execute(
+            text(
+                "CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts "
+                "USING fts5(chunk_id UNINDEXED, episode_id UNINDEXED, text)"
+            )
+        )
 
         # Create schema_migrations table (for tracking)
-        conn.execute(text("""
+        conn.execute(
+            text("""
             CREATE TABLE schema_migrations (
                 version VARCHAR(64) PRIMARY KEY,
                 applied_at TIMESTAMP NOT NULL
             )
-        """))
+        """)
+        )
 
         conn.commit()
 
@@ -109,15 +120,18 @@ def old_db_session(old_db_engine):
 def seeded_old_db(old_db_session):
     """Old database with some episodes (no channel_id)."""
     # Insert episodes directly with raw SQL since ORM would fail
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    old_db_session.execute(text("""
+    old_db_session.execute(
+        text("""
         INSERT INTO episodes (episode_id, title, url, status, detected_at)
         VALUES
             ('ep001', 'Episode 1', 'https://youtube.com/watch?v=ep001', 'new', :now),
             ('ep002', 'Episode 2', 'https://youtube.com/watch?v=ep002', 'downloaded', :now),
             ('ep003', 'Episode 3', 'https://youtube.com/watch?v=ep003', 'completed', :now)
-    """), {"now": datetime.now(timezone.utc)})
+    """),
+        {"now": datetime.now(UTC)},
+    )
     old_db_session.commit()
 
     return old_db_session
@@ -154,15 +168,11 @@ def test_migration_on_old_database(seeded_old_db):
     assert result.fetchone() is not None
 
     # Verify default channel was created
-    result = session.execute(
-        text("SELECT COUNT(*) FROM channels WHERE channel_id = 'default'")
-    )
+    result = session.execute(text("SELECT COUNT(*) FROM channels WHERE channel_id = 'default'"))
     assert result.scalar() == 1
 
     # Verify existing episodes were backfilled
-    result = session.execute(
-        text("SELECT COUNT(*) FROM episodes WHERE channel_id = 'default'")
-    )
+    result = session.execute(text("SELECT COUNT(*) FROM episodes WHERE channel_id = 'default'"))
     assert result.scalar() == 3
 
     # Verify index was created
@@ -172,9 +182,11 @@ def test_migration_on_old_database(seeded_old_db):
     assert result.fetchone() is not None
 
     # Verify migration was marked as applied
-    result = session.query(SchemaMigration).filter(
-        SchemaMigration.version == "001_add_channels_support"
-    ).first()
+    result = (
+        session.query(SchemaMigration)
+        .filter(SchemaMigration.version == "001_add_channels_support")
+        .first()
+    )
     assert result is not None
 
 
@@ -190,15 +202,11 @@ def test_migration_idempotency(seeded_old_db):
     migration.up(session)
 
     # Verify still only one default channel
-    result = session.execute(
-        text("SELECT COUNT(*) FROM channels WHERE channel_id = 'default'")
-    )
+    result = session.execute(text("SELECT COUNT(*) FROM channels WHERE channel_id = 'default'"))
     assert result.scalar() == 1
 
     # Verify all episodes still have channel_id
-    result = session.execute(
-        text("SELECT COUNT(*) FROM episodes WHERE channel_id IS NULL")
-    )
+    result = session.execute(text("SELECT COUNT(*) FROM episodes WHERE channel_id IS NULL"))
     assert result.scalar() == 0
 
 

@@ -1,14 +1,14 @@
 import json
 import logging
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import click
 
 from btcedu.config import get_settings
 from btcedu.db import get_session_factory, init_db
-from btcedu.models.episode import Episode, EpisodeStatus, PipelineStage
+from btcedu.models.episode import Episode, EpisodeStatus
 
 logging.basicConfig(
     level=logging.INFO,
@@ -35,15 +35,15 @@ def _check_pending_migrations(session_factory):
     session = session_factory()
     try:
         from btcedu.migrations import get_pending_migrations
+
         pending = get_pending_migrations(session)
         if pending:
             migration_list = ", ".join(m.version for m in pending)
-            logging.warning(
-                f"⚠ Database migration required. Pending: {migration_list}"
-            )
+            logging.warning(f"⚠ Database migration required. Pending: {migration_list}")
             logging.warning("  Run: btcedu migrate")
     except Exception:
-        # Silently ignore errors during migration check (e.g., if schema_migrations table doesn't exist yet)
+        # Silently ignore errors during migration check
+        # (e.g., if schema_migrations table doesn't exist yet)
         pass
     finally:
         session.close()
@@ -66,14 +66,30 @@ def detect(ctx: click.Context) -> None:
 
 @cli.command()
 @click.option("--max", "max_count", type=int, default=None, help="Max new episodes to insert.")
-@click.option("--since", type=click.DateTime(formats=["%Y-%m-%d"]), default=None,
-              help="Only videos published on or after YYYY-MM-DD.")
-@click.option("--until", "until_date", type=click.DateTime(formats=["%Y-%m-%d"]), default=None,
-              help="Only videos published on or before YYYY-MM-DD.")
-@click.option("--dry-run", is_flag=True, default=False, help="Print what would be inserted, don't write.")
+@click.option(
+    "--since",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Only videos published on or after YYYY-MM-DD.",
+)
+@click.option(
+    "--until",
+    "until_date",
+    type=click.DateTime(formats=["%Y-%m-%d"]),
+    default=None,
+    help="Only videos published on or before YYYY-MM-DD.",
+)
+@click.option(
+    "--dry-run", is_flag=True, default=False, help="Print what would be inserted, don't write."
+)
 @click.pass_context
-def backfill(ctx: click.Context, max_count: int | None, since: datetime | None,
-             until_date: datetime | None, dry_run: bool) -> None:
+def backfill(
+    ctx: click.Context,
+    max_count: int | None,
+    since: datetime | None,
+    until_date: datetime | None,
+    dry_run: bool,
+) -> None:
     """Import full YouTube channel history via yt-dlp.
 
     Unlike 'detect' (which reads the RSS feed limited to ~15 videos),
@@ -85,17 +101,15 @@ def backfill(ctx: click.Context, max_count: int | None, since: datetime | None,
     session = ctx.obj["session_factory"]()
     try:
         result = backfill_episodes(
-            session, settings,
+            session,
+            settings,
             max_count=max_count,
             since=since.date() if since else None,
             until=until_date.date() if until_date else None,
             dry_run=dry_run,
         )
         prefix = "[dry-run] " if dry_run else ""
-        click.echo(
-            f"{prefix}Found: {result.found}  New: {result.new}  "
-            f"Total in DB: {result.total}"
-        )
+        click.echo(f"{prefix}Found: {result.found}  New: {result.new}  Total in DB: {result.total}")
     except Exception as e:
         click.echo(f"Backfill failed: {e}", err=True)
         sys.exit(1)
@@ -105,7 +119,10 @@ def backfill(ctx: click.Context, max_count: int | None, since: datetime | None,
 
 @cli.command()
 @click.option(
-    "--episode-id", "episode_ids", multiple=True, required=True,
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
     help="Episode ID(s) to download (repeatable).",
 )
 @click.option("--force", is_flag=True, default=False, help="Re-download even if file exists.")
@@ -129,7 +146,10 @@ def download(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> N
 
 @cli.command()
 @click.option(
-    "--episode-id", "episode_ids", multiple=True, required=True,
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
     help="Episode ID(s) to transcribe (repeatable).",
 )
 @click.option("--force", is_flag=True, default=False, help="Re-transcribe even if file exists.")
@@ -153,7 +173,10 @@ def transcribe(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) ->
 
 @cli.command()
 @click.option(
-    "--episode-id", "episode_ids", multiple=True, required=True,
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
     help="Episode ID(s) to chunk (repeatable).",
 )
 @click.option("--force", is_flag=True, default=False, help="Re-chunk even if file exists.")
@@ -177,7 +200,9 @@ def chunk(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None
 
 @cli.command()
 @click.option(
-    "--episode-id", "episode_ids", multiple=True,
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
     help="Episode ID(s) to process (repeatable). If omitted, processes all pending episodes.",
 )
 @click.option("--force", is_flag=True, default=False, help="Force re-run of completed stages.")
@@ -190,22 +215,20 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
     session = ctx.obj["session_factory"]()
     try:
         if episode_ids:
-            episodes = (
-                session.query(Episode)
-                .filter(Episode.episode_id.in_(episode_ids))
-                .all()
-            )
+            episodes = session.query(Episode).filter(Episode.episode_id.in_(episode_ids)).all()
         else:
             episodes = (
                 session.query(Episode)
                 .filter(
-                    Episode.status.in_([
-                        EpisodeStatus.NEW,
-                        EpisodeStatus.DOWNLOADED,
-                        EpisodeStatus.TRANSCRIBED,
-                        EpisodeStatus.CHUNKED,
-                        EpisodeStatus.GENERATED,
-                    ])
+                    Episode.status.in_(
+                        [
+                            EpisodeStatus.NEW,
+                            EpisodeStatus.DOWNLOADED,
+                            EpisodeStatus.TRANSCRIBED,
+                            EpisodeStatus.CHUNKED,
+                            EpisodeStatus.GENERATED,
+                        ]
+                    )
                 )
                 .order_by(Episode.published_at.asc())
                 .all()
@@ -274,7 +297,12 @@ def run_latest_cmd(ctx: click.Context) -> None:
 
 @cli.command(name="run-pending")
 @click.option("--max", "max_episodes", type=int, default=None, help="Max episodes to process.")
-@click.option("--since", type=click.DateTime(), default=None, help="Only episodes published after this date (YYYY-MM-DD).")
+@click.option(
+    "--since",
+    type=click.DateTime(),
+    default=None,
+    help="Only episodes published after this date (YYYY-MM-DD).",
+)
 @click.pass_context
 def run_pending_cmd(ctx: click.Context, max_episodes: int | None, since: datetime | None) -> None:
     """Process all pending episodes through the pipeline."""
@@ -285,7 +313,7 @@ def run_pending_cmd(ctx: click.Context, max_episodes: int | None, since: datetim
     try:
         # Add timezone info if since was provided
         if since is not None and since.tzinfo is None:
-            since = since.replace(tzinfo=timezone.utc)
+            since = since.replace(tzinfo=UTC)
 
         reports = run_pending(session, settings, max_episodes=max_episodes, since=since)
 
@@ -317,7 +345,10 @@ def run_pending_cmd(ctx: click.Context, max_episodes: int | None, since: datetim
 
 @cli.command()
 @click.option(
-    "--episode-id", "episode_ids", multiple=True, required=True,
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
     help="Episode ID(s) to retry (repeatable).",
 )
 @click.pass_context
@@ -350,7 +381,9 @@ def retry(ctx: click.Context, episode_ids: tuple[str, ...]) -> None:
 
 
 @cli.command()
-@click.option("--episode-id", "episode_id", type=str, required=True, help="Episode to show report for.")
+@click.option(
+    "--episode-id", "episode_id", type=str, required=True, help="Episode to show report for."
+)
 @click.pass_context
 def report(ctx: click.Context, episode_id: str) -> None:
     """Show the latest pipeline report for an episode."""
@@ -401,11 +434,7 @@ def status(ctx: click.Context) -> None:
     try:
         from sqlalchemy import func
 
-        rows = (
-            session.query(Episode.status, func.count())
-            .group_by(Episode.status)
-            .all()
-        )
+        rows = session.query(Episode.status, func.count()).group_by(Episode.status).all()
         total = sum(c for _, c in rows)
         click.echo(f"=== Episodes: {total} ===")
         for s, c in rows:
@@ -413,12 +442,7 @@ def status(ctx: click.Context) -> None:
 
         click.echo("")
         click.echo("--- Last 10 episodes ---")
-        recent = (
-            session.query(Episode)
-            .order_by(Episode.detected_at.desc())
-            .limit(10)
-            .all()
-        )
+        recent = session.query(Episode).order_by(Episode.detected_at.desc()).limit(10).all()
         if not recent:
             click.echo("  (none)")
         for ep in recent:
@@ -426,17 +450,17 @@ def status(ctx: click.Context) -> None:
             err = ""
             if ep.error_message:
                 err = f"  !! {ep.error_message[:40]}"
-            click.echo(
-                f"  [{ep.status.value:<12}] {ep.episode_id}  {pub}  "
-                f"{ep.title[:50]}{err}"
-            )
+            click.echo(f"  [{ep.status.value:<12}] {ep.episode_id}  {pub}  {ep.title[:50]}{err}")
     finally:
         session.close()
 
 
 @cli.command()
 @click.option(
-    "--episode-id", "episode_ids", multiple=True, required=True,
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
     help="Episode ID(s) to generate content for (repeatable).",
 )
 @click.option("--force", is_flag=True, default=False, help="Regenerate even if outputs exist.")
@@ -464,7 +488,10 @@ def generate(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, top_
 
 @cli.command()
 @click.option(
-    "--episode-id", "episode_ids", multiple=True, required=True,
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
     help="Episode ID(s) to refine (repeatable).",
 )
 @click.option("--force", is_flag=True, default=False, help="Re-refine even if v2 outputs exist.")
@@ -552,11 +579,16 @@ def init_db_cmd(ctx: click.Context) -> None:
 
 
 @cli.command()
-@click.option("--dry-run", is_flag=True, default=False, help="Show what would be applied without making changes.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Show what would be applied without making changes.",
+)
 @click.pass_context
 def migrate(ctx: click.Context, dry_run: bool) -> None:
     """Run pending database migrations."""
-    from btcedu.migrations import run_migrations, get_pending_migrations
+    from btcedu.migrations import get_pending_migrations, run_migrations
 
     session = ctx.obj["session_factory"]()
     try:
@@ -640,8 +672,7 @@ def web(host: str, port: int, production: bool) -> None:
     if production:
         venv = Path(sys.executable).parent
         cmd = (
-            f'{venv / "gunicorn"} -w 2 -b {host}:{port} '
-            f'--timeout 300 "btcedu.web.app:create_app()"'
+            f'{venv / "gunicorn"} -w 2 -b {host}:{port} --timeout 300 "btcedu.web.app:create_app()"'
         )
         click.echo("Run this command for production:\n")
         click.echo(f"  {cmd}")

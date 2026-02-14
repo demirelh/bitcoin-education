@@ -1,4 +1,5 @@
 """Tests for transcription pipeline stage."""
+
 from pathlib import Path
 from unittest.mock import patch
 

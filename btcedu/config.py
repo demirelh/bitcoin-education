@@ -23,15 +23,13 @@ class Settings(BaseSettings):
             if not self.anthropic_api_key:
                 self.anthropic_api_key = self.claude_api_key
                 warnings.warn(
-                    "CLAUDE_API_KEY is deprecated. "
-                    "Use ANTHROPIC_API_KEY instead.",
+                    "CLAUDE_API_KEY is deprecated. Use ANTHROPIC_API_KEY instead.",
                     DeprecationWarning,
                     stacklevel=2,
                 )
             else:
                 logger.debug(
-                    "Both ANTHROPIC_API_KEY and CLAUDE_API_KEY set; "
-                    "using ANTHROPIC_API_KEY."
+                    "Both ANTHROPIC_API_KEY and CLAUDE_API_KEY set; using ANTHROPIC_API_KEY."
                 )
             self.claude_api_key = ""  # clear after migration
         return self

@@ -3,7 +3,7 @@
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -21,7 +21,6 @@ from btcedu.models.episode import (
 )
 from btcedu.services.claude_service import (
     ClaudeResponse,
-    calculate_cost,
     call_claude,
     compute_prompt_hash,
 )
@@ -57,7 +56,7 @@ ARTIFACT_FILENAMES = {
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 @dataclass
@@ -141,11 +140,7 @@ def retrieve_chunks(
                 break
 
     # Fetch full text from Chunk ORM
-    chunks_orm = (
-        session.query(Chunk)
-        .filter(Chunk.chunk_id.in_(ranked_ids))
-        .all()
-    )
+    chunks_orm = session.query(Chunk).filter(Chunk.chunk_id.in_(ranked_ids)).all()
     chunk_map = {c.chunk_id: c for c in chunks_orm}
 
     # Build result list preserving rank order
@@ -153,13 +148,15 @@ def retrieve_chunks(
     for rank, cid in enumerate(ranked_ids):
         if cid in chunk_map:
             c = chunk_map[cid]
-            result.append({
-                "chunk_id": c.chunk_id,
-                "episode_id": c.episode_id,
-                "ordinal": c.ordinal,
-                "text": c.text,
-                "rank": rank,
-            })
+            result.append(
+                {
+                    "chunk_id": c.chunk_id,
+                    "episode_id": c.episode_id,
+                    "ordinal": c.ordinal,
+                    "text": c.text,
+                    "rank": rank,
+                }
+            )
 
     return result
 
@@ -232,11 +229,7 @@ def generate_content(
     Raises:
         ValueError: If episode not found or not in CHUNKED/GENERATED state.
     """
-    episode = (
-        session.query(Episode)
-        .filter(Episode.episode_id == episode_id)
-        .first()
-    )
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
@@ -272,42 +265,90 @@ def generate_content(
 
         # Generate artifacts sequentially
         outline_resp = _generate_artifact(
-            "outline", episode, chunks, chunks_text, query_terms,
-            settings, output_dir, top_k, session, force,
+            "outline",
+            episode,
+            chunks,
+            chunks_text,
+            query_terms,
+            settings,
+            output_dir,
+            top_k,
+            session,
+            force,
         )
         _accumulate(result, outline_resp)
 
         script_resp = _generate_artifact(
-            "script", episode, chunks, chunks_text, query_terms,
-            settings, output_dir, top_k, session, force,
+            "script",
+            episode,
+            chunks,
+            chunks_text,
+            query_terms,
+            settings,
+            output_dir,
+            top_k,
+            session,
+            force,
             outline_text=outline_resp["text"],
         )
         _accumulate(result, script_resp)
 
         shorts_resp = _generate_artifact(
-            "shorts", episode, chunks, chunks_text, query_terms,
-            settings, output_dir, top_k, session, force,
+            "shorts",
+            episode,
+            chunks,
+            chunks_text,
+            query_terms,
+            settings,
+            output_dir,
+            top_k,
+            session,
+            force,
             outline_text=outline_resp["text"],
         )
         _accumulate(result, shorts_resp)
 
         visuals_resp = _generate_artifact(
-            "visuals", episode, chunks, chunks_text, query_terms,
-            settings, output_dir, top_k, session, force,
+            "visuals",
+            episode,
+            chunks,
+            chunks_text,
+            query_terms,
+            settings,
+            output_dir,
+            top_k,
+            session,
+            force,
             outline_text=outline_resp["text"],
         )
         _accumulate(result, visuals_resp)
 
         qa_resp = _generate_artifact(
-            "qa", episode, chunks, chunks_text, query_terms,
-            settings, output_dir, top_k, session, force,
+            "qa",
+            episode,
+            chunks,
+            chunks_text,
+            query_terms,
+            settings,
+            output_dir,
+            top_k,
+            session,
+            force,
             script_text=script_resp["text"],
         )
         _accumulate(result, qa_resp)
 
         pub_resp = _generate_artifact(
-            "publishing", episode, chunks, chunks_text, query_terms,
-            settings, output_dir, top_k, session, force,
+            "publishing",
+            episode,
+            chunks,
+            chunks_text,
+            query_terms,
+            settings,
+            output_dir,
+            top_k,
+            session,
+            force,
             outline_text=outline_resp["text"],
             script_text=script_resp["text"],
         )
@@ -327,7 +368,9 @@ def generate_content(
 
         logger.info(
             "Generated %d artifacts for %s ($%.4f)",
-            len(result.artifacts), episode_id, result.total_cost_usd,
+            len(result.artifacts),
+            episode_id,
+            result.total_cost_usd,
         )
 
     except Exception as e:
@@ -360,11 +403,7 @@ def refine_content(
     Raises:
         ValueError: If episode not found or not in GENERATED/REFINED state.
     """
-    episode = (
-        session.query(Episode)
-        .filter(Episode.episode_id == episode_id)
-        .first()
-    )
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
@@ -412,8 +451,16 @@ def refine_content(
 
         # Step 1: Refine outline using v1 outline + QA
         outline_v2_resp = _generate_artifact(
-            "refine_outline", episode, empty_chunks, "", empty_query_terms,
-            settings, output_dir, 0, session, force,
+            "refine_outline",
+            episode,
+            empty_chunks,
+            "",
+            empty_query_terms,
+            settings,
+            output_dir,
+            0,
+            session,
+            force,
             outline_text=outline_v1,
             qa_text=qa_text,
         )
@@ -421,8 +468,16 @@ def refine_content(
 
         # Step 2: Refine script using v1 script + v2 outline + QA
         script_v2_resp = _generate_artifact(
-            "refine_script", episode, empty_chunks, "", empty_query_terms,
-            settings, output_dir, 0, session, force,
+            "refine_script",
+            episode,
+            empty_chunks,
+            "",
+            empty_query_terms,
+            settings,
+            output_dir,
+            0,
+            session,
+            force,
             script_text=script_v1,
             outline_text=outline_v2_resp["text"],
             qa_text=qa_text,
@@ -431,8 +486,16 @@ def refine_content(
 
         # Step 3: Regenerate publishing pack from v2 outline + v2 script
         pub_v2_resp = _generate_artifact(
-            "refine_publishing", episode, empty_chunks, "", empty_query_terms,
-            settings, output_dir, 0, session, force,
+            "refine_publishing",
+            episode,
+            empty_chunks,
+            "",
+            empty_query_terms,
+            settings,
+            output_dir,
+            0,
+            session,
+            force,
             outline_text=outline_v2_resp["text"],
             script_text=script_v2_resp["text"],
         )
@@ -451,7 +514,9 @@ def refine_content(
 
         logger.info(
             "Refined %d artifacts for %s ($%.4f)",
-            len(result.artifacts), episode_id, result.total_cost_usd,
+            len(result.artifacts),
+            episode_id,
+            result.total_cost_usd,
         )
 
     except Exception as e:
@@ -508,14 +573,22 @@ def _generate_artifact(
     from btcedu.prompts.system import SYSTEM_PROMPT
 
     user_prompt = _build_prompt(
-        artifact_type, episode.title, episode.episode_id,
-        chunks_text, outline_text, script_text, qa_text,
+        artifact_type,
+        episode.title,
+        episode.episode_id,
+        chunks_text,
+        outline_text,
+        script_text,
+        qa_text,
     )
 
     # Compute prompt hash
     chunk_ids = [c["chunk_id"] for c in chunks]
     prompt_hash = compute_prompt_hash(
-        user_prompt, settings.claude_model, settings.claude_temperature, chunk_ids,
+        user_prompt,
+        settings.claude_model,
+        settings.claude_temperature,
+        chunk_ids,
     )
 
     # Dry-run path
@@ -537,7 +610,11 @@ def _generate_artifact(
     snapshot_path = None
     if chunks:
         snapshot_path = save_retrieval_snapshot(
-            chunks, artifact_type, output_dir, query_terms, top_k,
+            chunks,
+            artifact_type,
+            output_dir,
+            query_terms,
+            top_k,
         )
 
     # Persist ContentArtifact
@@ -573,40 +650,53 @@ def _build_prompt(
     """Build user prompt from the appropriate template."""
     if artifact_type == "outline":
         from btcedu.prompts.outline import build_user_prompt
+
         return build_user_prompt(episode_title, episode_id, chunks_text)
 
     elif artifact_type == "script":
         from btcedu.prompts.script import build_user_prompt
+
         return build_user_prompt(episode_title, episode_id, chunks_text, outline_text)
 
     elif artifact_type == "shorts":
         from btcedu.prompts.shorts import build_user_prompt
+
         return build_user_prompt(episode_title, episode_id, chunks_text, outline_text)
 
     elif artifact_type == "visuals":
         from btcedu.prompts.visuals import build_user_prompt
+
         return build_user_prompt(episode_title, episode_id, chunks_text, outline_text)
 
     elif artifact_type == "qa":
         from btcedu.prompts.qa import build_user_prompt
+
         return build_user_prompt(episode_title, episode_id, chunks_text, script_text)
 
     elif artifact_type == "publishing":
         from btcedu.prompts.publishing import build_user_prompt
+
         return build_user_prompt(episode_title, episode_id, outline_text, script_text)
 
     elif artifact_type == "refine_outline":
         from btcedu.prompts.refine_outline import build_user_prompt
+
         return build_user_prompt(episode_title, episode_id, outline_text, qa_text)
 
     elif artifact_type == "refine_script":
         from btcedu.prompts.refine_script import build_user_prompt
+
         return build_user_prompt(
-            episode_title, episode_id, script_text, outline_text, qa_text,
+            episode_title,
+            episode_id,
+            script_text,
+            outline_text,
+            qa_text,
         )
 
     elif artifact_type == "refine_publishing":
         from btcedu.prompts.publishing import build_user_prompt
+
         return build_user_prompt(episode_title, episode_id, outline_text, script_text)
 
     else:

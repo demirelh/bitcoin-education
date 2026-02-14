@@ -2,13 +2,12 @@
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import func
 
-from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun
 
 logger = logging.getLogger(__name__)
@@ -20,14 +19,17 @@ api_bp = Blueprint("api", __name__)
 # Health check
 # ---------------------------------------------------------------------------
 
+
 @api_bp.route("/health")
 def health():
     """Health check for monitoring and proxy verification."""
-    return jsonify({
-        "status": "ok",
-        "time": datetime.now(timezone.utc).isoformat(),
-        "version": "0.1.0",
-    })
+    return jsonify(
+        {
+            "status": "ok",
+            "time": datetime.now(UTC).isoformat(),
+            "version": "0.1.0",
+        }
+    )
 
 
 @api_bp.route("/debug/db-schema")
@@ -49,13 +51,15 @@ def debug_db_schema():
             result = session.execute(text(f"PRAGMA table_info({table})"))
             columns = []
             for row in result.fetchall():
-                columns.append({
-                    "name": row[1],
-                    "type": row[2],
-                    "nullable": row[3] == 0,
-                    "default": row[4],
-                    "pk": row[5] == 1
-                })
+                columns.append(
+                    {
+                        "name": row[1],
+                        "type": row[2],
+                        "nullable": row[3] == 0,
+                        "default": row[4],
+                        "pk": row[5] == 1,
+                    }
+                )
             schema[table] = columns
 
         # Get indexes
@@ -66,11 +70,7 @@ def debug_db_schema():
             if table_indexes:
                 indexes[table] = table_indexes
 
-        return jsonify({
-            "tables": list(schema.keys()),
-            "schema": schema,
-            "indexes": indexes
-        })
+        return jsonify({"tables": list(schema.keys()), "schema": schema, "indexes": indexes})
     except Exception as e:
         logger.exception("Failed to get database schema")
         return jsonify({"error": str(e)}), 500
@@ -93,6 +93,7 @@ def _get_job_manager():
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _file_presence(episode_id: str, settings) -> dict[str, bool]:
     """Check which output files exist for an episode."""
@@ -140,10 +141,12 @@ def _submit_job(action, episode_id, **kwargs):
     mgr = _get_job_manager()
     active = mgr.active_for_episode(episode_id)
     if active:
-        return jsonify({
-            "error": "Job already active",
-            "job_id": active.job_id,
-        }), 409
+        return jsonify(
+            {
+                "error": "Job already active",
+                "job_id": active.job_id,
+            }
+        ), 409
 
     job = mgr.submit(
         action=action,
@@ -157,6 +160,7 @@ def _submit_job(action, episode_id, **kwargs):
 # ---------------------------------------------------------------------------
 # Episode list + detail
 # ---------------------------------------------------------------------------
+
 
 @api_bp.route("/episodes")
 def list_episodes():
@@ -190,11 +194,7 @@ def get_episode(episode_id: str):
         data = _episode_to_dict(ep, settings)
 
         # Add cost info from pipeline runs
-        runs = (
-            session.query(PipelineRun)
-            .filter(PipelineRun.episode_id == ep.id)
-            .all()
-        )
+        runs = session.query(PipelineRun).filter(PipelineRun.episode_id == ep.id).all()
         data["cost"] = {
             "total_usd": sum(r.estimated_cost_usd for r in runs),
             "input_tokens": sum(r.input_tokens for r in runs),
@@ -210,6 +210,7 @@ def get_episode(episode_id: str):
 # Pipeline actions (all async via JobManager)
 # ---------------------------------------------------------------------------
 
+
 @api_bp.route("/detect", methods=["POST"])
 def detect():
     """Detect new episodes — synchronous (fast network I/O)."""
@@ -219,12 +220,14 @@ def detect():
     settings = _get_settings()
     try:
         result = detect_episodes(session, settings)
-        return jsonify({
-            "success": True,
-            "found": result.found,
-            "new": result.new,
-            "total": result.total,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "found": result.found,
+                "new": result.new,
+                "total": result.total,
+            }
+        )
     except Exception as e:
         logger.exception("Detect failed")
         return jsonify({"success": False, "error": str(e)}), 500
@@ -283,6 +286,7 @@ def retry_episode(episode_id: str):
 # Job status + logs
 # ---------------------------------------------------------------------------
 
+
 @api_bp.route("/jobs/<job_id>")
 def get_job(job_id: str):
     mgr = _get_job_manager()
@@ -305,9 +309,13 @@ def get_job(job_id: str):
     # Include current episode status from DB for real-time progress
     session = _get_session()
     try:
-        ep = session.query(Episode).filter(
-            Episode.episode_id == job.episode_id,
-        ).first()
+        ep = (
+            session.query(Episode)
+            .filter(
+                Episode.episode_id == job.episode_id,
+            )
+            .first()
+        )
         data["episode_status"] = ep.status.value if ep else None
     finally:
         session.close()
@@ -386,6 +394,7 @@ def get_file(episode_id: str, file_type: str):
 # Cost summary
 # ---------------------------------------------------------------------------
 
+
 @api_bp.route("/cost")
 def cost_summary():
     session = _get_session()
@@ -407,24 +416,26 @@ def cost_summary():
         for row in rows:
             cost_val = row.total_cost or 0.0
             grand_total += cost_val
-            stages.append({
-                "stage": row.stage.value,
-                "runs": row.runs,
-                "input_tokens": row.input_tokens or 0,
-                "output_tokens": row.output_tokens or 0,
-                "cost_usd": round(cost_val, 6),
-            })
+            stages.append(
+                {
+                    "stage": row.stage.value,
+                    "runs": row.runs,
+                    "input_tokens": row.input_tokens or 0,
+                    "output_tokens": row.output_tokens or 0,
+                    "cost_usd": round(cost_val, 6),
+                }
+            )
 
-        ep_count = session.query(
-            func.count(func.distinct(PipelineRun.episode_id))
-        ).scalar() or 0
+        ep_count = session.query(func.count(func.distinct(PipelineRun.episode_id))).scalar() or 0
 
-        return jsonify({
-            "stages": stages,
-            "total_usd": round(grand_total, 6),
-            "episodes_processed": ep_count,
-            "avg_per_episode": round(grand_total / ep_count, 4) if ep_count else 0,
-        })
+        return jsonify(
+            {
+                "stages": stages,
+                "total_usd": round(grand_total, 6),
+                "episodes_processed": ep_count,
+                "avg_per_episode": round(grand_total / ep_count, 4) if ep_count else 0,
+            }
+        )
     finally:
         session.close()
 
@@ -432,6 +443,7 @@ def cost_summary():
 # ---------------------------------------------------------------------------
 # What's new
 # ---------------------------------------------------------------------------
+
 
 @api_bp.route("/whats-new")
 def whats_new():
@@ -456,54 +468,75 @@ def whats_new():
 
         # Episodes missing a step (have audio but no transcript, etc.)
         incomplete = []
-        all_eps = session.query(Episode).filter(
-            Episode.status.notin_([EpisodeStatus.NEW, EpisodeStatus.GENERATED, EpisodeStatus.REFINED, EpisodeStatus.COMPLETED])
-        ).all()
+        all_eps = (
+            session.query(Episode)
+            .filter(
+                Episode.status.notin_(
+                    [
+                        EpisodeStatus.NEW,
+                        EpisodeStatus.GENERATED,
+                        EpisodeStatus.REFINED,
+                        EpisodeStatus.COMPLETED,
+                    ]
+                )
+            )
+            .all()
+        )
         for ep in all_eps:
             files = _file_presence(ep.episode_id, settings)
             if ep.status == EpisodeStatus.DOWNLOADED and not files.get("transcript_raw"):
-                incomplete.append({
-                    "episode_id": ep.episode_id,
-                    "title": ep.title,
-                    "status": ep.status.value,
-                    "missing": "transcript",
-                })
+                incomplete.append(
+                    {
+                        "episode_id": ep.episode_id,
+                        "title": ep.title,
+                        "status": ep.status.value,
+                        "missing": "transcript",
+                    }
+                )
             elif ep.status == EpisodeStatus.TRANSCRIBED and not files.get("chunks"):
-                incomplete.append({
-                    "episode_id": ep.episode_id,
-                    "title": ep.title,
-                    "status": ep.status.value,
-                    "missing": "chunks",
-                })
+                incomplete.append(
+                    {
+                        "episode_id": ep.episode_id,
+                        "title": ep.title,
+                        "status": ep.status.value,
+                        "missing": "chunks",
+                    }
+                )
             elif ep.status == EpisodeStatus.CHUNKED and not files.get("outline"):
-                incomplete.append({
-                    "episode_id": ep.episode_id,
-                    "title": ep.title,
-                    "status": ep.status.value,
-                    "missing": "generated content",
-                })
+                incomplete.append(
+                    {
+                        "episode_id": ep.episode_id,
+                        "title": ep.title,
+                        "status": ep.status.value,
+                        "missing": "generated content",
+                    }
+                )
 
-        return jsonify({
-            "new_episodes": [
-                {"episode_id": ep.episode_id, "title": ep.title}
-                for ep in new_eps
-            ],
-            "failed": [
-                {
-                    "episode_id": ep.episode_id,
-                    "title": ep.title,
-                    "error": ep.error_message[:200] if ep.error_message else None,
-                    "retry_count": ep.retry_count,
-                }
-                for ep in failed_eps
-            ],
-            "incomplete": incomplete,
-        })
+        return jsonify(
+            {
+                "new_episodes": [
+                    {"episode_id": ep.episode_id, "title": ep.title} for ep in new_eps
+                ],
+                "failed": [
+                    {
+                        "episode_id": ep.episode_id,
+                        "title": ep.title,
+                        "error": ep.error_message[:200] if ep.error_message else None,
+                        "retry_count": ep.retry_count,
+                    }
+                    for ep in failed_eps
+                ],
+                "incomplete": incomplete,
+            }
+        )
     finally:
         session.close()
+
+
 # ---------------------------------------------------------------------------
 # Batch Processing (Process All)
 # ---------------------------------------------------------------------------
+
 
 @api_bp.route("/batch/start", methods=["POST"])
 def batch_start():
@@ -513,10 +546,12 @@ def batch_start():
     # Check if there's already an active batch job
     active = job_manager.active_batch()
     if active:
-        return jsonify({
-            "error": "A batch job is already running",
-            "batch_id": active.batch_id,
-        }), 409
+        return jsonify(
+            {
+                "error": "A batch job is already running",
+                "batch_id": active.batch_id,
+            }
+        ), 409
 
     data = request.get_json() or {}
     force = data.get("force", False)
@@ -526,11 +561,13 @@ def batch_start():
         current_app._get_current_object(), force=force, channel_id=channel_id
     )
 
-    return jsonify({
-        "batch_id": batch_job.batch_id,
-        "state": batch_job.state,
-        "message": "Batch job started",
-    }), 202
+    return jsonify(
+        {
+            "batch_id": batch_job.batch_id,
+            "state": batch_job.state,
+            "message": "Batch job started",
+        }
+    ), 202
 
 
 @api_bp.route("/batch/<batch_id>", methods=["GET"])
@@ -542,20 +579,24 @@ def batch_status(batch_id):
     if not batch_job:
         return jsonify({"error": "Batch job not found"}), 404
 
-    return jsonify({
-        "batch_id": batch_job.batch_id,
-        "state": batch_job.state,
-        "current_episode_id": batch_job.current_episode_id,
-        "current_stage": batch_job.current_stage,
-        "total_episodes": batch_job.total_episodes,
-        "completed_episodes": batch_job.completed_episodes,
-        "failed_episodes": batch_job.failed_episodes,
-        "remaining_episodes": batch_job.total_episodes - batch_job.completed_episodes - batch_job.failed_episodes,
-        "total_cost_usd": batch_job.total_cost_usd,
-        "message": batch_job.message,
-        "created_at": batch_job.created_at.isoformat(),
-        "updated_at": batch_job.updated_at.isoformat(),
-    })
+    return jsonify(
+        {
+            "batch_id": batch_job.batch_id,
+            "state": batch_job.state,
+            "current_episode_id": batch_job.current_episode_id,
+            "current_stage": batch_job.current_stage,
+            "total_episodes": batch_job.total_episodes,
+            "completed_episodes": batch_job.completed_episodes,
+            "failed_episodes": batch_job.failed_episodes,
+            "remaining_episodes": batch_job.total_episodes
+            - batch_job.completed_episodes
+            - batch_job.failed_episodes,
+            "total_cost_usd": batch_job.total_cost_usd,
+            "message": batch_job.message,
+            "created_at": batch_job.created_at.isoformat(),
+            "updated_at": batch_job.updated_at.isoformat(),
+        }
+    )
 
 
 @api_bp.route("/batch/<batch_id>/stop", methods=["POST"])
@@ -569,14 +610,18 @@ def batch_stop(batch_id):
         batch_job = job_manager.get_batch(batch_id)
         if not batch_job:
             return jsonify({"error": "Batch job not found"}), 404
-        return jsonify({
-            "error": f"Cannot stop batch job in state: {batch_job.state}",
-        }), 400
+        return jsonify(
+            {
+                "error": f"Cannot stop batch job in state: {batch_job.state}",
+            }
+        ), 400
 
-    return jsonify({
-        "batch_id": batch_id,
-        "message": "Stop requested, will complete current episode",
-    })
+    return jsonify(
+        {
+            "batch_id": batch_id,
+            "message": "Stop requested, will complete current episode",
+        }
+    )
 
 
 @api_bp.route("/batch/active", methods=["GET"])
@@ -588,23 +633,28 @@ def batch_active():
     if not active:
         return jsonify({"active": False})
 
-    return jsonify({
-        "active": True,
-        "batch_id": active.batch_id,
-        "state": active.state,
-        "current_episode_id": active.current_episode_id,
-        "current_stage": active.current_stage,
-        "total_episodes": active.total_episodes,
-        "completed_episodes": active.completed_episodes,
-        "failed_episodes": active.failed_episodes,
-        "remaining_episodes": active.total_episodes - active.completed_episodes - active.failed_episodes,
-        "total_cost_usd": active.total_cost_usd,
-    })
+    return jsonify(
+        {
+            "active": True,
+            "batch_id": active.batch_id,
+            "state": active.state,
+            "current_episode_id": active.current_episode_id,
+            "current_stage": active.current_stage,
+            "total_episodes": active.total_episodes,
+            "completed_episodes": active.completed_episodes,
+            "failed_episodes": active.failed_episodes,
+            "remaining_episodes": active.total_episodes
+            - active.completed_episodes
+            - active.failed_episodes,
+            "total_cost_usd": active.total_cost_usd,
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Channel Management
 # ---------------------------------------------------------------------------
+
 
 @api_bp.route("/channels", methods=["GET"])
 def list_channels():
@@ -615,20 +665,22 @@ def list_channels():
 
         channels = session.query(Channel).order_by(Channel.created_at.desc()).all()
 
-        return jsonify({
-            "channels": [
-                {
-                    "id": ch.id,
-                    "channel_id": ch.channel_id,
-                    "name": ch.name,
-                    "youtube_channel_id": ch.youtube_channel_id,
-                    "rss_url": ch.rss_url,
-                    "is_active": ch.is_active,
-                    "created_at": ch.created_at.isoformat(),
-                }
-                for ch in channels
-            ]
-        })
+        return jsonify(
+            {
+                "channels": [
+                    {
+                        "id": ch.id,
+                        "channel_id": ch.channel_id,
+                        "name": ch.name,
+                        "youtube_channel_id": ch.youtube_channel_id,
+                        "rss_url": ch.rss_url,
+                        "is_active": ch.is_active,
+                        "created_at": ch.created_at.isoformat(),
+                    }
+                    for ch in channels
+                ]
+            }
+        )
     finally:
         session.close()
 
@@ -650,16 +702,15 @@ def create_channel():
 
     session = _get_session()
     try:
-        from btcedu.models.channel import Channel
         import uuid
+
+        from btcedu.models.channel import Channel
 
         # Generate a unique channel_id
         channel_id = youtube_channel_id or f"channel_{uuid.uuid4().hex[:8]}"
 
         # Check if channel already exists
-        existing = session.query(Channel).filter(
-            Channel.channel_id == channel_id
-        ).first()
+        existing = session.query(Channel).filter(Channel.channel_id == channel_id).first()
 
         if existing:
             return jsonify({"error": f"Channel with ID {channel_id} already exists"}), 409
@@ -676,17 +727,19 @@ def create_channel():
         session.commit()
         session.refresh(channel)
 
-        return jsonify({
-            "channel": {
-                "id": channel.id,
-                "channel_id": channel.channel_id,
-                "name": channel.name,
-                "youtube_channel_id": channel.youtube_channel_id,
-                "rss_url": channel.rss_url,
-                "is_active": channel.is_active,
-                "created_at": channel.created_at.isoformat(),
+        return jsonify(
+            {
+                "channel": {
+                    "id": channel.id,
+                    "channel_id": channel.channel_id,
+                    "name": channel.name,
+                    "youtube_channel_id": channel.youtube_channel_id,
+                    "rss_url": channel.rss_url,
+                    "is_active": channel.is_active,
+                    "created_at": channel.created_at.isoformat(),
+                }
             }
-        }), 201
+        ), 201
     finally:
         session.close()
 
@@ -704,14 +757,14 @@ def delete_channel(channel_id):
             return jsonify({"error": "Channel not found"}), 404
 
         # Check if there are episodes associated with this channel
-        episode_count = session.query(Episode).filter(
-            Episode.channel_id == channel.channel_id
-        ).count()
+        episode_count = (
+            session.query(Episode).filter(Episode.channel_id == channel.channel_id).count()
+        )
 
         if episode_count > 0:
-            return jsonify({
-                "error": f"Cannot delete channel with {episode_count} associated episodes"
-            }), 400
+            return jsonify(
+                {"error": f"Cannot delete channel with {episode_count} associated episodes"}
+            ), 400
 
         session.delete(channel)
         session.commit()
@@ -736,9 +789,11 @@ def toggle_channel(channel_id):
         channel.is_active = not channel.is_active
         session.commit()
 
-        return jsonify({
-            "channel_id": channel.id,
-            "is_active": channel.is_active,
-        })
+        return jsonify(
+            {
+                "channel_id": channel.id,
+                "is_active": channel.is_active,
+            }
+        )
     finally:
         session.close()

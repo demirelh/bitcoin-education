@@ -1,5 +1,5 @@
 import enum
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -35,7 +35,7 @@ class RunStatus(str, enum.Enum):
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 class Episode(Base):
@@ -46,9 +46,7 @@ class Episode(Base):
     channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="youtube_rss")
     title: Mapped[str] = mapped_column(String(500), nullable=False)
-    published_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
     url: Mapped[str] = mapped_column(String(500), nullable=False)
     status: Mapped[EpisodeStatus] = mapped_column(
@@ -60,9 +58,7 @@ class Episode(Base):
     detected_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
@@ -72,8 +68,7 @@ class Episode(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<Episode(id={self.id}, episode_id='{self.episode_id}', "
-            f"status='{self.status.value}')>"
+            f"<Episode(id={self.id}, episode_id='{self.episode_id}', status='{self.status.value}')>"
         )
 
 
@@ -81,9 +76,7 @@ class PipelineRun(Base):
     __tablename__ = "pipeline_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    episode_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("episodes.id"), nullable=False
-    )
+    episode_id: Mapped[int] = mapped_column(Integer, ForeignKey("episodes.id"), nullable=False)
     stage: Mapped[PipelineStage] = mapped_column(Enum(PipelineStage), nullable=False)
     status: Mapped[RunStatus] = mapped_column(
         Enum(RunStatus), nullable=False, default=RunStatus.RUNNING
@@ -91,9 +84,7 @@ class PipelineRun(Base):
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
@@ -103,8 +94,7 @@ class PipelineRun(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<PipelineRun(id={self.id}, stage='{self.stage.value}', "
-            f"status='{self.status.value}')>"
+            f"<PipelineRun(id={self.id}, stage='{self.stage.value}', status='{self.status.value}')>"
         )
 
 

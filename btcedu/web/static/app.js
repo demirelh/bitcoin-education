@@ -6,6 +6,33 @@
   let selected = null;
   let channels = [];
   let selectedChannelId = null;
+  let isMobileView = false;
+
+  // ── Mobile navigation state ──────────────────────────────────
+  function updateMobileView() {
+    isMobileView = window.innerWidth <= 768;
+    if (!isMobileView) {
+      // Reset mobile classes on desktop
+      document.body.classList.remove("mobile-list-view", "mobile-detail-view");
+    }
+  }
+
+  function mobileShowList() {
+    if (isMobileView) {
+      document.body.classList.remove("mobile-detail-view");
+      document.body.classList.add("mobile-list-view");
+      window.scrollTo(0, 0);
+    }
+  }
+  window.mobileShowList = mobileShowList;
+
+  function mobileShowDetail() {
+    if (isMobileView) {
+      document.body.classList.remove("mobile-list-view");
+      document.body.classList.add("mobile-detail-view");
+      window.scrollTo(0, 0);
+    }
+  }
 
   // ── API helpers ──────────────────────────────────────────────
   // Use relative URL so requests stay within the reverse-proxy prefix
@@ -178,6 +205,57 @@
         `<td>${ep.retry_count > 0 ? ep.retry_count : ""}</td>`;
       tbody.appendChild(tr);
     });
+
+    // Render mobile cards
+    renderCards(eps);
+  }
+
+  function renderCards(eps) {
+    const container = document.getElementById("ep-cards");
+    if (eps.length === 0) {
+      container.innerHTML = '<div class="empty">No episodes found.</div>';
+      return;
+    }
+
+    container.innerHTML = "";
+    eps.forEach((ep) => {
+      const card = document.createElement("div");
+      card.className = "ep-card";
+      if (selected && selected.episode_id === ep.episode_id) {
+        card.classList.add("selected");
+      }
+      card.onclick = () => selectEpisode(ep);
+
+      const pub = ep.published_at ? ep.published_at.slice(0, 10) : "\u2014";
+
+      // File indicators with icons
+      const fileIcons = [];
+      if (ep.files) {
+        if (ep.files.audio) fileIcons.push("🎵");
+        if (ep.files.transcript_clean || ep.files.transcript_raw) fileIcons.push("📝");
+        if (ep.files.chunks) fileIcons.push("📦");
+        if (ep.files.script || ep.files.script_v2) fileIcons.push("📄");
+        if (ep.files.qa) fileIcons.push("❓");
+      }
+
+      const retryBadge = ep.retry_count > 0
+        ? `<span class="ep-card-retry">retry: ${ep.retry_count}</span>`
+        : "";
+
+      card.innerHTML = `
+        <div class="ep-card-header">
+          <span class="badge badge-${ep.status}">${ep.status}</span>
+          ${retryBadge}
+        </div>
+        <div class="ep-card-title">${esc(ep.title)}</div>
+        <div class="ep-card-meta">
+          <span>${pub}</span>
+          ${fileIcons.length > 0 ? '<span>' + fileIcons.join(' ') + '</span>' : ''}
+        </div>
+      `;
+
+      container.appendChild(card);
+    });
   }
 
   // ── Filters ──────────────────────────────────────────────────
@@ -197,6 +275,9 @@
     clearInterval(logPollTimer);
     selected = ep;
     applyFilters(); // re-render to highlight row
+
+    // Show detail view on mobile
+    mobileShowDetail();
 
     const det = document.getElementById("detail");
     det.innerHTML = `
@@ -734,6 +815,16 @@
     document.getElementById("filter-status").onchange = applyFilters;
     document.getElementById("filter-search").oninput = applyFilters;
     document.getElementById("channel-select").onchange = onChannelChange;
+
+    // Mobile view detection
+    updateMobileView();
+    window.addEventListener("resize", updateMobileView);
+
+    // Start in list view on mobile
+    if (isMobileView) {
+      document.body.classList.add("mobile-list-view");
+    }
+
     loadChannels();
     refresh();
     checkActiveBatch();

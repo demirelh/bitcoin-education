@@ -53,10 +53,27 @@ btcedu run-latest
 
 ## Updating to a New Version
 
-After pulling new code, always run migrations to update the database schema:
+### Automated Deployment (Recommended)
+
+Use the `run.sh` script to safely update the application in one command:
+
+```bash
+./run.sh
+```
+
+This script automatically:
+- Pulls the latest code from git
+- Installs/updates Python dependencies
+- Runs database migrations
+- Restarts the btcedu-web service
+
+### Manual Deployment
+
+Alternatively, you can run each step manually:
 
 ```bash
 git pull
+pip install -e ".[web]"
 btcedu migrate
 sudo systemctl restart btcedu-web  # If using systemd
 ```

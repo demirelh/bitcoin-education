@@ -1,0 +1,56 @@
+{
+  "runtime_model": {
+    "provider": "Anthropic",
+    "model": "claude-sonnet-4-5-20250929",
+    "confidence": "HIGH - based on system context information"
+  },
+  "runtime_in_repo_models": true,
+  "model_routing_supported": {
+    "value": "YES",
+    "confidence": "HIGH - Task tool accepts model parameter (haiku/sonnet/opus)"
+  },
+  "available_providers": [
+    "Anthropic",
+    "OpenAI",
+    "Google",
+    "Meta",
+    "Mistral AI"
+  ],
+  "available_models": [
+    "claude-opus-4-5-20251101",
+    "claude-3-opus-20240229",
+    "claude-sonnet-4-5-20250929",
+    "claude-sonnet-4-20250514",
+    "claude-3-5-haiku-20241022",
+    "claude-3-haiku-20240307",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "o1",
+    "o1-mini",
+    "gpt-4-turbo",
+    "gpt-4-turbo-2024-04-09",
+    "gpt-4",
+    "gpt-4-0613",
+    "gpt-3.5-turbo",
+    "whisper-1"
+  ],
+  "models_likely_usable": [
+    "claude-opus-4-5-20251101",
+    "claude-3-opus-20240229",
+    "claude-sonnet-4-5-20250929",
+    "claude-sonnet-4-20250514",
+    "claude-3-5-haiku-20241022",
+    "claude-3-haiku-20240307",
+    "gpt-4o",
+    "gpt-4o-mini",
+    "o1",
+    "o1-mini",
+    "gpt-4-turbo",
+    "gpt-4-turbo-2024-04-09",
+    "gpt-4",
+    "gpt-4-0613",
+    "gpt-3.5-turbo",
+    "whisper-1"
+  ],
+  "notes": "This report compares the runtime model (claude-sonnet-4-5-20250929) against models listed in MODELS_TABLE.md. Found 5 providers and 26 total models. Runtime model is present in the table."
+}

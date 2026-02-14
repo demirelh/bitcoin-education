@@ -213,5 +213,9 @@ def test_constraints_table_markdown_valid():
     assert len(table_lines) >= 8
 
     # Verify all 6 constraints are in the table
-    constraint_count = sum(1 for line in table_lines if "| " in line and line != table_lines[0] and line != table_lines[1])
+    constraint_count = sum(
+        1
+        for line in table_lines
+        if "| " in line and line != table_lines[0] and line != table_lines[1]
+    )
     assert constraint_count == 6

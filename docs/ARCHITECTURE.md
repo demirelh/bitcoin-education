@@ -403,12 +403,12 @@ bitcoin-education/
 │   │   ├── qa.py                  # Q&A pairs
 │   │   ├── publishing.py          # Titles, descriptions, tags
 │   │   ├── refine_outline.py      # Outline refinement
-│   │   ├── refine_script.py       # Script refinement
-│   │   └── refine_publishing.py   # Publishing refinement
+│   │   └── refine_script.py       # Script refinement
 │   │
 │   ├── utils/                     # Utility functions
 │   │   ├── __init__.py
-│   │   └── journal.py             # Progress log utility
+│   │   ├── journal.py             # Progress log utility
+│   │   └── llm_introspection.py   # LLM usage report generation
 │   │
 │   └── web/                       # Flask web dashboard
 │       ├── __init__.py
@@ -484,6 +484,7 @@ bitcoin-education/
 ├── .github/                       # GitHub Actions CI/CD
 │   └── workflows/
 │       ├── ci.yml                 # Linting + tests
+│       ├── deploy.yml             # Deployment to production
 │       └── security.yml           # Security scanning
 │
 ├── README.md                      # Main documentation
@@ -856,6 +857,7 @@ def create_app(settings):
 - `POST /api/episodes/<episode_id>/transcribe` - Queue transcribe job
 - `POST /api/episodes/<episode_id>/chunk` - Queue chunk job
 - `POST /api/episodes/<episode_id>/generate` - Queue generate job (supports `force`, `dry_run`, `top_k`)
+- `POST /api/episodes/<episode_id>/refine` - Queue refinement job (supports `force`)
 - `POST /api/episodes/<episode_id>/run` - Queue full pipeline
 - `POST /api/episodes/<episode_id>/retry` - Queue retry
 - `POST /api/detect` - Run detection (check feed for new episodes)
@@ -871,6 +873,12 @@ def create_app(settings):
 - `GET /api/cost` - Aggregated cost summary (by episode, by channel)
 - `GET /api/whats-new` - Dashboard summary (new, failed, pending counts)
 - `GET /api/episodes/<episode_id>/action-log` - Job history for episode
+
+**Channel Management:**
+- `GET /api/channels` - List all channels
+- `POST /api/channels` - Create a new channel (requires `name` + `youtube_channel_id` or `rss_url`)
+- `DELETE /api/channels/<id>` - Delete a channel (blocked if episodes exist)
+- `POST /api/channels/<id>/toggle` - Toggle channel active/inactive status
 
 ### Frontend Architecture (SPA)
 
@@ -989,6 +997,7 @@ These commands are designed for automated execution (cron, systemd timers) with 
 | `btcedu cost [--episode-id ID]` | API usage costs breakdown | JSON |
 | `btcedu report --episode-id ID` | Show latest pipeline report | JSON |
 | `btcedu journal [--tail N]` | Show project progress log | Markdown |
+| `btcedu llm-report [--json-only] [--output FILE]` | Generate LLM usage introspection report | JSON/Markdown |
 
 ### Database Management
 
@@ -1142,13 +1151,19 @@ DRY_RUN=false
   4. Run ruff linter
   5. Run pytest with dummy API keys
 
+**.github/workflows/deploy.yml**
+- Runs on push to `main` + manual trigger
+- Steps:
+  1. Setup SSH with deploy key
+  2. SSH to Raspberry Pi and run deploy script (`run.sh`)
+
 **.github/workflows/security.yml**
 - Runs weekly + on push
 - Steps:
   1. Dependency vulnerability scan
   2. Secret detection
 
-**Deployment:** Manual SSH to Raspberry Pi, then:
+**Manual Deployment:** SSH to Raspberry Pi, then:
 ```bash
 cd /home/pi/AI-Startup-Lab/bitcoin-education
 git pull

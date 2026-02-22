@@ -99,7 +99,7 @@ No need for nginx or certbot.
 
 **Architecture:**
 ```
-Internet → DuckDNS → Router → Caddy (:443, auto-TLS) → Gunicorn (:8090)
+Internet → DuckDNS → Router → Caddy (:443, auto-TLS) → Gunicorn (:8091)
 ```
 
 **Files created:**

@@ -11,14 +11,12 @@ class TestSettings:
             podcast_youtube_channel_id="UCtest123",
         )
         assert settings.database_url == "sqlite:///data/btcedu.db"
-        assert settings.chromadb_persist_dir == "data/chromadb"
         assert settings.audio_format == "m4a"
         assert settings.max_audio_chunk_mb == 24
         assert settings.claude_model == "claude-sonnet-4-20250514"
         assert settings.max_retries == 3
         assert settings.whisper_model == "whisper-1"
         assert settings.whisper_language == "de"
-        assert settings.output_dir == "output"
         assert settings.raw_data_dir == "data/raw"
         assert settings.transcripts_dir == "data/transcripts"
         assert settings.chunks_dir == "data/chunks"
@@ -32,10 +30,6 @@ class TestSettings:
     def test_source_type_override(self):
         settings = Settings(source_type="rss")
         assert settings.source_type == "rss"
-
-    def test_use_chroma_default_false(self):
-        settings = Settings()
-        assert settings.use_chroma is False
 
     def test_effective_whisper_api_key_prefers_whisper(self):
         settings = Settings(whisper_api_key="whisper-key", openai_api_key="openai-key")

@@ -37,10 +37,6 @@ class Settings(BaseSettings):
     # Database
     database_url: str = "sqlite:///data/btcedu.db"
 
-    # ChromaDB (optional)
-    use_chroma: bool = False
-    chromadb_persist_dir: str = "data/chromadb"
-
     # Podcast Source
     source_type: str = "youtube_rss"  # "youtube_rss" or "rss"
     podcast_youtube_channel_id: str = ""
@@ -69,7 +65,6 @@ class Settings(BaseSettings):
     dry_run: bool = False
 
     # Output
-    output_dir: str = "output"
     outputs_dir: str = "data/outputs"
 
     # Reports & Logs

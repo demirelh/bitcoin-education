@@ -35,7 +35,7 @@ The pipeline will be extended from "content artifact generation" to "full video 
 | 11 | **Review** | NEW | Human review + approval workflow |
 | 12 | **Publish** | NEW | YouTube upload via API |
 
-The existing GENERATE and REFINE stages will be **replaced** by the new stages 4-7, which decompose the monolithic generation into reviewable, resumable steps.
+The existing GENERATE and REFINE stages will be **superseded** by the new stages 4-7, which decompose the monolithic generation into reviewable, resumable steps. The v1 pipeline (CHUNK → GENERATE → REFINE) continues to operate for all episodes until the v2 pipeline is fully operational through at least the ADAPT stage. A `pipeline_version` config setting (default=1) controls which flow `run-latest` uses. No v1 code is deleted until v2 is proven in production.
 
 ### Guiding Principles
 
@@ -52,7 +52,7 @@ The existing GENERATE and REFINE stages will be **replaced** by the new stages 4
 ## 2) Current-State Assessment
 
 ### CLI (`btcedu/cli.py`)
-- **Exists**: 26 Click commands covering all pipeline operations, batch processing, cost reporting, status management
+- **Exists**: ~20 Click commands covering all pipeline operations, batch processing, cost reporting, status management
 - **Reuse**: Command structure, context passing, session management patterns
 - **Extend**: Add new commands for each new stage (correct, translate, adapt, chapterize, imagegen, tts, render, review, publish)
 
@@ -93,7 +93,8 @@ The existing GENERATE and REFINE stages will be **replaced** by the new stages 4
 
 ### Config (`btcedu/config.py`)
 - **Exists**: Pydantic Settings from .env
-- **Extend**: Add ElevenLabs API key, YouTube API credentials, image gen API key, ffmpeg path, review settings
+- **Extend (first)**: Add `pipeline_version` (int, default=1) — controls whether `run-latest` uses v1 (chunk→generate→refine) or v2 (correct→translate→adapt→...) flow. Flip to 2 once v2 pipeline is operational through ADAPT stage. Add `max_episode_cost_usd` (float, default=10.0) — safety cap on per-episode API costs.
+- **Extend (later)**: Add ElevenLabs API key, YouTube API credentials, image gen API key, ffmpeg path, review settings
 
 ### Deployment (`deploy/`)
 - **Exists**: systemd services/timers for detect, run, web
@@ -271,10 +272,11 @@ Every stage execution records a provenance file:
 - `btcedu retry <episode_id>` resumes from last successful stage
 - API failures (rate limit, timeout): exponential backoff with 3 retries within stage
 - Review rejections: not a "failure" — episode goes back to previous stage for regeneration
+- **Cost cap**: `max_episode_cost_usd` setting (default: $10). Pipeline checks cumulative cost per episode (sum of all PipelineRun.estimated_cost_usd) after each stage. If exceeded, episode status set to COST_LIMIT with error message. Prevents runaway API costs from retry loops or unexpectedly long transcripts.
 
 ### 3.8 Idempotency Strategy
 
-Per stage, "already done" = output file exists AND prompt hash matches AND input file unchanged. Details in Section 8.
+Per stage, "already done" = output file exists AND no `.stale` marker exists AND prompt hash matches current default AND input content hash matches stored input hash (from provenance file). Using content hashes (SHA-256, not mtime) ensures filesystem-independent correctness. Details in Section 8.
 
 ---
 
@@ -533,13 +535,26 @@ def correct_transcript(
 - Diff: `data/outputs/{ep_id}/review/adaptation_diff.json` (changes from literal translation)
 
 **Adaptation Rules** (encoded in prompt):
-1. Replace German institutions with Turkish equivalents (BaFin → SPK, Sparkasse → generic bank)
+
+*Tier 1 — Mechanical (low risk, auto-applicable):*
+1. Replace German institutions with Turkish equivalents from maintained lookup (BaFin → SPK, Sparkasse → generic bank reference)
 2. Replace Euro amounts with context-appropriate Turkish Lira or keep in USD
-3. Replace German cultural references with Turkish ones
+3. Adjust tone to Turkish influencer style: conversational, engaging, use "siz" (formal you)
 4. Remove Germany-specific legal/tax advice entirely (flag with "[kaldırıldı: ülkeye özgü]")
-5. Keep all Bitcoin/crypto facts unchanged
-6. Add Turkish influencer tone: conversational, engaging, use "siz" (formal you)
-7. NO political commentary, NO financial advice, editorial neutrality
+
+*Tier 2 — Editorial (flagged for review, highlighted in diff):*
+5. Replace German cultural references with Turkish equivalents (each substitution tagged for reviewer)
+6. Any regulatory/legal context change beyond simple removal
+
+*Hard constraints (FORBIDDEN — prompt must enforce):*
+7. Keep ALL Bitcoin/crypto technical facts unchanged — no simplification, no reinterpretation
+8. Do NOT invent Turkish regulatory details — if the German source cites a specific law, either remove with marker or add neutral note ("Türkiye'de bu konu farklı düzenlenmiştir") — NEVER fabricate Turkish law references
+9. Do NOT add financial advice, investment recommendations, or price predictions
+10. Do NOT add political commentary or partisan framing
+11. Do NOT present adaptation choices as claims from the original source
+12. Editorial neutrality: adaptation changes framing, not facts
+
+Each adaptation in the output should be tagged with `[T1]` or `[T2]` to indicate its tier. Tier 2 adaptations are highlighted in the review diff view.
 
 **Dashboard Implications**:
 - Side-by-side: literal translation vs adapted version
@@ -579,6 +594,7 @@ def correct_transcript(
 **Chapter JSON Schema**:
 ```json
 {
+  "schema_version": "1.0",
   "episode_id": "abc123",
   "title": "Bitcoin Nedir?",
   "total_chapters": 8,
@@ -615,6 +631,8 @@ def correct_transcript(
   ]
 }
 ```
+
+**Schema Versioning Rule**: The `schema_version` field is required. Minor version increments (1.0 → 1.1) are additive and backward compatible. Major version increments (1.x → 2.0) are breaking and require re-chapterization of existing episodes. IMAGE_GEN, TTS, and RENDER stages validate schema version compatibility before processing.
 
 **Implementation Slices**:
 1. Core chapterizer with basic JSON output
@@ -804,6 +822,7 @@ class ReviewTask(Base):
     created_at: datetime
     reviewed_at: datetime | None
     reviewer_notes: str | None
+    artifact_hash: str | None        # SHA-256 of primary artifact (e.g., draft.mp4) at approval time
     prompt_version_id: int | None # FK to PromptVersion
 ```
 
@@ -823,6 +842,26 @@ class ReviewTask(Base):
 4. Owner approves → status → APPROVED, pipeline resumes
 5. Owner rejects → status → REJECTED, episode goes back to previous stage
 6. Owner requests changes → notes saved, episode goes back for regeneration with notes as additional prompt context
+
+**Reviewer Feedback Injection**:
+
+When a reviewer selects "Request Changes" and provides notes, the notes are injected into the re-generation prompt via a dedicated `{{reviewer_feedback}}` template variable. The prompt template wraps feedback in clear delimiters:
+
+```
+{% if reviewer_feedback %}
+## Reviewer Feedback (apply these corrections)
+
+{{ reviewer_feedback }}
+
+Important: Treat this feedback as correction guidance. Do not include the feedback text verbatim in your output.
+{% endif %}
+```
+
+Reviewer notes should use structured categories where possible:
+- **Factual error**: "Section X incorrectly states Y, should be Z"
+- **Tone issue**: "Section X is too formal/informal"
+- **Missing content**: "Add context about X"
+- **Formatting**: "Chapter breaks should be at X and Y"
 
 **Implementation Slices**:
 1. ReviewTask model and migration
@@ -866,6 +905,18 @@ class PublishJob(Base):
     metadata_snapshot: JSON       # what was sent to YouTube
     error_message: str | None
 ```
+
+**Pre-Publish Safety Checks**:
+
+Before uploading to YouTube, the publish stage MUST verify:
+1. **Approval gate**: Episode status is APPROVED (a ReviewTask with stage="render" exists with status=APPROVED)
+2. **Artifact integrity**: SHA-256 hash of `render/draft.mp4` matches the hash recorded in the APPROVED ReviewDecision record (`artifact_hash` field)
+3. **Metadata completeness**: Title, description, and tags are non-empty
+4. **Cost sanity**: Total episode cost is within budget (`max_episode_cost_usd` setting)
+
+If any check fails, the publish stage aborts with a descriptive error. Publishing never proceeds silently past a failed check.
+
+The `artifact_hash` is computed and stored when Review Gate 3 approves the video. This creates a tamper-evident chain from approval to upload.
 
 **Implementation Slices**:
 1. YouTube service with OAuth2 setup flow
@@ -1069,6 +1120,7 @@ class EpisodeStatus(str, Enum):
     # Terminal
     COMPLETED = "completed"
     FAILED = "failed"
+    COST_LIMIT = "cost_limit"        # per-episode cost cap exceeded
 ```
 
 ### 7.2 Episode Model Extension
@@ -1117,6 +1169,7 @@ published_at_youtube: datetime | None = None
 | created_at | DATETIME | |
 | reviewed_at | DATETIME | |
 | reviewer_notes | TEXT | |
+| artifact_hash | TEXT | SHA-256 of primary artifact at approval time |
 
 **Index**: (episode_id, stage), status
 
@@ -1178,7 +1231,7 @@ published_at_youtube: datetime | None = None
 ## 8) Stage-by-Stage Idempotency + Retry Design
 
 ### CORRECT Stage
-- **Already done**: `transcript.corrected.de.txt` exists AND `prompt_hash` matches current default prompt version AND `transcript.de.txt` hasn't changed (compare mtime or hash)
+- **Already done**: `transcript.corrected.de.txt` exists AND no `.stale` marker AND `prompt_hash` matches current default prompt version AND `transcript.de.txt` content hash matches stored input hash (from provenance file)
 - **Invalidated by**: transcript re-run, prompt version change
 - **Force re-run**: `btcedu correct <ep_id> --force`
 - **Cascade**: invalidates TRANSLATE, ADAPT, and all downstream
@@ -1237,8 +1290,21 @@ STAGE_DEPENDENCIES = {
 }
 
 def invalidate_downstream(session, episode_id, from_stage):
-    """Mark all downstream stages as needing re-run."""
-    # Walk dependency graph, delete output files, reset status
+    """Mark all downstream stages as needing re-run.
+
+    Does NOT delete output files (preserves for comparison).
+    Instead, creates .stale marker files and sets invalidated_at timestamp.
+    """
+    for stage in _downstream_stages(from_stage):
+        for output_path in _get_stage_outputs(episode_id, stage):
+            stale_marker = Path(str(output_path) + ".stale")
+            stale_marker.write_text(json.dumps({
+                "invalidated_by": from_stage,
+                "invalidated_at": datetime.utcnow().isoformat(),
+                "reason": "upstream_change",
+            }))
+    # Reset episode status to from_stage's completed status
+    # so pipeline resumes from the changed stage
 ```
 
 ---
@@ -1451,7 +1517,7 @@ Checklist:
 - `btcedu/models/review.py` (new)
 - `btcedu/core/prompt_registry.py` (new)
 - `btcedu/prompts/templates/system.md` (new)
-- `btcedu/db/migrations/` (new migration files)
+- `btcedu/migrations/__init__.py` (append new Migration subclasses to MIGRATIONS list)
 - `tests/test_models.py` (new tests)
 - `tests/test_prompt_registry.py` (new)
 

@@ -134,7 +134,7 @@ restart_service() {
     log_info "Restarting ${SERVICE_NAME} service..."
 
     # Check if service exists
-    if ! systemctl list-unit-files | grep -q "^${SERVICE_NAME}.service"; then
+    if ! systemctl list-unit-files | grep -q "${SERVICE_NAME}.service"; then
         log_warn "Service ${SERVICE_NAME} not found. Skipping restart."
         log_warn "To enable the service, run: sudo cp deploy/${SERVICE_NAME}.service /etc/systemd/system/ && sudo systemctl enable --now ${SERVICE_NAME}"
         return 0

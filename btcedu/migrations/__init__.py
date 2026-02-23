@@ -182,9 +182,191 @@ class AddChannelsSupportMigration(Migration):
         logger.info("✓ Migration completed successfully!")
 
 
+class AddV2PipelineColumnsMigration(Migration):
+    """Migration v2: Add v2 pipeline columns to episodes table."""
+
+    @property
+    def version(self) -> str:
+        return "002_add_v2_pipeline_columns"
+
+    @property
+    def description(self) -> str:
+        return "Add pipeline_version, review_status, youtube_video_id, published_at_youtube columns to episodes"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("PRAGMA table_info(episodes)"))
+        columns = [row[1] for row in result.fetchall()]
+
+        if "pipeline_version" not in columns:
+            session.execute(
+                text("ALTER TABLE episodes ADD COLUMN pipeline_version INTEGER DEFAULT 1")
+            )
+            session.commit()
+            logger.info("Added pipeline_version column")
+
+        if "review_status" not in columns:
+            session.execute(text("ALTER TABLE episodes ADD COLUMN review_status TEXT"))
+            session.commit()
+            logger.info("Added review_status column")
+
+        if "youtube_video_id" not in columns:
+            session.execute(text("ALTER TABLE episodes ADD COLUMN youtube_video_id TEXT"))
+            session.commit()
+            logger.info("Added youtube_video_id column")
+
+        if "published_at_youtube" not in columns:
+            session.execute(
+                text("ALTER TABLE episodes ADD COLUMN published_at_youtube TIMESTAMP")
+            )
+            session.commit()
+            logger.info("Added published_at_youtube column")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
+class CreatePromptVersionsTableMigration(Migration):
+    """Migration v3: Create prompt_versions table."""
+
+    @property
+    def version(self) -> str:
+        return "003_create_prompt_versions"
+
+    @property
+    def description(self) -> str:
+        return "Create prompt_versions table for prompt versioning system"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='prompt_versions'")
+        )
+        if not result.fetchone():
+            session.execute(
+                text("""
+                    CREATE TABLE prompt_versions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL,
+                        version INTEGER NOT NULL,
+                        content_hash TEXT NOT NULL,
+                        template_path TEXT,
+                        model TEXT,
+                        temperature REAL,
+                        max_tokens INTEGER,
+                        is_default BOOLEAN NOT NULL DEFAULT 0,
+                        created_at TIMESTAMP NOT NULL,
+                        notes TEXT,
+                        UNIQUE(name, version),
+                        UNIQUE(name, content_hash)
+                    )
+                """)
+            )
+            session.execute(
+                text("CREATE INDEX idx_prompt_versions_name ON prompt_versions(name)")
+            )
+            session.execute(
+                text(
+                    "CREATE INDEX idx_prompt_versions_default "
+                    "ON prompt_versions(name, is_default)"
+                )
+            )
+            session.commit()
+            logger.info("Created prompt_versions table with indexes")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
+class CreateReviewTablesMigration(Migration):
+    """Migration v4: Create review_tasks and review_decisions tables."""
+
+    @property
+    def version(self) -> str:
+        return "004_create_review_tables"
+
+    @property
+    def description(self) -> str:
+        return "Create review_tasks and review_decisions tables"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        # Create review_tasks table
+        result = session.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='review_tasks'")
+        )
+        if not result.fetchone():
+            session.execute(
+                text("""
+                    CREATE TABLE review_tasks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        episode_id TEXT NOT NULL,
+                        stage TEXT NOT NULL,
+                        status TEXT NOT NULL DEFAULT 'pending',
+                        artifact_paths TEXT,
+                        diff_path TEXT,
+                        prompt_version_id INTEGER,
+                        created_at TIMESTAMP NOT NULL,
+                        reviewed_at TIMESTAMP,
+                        reviewer_notes TEXT,
+                        artifact_hash TEXT,
+                        FOREIGN KEY (prompt_version_id) REFERENCES prompt_versions(id)
+                    )
+                """)
+            )
+            session.execute(
+                text(
+                    "CREATE INDEX idx_review_tasks_episode_stage "
+                    "ON review_tasks(episode_id, stage)"
+                )
+            )
+            session.execute(
+                text("CREATE INDEX idx_review_tasks_status ON review_tasks(status)")
+            )
+            session.commit()
+            logger.info("Created review_tasks table with indexes")
+
+        # Create review_decisions table
+        result = session.execute(
+            text(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='review_decisions'"
+            )
+        )
+        if not result.fetchone():
+            session.execute(
+                text("""
+                    CREATE TABLE review_decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        review_task_id INTEGER NOT NULL,
+                        decision TEXT NOT NULL,
+                        notes TEXT,
+                        decided_at TIMESTAMP NOT NULL,
+                        FOREIGN KEY (review_task_id) REFERENCES review_tasks(id)
+                    )
+                """)
+            )
+            session.execute(
+                text(
+                    "CREATE INDEX idx_review_decisions_task "
+                    "ON review_decisions(review_task_id)"
+                )
+            )
+            session.commit()
+            logger.info("Created review_decisions table with index")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
+    AddV2PipelineColumnsMigration(),
+    CreatePromptVersionsTableMigration(),
+    CreateReviewTablesMigration(),
 ]
 
 

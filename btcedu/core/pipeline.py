@@ -25,6 +25,17 @@ _STATUS_ORDER = {
     EpisodeStatus.REFINED: 5,
     EpisodeStatus.COMPLETED: 6,
     EpisodeStatus.FAILED: -1,
+    # v2 pipeline statuses
+    EpisodeStatus.CORRECTED: 10,
+    EpisodeStatus.TRANSLATED: 11,
+    EpisodeStatus.ADAPTED: 12,
+    EpisodeStatus.CHAPTERIZED: 13,
+    EpisodeStatus.IMAGES_GENERATED: 14,
+    EpisodeStatus.TTS_DONE: 15,
+    EpisodeStatus.RENDERED: 16,
+    EpisodeStatus.APPROVED: 17,
+    EpisodeStatus.PUBLISHED: 18,
+    EpisodeStatus.COST_LIMIT: -2,
 }
 
 # Stages in execution order, with the status required to enter each stage

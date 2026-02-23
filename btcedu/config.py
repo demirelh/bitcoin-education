@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     max_retries: int = 3
     dry_run: bool = False
 
+    # Pipeline Version Control
+    pipeline_version: int = 1  # 1 = legacy (chunk->generate->refine), 2 = v2 pipeline
+    max_episode_cost_usd: float = 10.0  # per-episode cost safety cap
+
     # Output
     outputs_dir: str = "data/outputs"
 

@@ -8,6 +8,7 @@ from btcedu.db import Base
 
 
 class EpisodeStatus(str, enum.Enum):
+    # Existing (v1 pipeline)
     NEW = "new"
     DOWNLOADED = "downloaded"
     TRANSCRIBED = "transcribed"
@@ -16,9 +17,21 @@ class EpisodeStatus(str, enum.Enum):
     REFINED = "refined"
     COMPLETED = "completed"
     FAILED = "failed"
+    # New (v2 pipeline)
+    CORRECTED = "corrected"
+    TRANSLATED = "translated"
+    ADAPTED = "adapted"
+    CHAPTERIZED = "chapterized"
+    IMAGES_GENERATED = "images_generated"
+    TTS_DONE = "tts_done"
+    RENDERED = "rendered"
+    APPROVED = "approved"
+    PUBLISHED = "published"
+    COST_LIMIT = "cost_limit"
 
 
 class PipelineStage(str, enum.Enum):
+    # Existing (v1)
     DETECT = "detect"
     DOWNLOAD = "download"
     TRANSCRIBE = "transcribe"
@@ -26,6 +39,16 @@ class PipelineStage(str, enum.Enum):
     GENERATE = "generate"
     REFINE = "refine"
     COMPLETE = "complete"
+    # New (v2)
+    CORRECT = "correct"
+    TRANSLATE = "translate"
+    ADAPT = "adapt"
+    CHAPTERIZE = "chapterize"
+    IMAGEGEN = "imagegen"
+    TTS = "tts"
+    RENDER = "render"
+    REVIEW = "review"
+    PUBLISH = "publish"
 
 
 class RunStatus(str, enum.Enum):
@@ -61,6 +84,14 @@ class Episode(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    # v2 pipeline fields
+    pipeline_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    review_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    youtube_video_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    published_at_youtube: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     pipeline_runs: Mapped[list["PipelineRun"]] = relationship(
         back_populates="episode", cascade="all, delete-orphan"

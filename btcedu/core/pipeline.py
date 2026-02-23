@@ -38,14 +38,35 @@ _STATUS_ORDER = {
     EpisodeStatus.COST_LIMIT: -2,
 }
 
-# Stages in execution order, with the status required to enter each stage
-_STAGES = [
+# v1 stages in execution order, with the status required to enter each stage
+_V1_STAGES = [
     ("download", EpisodeStatus.NEW),
     ("transcribe", EpisodeStatus.DOWNLOADED),
     ("chunk", EpisodeStatus.TRANSCRIBED),
     ("generate", EpisodeStatus.CHUNKED),
     ("refine", EpisodeStatus.GENERATED),
 ]
+
+# v2 stages (extends after TRANSCRIBED with CORRECT instead of CHUNK)
+_V2_STAGES = [
+    ("download", EpisodeStatus.NEW),
+    ("transcribe", EpisodeStatus.DOWNLOADED),
+    ("correct", EpisodeStatus.TRANSCRIBED),
+    # Future sprints will add:
+    # ("translate", EpisodeStatus.CORRECTED),
+    # ("adapt", EpisodeStatus.TRANSLATED),
+    # ...
+]
+
+# Keep _STAGES as alias for backward compat
+_STAGES = _V1_STAGES
+
+
+def _get_stages(settings: Settings) -> list[tuple[str, EpisodeStatus]]:
+    """Return the appropriate stages list based on pipeline version."""
+    if settings.pipeline_version >= 2:
+        return _V2_STAGES
+    return _V1_STAGES
 
 
 def _utcnow() -> datetime:
@@ -86,19 +107,25 @@ def resolve_pipeline_plan(
     session: Session,
     episode: Episode,
     force: bool = False,
+    settings: Settings | None = None,
 ) -> list[StagePlan]:
     """Determine what each stage would do without executing anything.
 
     Returns a list of StagePlan entries — one per stage — showing whether
     each stage would run, be skipped, or is pending (will run if prior
     stages succeed).
+
+    Args:
+        settings: If provided, selects v1 or v2 stages based on pipeline_version.
+            If None, uses v1 stages for backward compatibility.
     """
     session.refresh(episode)
     current_order = _STATUS_ORDER.get(episode.status, -1)
     plan: list[StagePlan] = []
     will_advance = False
 
-    for stage_name, required_status in _STAGES:
+    stages = _get_stages(settings) if settings else _V1_STAGES
+    for stage_name, required_status in stages:
         required_order = _STATUS_ORDER[required_status]
 
         if current_order > required_order and not force:
@@ -178,6 +205,18 @@ def _run_stage(
                 detail=f"{len(result.artifacts)} artifacts (${result.total_cost_usd:.4f})",
             )
 
+        elif stage_name == "correct":
+            from btcedu.core.corrector import correct_transcript
+
+            result = correct_transcript(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+            return StageResult(
+                "correct",
+                "success",
+                elapsed,
+                detail=f"{result.change_count} corrections (${result.cost_usd:.4f})",
+            )
+
         else:
             raise ValueError(f"Unknown stage: {stage_name}")
 
@@ -212,7 +251,7 @@ def run_episode_pipeline(
     )
 
     # Log pipeline plan before execution
-    plan = resolve_pipeline_plan(session, episode, force)
+    plan = resolve_pipeline_plan(session, episode, force, settings=settings)
     plan_lines = [f"  {p.stage}: {p.decision} ({p.reason})" for p in plan]
     logger.info(
         "Pipeline plan for %s (status: %s):\n%s",
@@ -223,7 +262,8 @@ def run_episode_pipeline(
 
     logger.info("Pipeline start: %s (%s)", episode.episode_id, episode.title)
 
-    for stage_name, required_status in _STAGES:
+    stages = _get_stages(settings)
+    for stage_name, required_status in stages:
         # Refresh episode status from DB
         session.refresh(episode)
 
@@ -272,9 +312,9 @@ def run_episode_pipeline(
 
     report.completed_at = _utcnow()
 
-    # Calculate total cost from generate/refine stage results
+    # Calculate total cost from stage results that report costs
     for sr in report.stages:
-        if sr.stage in ("generate", "refine") and sr.status == "success" and "$" in sr.detail:
+        if sr.stage in ("generate", "refine", "correct") and sr.status == "success" and "$" in sr.detail:
             try:
                 cost_str = sr.detail.split("$")[1].rstrip(")")
                 report.total_cost_usd += float(cost_str)
@@ -299,8 +339,8 @@ def run_pending(
 ) -> list[PipelineReport]:
     """Process all pending episodes through the pipeline.
 
-    Queries episodes with status in (NEW, DOWNLOADED, TRANSCRIBED, CHUNKED),
-    ordered by published_at ASC (oldest first).
+    Queries episodes with status in (NEW, DOWNLOADED, TRANSCRIBED, CHUNKED,
+    GENERATED, CORRECTED), ordered by published_at ASC (oldest first).
 
     Args:
         session: DB session.
@@ -321,6 +361,8 @@ def run_pending(
                     EpisodeStatus.TRANSCRIBED,
                     EpisodeStatus.CHUNKED,
                     EpisodeStatus.GENERATED,
+                    # v2 pipeline statuses
+                    EpisodeStatus.CORRECTED,
                 ]
             )
         )
@@ -382,6 +424,8 @@ def run_latest(
                     EpisodeStatus.TRANSCRIBED,
                     EpisodeStatus.CHUNKED,
                     EpisodeStatus.GENERATED,
+                    # v2 pipeline statuses
+                    EpisodeStatus.CORRECTED,
                 ]
             )
         )

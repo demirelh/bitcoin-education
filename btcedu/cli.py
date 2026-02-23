@@ -517,6 +517,36 @@ def refine(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> Non
 
 
 @cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to correct (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-correct even if output exists.")
+@click.pass_context
+def correct(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
+    """Correct Whisper transcripts for specified episodes (v2 pipeline)."""
+    from btcedu.core.corrector import correct_transcript
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = correct_transcript(session, eid, settings, force=force)
+                click.echo(
+                    f"[OK] {eid} -> {result.corrected_path} "
+                    f"({result.change_count} changes, ${result.cost_usd:.4f})"
+                )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
+@cli.command()
 @click.option("--episode-id", "episode_id", type=str, default=None, help="Filter by episode ID")
 @click.pass_context
 def cost(ctx: click.Context, episode_id: str | None) -> None:

@@ -349,6 +349,107 @@ class TestCorrectTranscript:
 
 
 # ---------------------------------------------------------------------------
+# Reviewer feedback injection
+# ---------------------------------------------------------------------------
+
+
+class TestReviewerFeedbackInjection:
+    def test_feedback_injected_into_prompt(self, db_session, transcribed_episode, mock_settings):
+        """When reviewer feedback exists, it replaces {{ reviewer_feedback }} in the prompt."""
+        from btcedu.core.reviewer import create_review_task, request_changes
+
+        # First correction — produces output files
+        result1 = correct_transcript(db_session, "ep_test", mock_settings)
+        assert Path(result1.corrected_path).exists()
+
+        # Create and request changes on a review task
+        task = create_review_task(
+            db_session,
+            episode_id="ep_test",
+            stage="correct",
+            artifact_paths=[result1.corrected_path],
+            diff_path=result1.diff_path,
+        )
+        request_changes(db_session, task.id, notes="Fix Bitcoin spelling")
+
+        # Episode is now TRANSCRIBED again; re-correct should inject feedback
+        db_session.refresh(transcribed_episode)
+        assert transcribed_episode.status == EpisodeStatus.TRANSCRIBED
+
+        # Patch call_claude to capture the system prompt
+        captured_prompts = []
+        original_call = None
+
+        from btcedu.services import claude_service
+
+        original_call = claude_service.call_claude
+
+        def spy_call_claude(system_prompt, user_message, **kwargs):
+            captured_prompts.append(system_prompt)
+            return original_call(system_prompt=system_prompt, user_message=user_message, **kwargs)
+
+        with patch("btcedu.core.corrector.call_claude", side_effect=spy_call_claude):
+            result2 = correct_transcript(db_session, "ep_test", mock_settings, force=True)
+
+        # The feedback should appear in the system prompt
+        assert len(captured_prompts) >= 1
+        system_prompt = captured_prompts[0]
+        assert "Fix Bitcoin spelling" in system_prompt
+        assert "Reviewer-Korrekturen" in system_prompt
+
+    def test_no_feedback_placeholder_removed(self, db_session, transcribed_episode, mock_settings):
+        """When no feedback exists, {{ reviewer_feedback }} is replaced with empty string."""
+        captured_prompts = []
+        original_call = None
+
+        from btcedu.services import claude_service
+
+        original_call = claude_service.call_claude
+
+        def spy_call_claude(system_prompt, user_message, **kwargs):
+            captured_prompts.append(system_prompt)
+            return original_call(system_prompt=system_prompt, user_message=user_message, **kwargs)
+
+        with patch("btcedu.core.corrector.call_claude", side_effect=spy_call_claude):
+            correct_transcript(db_session, "ep_test", mock_settings)
+
+        assert len(captured_prompts) >= 1
+        system_prompt = captured_prompts[0]
+        # Placeholder should not appear in the rendered prompt
+        assert "{{ reviewer_feedback }}" not in system_prompt
+        # No feedback block should appear
+        assert "Reviewer-Korrekturen" not in system_prompt
+
+    def test_stale_marker_triggers_rerun(self, db_session, transcribed_episode, mock_settings):
+        """A .stale marker on the corrected file forces re-correction."""
+        result1 = correct_transcript(db_session, "ep_test", mock_settings)
+        corrected_path = Path(result1.corrected_path)
+        assert corrected_path.exists()
+
+        # Idempotent: second run without force returns cached (zero cost)
+        result2 = correct_transcript(db_session, "ep_test", mock_settings)
+        assert result2.cost_usd == 0.0
+
+        # Create stale marker
+        stale_marker = corrected_path.parent / (corrected_path.name + ".stale")
+        stale_marker.write_text('{"reason": "changes_requested"}')
+
+        # Now re-correction should run (non-zero pipeline run created)
+        runs_before = (
+            db_session.query(PipelineRun)
+            .filter(PipelineRun.stage == PipelineStage.CORRECT)
+            .count()
+        )
+        result3 = correct_transcript(db_session, "ep_test", mock_settings)
+        runs_after = (
+            db_session.query(PipelineRun)
+            .filter(PipelineRun.stage == PipelineStage.CORRECT)
+            .count()
+        )
+        assert runs_after == runs_before + 1
+
+
+# ---------------------------------------------------------------------------
 # CLI test
 # ---------------------------------------------------------------------------
 

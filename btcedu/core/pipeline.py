@@ -13,6 +13,9 @@ from sqlalchemy.orm import Session
 from btcedu.config import Settings
 from btcedu.models.episode import Episode, EpisodeStatus
 
+# Lazy import to avoid circular imports at module level:
+# from btcedu.core.reviewer import has_pending_review
+
 logger = logging.getLogger(__name__)
 
 # Map statuses to their pipeline stage order (lower = earlier)
@@ -52,8 +55,9 @@ _V2_STAGES = [
     ("download", EpisodeStatus.NEW),
     ("transcribe", EpisodeStatus.DOWNLOADED),
     ("correct", EpisodeStatus.TRANSCRIBED),
+    ("review_gate_1", EpisodeStatus.CORRECTED),
     # Future sprints will add:
-    # ("translate", EpisodeStatus.CORRECTED),
+    # ("translate", EpisodeStatus.CORRECTED),  # after review approved
     # ("adapt", EpisodeStatus.TRANSLATED),
     # ...
 ]
@@ -217,6 +221,58 @@ def _run_stage(
                 detail=f"{result.change_count} corrections (${result.cost_usd:.4f})",
             )
 
+        elif stage_name == "review_gate_1":
+            from btcedu.core.reviewer import (
+                create_review_task,
+                has_approved_review,
+                has_pending_review,
+            )
+
+            # Check if already approved
+            if has_approved_review(session, episode.episode_id, "correct"):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_1", "success", elapsed, detail="review approved"
+                )
+
+            # Check if a pending review already exists
+            if has_pending_review(session, episode.episode_id):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_1",
+                    "review_pending",
+                    elapsed,
+                    detail="awaiting review",
+                )
+
+            # Create a new review task
+            corrected_path = (
+                Path(settings.transcripts_dir)
+                / episode.episode_id
+                / "transcript.corrected.de.txt"
+            )
+            diff_path = (
+                Path(settings.outputs_dir)
+                / episode.episode_id
+                / "review"
+                / "correction_diff.json"
+            )
+
+            create_review_task(
+                session,
+                episode.episode_id,
+                stage="correct",
+                artifact_paths=[str(corrected_path)],
+                diff_path=str(diff_path) if diff_path.exists() else None,
+            )
+            elapsed = time.monotonic() - t0
+            return StageResult(
+                "review_gate_1",
+                "review_pending",
+                elapsed,
+                detail="review task created",
+            )
+
         else:
             raise ValueError(f"Unknown stage: {stage_name}")
 
@@ -298,6 +354,9 @@ def run_episode_pipeline(
             episode.retry_count += 1
             session.commit()
             break
+        elif result.status == "review_pending":
+            logger.info("  Stage %s: %s", stage_name, result.detail)
+            break  # Stop pipeline gracefully, no error
         else:
             logger.info("  Stage %s: %s", stage_name, result.detail)
 
@@ -377,6 +436,14 @@ def run_pending(
 
     episodes = query.all()
 
+    # Filter out episodes with active review tasks to avoid wasteful re-processing
+    if episodes:
+        from btcedu.core.reviewer import has_pending_review
+
+        episodes = [
+            ep for ep in episodes if not has_pending_review(session, ep.episode_id)
+        ]
+
     if not episodes:
         logger.info("No pending episodes to process.")
         return []
@@ -414,7 +481,7 @@ def run_latest(
     )
 
     # Find newest pending episode
-    episode = (
+    candidates = (
         session.query(Episode)
         .filter(
             Episode.status.in_(
@@ -430,8 +497,17 @@ def run_latest(
             )
         )
         .order_by(Episode.published_at.desc())
-        .first()
+        .all()
     )
+
+    # Filter out episodes with active review tasks
+    from btcedu.core.reviewer import has_pending_review
+
+    episode = None
+    for candidate in candidates:
+        if not has_pending_review(session, candidate.episode_id):
+            episode = candidate
+            break
 
     if episode is None:
         logger.info("No pending episodes after detection.")

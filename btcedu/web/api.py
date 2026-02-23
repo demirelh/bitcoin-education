@@ -783,6 +783,167 @@ def delete_channel(channel_id):
         session.close()
 
 
+# ---------------------------------------------------------------------------
+# Review System
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/reviews")
+def list_reviews():
+    """List review tasks: pending + recent resolved."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import get_pending_reviews, pending_review_count
+        from btcedu.models.review import ReviewTask
+
+        pending = get_pending_reviews(session)
+
+        # Also get last 20 resolved tasks
+        from btcedu.models.review import ReviewStatus
+
+        resolved = (
+            session.query(ReviewTask)
+            .filter(
+                ReviewTask.status.in_(
+                    [
+                        ReviewStatus.APPROVED.value,
+                        ReviewStatus.REJECTED.value,
+                        ReviewStatus.CHANGES_REQUESTED.value,
+                    ]
+                )
+            )
+            .order_by(ReviewTask.reviewed_at.desc())
+            .limit(20)
+            .all()
+        )
+
+        def _task_to_dict(t):
+            ep = session.query(Episode).filter(Episode.episode_id == t.episode_id).first()
+            return {
+                "id": t.id,
+                "episode_id": t.episode_id,
+                "episode_title": ep.title if ep else None,
+                "stage": t.stage,
+                "status": t.status,
+                "created_at": t.created_at.isoformat() if t.created_at else None,
+                "reviewed_at": t.reviewed_at.isoformat() if t.reviewed_at else None,
+            }
+
+        return jsonify(
+            {
+                "pending_count": pending_review_count(session),
+                "tasks": [_task_to_dict(t) for t in pending + resolved],
+            }
+        )
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/count")
+def review_count():
+    """Return count of pending reviews (for badge)."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import pending_review_count
+
+        return jsonify({"pending_count": pending_review_count(session)})
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/<int:review_id>")
+def get_review_detail(review_id: int):
+    """Return full review detail including diff data."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import get_review_detail
+
+        try:
+            detail = get_review_detail(session, review_id)
+        except ValueError:
+            return jsonify({"error": f"Review not found: {review_id}"}), 404
+
+        return jsonify(detail)
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/<int:review_id>/approve", methods=["POST"])
+def approve_review_route(review_id: int):
+    """Approve a review task."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import approve_review
+
+        body = request.get_json(silent=True) or {}
+        try:
+            decision = approve_review(session, review_id, notes=body.get("notes"))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        return jsonify(
+            {
+                "success": True,
+                "decision_id": decision.id,
+                "decision": decision.decision,
+            }
+        )
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/<int:review_id>/reject", methods=["POST"])
+def reject_review_route(review_id: int):
+    """Reject a review task."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import reject_review
+
+        body = request.get_json(silent=True) or {}
+        try:
+            decision = reject_review(session, review_id, notes=body.get("notes"))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        return jsonify(
+            {
+                "success": True,
+                "decision_id": decision.id,
+                "decision": decision.decision,
+            }
+        )
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/<int:review_id>/request-changes", methods=["POST"])
+def request_changes_route(review_id: int):
+    """Request changes on a review task (requires notes in JSON body)."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import request_changes
+
+        body = request.get_json(silent=True) or {}
+        notes = body.get("notes", "").strip()
+        if not notes:
+            return jsonify({"error": "Notes are required when requesting changes"}), 400
+
+        try:
+            decision = request_changes(session, review_id, notes=notes)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        return jsonify(
+            {
+                "success": True,
+                "decision_id": decision.id,
+                "decision": decision.decision,
+            }
+        )
+    finally:
+        session.close()
+
+
 @api_bp.route("/channels/<int:channel_id>/toggle", methods=["POST"])
 def toggle_channel(channel_id):
     """Toggle channel active status."""

@@ -138,6 +138,20 @@ def correct_transcript(
     t0 = time.monotonic()
 
     try:
+        # Inject reviewer feedback if available (from request_changes)
+        from btcedu.core.reviewer import get_latest_reviewer_feedback
+
+        reviewer_feedback = get_latest_reviewer_feedback(session, episode_id, "correct")
+        if reviewer_feedback:
+            feedback_block = (
+                "## Reviewer-Korrekturen "
+                "(bitte diese Anmerkungen bei der Korrektur berücksichtigen)\n\n"
+                f"{reviewer_feedback}"
+            )
+            template_body = template_body.replace("{{ reviewer_feedback }}", feedback_block)
+        else:
+            template_body = template_body.replace("{{ reviewer_feedback }}", "")
+
         # Split prompt template into system and user parts
         system_prompt, user_template = _split_prompt(template_body)
 

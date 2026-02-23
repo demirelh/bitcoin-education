@@ -23,6 +23,7 @@
       <button class="btn" onclick="detectEpisodes()">Detect</button>
       <button class="btn btn-primary" id="batch-btn" onclick="toggleBatch()">Process All</button>
       <button class="btn" onclick="showCost()">Cost</button>
+      <button class="btn" onclick="showReviews()">Reviews <span class="review-badge" id="review-badge"></span></button>
       <button class="btn" onclick="refresh()">Refresh</button>
     </div>
   </div>
@@ -76,6 +77,22 @@
     <!-- Right: detail panel -->
     <div class="panel" id="detail">
       <div class="empty">Select an episode from the list.</div>
+    </div>
+  </div>
+
+  <!-- Review panel (hidden by default) -->
+  <div class="review-panel" id="review-panel" style="display:none;">
+    <div class="review-header">
+      <h2>Review Queue</h2>
+      <button class="btn btn-sm" onclick="hideReviews()">Back to Episodes</button>
+    </div>
+    <div class="review-layout">
+      <div class="review-list" id="review-list">
+        <div class="empty">Loading reviews...</div>
+      </div>
+      <div class="review-detail" id="review-detail">
+        <div class="empty">Select a review from the list.</div>
+      </div>
     </div>
   </div>
 

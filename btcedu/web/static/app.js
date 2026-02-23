@@ -487,6 +487,7 @@
       episodes = Array.isArray(data) ? data : [];
       applyFilters();
       loadWhatsNew();
+      updateReviewBadge();
       // Re-select if still exists
       if (selected) {
         const found = episodes.find((e) => e.episode_id === selected.episode_id);
@@ -822,6 +823,267 @@
     loadChannelList();
   }
   window.toggleChannelActive = toggleChannelActive;
+
+  // ── Review System ────────────────────────────────────────────
+  let reviewTasks = [];
+  let selectedReview = null;
+
+  async function updateReviewBadge() {
+    try {
+      const data = await GET("/reviews/count");
+      const badge = document.getElementById("review-badge");
+      if (data.pending_count > 0) {
+        badge.textContent = data.pending_count;
+        badge.style.display = "inline";
+      } else {
+        badge.textContent = "";
+        badge.style.display = "none";
+      }
+    } catch (err) {
+      // Non-critical
+    }
+  }
+
+  function showReviews() {
+    document.querySelector(".main").style.display = "none";
+    document.getElementById("review-panel").style.display = "block";
+    loadReviewList();
+  }
+  window.showReviews = showReviews;
+
+  function hideReviews() {
+    document.getElementById("review-panel").style.display = "none";
+    document.querySelector(".main").style.display = "";
+  }
+  window.hideReviews = hideReviews;
+
+  async function loadReviewList() {
+    const container = document.getElementById("review-list");
+    container.innerHTML = '<div class="empty">Loading...</div>';
+
+    const data = await GET("/reviews");
+    if (data.error) {
+      container.innerHTML = `<div class="empty" style="color:var(--red)">${esc(data.error)}</div>`;
+      return;
+    }
+
+    reviewTasks = data.tasks || [];
+
+    if (reviewTasks.length === 0) {
+      container.innerHTML = '<div class="empty">No reviews found.</div>';
+      return;
+    }
+
+    let html = "";
+    let lastSection = "";
+    reviewTasks.forEach((t) => {
+      const isPending = t.status === "pending" || t.status === "in_review";
+      const section = isPending ? "Pending" : "Resolved";
+      if (section !== lastSection) {
+        html += `<div class="review-section-header">${section}</div>`;
+        lastSection = section;
+      }
+
+      const statusClass = "review-status-" + t.status.replace("_", "-");
+      const time = t.reviewed_at || t.created_at;
+      const timeLabel = time ? timeAgo(time) : "";
+      const isSelected = selectedReview && selectedReview.id === t.id;
+
+      html += `<div class="review-item ${statusClass} ${isSelected ? "selected" : ""}" onclick="selectReview(${t.id})">
+        <div class="review-item-top">
+          <span class="badge badge-review-${t.status.replace("_", "-")}">${t.status}</span>
+          <span class="review-item-stage">${esc(t.stage)}</span>
+        </div>
+        <div class="review-item-title">${esc(t.episode_title || t.episode_id)}</div>
+        <div class="review-item-time">${timeLabel}</div>
+      </div>`;
+    });
+
+    container.innerHTML = html;
+  }
+
+  async function selectReview(id) {
+    const detail = document.getElementById("review-detail");
+    detail.innerHTML = '<div class="empty">Loading...</div>';
+
+    const data = await GET("/reviews/" + id);
+    if (data.error) {
+      detail.innerHTML = `<div class="empty" style="color:var(--red)">${esc(data.error)}</div>`;
+      return;
+    }
+    selectedReview = data;
+
+    // Re-render list to show selection
+    loadReviewList();
+
+    let html = "";
+
+    // Header
+    html += `<div class="review-detail-header">
+      <h3>${esc(data.episode_title || data.episode_id)}</h3>
+      <div class="review-detail-meta">
+        <span class="badge badge-review-${data.status.replace("_", "-")}">${data.status}</span>
+        Stage: ${esc(data.stage)} &middot; ${data.episode_id}
+        ${data.created_at ? " &middot; Created: " + new Date(data.created_at).toLocaleString() : ""}
+        ${data.reviewed_at ? " &middot; Reviewed: " + new Date(data.reviewed_at).toLocaleString() : ""}
+      </div>
+    </div>`;
+
+    // Diff viewer
+    if (data.diff) {
+      html += renderDiffViewer(data.diff, data.original_text, data.corrected_text);
+    } else {
+      html += '<div class="empty">No diff data available.</div>';
+    }
+
+    // Decision history
+    if (data.decisions && data.decisions.length > 0) {
+      html += '<div class="review-decisions"><h4>Decision History</h4>';
+      data.decisions.forEach((d) => {
+        const decClass = "badge-review-" + d.decision.replace("_", "-");
+        html += `<div class="review-decision-entry">
+          <span class="badge ${decClass}">${d.decision}</span>
+          <span class="review-decision-time">${d.decided_at ? new Date(d.decided_at).toLocaleString() : ""}</span>
+          ${d.notes ? `<div class="review-decision-notes">${esc(d.notes)}</div>` : ""}
+        </div>`;
+      });
+      html += "</div>";
+    }
+
+    // Action buttons (only if pending/in_review)
+    const isPending = data.status === "pending" || data.status === "in_review";
+    if (isPending) {
+      html += `<div class="review-actions">
+        <button class="btn btn-primary" onclick="approveReview(${data.id})">Approve</button>
+        <button class="btn btn-danger" onclick="rejectReview(${data.id})">Reject</button>
+        <button class="btn btn-warning" onclick="toggleChangesForm()">Request Changes</button>
+      </div>
+      <div class="review-changes-form" id="review-changes-form" style="display:none;">
+        <textarea class="review-notes-textarea" id="review-notes" placeholder="Describe the changes needed..."></textarea>
+        <button class="btn btn-warning" onclick="submitRequestChanges(${data.id})">Submit Feedback</button>
+      </div>`;
+    }
+
+    detail.innerHTML = html;
+  }
+  window.selectReview = selectReview;
+
+  function renderDiffViewer(diff, originalText, correctedText) {
+    if (diff.error) {
+      return `<div class="empty">${esc(diff.error)}</div>`;
+    }
+
+    let html = "";
+    const summary = diff.summary || {};
+    const changes = diff.changes || [];
+
+    // Summary bar
+    html += `<div class="diff-summary">
+      <span class="diff-summary-total">${summary.total_changes || 0} changes</span>`;
+    const byType = summary.by_type || {};
+    if (byType.replace) html += `<span class="diff-type-badge replace">${byType.replace} replace</span>`;
+    if (byType.insert) html += `<span class="diff-type-badge insert">${byType.insert} insert</span>`;
+    if (byType.delete) html += `<span class="diff-type-badge delete">${byType.delete} delete</span>`;
+    html += "</div>";
+
+    // Change list
+    if (changes.length > 0) {
+      html += '<div class="diff-changes">';
+      changes.forEach((c) => {
+        html += `<div class="diff-change ${c.type}">
+          <span class="diff-type-label">${c.type}</span>`;
+        if (c.original) html += `<span class="diff-original">${esc(c.original)}</span>`;
+        if (c.original && c.corrected) html += ' <span class="diff-arrow">&rarr;</span> ';
+        if (c.corrected) html += `<span class="diff-corrected">${esc(c.corrected)}</span>`;
+        if (c.context) html += `<div class="diff-context">${esc(c.context)}</div>`;
+        html += "</div>";
+      });
+      html += "</div>";
+    }
+
+    // Side-by-side panels
+    if (originalText || correctedText) {
+      html += `<div class="diff-sidebyside">
+        <div class="diff-side">
+          <h4>Original</h4>
+          <pre class="diff-text">${esc(originalText || "(not available)")}</pre>
+        </div>
+        <div class="diff-side">
+          <h4>Corrected</h4>
+          <pre class="diff-text">${esc(correctedText || "(not available)")}</pre>
+        </div>
+      </div>`;
+    }
+
+    return html;
+  }
+
+  async function approveReview(id) {
+    const r = await POST("/reviews/" + id + "/approve");
+    if (r.error) {
+      toast(r.error, false);
+    } else {
+      toast("Review approved");
+      selectedReview = null;
+      loadReviewList();
+      updateReviewBadge();
+      document.getElementById("review-detail").innerHTML = '<div class="empty">Review approved.</div>';
+    }
+  }
+  window.approveReview = approveReview;
+
+  async function rejectReview(id) {
+    if (!confirm("Reject this review? The episode will be reverted to TRANSCRIBED.")) return;
+    const r = await POST("/reviews/" + id + "/reject");
+    if (r.error) {
+      toast(r.error, false);
+    } else {
+      toast("Review rejected");
+      selectedReview = null;
+      loadReviewList();
+      updateReviewBadge();
+      document.getElementById("review-detail").innerHTML = '<div class="empty">Review rejected.</div>';
+    }
+  }
+  window.rejectReview = rejectReview;
+
+  function toggleChangesForm() {
+    const form = document.getElementById("review-changes-form");
+    form.style.display = form.style.display === "none" ? "block" : "none";
+  }
+  window.toggleChangesForm = toggleChangesForm;
+
+  async function submitRequestChanges(id) {
+    const notes = document.getElementById("review-notes").value.trim();
+    if (!notes) {
+      toast("Please provide notes describing the changes needed", false);
+      return;
+    }
+    const r = await POST("/reviews/" + id + "/request-changes", { notes });
+    if (r.error) {
+      toast(r.error, false);
+    } else {
+      toast("Changes requested");
+      selectedReview = null;
+      loadReviewList();
+      updateReviewBadge();
+      document.getElementById("review-detail").innerHTML = '<div class="empty">Changes requested.</div>';
+    }
+  }
+  window.submitRequestChanges = submitRequestChanges;
+
+  function timeAgo(dateStr) {
+    const now = new Date();
+    const then = new Date(dateStr);
+    const diffMs = now - then;
+    const mins = Math.floor(diffMs / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + "m ago";
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return hours + "h ago";
+    const days = Math.floor(hours / 24);
+    return days + "d ago";
+  }
 
   // ── Init ─────────────────────────────────────────────────────
   document.addEventListener("DOMContentLoaded", () => {

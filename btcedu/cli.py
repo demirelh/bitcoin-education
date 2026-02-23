@@ -546,6 +546,90 @@ def correct(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> No
         session.close()
 
 
+@cli.group()
+@click.pass_context
+def review(ctx: click.Context) -> None:
+    """Review system commands."""
+    pass
+
+
+@review.command(name="list")
+@click.option(
+    "--status",
+    default=None,
+    help="Filter by status (pending, approved, rejected, changes_requested).",
+)
+@click.pass_context
+def review_list(ctx: click.Context, status: str | None) -> None:
+    """List review tasks."""
+    from btcedu.models.review import ReviewStatus, ReviewTask
+
+    session = ctx.obj["session_factory"]()
+    try:
+        query = session.query(ReviewTask).order_by(ReviewTask.created_at.desc())
+
+        if status:
+            query = query.filter(ReviewTask.status == status)
+        else:
+            # Default: show pending + in_review
+            query = query.filter(
+                ReviewTask.status.in_(
+                    [ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]
+                )
+            )
+
+        tasks = query.all()
+        if not tasks:
+            click.echo("No review tasks found.")
+            return
+
+        click.echo(f"{'ID':<5} {'Episode':<20} {'Stage':<10} {'Status':<20} {'Created'}")
+        click.echo("-" * 80)
+        for t in tasks:
+            ep = session.query(Episode).filter(Episode.episode_id == t.episode_id).first()
+            title = ep.title[:18] if ep else t.episode_id[:18]
+            created = t.created_at.strftime("%Y-%m-%d %H:%M") if t.created_at else "?"
+            click.echo(f"{t.id:<5} {title:<20} {t.stage:<10} {t.status:<20} {created}")
+    finally:
+        session.close()
+
+
+@review.command()
+@click.argument("review_id", type=int)
+@click.option("--notes", default=None, help="Optional approval notes.")
+@click.pass_context
+def approve(ctx: click.Context, review_id: int, notes: str | None) -> None:
+    """Approve a review task."""
+    from btcedu.core.reviewer import approve_review
+
+    session = ctx.obj["session_factory"]()
+    try:
+        decision = approve_review(session, review_id, notes=notes)
+        click.echo(f"[OK] Review {review_id} approved (decision {decision.id})")
+    except ValueError as e:
+        click.echo(f"[FAIL] {e}", err=True)
+    finally:
+        session.close()
+
+
+@review.command()
+@click.argument("review_id", type=int)
+@click.option("--notes", default=None, help="Optional rejection notes.")
+@click.pass_context
+def reject(ctx: click.Context, review_id: int, notes: str | None) -> None:
+    """Reject a review task (reverts episode to TRANSCRIBED)."""
+    from btcedu.core.reviewer import reject_review
+
+    session = ctx.obj["session_factory"]()
+    try:
+        decision = reject_review(session, review_id, notes=notes)
+        click.echo(f"[OK] Review {review_id} rejected (decision {decision.id})")
+    except ValueError as e:
+        click.echo(f"[FAIL] {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.command()
 @click.option("--episode-id", "episode_id", type=str, default=None, help="Filter by episode ID")
 @click.pass_context

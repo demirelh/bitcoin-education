@@ -948,6 +948,290 @@ body {
     }
 }
 
+/* Review system */
+.review-badge {
+    display: none;
+    background: var(--red);
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 10px;
+    margin-left: 4px;
+    vertical-align: top;
+}
+.review-panel {
+    padding: 12px 16px;
+}
+.review-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+.review-header h2 {
+    font-size: 16px;
+}
+.review-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    min-height: 70vh;
+    min-height: calc(var(--vh, 1vh) * 70);
+}
+.review-list {
+    overflow-y: auto;
+    max-height: 80vh;
+    max-height: calc(var(--vh, 1vh) * 80);
+}
+.review-detail {
+    overflow-y: auto;
+    max-height: 80vh;
+    max-height: calc(var(--vh, 1vh) * 80);
+}
+.review-section-header {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    padding: 8px 0 4px;
+    letter-spacing: 0.5px;
+}
+.review-item {
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 6px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+}
+.review-item:hover {
+    background: var(--surface-hover);
+}
+.review-item.selected {
+    background: rgba(88, 166, 255, 0.15);
+    border-color: var(--accent);
+}
+.review-item-top {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+}
+.review-item-stage {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+.review-item-title {
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.review-item-time {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+.badge-review-pending { background: #d2992233; color: var(--yellow); }
+.badge-review-in-review { background: #58a6ff33; color: var(--accent); }
+.badge-review-approved { background: #3fb95033; color: var(--green); }
+.badge-review-rejected { background: #f8514933; color: var(--red); }
+.badge-review-changes-requested { background: #d2992233; color: var(--yellow); }
+
+.review-detail-header {
+    margin-bottom: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border);
+}
+.review-detail-header h3 {
+    font-size: 15px;
+    margin-bottom: 4px;
+}
+.review-detail-meta {
+    font-size: 12px;
+    color: var(--text-dim);
+}
+
+/* Diff viewer */
+.diff-summary {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+.diff-summary-total {
+    font-weight: 600;
+    font-size: 13px;
+}
+.diff-type-badge {
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 10px;
+}
+.diff-type-badge.replace { background: #d2992233; color: var(--yellow); }
+.diff-type-badge.insert { background: #3fb95033; color: var(--green); }
+.diff-type-badge.delete { background: #f8514933; color: var(--red); }
+
+.diff-changes {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+    max-height: 300px;
+    overflow-y: auto;
+}
+.diff-change {
+    padding: 8px 12px;
+    border-radius: var(--radius);
+    border-left: 3px solid var(--border);
+    background: var(--surface);
+    font-size: 13px;
+}
+.diff-change.replace { border-left-color: var(--yellow); }
+.diff-change.insert { border-left-color: var(--green); }
+.diff-change.delete { border-left-color: var(--red); }
+.diff-type-label {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--text-dim);
+    margin-right: 8px;
+}
+.diff-original {
+    text-decoration: line-through;
+    color: var(--red);
+}
+.diff-corrected {
+    color: var(--green);
+    font-weight: 500;
+}
+.diff-arrow {
+    color: var(--text-dim);
+}
+.diff-context {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 4px;
+}
+
+.diff-sidebyside {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+.diff-side h4 {
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: var(--text-dim);
+}
+.diff-text {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px;
+    font-family: "SF Mono", "Fira Code", "Consolas", monospace;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* Review actions */
+.review-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+}
+.btn-warning {
+    background: linear-gradient(180deg, #d29922 0%, #b08000 100%);
+    border-color: #d29922;
+    color: #fff;
+    font-weight: 500;
+}
+.btn-warning:hover {
+    background: linear-gradient(180deg, #e0a520 0%, #c09000 100%);
+}
+.review-changes-form {
+    margin-top: 8px;
+}
+.review-notes-textarea {
+    display: block;
+    width: 100%;
+    min-height: 80px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+}
+.review-notes-textarea:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+/* Decision history */
+.review-decisions {
+    margin-top: 16px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+}
+.review-decisions h4 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text-dim);
+}
+.review-decision-entry {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+}
+.review-decision-time {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+.review-decision-notes {
+    width: 100%;
+    font-size: 12px;
+    color: var(--text-dim);
+    padding: 4px 8px;
+    background: var(--bg);
+    border-radius: var(--radius);
+    margin-top: 2px;
+}
+
+@media (max-width: 768px) {
+    .review-layout {
+        grid-template-columns: 1fr;
+    }
+    .diff-sidebyside {
+        grid-template-columns: 1fr;
+    }
+    .review-actions {
+        flex-wrap: wrap;
+    }
+    .review-actions .btn {
+        flex: 1 1 calc(50% - 4px);
+    }
+}
+
 /* Small mobile devices */
 @media (max-width: 480px) {
     .topbar h1 {

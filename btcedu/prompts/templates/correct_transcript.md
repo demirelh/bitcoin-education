@@ -33,6 +33,8 @@ Du bist ein erfahrener deutscher Transkript-Editor, spezialisiert auf Bitcoin- u
 - Wiederholungen oder Füllwörter (sind Teil des natürlichen Sprechens)
 - Inhaltliche Aussagen (auch wenn sie fachlich fragwürdig erscheinen)
 
+{{ reviewer_feedback }}
+
 # Transkript
 
 {{ transcript }}

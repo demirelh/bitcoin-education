@@ -411,7 +411,13 @@ def test_adapt_script_idempotent(
 
 
 @patch("btcedu.core.adapter.call_claude")
-def test_adapt_script_force_rerun(mock_call_claude, translated_episode, mock_settings, db_session, mock_claude_adapt_response):
+def test_adapt_script_force_rerun(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+):
     """Test that force=True re-runs even if output exists."""
     mock_call_claude.return_value = type("Response", (), mock_claude_adapt_response)
 
@@ -513,7 +519,9 @@ def test_adapt_script_pipeline_run_tracking(
 
 
 @patch("btcedu.core.adapter.call_claude")
-def test_adapt_script_error_handling(mock_call_claude, translated_episode, mock_settings, db_session):
+def test_adapt_script_error_handling(
+    mock_call_claude, translated_episode, mock_settings, db_session
+):
     """Test that errors are properly recorded in PipelineRun and Episode."""
     mock_call_claude.side_effect = RuntimeError("Claude API error")
 

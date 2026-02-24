@@ -56,8 +56,8 @@ _V2_STAGES = [
     ("transcribe", EpisodeStatus.DOWNLOADED),
     ("correct", EpisodeStatus.TRANSCRIBED),
     ("review_gate_1", EpisodeStatus.CORRECTED),
+    ("translate", EpisodeStatus.CORRECTED),  # after review approved
     # Future sprints will add:
-    # ("translate", EpisodeStatus.CORRECTED),  # after review approved
     # ("adapt", EpisodeStatus.TRANSLATED),
     # ...
 ]
@@ -265,6 +265,22 @@ def _run_stage(
                 elapsed,
                 detail="review task created",
             )
+
+        elif stage_name == "translate":
+            from btcedu.core.translator import translate_transcript
+
+            result = translate_transcript(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("translate", "skipped", elapsed, detail="already up-to-date")
+            else:
+                return StageResult(
+                    "translate",
+                    "success",
+                    elapsed,
+                    detail=f"{result.output_char_count} chars Turkish (${result.cost_usd:.4f})",
+                )
 
         else:
             raise ValueError(f"Unknown stage: {stage_name}")

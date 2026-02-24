@@ -9,6 +9,7 @@ Automated pipeline that transforms German Bitcoin podcast episodes into Turkish 
 
 **📖 [Architecture Documentation](docs/ARCHITECTURE.md)** - Comprehensive technical overview for developers
 **🤖 [Claude Models Reference](docs/CLAUDE_MODELS.md)** - Complete guide to Claude AI models, capabilities, and technical limits
+**👥 [Contributing Guide](CONTRIBUTING.md)** - Development setup, code quality standards, and contribution guidelines
 
 ## Pipeline Stages
 

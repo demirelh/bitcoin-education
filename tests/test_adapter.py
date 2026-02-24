@@ -362,21 +362,14 @@ def test_adapt_script_success(
     assert translated_episode.status == EpisodeStatus.ADAPTED
 
     # Check files were written
-    adapted_path = (
-        Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
-    )
+    adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
     assert adapted_path.exists()
 
-    diff_path = (
-        Path(mock_settings.outputs_dir) / "ep_test" / "review" / "adaptation_diff.json"
-    )
+    diff_path = Path(mock_settings.outputs_dir) / "ep_test" / "review" / "adaptation_diff.json"
     assert diff_path.exists()
 
     provenance_path = (
-        Path(mock_settings.outputs_dir)
-        / "ep_test"
-        / "provenance"
-        / "adapt_provenance.json"
+        Path(mock_settings.outputs_dir) / "ep_test" / "provenance" / "adapt_provenance.json"
     )
     assert provenance_path.exists()
 
@@ -464,25 +457,17 @@ def test_adapt_script_missing_translation(translated_episode, mock_settings, db_
         adapt_script(db_session, "ep_test", mock_settings)
 
 
-def test_adapt_script_missing_german(
-    translated_episode, mock_settings, db_session, tmp_path
-):
+def test_adapt_script_missing_german(translated_episode, mock_settings, db_session, tmp_path):
     """Test that adaptation fails if German corrected transcript is missing."""
     # Remove German file
-    corrected_path = (
-        Path(mock_settings.transcripts_dir)
-        / "ep_test"
-        / "transcript.corrected.de.txt"
-    )
+    corrected_path = Path(mock_settings.transcripts_dir) / "ep_test" / "transcript.corrected.de.txt"
     corrected_path.unlink()
 
     with pytest.raises(FileNotFoundError, match="Corrected German transcript not found"):
         adapt_script(db_session, "ep_test", mock_settings)
 
 
-def test_adapt_script_no_review_approval(
-    translated_episode_no_approval, mock_settings, db_session
-):
+def test_adapt_script_no_review_approval(translated_episode_no_approval, mock_settings, db_session):
     """Test that adaptation fails if Review Gate 1 (correction) is not approved."""
     with pytest.raises(ValueError, match="correction has not been approved"):
         adapt_script(db_session, "ep_test", mock_settings)

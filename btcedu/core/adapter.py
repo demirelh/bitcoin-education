@@ -224,10 +224,8 @@ def adapt_script(
         for i, segment in enumerate(segments):
             # For multi-segment: include full German text as reference (simplification)
             # A more sophisticated implementation would align German segments with Turkish segments
-            user_message = (
-                user_template.replace("{{ translation }}", segment).replace(
-                    "{{ original_german }}", german_text
-                )
+            user_message = user_template.replace("{{ translation }}", segment).replace(
+                "{{ original_german }}", german_text
             )
 
             # Dry-run path

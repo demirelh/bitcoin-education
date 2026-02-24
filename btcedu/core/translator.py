@@ -75,13 +75,46 @@ def translate_transcript(
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
-    # Allow both CORRECTED and TRANSLATED status (for idempotency)
-    # For TRANSLATED, the _is_translation_current check will handle skipping
+    # Allow both CORRECTED and TRANSLATED status:
+    # - CORRECTED: Normal first-time translation (after Review Gate 1 approval)
+    # - TRANSLATED: Allow idempotent re-runs (useful for testing, manual re-translation)
+    # The _is_translation_current() check will skip if output is already current.
     if episode.status not in (EpisodeStatus.CORRECTED, EpisodeStatus.TRANSLATED) and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'corrected' or 'translated'. Use --force to override."
         )
+
+    # Check Review Gate 1 approval (unless episode already translated or force flag)
+    # Per MASTERPLAN §3.1, translation must not proceed until Review Gate 1 is approved.
+    if episode.status == EpisodeStatus.CORRECTED and not force:
+        from btcedu.core.reviewer import has_pending_review
+
+        # First check if there's a pending review (not yet approved/rejected)
+        if has_pending_review(session, episode_id):
+            raise ValueError(
+                f"Episode {episode_id} has pending review for correction stage. "
+                "Translation cannot proceed until Review Gate 1 is approved."
+            )
+
+        # Verify at least one approved review exists for the correct stage
+        from btcedu.models.review import ReviewTask, ReviewStatus  # noqa: I001
+
+        approved_review = (
+            session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == episode_id,
+                ReviewTask.stage == "correct",
+                ReviewTask.status == ReviewStatus.APPROVED.value,
+            )
+            .first()
+        )
+
+        if not approved_review:
+            raise ValueError(
+                f"Episode {episode_id} correction has not been approved. "
+                "Translation cannot proceed until Review Gate 1 is approved."
+            )
 
     # Resolve paths
     corrected_path = Path(settings.transcripts_dir) / episode_id / "transcript.corrected.de.txt"

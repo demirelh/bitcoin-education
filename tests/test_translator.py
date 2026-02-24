@@ -415,7 +415,9 @@ class TestTranslateTranscript:
         with pytest.raises(ValueError, match="correction has not been approved"):
             translate_transcript(db_session, "ep_test", mock_settings, force=False)
 
-    def test_translate_fails_with_pending_review(self, db_session, corrected_episode, mock_settings):
+    def test_translate_fails_with_pending_review(
+        self, db_session, corrected_episode, mock_settings
+    ):
         """Test that translation fails if Review Gate 1 is still pending."""
         # Create pending ReviewTask
         review_task = ReviewTask(

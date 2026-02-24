@@ -98,7 +98,7 @@ def translate_transcript(
             )
 
         # Verify at least one approved review exists for the correct stage
-        from btcedu.models.review import ReviewTask, ReviewStatus
+        from btcedu.models.review import ReviewTask, ReviewStatus  # noqa: I001
 
         approved_review = (
             session.query(ReviewTask)

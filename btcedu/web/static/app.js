@@ -975,41 +975,84 @@
 
     let html = "";
     const summary = diff.summary || {};
-    const changes = diff.changes || [];
+    const changes = diff.changes || diff.adaptations || [];
+
+    // Check if this is an adaptation diff (has tier info)
+    const isAdaptation = changes.length > 0 && changes[0].tier !== undefined;
 
     // Summary bar
-    html += `<div class="diff-summary">
-      <span class="diff-summary-total">${summary.total_changes || 0} changes</span>`;
-    const byType = summary.by_type || {};
-    if (byType.replace) html += `<span class="diff-type-badge replace">${byType.replace} replace</span>`;
-    if (byType.insert) html += `<span class="diff-type-badge insert">${byType.insert} insert</span>`;
-    if (byType.delete) html += `<span class="diff-type-badge delete">${byType.delete} delete</span>`;
-    html += "</div>";
+    if (isAdaptation) {
+      // Adaptation-specific summary
+      const total = summary.total_adaptations || 0;
+      const tier1 = summary.tier1_count || 0;
+      const tier2 = summary.tier2_count || 0;
+      html += `<div class="diff-summary">
+        <span class="diff-summary-total">${total} adaptations</span>
+        <span class="diff-type-badge tier1">${tier1} T1 (mechanical)</span>
+        <span class="diff-type-badge tier2">${tier2} T2 (editorial)</span>
+      </div>`;
 
-    // Change list
+      // Category breakdown
+      const byCategory = summary.by_category || {};
+      if (Object.keys(byCategory).length > 0) {
+        html += '<div class="diff-category-summary">';
+        Object.entries(byCategory).forEach(([cat, count]) => {
+          html += `<span class="diff-category-badge">${cat}: ${count}</span>`;
+        });
+        html += '</div>';
+      }
+    } else {
+      // Correction-specific summary
+      html += `<div class="diff-summary">
+        <span class="diff-summary-total">${summary.total_changes || 0} changes</span>`;
+      const byType = summary.by_type || {};
+      if (byType.replace) html += `<span class="diff-type-badge replace">${byType.replace} replace</span>`;
+      if (byType.insert) html += `<span class="diff-type-badge insert">${byType.insert} insert</span>`;
+      if (byType.delete) html += `<span class="diff-type-badge delete">${byType.delete} delete</span>`;
+      html += "</div>";
+    }
+
+    // Change/Adaptation list
     if (changes.length > 0) {
       html += '<div class="diff-changes">';
       changes.forEach((c) => {
-        html += `<div class="diff-change ${c.type}">
-          <span class="diff-type-label">${c.type}</span>`;
-        if (c.original) html += `<span class="diff-original">${esc(c.original)}</span>`;
-        if (c.original && c.corrected) html += ' <span class="diff-arrow">&rarr;</span> ';
-        if (c.corrected) html += `<span class="diff-corrected">${esc(c.corrected)}</span>`;
-        if (c.context) html += `<div class="diff-context">${esc(c.context)}</div>`;
-        html += "</div>";
+        if (isAdaptation) {
+          // Render adaptation with tier highlighting
+          const tierClass = c.tier === "T1" ? "tier1" : "tier2";
+          const tierLabel = c.tier === "T1" ? "T1 (mechanical)" : "T2 (editorial)";
+          html += `<div class="diff-change adaptation ${tierClass}">
+            <span class="diff-tier-label">${tierLabel}</span>
+            <span class="diff-category-label">${c.category || "other"}</span>`;
+          if (c.original) html += `<span class="diff-original">${esc(c.original)}</span>`;
+          if (c.original && c.adapted) html += ' <span class="diff-arrow">&rarr;</span> ';
+          if (c.adapted) html += `<span class="diff-adapted">${esc(c.adapted)}</span>`;
+          if (c.context) html += `<div class="diff-context">${esc(c.context)}</div>`;
+          html += "</div>";
+        } else {
+          // Render correction (existing format)
+          html += `<div class="diff-change ${c.type}">
+            <span class="diff-type-label">${c.type}</span>`;
+          if (c.original) html += `<span class="diff-original">${esc(c.original)}</span>`;
+          if (c.original && c.corrected) html += ' <span class="diff-arrow">&rarr;</span> ';
+          if (c.corrected) html += `<span class="diff-corrected">${esc(c.corrected)}</span>`;
+          if (c.context) html += `<div class="diff-context">${esc(c.context)}</div>`;
+          html += "</div>";
+        }
       });
       html += "</div>";
     }
 
     // Side-by-side panels
     if (originalText || correctedText) {
+      const leftLabel = isAdaptation ? "Translation" : "Original";
+      const rightLabel = isAdaptation ? "Adapted" : "Corrected";
       html += `<div class="diff-sidebyside">
         <div class="diff-side">
-          <h4>Original</h4>
+          <h4>${leftLabel}</h4>
           <pre class="diff-text">${esc(originalText || "(not available)")}</pre>
         </div>
         <div class="diff-side">
-          <h4>Corrected</h4>
+          <h4>${rightLabel}</h4>
           <pre class="diff-text">${esc(correctedText || "(not available)")}</pre>
         </div>
       </div>`;

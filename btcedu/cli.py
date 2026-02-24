@@ -27,13 +27,19 @@ def cli(ctx: click.Context) -> None:
         return
 
     try:
-        settings = get_settings()
-        ctx.obj["settings"] = settings
-        init_db(settings.database_url)
-        ctx.obj["session_factory"] = get_session_factory(settings.database_url)
+        # Allow tests to inject settings and session_factory via ctx.obj
+        if "settings" not in ctx.obj:
+            settings = get_settings()
+            ctx.obj["settings"] = settings
+        else:
+            settings = ctx.obj["settings"]
 
-        # Check for pending migrations on CLI startup
-        _check_pending_migrations(ctx.obj["session_factory"])
+        if "session_factory" not in ctx.obj:
+            init_db(settings.database_url)
+            ctx.obj["session_factory"] = get_session_factory(settings.database_url)
+
+            # Check for pending migrations on CLI startup
+            _check_pending_migrations(ctx.obj["session_factory"])
     except Exception as e:
         # If database initialization fails during help display, store the error
         # The actual command will fail properly if it tries to access the database
@@ -598,6 +604,50 @@ def translate(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry
                     click.echo(
                         f"[OK] {eid} -> {result.translated_path} "
                         f"({result.input_char_count}→{result.output_char_count} chars, "
+                        f"${result.cost_usd:.4f})"
+                    )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to adapt (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-adapt even if output exists.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Write request JSON instead of calling Claude API.",
+)
+@click.pass_context
+def adapt(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run: bool) -> None:
+    """Adapt Turkish translation for Turkey context (v2 pipeline)."""
+    from btcedu.core.adapter import adapt_script
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = adapt_script(session, eid, settings, force=force)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
+                else:
+                    click.echo(
+                        f"[OK] {eid} -> {result.adapted_path} "
+                        f"({result.adaptation_count} adaptations: "
+                        f"T1={result.tier1_count}, T2={result.tier2_count}, "
                         f"${result.cost_usd:.4f})"
                     )
             except Exception as e:

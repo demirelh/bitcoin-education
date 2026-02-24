@@ -14,6 +14,7 @@ from btcedu.core.translator import (
     translate_transcript,
 )
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
+from btcedu.models.review import ReviewStatus, ReviewTask
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -405,6 +406,82 @@ class TestTranslateTranscript:
 
         with pytest.raises(ValueError, match="expected 'corrected'"):
             translate_transcript(db_session, "ep_wrong", mock_settings, force=False)
+
+    def test_translate_fails_without_review_approval(
+        self, db_session, corrected_episode, mock_settings
+    ):
+        """Test that translation fails if Review Gate 1 is not approved."""
+        # Episode is CORRECTED but no approved ReviewTask exists
+        with pytest.raises(ValueError, match="correction has not been approved"):
+            translate_transcript(db_session, "ep_test", mock_settings, force=False)
+
+    def test_translate_fails_with_pending_review(self, db_session, corrected_episode, mock_settings):
+        """Test that translation fails if Review Gate 1 is still pending."""
+        # Create pending ReviewTask
+        review_task = ReviewTask(
+            episode_id="ep_test",
+            stage="correct",
+            status=ReviewStatus.PENDING.value,
+            artifact_paths="[]",
+        )
+        db_session.add(review_task)
+        db_session.commit()
+
+        with pytest.raises(ValueError, match="has pending review"):
+            translate_transcript(db_session, "ep_test", mock_settings, force=False)
+
+    def test_translate_succeeds_with_review_approval(
+        self, db_session, corrected_episode, mock_settings
+    ):
+        """Test that translation succeeds when Review Gate 1 is approved."""
+        # Create approved ReviewTask
+        review_task = ReviewTask(
+            episode_id="ep_test",
+            stage="correct",
+            status=ReviewStatus.APPROVED.value,
+            artifact_paths="[]",
+        )
+        db_session.add(review_task)
+        db_session.commit()
+
+        # Now translation should succeed
+        with patch("btcedu.core.translator.call_claude") as mock_claude:
+            mock_claude.return_value = type(
+                "Response",
+                (),
+                {
+                    "text": "Turkish translation here",
+                    "input_tokens": 100,
+                    "output_tokens": 120,
+                    "cost_usd": 0.01,
+                },
+            )
+
+            result = translate_transcript(db_session, "ep_test", mock_settings, force=False)
+            assert not result.skipped
+            assert result.cost_usd > 0
+
+    def test_translate_force_bypasses_approval_check(
+        self, db_session, corrected_episode, mock_settings
+    ):
+        """Test that --force flag bypasses Review Gate 1 approval check."""
+        # No approved ReviewTask exists, but force=True should bypass check
+        with patch("btcedu.core.translator.call_claude") as mock_claude:
+            mock_claude.return_value = type(
+                "Response",
+                (),
+                {
+                    "text": "Forced Turkish translation",
+                    "input_tokens": 50,
+                    "output_tokens": 60,
+                    "cost_usd": 0.005,
+                },
+            )
+
+            # force=True should bypass approval check
+            result = translate_transcript(db_session, "ep_test", mock_settings, force=True)
+            assert not result.skipped
+            assert result.cost_usd > 0
 
     def test_translate_missing_corrected_file_fails(self, db_session, mock_settings):
         """Test that translation fails if corrected transcript file is missing."""

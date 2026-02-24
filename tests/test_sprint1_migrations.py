@@ -13,7 +13,6 @@ from btcedu.migrations import (
     get_pending_migrations,
     run_migrations,
 )
-from btcedu.models.migration import SchemaMigration
 
 
 @pytest.fixture
@@ -119,7 +118,10 @@ def seeded_post_001(post_001_session):
         INSERT INTO episodes (episode_id, channel_id, title, url, status, detected_at)
         VALUES
             ('ep001', 'default', 'Episode 1', 'https://youtube.com/watch?v=ep001', 'new', :now),
-            ('ep002', 'default', 'Episode 2', 'https://youtube.com/watch?v=ep002', 'completed', :now)
+            (
+                'ep002', 'default', 'Episode 2',
+                'https://youtube.com/watch?v=ep002', 'completed', :now
+            )
     """),
         {"now": datetime.now(UTC)},
     )
@@ -179,8 +181,17 @@ def test_migration_003_creates_prompt_versions(post_001_session):
     result = session.execute(text("PRAGMA table_info(prompt_versions)"))
     columns = {row[1] for row in result.fetchall()}
     expected = {
-        "id", "name", "version", "content_hash", "template_path",
-        "model", "temperature", "max_tokens", "is_default", "created_at", "notes",
+        "id",
+        "name",
+        "version",
+        "content_hash",
+        "template_path",
+        "model",
+        "temperature",
+        "max_tokens",
+        "is_default",
+        "created_at",
+        "notes",
     }
     assert expected.issubset(columns)
 
@@ -228,8 +239,17 @@ def test_migration_004_creates_review_tables(post_001_session):
     result = session.execute(text("PRAGMA table_info(review_tasks)"))
     columns = {row[1] for row in result.fetchall()}
     expected = {
-        "id", "episode_id", "stage", "status", "artifact_paths", "diff_path",
-        "prompt_version_id", "created_at", "reviewed_at", "reviewer_notes", "artifact_hash",
+        "id",
+        "episode_id",
+        "stage",
+        "status",
+        "artifact_paths",
+        "diff_path",
+        "prompt_version_id",
+        "created_at",
+        "reviewed_at",
+        "reviewer_notes",
+        "artifact_hash",
     }
     assert expected.issubset(columns)
 
@@ -295,12 +315,8 @@ def test_existing_pipeline_works_after_migrations(seeded_post_001):
     assert rows[1][2] == 1
 
     # Can update an episode status
-    session.execute(
-        text("UPDATE episodes SET status = 'downloaded' WHERE episode_id = 'ep001'")
-    )
+    session.execute(text("UPDATE episodes SET status = 'downloaded' WHERE episode_id = 'ep001'"))
     session.commit()
 
-    result = session.execute(
-        text("SELECT status FROM episodes WHERE episode_id = 'ep001'")
-    )
+    result = session.execute(text("SELECT status FROM episodes WHERE episode_id = 'ep001'"))
     assert result.scalar() == "downloaded"

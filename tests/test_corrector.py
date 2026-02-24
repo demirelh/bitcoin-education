@@ -17,7 +17,6 @@ from btcedu.core.corrector import (
 )
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -184,7 +183,10 @@ class TestSegmentTranscript:
 
 class TestSplitPrompt:
     def test_splits_at_marker(self):
-        body = "System instructions here.\n\n# Transkript\n\n{{ transcript }}\n\n# Ausgabeformat\n\nPlain text."
+        body = (
+            "System instructions here.\n\n# Transkript\n\n"
+            "{{ transcript }}\n\n# Ausgabeformat\n\nPlain text."
+        )
         system, user = _split_prompt(body)
         assert "System instructions" in system
         assert "# Transkript" in user
@@ -208,9 +210,7 @@ class TestIsCorrectionCurrent:
         corrected.write_text("corrected text")
         provenance = tmp_path / "provenance.json"
         provenance.write_text(
-            json.dumps(
-                {"prompt_hash": "hash123", "input_content_hash": "inputhash456"}
-            )
+            json.dumps({"prompt_hash": "hash123", "input_content_hash": "inputhash456"})
         )
         assert _is_correction_current(corrected, provenance, "inputhash456", "hash123") is True
 
@@ -236,9 +236,7 @@ class TestIsCorrectionCurrent:
         provenance.write_text(
             json.dumps({"prompt_hash": "old_hash", "input_content_hash": "inputhash"})
         )
-        assert (
-            _is_correction_current(corrected, provenance, "inputhash", "new_hash") is False
-        )
+        assert _is_correction_current(corrected, provenance, "inputhash", "new_hash") is False
 
     def test_input_hash_mismatch(self, tmp_path):
         corrected = tmp_path / "corrected.txt"
@@ -247,9 +245,7 @@ class TestIsCorrectionCurrent:
         provenance.write_text(
             json.dumps({"prompt_hash": "hash", "input_content_hash": "old_input"})
         )
-        assert (
-            _is_correction_current(corrected, provenance, "new_input", "hash") is False
-        )
+        assert _is_correction_current(corrected, provenance, "new_input", "hash") is False
 
     def test_missing_provenance(self, tmp_path):
         corrected = tmp_path / "corrected.txt"
@@ -266,9 +262,7 @@ class TestIsCorrectionCurrent:
 class TestCorrectTranscript:
     def test_success_dry_run(self, db_session, transcribed_episode, mock_settings):
         """Full integration: dry-run correction creates expected files and DB records."""
-        result = correct_transcript(
-            db_session, "ep_test", mock_settings, force=False
-        )
+        result = correct_transcript(db_session, "ep_test", mock_settings, force=False)
         assert isinstance(result, CorrectionResult)
         assert result.episode_id == "ep_test"
         assert Path(result.corrected_path).exists()
@@ -281,9 +275,7 @@ class TestCorrectTranscript:
 
         # PipelineRun created
         runs = (
-            db_session.query(PipelineRun)
-            .filter(PipelineRun.stage == PipelineStage.CORRECT)
-            .all()
+            db_session.query(PipelineRun).filter(PipelineRun.stage == PipelineStage.CORRECT).all()
         )
         assert len(runs) == 1
         assert runs[0].status == RunStatus.SUCCESS
@@ -336,14 +328,12 @@ class TestCorrectTranscript:
 
     def test_force_reruns(self, db_session, transcribed_episode, mock_settings):
         """With force=True, re-runs even if output exists."""
-        result1 = correct_transcript(db_session, "ep_test", mock_settings)
+        correct_transcript(db_session, "ep_test", mock_settings)
 
-        result2 = correct_transcript(db_session, "ep_test", mock_settings, force=True)
+        correct_transcript(db_session, "ep_test", mock_settings, force=True)
         # Force run should create a new PipelineRun
         runs = (
-            db_session.query(PipelineRun)
-            .filter(PipelineRun.stage == PipelineStage.CORRECT)
-            .all()
+            db_session.query(PipelineRun).filter(PipelineRun.stage == PipelineStage.CORRECT).all()
         )
         assert len(runs) == 2
 
@@ -389,7 +379,7 @@ class TestReviewerFeedbackInjection:
             return original_call(system_prompt=system_prompt, user_message=user_message, **kwargs)
 
         with patch("btcedu.core.corrector.call_claude", side_effect=spy_call_claude):
-            result2 = correct_transcript(db_session, "ep_test", mock_settings, force=True)
+            correct_transcript(db_session, "ep_test", mock_settings, force=True)
 
         # The feedback should appear in the system prompt
         assert len(captured_prompts) >= 1
@@ -436,15 +426,11 @@ class TestReviewerFeedbackInjection:
 
         # Now re-correction should run (non-zero pipeline run created)
         runs_before = (
-            db_session.query(PipelineRun)
-            .filter(PipelineRun.stage == PipelineStage.CORRECT)
-            .count()
+            db_session.query(PipelineRun).filter(PipelineRun.stage == PipelineStage.CORRECT).count()
         )
-        result3 = correct_transcript(db_session, "ep_test", mock_settings)
+        correct_transcript(db_session, "ep_test", mock_settings)
         runs_after = (
-            db_session.query(PipelineRun)
-            .filter(PipelineRun.stage == PipelineStage.CORRECT)
-            .count()
+            db_session.query(PipelineRun).filter(PipelineRun.stage == PipelineStage.CORRECT).count()
         )
         assert runs_after == runs_before + 1
 

@@ -27,13 +27,19 @@ def cli(ctx: click.Context) -> None:
         return
 
     try:
-        settings = get_settings()
-        ctx.obj["settings"] = settings
-        init_db(settings.database_url)
-        ctx.obj["session_factory"] = get_session_factory(settings.database_url)
+        # Allow tests to inject settings and session_factory via ctx.obj
+        if "settings" not in ctx.obj:
+            settings = get_settings()
+            ctx.obj["settings"] = settings
+        else:
+            settings = ctx.obj["settings"]
 
-        # Check for pending migrations on CLI startup
-        _check_pending_migrations(ctx.obj["session_factory"])
+        if "session_factory" not in ctx.obj:
+            init_db(settings.database_url)
+            ctx.obj["session_factory"] = get_session_factory(settings.database_url)
+
+            # Check for pending migrations on CLI startup
+            _check_pending_migrations(ctx.obj["session_factory"])
     except Exception as e:
         # If database initialization fails during help display, store the error
         # The actual command will fail properly if it tries to access the database

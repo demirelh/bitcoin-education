@@ -102,7 +102,9 @@ class PromptRegistry:
         self._session.add(pv)
         self._session.commit()
 
-        logger.info("Registered prompt %s version %d (hash=%s)", name, version_num, content_hash[:12])
+        logger.info(
+            "Registered prompt %s version %d (hash=%s)", name, version_num, content_hash[:12]
+        )
 
         if set_default:
             self.promote_to_default(pv.id)
@@ -169,7 +171,7 @@ class PromptRegistry:
         if match:
             frontmatter_text = match.group(1)
             metadata = yaml.safe_load(frontmatter_text) or {}
-            body = content[match.end():]
+            body = content[match.end() :]
 
         return metadata, body
 

@@ -231,9 +231,7 @@ def _run_stage(
             # Check if already approved
             if has_approved_review(session, episode.episode_id, "correct"):
                 elapsed = time.monotonic() - t0
-                return StageResult(
-                    "review_gate_1", "success", elapsed, detail="review approved"
-                )
+                return StageResult("review_gate_1", "success", elapsed, detail="review approved")
 
             # Check if a pending review already exists
             if has_pending_review(session, episode.episode_id):
@@ -247,15 +245,10 @@ def _run_stage(
 
             # Create a new review task
             corrected_path = (
-                Path(settings.transcripts_dir)
-                / episode.episode_id
-                / "transcript.corrected.de.txt"
+                Path(settings.transcripts_dir) / episode.episode_id / "transcript.corrected.de.txt"
             )
             diff_path = (
-                Path(settings.outputs_dir)
-                / episode.episode_id
-                / "review"
-                / "correction_diff.json"
+                Path(settings.outputs_dir) / episode.episode_id / "review" / "correction_diff.json"
             )
 
             create_review_task(
@@ -373,7 +366,8 @@ def run_episode_pipeline(
 
     # Calculate total cost from stage results that report costs
     for sr in report.stages:
-        if sr.stage in ("generate", "refine", "correct") and sr.status == "success" and "$" in sr.detail:
+        success_stages = ("generate", "refine", "correct")
+        if sr.stage in success_stages and sr.status == "success" and "$" in sr.detail:
             try:
                 cost_str = sr.detail.split("$")[1].rstrip(")")
                 report.total_cost_usd += float(cost_str)
@@ -440,9 +434,7 @@ def run_pending(
     if episodes:
         from btcedu.core.reviewer import has_pending_review
 
-        episodes = [
-            ep for ep in episodes if not has_pending_review(session, ep.episode_id)
-        ]
+        episodes = [ep for ep in episodes if not has_pending_review(session, ep.episode_id)]
 
     if not episodes:
         logger.info("No pending episodes to process.")

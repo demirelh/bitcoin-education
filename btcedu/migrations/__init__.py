@@ -191,7 +191,10 @@ class AddV2PipelineColumnsMigration(Migration):
 
     @property
     def description(self) -> str:
-        return "Add pipeline_version, review_status, youtube_video_id, published_at_youtube columns to episodes"
+        return (
+            "Add pipeline_version, review_status, youtube_video_id, "
+            "published_at_youtube columns to episodes"
+        )
 
     def up(self, session: Session) -> None:
         logger.info(f"Running migration: {self.version}")
@@ -217,9 +220,7 @@ class AddV2PipelineColumnsMigration(Migration):
             logger.info("Added youtube_video_id column")
 
         if "published_at_youtube" not in columns:
-            session.execute(
-                text("ALTER TABLE episodes ADD COLUMN published_at_youtube TIMESTAMP")
-            )
+            session.execute(text("ALTER TABLE episodes ADD COLUMN published_at_youtube TIMESTAMP"))
             session.commit()
             logger.info("Added published_at_youtube column")
 
@@ -264,13 +265,10 @@ class CreatePromptVersionsTableMigration(Migration):
                     )
                 """)
             )
-            session.execute(
-                text("CREATE INDEX idx_prompt_versions_name ON prompt_versions(name)")
-            )
+            session.execute(text("CREATE INDEX idx_prompt_versions_name ON prompt_versions(name)"))
             session.execute(
                 text(
-                    "CREATE INDEX idx_prompt_versions_default "
-                    "ON prompt_versions(name, is_default)"
+                    "CREATE INDEX idx_prompt_versions_default ON prompt_versions(name, is_default)"
                 )
             )
             session.commit()
@@ -319,21 +317,16 @@ class CreateReviewTablesMigration(Migration):
             )
             session.execute(
                 text(
-                    "CREATE INDEX idx_review_tasks_episode_stage "
-                    "ON review_tasks(episode_id, stage)"
+                    "CREATE INDEX idx_review_tasks_episode_stage ON review_tasks(episode_id, stage)"
                 )
             )
-            session.execute(
-                text("CREATE INDEX idx_review_tasks_status ON review_tasks(status)")
-            )
+            session.execute(text("CREATE INDEX idx_review_tasks_status ON review_tasks(status)"))
             session.commit()
             logger.info("Created review_tasks table with indexes")
 
         # Create review_decisions table
         result = session.execute(
-            text(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='review_decisions'"
-            )
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='review_decisions'")
         )
         if not result.fetchone():
             session.execute(
@@ -349,10 +342,7 @@ class CreateReviewTablesMigration(Migration):
                 """)
             )
             session.execute(
-                text(
-                    "CREATE INDEX idx_review_decisions_task "
-                    "ON review_decisions(review_task_id)"
-                )
+                text("CREATE INDEX idx_review_decisions_task ON review_decisions(review_task_id)")
             )
             session.commit()
             logger.info("Created review_decisions table with index")

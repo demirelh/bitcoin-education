@@ -279,11 +279,7 @@ def get_pending_reviews(session: Session) -> list[ReviewTask]:
     """Return all PENDING and IN_REVIEW tasks, newest first."""
     return (
         session.query(ReviewTask)
-        .filter(
-            ReviewTask.status.in_(
-                [ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]
-            )
-        )
+        .filter(ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]))
         .order_by(ReviewTask.created_at.desc())
         .all()
     )
@@ -297,9 +293,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
     """
     task = _get_task_or_raise(session, review_task_id)
 
-    episode = (
-        session.query(Episode).filter(Episode.episode_id == task.episode_id).first()
-    )
+    episode = session.query(Episode).filter(Episode.episode_id == task.episode_id).first()
 
     # Load diff data
     diff_data = None
@@ -415,9 +409,7 @@ def has_pending_review(
         session.query(ReviewTask)
         .filter(
             ReviewTask.episode_id == episode_id,
-            ReviewTask.status.in_(
-                [ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]
-            ),
+            ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]),
         )
         .count()
     )
@@ -428,10 +420,6 @@ def pending_review_count(session: Session) -> int:
     """Count of PENDING + IN_REVIEW tasks. Used for dashboard badge."""
     return (
         session.query(ReviewTask)
-        .filter(
-            ReviewTask.status.in_(
-                [ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]
-            )
-        )
+        .filter(ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]))
         .count()
     )

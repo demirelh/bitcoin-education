@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -21,7 +21,7 @@ from btcedu.models.episode import (
     PipelineStage,
     RunStatus,
 )
-from btcedu.services.claude_service import ClaudeResponse, call_claude, compute_prompt_hash
+from btcedu.services.claude_service import ClaudeResponse, call_claude
 
 logger = logging.getLogger(__name__)
 
@@ -167,11 +167,6 @@ def correct_transcript(
         for i, segment in enumerate(segments):
             user_message = user_template.replace("{{ transcript }}", segment)
 
-            # Compute prompt hash for this call
-            prompt_hash = compute_prompt_hash(
-                user_message, settings.claude_model, settings.claude_temperature, []
-            )
-
             # Dry-run path
             dry_run_path = (
                 Path(settings.outputs_dir) / episode_id / f"dry_run_correct_{i}.json"
@@ -202,9 +197,7 @@ def correct_transcript(
         corrected_path.write_text(corrected_text, encoding="utf-8")
 
         diff_path.parent.mkdir(parents=True, exist_ok=True)
-        diff_path.write_text(
-            json.dumps(diff_data, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        diff_path.write_text(json.dumps(diff_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
         # Write provenance
         elapsed = time.monotonic() - t0

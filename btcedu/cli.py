@@ -573,9 +573,7 @@ def review_list(ctx: click.Context, status: str | None) -> None:
         else:
             # Default: show pending + in_review
             query = query.filter(
-                ReviewTask.status.in_(
-                    [ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]
-                )
+                ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value])
             )
 
         tasks = query.all()

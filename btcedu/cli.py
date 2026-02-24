@@ -640,7 +640,8 @@ def adapt(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run
                 else:
                     click.echo(
                         f"[OK] {eid} -> {result.adapted_path} "
-                        f"({result.adaptation_count} adaptations: T1={result.tier1_count}, T2={result.tier2_count}, "
+                        f"({result.adaptation_count} adaptations: "
+                        f"T1={result.tier1_count}, T2={result.tier2_count}, "
                         f"${result.cost_usd:.4f})"
                     )
             except Exception as e:

@@ -24,7 +24,10 @@ from btcedu.models.review import ReviewStatus, ReviewTask
 
 @pytest.fixture
 def translated_episode(db_session, tmp_path):
-    """Episode at TRANSLATED status with translation and German transcript files, and approved Review Gate 1."""
+    """Episode at TRANSLATED status with translation and German transcript files.
+
+    Also includes approved Review Gate 1.
+    """
     transcript_dir = tmp_path / "transcripts" / "ep_test"
     transcript_dir.mkdir(parents=True)
 
@@ -335,7 +338,13 @@ def test_is_adaptation_current_all_match(tmp_path):
 
 
 @patch("btcedu.core.adapter.call_claude")
-def test_adapt_script_success(mock_call_claude, translated_episode, mock_settings, db_session, mock_claude_adapt_response):
+def test_adapt_script_success(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+):
     """Test successful adaptation of a translated episode."""
     mock_call_claude.return_value = type("Response", (), mock_claude_adapt_response)
 
@@ -353,13 +362,22 @@ def test_adapt_script_success(mock_call_claude, translated_episode, mock_setting
     assert translated_episode.status == EpisodeStatus.ADAPTED
 
     # Check files were written
-    adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
+    adapted_path = (
+        Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
+    )
     assert adapted_path.exists()
 
-    diff_path = Path(mock_settings.outputs_dir) / "ep_test" / "review" / "adaptation_diff.json"
+    diff_path = (
+        Path(mock_settings.outputs_dir) / "ep_test" / "review" / "adaptation_diff.json"
+    )
     assert diff_path.exists()
 
-    provenance_path = Path(mock_settings.outputs_dir) / "ep_test" / "provenance" / "adapt_provenance.json"
+    provenance_path = (
+        Path(mock_settings.outputs_dir)
+        / "ep_test"
+        / "provenance"
+        / "adapt_provenance.json"
+    )
     assert provenance_path.exists()
 
     # Check provenance content
@@ -372,7 +390,13 @@ def test_adapt_script_success(mock_call_claude, translated_episode, mock_setting
 
 
 @patch("btcedu.core.adapter.call_claude")
-def test_adapt_script_idempotent(mock_call_claude, translated_episode, mock_settings, db_session, mock_claude_adapt_response):
+def test_adapt_script_idempotent(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+):
     """Test that second run is skipped due to idempotency."""
     mock_call_claude.return_value = type("Response", (), mock_claude_adapt_response)
 
@@ -434,24 +458,38 @@ def test_adapt_script_missing_translation(translated_episode, mock_settings, db_
         adapt_script(db_session, "ep_test", mock_settings)
 
 
-def test_adapt_script_missing_german(translated_episode, mock_settings, db_session, tmp_path):
+def test_adapt_script_missing_german(
+    translated_episode, mock_settings, db_session, tmp_path
+):
     """Test that adaptation fails if German corrected transcript is missing."""
     # Remove German file
-    corrected_path = Path(mock_settings.transcripts_dir) / "ep_test" / "transcript.corrected.de.txt"
+    corrected_path = (
+        Path(mock_settings.transcripts_dir)
+        / "ep_test"
+        / "transcript.corrected.de.txt"
+    )
     corrected_path.unlink()
 
     with pytest.raises(FileNotFoundError, match="Corrected German transcript not found"):
         adapt_script(db_session, "ep_test", mock_settings)
 
 
-def test_adapt_script_no_review_approval(translated_episode_no_approval, mock_settings, db_session):
+def test_adapt_script_no_review_approval(
+    translated_episode_no_approval, mock_settings, db_session
+):
     """Test that adaptation fails if Review Gate 1 (correction) is not approved."""
     with pytest.raises(ValueError, match="correction has not been approved"):
         adapt_script(db_session, "ep_test", mock_settings)
 
 
 @patch("btcedu.core.adapter.call_claude")
-def test_adapt_script_pipeline_run_tracking(mock_call_claude, translated_episode, mock_settings, db_session, mock_claude_adapt_response):
+def test_adapt_script_pipeline_run_tracking(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+):
     """Test that PipelineRun is created and updated correctly."""
     mock_call_claude.return_value = type("Response", (), mock_claude_adapt_response)
 
@@ -503,7 +541,13 @@ def test_adapt_script_error_handling(mock_call_claude, translated_episode, mock_
 
 
 @patch("btcedu.core.adapter.call_claude")
-def test_adapt_script_content_artifact(mock_call_claude, translated_episode, mock_settings, db_session, mock_claude_adapt_response):
+def test_adapt_script_content_artifact(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+):
     """Test that ContentArtifact is created correctly."""
     from btcedu.models.content_artifact import ContentArtifact
 
@@ -532,7 +576,14 @@ def test_adapt_script_content_artifact(mock_call_claude, translated_episode, moc
 
 
 @patch("btcedu.core.adapter.call_claude")
-def test_cli_adapt_command(mock_call_claude, translated_episode, mock_settings, db_session, mock_claude_adapt_response, tmp_path):
+def test_cli_adapt_command(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+    tmp_path,
+):
     """Test the 'btcedu adapt' CLI command."""
     from click.testing import CliRunner
 
@@ -554,7 +605,13 @@ def test_cli_adapt_command(mock_call_claude, translated_episode, mock_settings, 
 
 
 @patch("btcedu.core.adapter.call_claude")
-def test_cli_adapt_command_force(mock_call_claude, translated_episode, mock_settings, db_session, mock_claude_adapt_response):
+def test_cli_adapt_command_force(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+):
     """Test the 'btcedu adapt --force' CLI command."""
     from click.testing import CliRunner
 

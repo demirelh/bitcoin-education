@@ -91,7 +91,7 @@ def adapt_script(
     # Check Review Gate 1 approval (correction must be approved)
     if episode.status == EpisodeStatus.TRANSLATED and not force:
         from btcedu.core.reviewer import has_pending_review
-        from btcedu.models.review import ReviewTask, ReviewStatus
+        from btcedu.models.review import ReviewStatus, ReviewTask
 
         # Check if there's a pending review for correction
         if has_pending_review(session, episode_id):

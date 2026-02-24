@@ -297,7 +297,11 @@ def _run_stage(
                     "adapt",
                     "success",
                     elapsed,
-                    detail=f"{result.adaptation_count} adaptations (T1:{result.tier1_count}, T2:{result.tier2_count}, ${result.cost_usd:.4f})",
+                    detail=(
+                        f"{result.adaptation_count} adaptations "
+                        f"(T1:{result.tier1_count}, T2:{result.tier2_count}, "
+                        f"${result.cost_usd:.4f})"
+                    ),
                 )
 
         elif stage_name == "review_gate_2":
@@ -310,7 +314,12 @@ def _run_stage(
             # Check if already approved
             if has_approved_review(session, episode.episode_id, "adapt"):
                 elapsed = time.monotonic() - t0
-                return StageResult("review_gate_2", "success", elapsed, detail="adaptation review approved")
+                return StageResult(
+                    "review_gate_2",
+                    "success",
+                    elapsed,
+                    detail="adaptation review approved",
+                )
 
             # Check if a pending review already exists
             if has_pending_review(session, episode.episode_id):

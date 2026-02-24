@@ -479,7 +479,12 @@ class TestTranslateCLI:
         """Test successful translation via CLI."""
         from btcedu.cli import cli
 
-        with patch("btcedu.core.translator.call_claude") as mock_claude:
+        with (
+            patch("btcedu.core.translator.call_claude") as mock_claude,
+            patch("btcedu.cli.get_settings") as mock_get_settings,
+            patch("btcedu.cli.init_db"),
+            patch("btcedu.cli.get_session_factory") as mock_get_session_factory,
+        ):
             mock_claude.return_value = type(
                 "Response",
                 (),
@@ -490,6 +495,8 @@ class TestTranslateCLI:
                     "cost_usd": 0.002,
                 },
             )
+            mock_get_settings.return_value = mock_settings
+            mock_get_session_factory.return_value = lambda: db_session
 
             runner = CliRunner()
             result = runner.invoke(cli, ["translate", "--episode-id", "ep_test"])
@@ -503,9 +510,17 @@ class TestTranslateCLI:
         """Test dry-run mode via CLI."""
         from btcedu.cli import cli
 
-        runner = CliRunner()
-        # Note: dry-run won't actually call API if settings.dry_run=True in mock_settings
-        result = runner.invoke(cli, ["translate", "--episode-id", "ep_test", "--dry-run"])
+        with (
+            patch("btcedu.cli.get_settings") as mock_get_settings,
+            patch("btcedu.cli.init_db"),
+            patch("btcedu.cli.get_session_factory") as mock_get_session_factory,
+        ):
+            mock_get_settings.return_value = mock_settings
+            mock_get_session_factory.return_value = lambda: db_session
 
-        # Should complete without error
-        assert result.exit_code == 0
+            runner = CliRunner()
+            # Note: dry-run won't actually call API if settings.dry_run=True in mock_settings
+            result = runner.invoke(cli, ["translate", "--episode-id", "ep_test", "--dry-run"])
+
+            # Should complete without error
+            assert result.exit_code == 0

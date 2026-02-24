@@ -75,10 +75,12 @@ def translate_transcript(
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
-    if episode.status != EpisodeStatus.CORRECTED and not force:
+    # Allow both CORRECTED and TRANSLATED status (for idempotency)
+    # For TRANSLATED, the _is_translation_current check will handle skipping
+    if episode.status not in (EpisodeStatus.CORRECTED, EpisodeStatus.TRANSLATED) and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
-            "expected 'corrected'. Use --force to override."
+            "expected 'corrected' or 'translated'. Use --force to override."
         )
 
     # Resolve paths
@@ -376,19 +378,27 @@ def _segment_text(text: str, limit: int = SEGMENT_CHAR_LIMIT) -> list[str]:
 
             # Split long paragraph by sentences (approximate with ". ")
             sentences = para.split(". ")
-            sent_segment = []
-            sent_len = 0
-            for sent in sentences:
-                if sent_len + len(sent) + 2 > limit and sent_segment:
-                    # Flush sentence segment
+
+            # If no sentence breaks found, fall back to character-based splitting
+            if len(sentences) == 1:
+                # No sentence breaks, split by chunks
+                for i in range(0, para_len, limit):
+                    segments.append(para[i : i + limit])
+            else:
+                # Has sentence breaks, split by sentences
+                sent_segment = []
+                sent_len = 0
+                for sent in sentences:
+                    if sent_len + len(sent) + 2 > limit and sent_segment:
+                        # Flush sentence segment
+                        segments.append(". ".join(sent_segment) + ".")
+                        sent_segment = [sent]
+                        sent_len = len(sent)
+                    else:
+                        sent_segment.append(sent)
+                        sent_len += len(sent) + 2
+                if sent_segment:
                     segments.append(". ".join(sent_segment) + ".")
-                    sent_segment = [sent]
-                    sent_len = len(sent)
-                else:
-                    sent_segment.append(sent)
-                    sent_len += len(sent) + 2
-            if sent_segment:
-                segments.append(". ".join(sent_segment) + ".")
 
         # Normal paragraph fits in current segment
         elif current_length + para_len + 2 <= limit:

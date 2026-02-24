@@ -579,9 +579,7 @@ def correct(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> No
     help="Write request JSON instead of calling Claude API.",
 )
 @click.pass_context
-def translate(
-    ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run: bool
-) -> None:
+def translate(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run: bool) -> None:
     """Translate corrected German transcripts to Turkish (v2 pipeline)."""
     from btcedu.core.translator import translate_transcript
 

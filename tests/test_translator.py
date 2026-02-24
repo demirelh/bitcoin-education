@@ -264,9 +264,7 @@ class TestTranslateTranscript:
                 },
             )
 
-            result = translate_transcript(
-                db_session, "ep_test", mock_settings, force=False
-            )
+            result = translate_transcript(db_session, "ep_test", mock_settings, force=False)
 
             assert not result.skipped
             assert result.episode_id == "ep_test"
@@ -432,9 +430,7 @@ class TestTranslateTranscript:
         transcript_dir = tmp_path / "transcripts" / "ep_test"
         corrected_path = transcript_dir / "transcript.corrected.de.txt"
         long_text = (
-            ("Dies ist ein sehr langer Absatz. " * 1000)
-            + "\n\n"
-            + ("Zweiter Absatz. " * 1000)
+            ("Dies ist ein sehr langer Absatz. " * 1000) + "\n\n" + ("Zweiter Absatz. " * 1000)
         )
         corrected_path.write_text(long_text, encoding="utf-8")
 

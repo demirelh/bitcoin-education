@@ -21,13 +21,29 @@ logging.basicConfig(
 def cli(ctx: click.Context) -> None:
     """btcedu - Bitcoin Education Automation Pipeline"""
     ctx.ensure_object(dict)
-    settings = get_settings()
-    ctx.obj["settings"] = settings
-    init_db(settings.database_url)
-    ctx.obj["session_factory"] = get_session_factory(settings.database_url)
 
-    # Check for pending migrations on CLI startup
-    _check_pending_migrations(ctx.obj["session_factory"])
+    # Don't initialize database during resilient parsing (help, completion)
+    if ctx.resilient_parsing:
+        return
+
+    try:
+        settings = get_settings()
+        ctx.obj["settings"] = settings
+        init_db(settings.database_url)
+        ctx.obj["session_factory"] = get_session_factory(settings.database_url)
+
+        # Check for pending migrations on CLI startup
+        _check_pending_migrations(ctx.obj["session_factory"])
+    except Exception as e:
+        # If database initialization fails during help display, store the error
+        # The actual command will fail properly if it tries to access the database
+        # This allows --help to work even when the database is unavailable
+        import sqlalchemy.exc
+        if isinstance(e, (sqlalchemy.exc.OperationalError, sqlalchemy.exc.DatabaseError)):
+            ctx.obj["db_init_error"] = e
+        else:
+            # Re-raise non-database errors
+            raise
 
 
 def _check_pending_migrations(session_factory):

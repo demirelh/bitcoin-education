@@ -7,7 +7,6 @@ from flask import Flask
 
 from btcedu.core.reviewer import create_review_task
 from btcedu.models.episode import Episode, EpisodeStatus
-from btcedu.models.review import ReviewStatus, ReviewTask
 
 
 @pytest.fixture

@@ -1,7 +1,5 @@
 """Tests for Sprint 1 new ORM models and enum extensions."""
 
-from datetime import UTC, datetime
-
 import pytest
 from sqlalchemy.exc import IntegrityError
 
@@ -39,12 +37,8 @@ class TestPromptVersionORM:
         assert result.created_at is not None
 
     def test_unique_name_version(self, db_session):
-        pv1 = PromptVersion(
-            name="system", version=1, content_hash="hash_a"
-        )
-        pv2 = PromptVersion(
-            name="system", version=1, content_hash="hash_b"
-        )
+        pv1 = PromptVersion(name="system", version=1, content_hash="hash_a")
+        pv2 = PromptVersion(name="system", version=1, content_hash="hash_b")
         db_session.add(pv1)
         db_session.commit()
         db_session.add(pv2)
@@ -53,12 +47,8 @@ class TestPromptVersionORM:
         db_session.rollback()
 
     def test_unique_name_hash(self, db_session):
-        pv1 = PromptVersion(
-            name="system", version=1, content_hash="hash_same"
-        )
-        pv2 = PromptVersion(
-            name="system", version=2, content_hash="hash_same"
-        )
+        pv1 = PromptVersion(name="system", version=1, content_hash="hash_same")
+        pv2 = PromptVersion(name="system", version=2, content_hash="hash_same")
         db_session.add(pv1)
         db_session.commit()
         db_session.add(pv2)
@@ -67,17 +57,11 @@ class TestPromptVersionORM:
         db_session.rollback()
 
     def test_default_flag(self, db_session):
-        pv = PromptVersion(
-            name="system", version=1, content_hash="hash_a", is_default=True
-        )
+        pv = PromptVersion(name="system", version=1, content_hash="hash_a", is_default=True)
         db_session.add(pv)
         db_session.commit()
 
-        result = (
-            db_session.query(PromptVersion)
-            .filter(PromptVersion.is_default.is_(True))
-            .first()
-        )
+        result = db_session.query(PromptVersion).filter(PromptVersion.is_default.is_(True)).first()
         assert result is not None
         assert result.name == "system"
 
@@ -200,11 +184,7 @@ class TestEpisodeV2Fields:
         db_session.commit()
 
         for i, status in enumerate(new_statuses):
-            ep = (
-                db_session.query(Episode)
-                .filter(Episode.episode_id == f"ep_status_{i}")
-                .first()
-            )
+            ep = db_session.query(Episode).filter(Episode.episode_id == f"ep_status_{i}").first()
             assert ep.status == status
 
     def test_pipeline_stage_new_values(self):

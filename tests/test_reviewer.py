@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from btcedu.core.pipeline import StageResult, _run_stage
 from btcedu.core.reviewer import (
     approve_review,
     create_review_task,
@@ -17,7 +18,6 @@ from btcedu.core.reviewer import (
     reject_review,
     request_changes,
 )
-from btcedu.core.pipeline import StageResult, _run_stage
 from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.models.review import ReviewStatus, ReviewTask
 
@@ -233,18 +233,14 @@ class TestGetLatestReviewerFeedback:
 class TestPendingReviewCount:
     def test_counts_correctly(self, db_session, corrected_episode):
         assert pending_review_count(db_session) == 0
-        create_review_task(
-            db_session, "ep001", "correct", [corrected_episode["corrected_path"]]
-        )
+        create_review_task(db_session, "ep001", "correct", [corrected_episode["corrected_path"]])
         assert pending_review_count(db_session) == 1
 
 
 class TestHasPendingReview:
     def test_true_when_pending(self, db_session, corrected_episode):
         assert not has_pending_review(db_session, "ep001")
-        create_review_task(
-            db_session, "ep001", "correct", [corrected_episode["corrected_path"]]
-        )
+        create_review_task(db_session, "ep001", "correct", [corrected_episode["corrected_path"]])
         assert has_pending_review(db_session, "ep001")
 
 
@@ -283,16 +279,18 @@ class TestReviewGate1Pipeline:
         assert "created" in result.detail
 
         # ReviewTask should exist in DB
-        tasks = db_session.query(ReviewTask).filter(
-            ReviewTask.episode_id == "ep001",
-            ReviewTask.stage == "correct",
-        ).all()
+        tasks = (
+            db_session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == "ep001",
+                ReviewTask.stage == "correct",
+            )
+            .all()
+        )
         assert len(tasks) == 1
         assert tasks[0].status == ReviewStatus.PENDING.value
 
-    def test_returns_pending_when_task_exists(
-        self, db_session, corrected_episode, gate_settings
-    ):
+    def test_returns_pending_when_task_exists(self, db_session, corrected_episode, gate_settings):
         """Second call (task already exists) returns review_pending without creating another."""
         episode = corrected_episode["episode"]
 
@@ -305,23 +303,29 @@ class TestReviewGate1Pipeline:
         assert "awaiting" in result.detail
 
         # Still only one task
-        count = db_session.query(ReviewTask).filter(
-            ReviewTask.episode_id == "ep001",
-        ).count()
+        count = (
+            db_session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == "ep001",
+            )
+            .count()
+        )
         assert count == 1
 
-    def test_returns_success_after_approval(
-        self, db_session, corrected_episode, gate_settings
-    ):
+    def test_returns_success_after_approval(self, db_session, corrected_episode, gate_settings):
         """After approving the review, the gate returns success."""
         episode = corrected_episode["episode"]
 
         # Create and approve
         _run_stage(db_session, episode, gate_settings, "review_gate_1")
-        task = db_session.query(ReviewTask).filter(
-            ReviewTask.episode_id == "ep001",
-            ReviewTask.stage == "correct",
-        ).first()
+        task = (
+            db_session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == "ep001",
+                ReviewTask.stage == "correct",
+            )
+            .first()
+        )
         approve_review(db_session, task.id)
 
         # Now the gate should pass

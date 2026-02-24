@@ -1,13 +1,9 @@
 """Tests for PromptRegistry."""
 
-import tempfile
-from pathlib import Path
-
 import pytest
 
 from btcedu.core.prompt_registry import TEMPLATES_DIR, PromptRegistry
 from btcedu.models.prompt_version import PromptVersion
-
 
 SAMPLE_TEMPLATE = """\
 ---
@@ -203,7 +199,6 @@ class TestPromptRegistry:
         assert default.is_default is True
 
         # pv1 is no longer default
-        from sqlalchemy.orm import Session
         db = registry._session
         db.refresh(pv1)
         assert pv1.is_default is False

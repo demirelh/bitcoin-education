@@ -606,6 +606,49 @@ def translate(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry
         session.close()
 
 
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to adapt (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-adapt even if output exists.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Write request JSON instead of calling Claude API.",
+)
+@click.pass_context
+def adapt(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run: bool) -> None:
+    """Adapt Turkish translation for Turkey context (v2 pipeline)."""
+    from btcedu.core.adapter import adapt_script
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = adapt_script(session, eid, settings, force=force)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
+                else:
+                    click.echo(
+                        f"[OK] {eid} -> {result.adapted_path} "
+                        f"({result.adaptation_count} adaptations: T1={result.tier1_count}, T2={result.tier2_count}, "
+                        f"${result.cost_usd:.4f})"
+                    )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.group()
 @click.pass_context
 def review(ctx: click.Context) -> None:

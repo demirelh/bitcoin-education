@@ -57,8 +57,10 @@ _V2_STAGES = [
     ("correct", EpisodeStatus.TRANSCRIBED),
     ("review_gate_1", EpisodeStatus.CORRECTED),
     ("translate", EpisodeStatus.CORRECTED),  # after review approved
+    ("adapt", EpisodeStatus.TRANSLATED),
+    ("review_gate_2", EpisodeStatus.ADAPTED),
     # Future sprints will add:
-    # ("adapt", EpisodeStatus.TRANSLATED),
+    # ("chapterize", EpisodeStatus.ADAPTED),  # after review approved
     # ...
 ]
 
@@ -281,6 +283,65 @@ def _run_stage(
                     elapsed,
                     detail=f"{result.output_char_count} chars Turkish (${result.cost_usd:.4f})",
                 )
+
+        elif stage_name == "adapt":
+            from btcedu.core.adapter import adapt_script
+
+            result = adapt_script(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("adapt", "skipped", elapsed, detail="already up-to-date")
+            else:
+                return StageResult(
+                    "adapt",
+                    "success",
+                    elapsed,
+                    detail=f"{result.adaptation_count} adaptations (T1:{result.tier1_count}, T2:{result.tier2_count}, ${result.cost_usd:.4f})",
+                )
+
+        elif stage_name == "review_gate_2":
+            from btcedu.core.reviewer import (
+                create_review_task,
+                has_approved_review,
+                has_pending_review,
+            )
+
+            # Check if already approved
+            if has_approved_review(session, episode.episode_id, "adapt"):
+                elapsed = time.monotonic() - t0
+                return StageResult("review_gate_2", "success", elapsed, detail="adaptation review approved")
+
+            # Check if a pending review already exists
+            if has_pending_review(session, episode.episode_id):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_2",
+                    "review_pending",
+                    elapsed,
+                    detail="awaiting adaptation review",
+                )
+
+            # Create a new review task
+            adapted_path = Path(settings.outputs_dir) / episode.episode_id / "script.adapted.tr.md"
+            diff_path = (
+                Path(settings.outputs_dir) / episode.episode_id / "review" / "adaptation_diff.json"
+            )
+
+            create_review_task(
+                session,
+                episode.episode_id,
+                stage="adapt",
+                artifact_paths=[str(adapted_path)],
+                diff_path=str(diff_path) if diff_path.exists() else None,
+            )
+            elapsed = time.monotonic() - t0
+            return StageResult(
+                "review_gate_2",
+                "review_pending",
+                elapsed,
+                detail="adaptation review task created",
+            )
 
         else:
             raise ValueError(f"Unknown stage: {stage_name}")

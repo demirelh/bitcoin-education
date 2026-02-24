@@ -8,7 +8,6 @@ import pytest
 from click.testing import CliRunner
 
 from btcedu.core.translator import (
-    TranslationResult,
     _is_translation_current,
     _segment_text,
     _split_prompt,
@@ -122,7 +121,10 @@ class TestSegmentText:
 
 class TestSplitPrompt:
     def test_split_at_input_marker(self):
-        template = "System instructions here\n\n# Input\n\n{{ transcript }}\n\n# Output Format\n\nReturn Turkish."
+        template = (
+            "System instructions here\n\n# Input\n\n{{ transcript }}\n\n"
+            "# Output Format\n\nReturn Turkish."
+        )
         system, user = _split_prompt(template)
         assert "System instructions" in system
         assert "# Input" in user
@@ -251,8 +253,11 @@ class TestTranslateTranscript:
                 "Response",
                 (),
                 {
-                    "text": "Bugün Bitcoin ve Blockchain teknolojisi hakkında konuşuyoruz.\n\n"
-                    "Bu, Satoshi Nakamoto tarafından icat edilen merkezi olmayan bir para birimidir.",
+                    "text": (
+                        "Bugün Bitcoin ve Blockchain teknolojisi hakkında konuşuyoruz.\n\n"
+                        "Bu, Satoshi Nakamoto tarafından icat edilen merkezi olmayan "
+                        "bir para birimidir."
+                    ),
                     "input_tokens": 100,
                     "output_tokens": 120,
                     "cost_usd": 0.005,
@@ -289,7 +294,9 @@ class TestTranslateTranscript:
             assert "prompt_hash" in provenance
             assert "input_content_hash" in provenance
 
-    def test_translate_idempotent_skip(self, db_session, corrected_episode, mock_settings, tmp_path):
+    def test_translate_idempotent_skip(
+        self, db_session, corrected_episode, mock_settings, tmp_path
+    ):
         """Test that running translate twice skips on second run."""
         with patch("btcedu.core.translator.call_claude") as mock_claude:
             mock_claude.return_value = type(
@@ -313,7 +320,9 @@ class TestTranslateTranscript:
             assert result2.skipped
             assert mock_claude.call_count == 1  # Not called again
 
-    def test_translate_force_reprocesses(self, db_session, corrected_episode, mock_settings, tmp_path):
+    def test_translate_force_reprocesses(
+        self, db_session, corrected_episode, mock_settings, tmp_path
+    ):
         """Test that --force flag re-translates even if output exists."""
         with patch("btcedu.core.translator.call_claude") as mock_claude:
             mock_claude.return_value = type(
@@ -422,7 +431,11 @@ class TestTranslateTranscript:
         # Create a very long corrected transcript
         transcript_dir = tmp_path / "transcripts" / "ep_test"
         corrected_path = transcript_dir / "transcript.corrected.de.txt"
-        long_text = ("Dies ist ein sehr langer Absatz. " * 1000) + "\n\n" + ("Zweiter Absatz. " * 1000)
+        long_text = (
+            ("Dies ist ein sehr langer Absatz. " * 1000)
+            + "\n\n"
+            + ("Zweiter Absatz. " * 1000)
+        )
         corrected_path.write_text(long_text, encoding="utf-8")
 
         with patch("btcedu.core.translator.call_claude") as mock_claude:

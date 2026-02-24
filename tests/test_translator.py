@@ -23,7 +23,44 @@ from btcedu.models.review import ReviewStatus, ReviewTask
 
 @pytest.fixture
 def corrected_episode(db_session, tmp_path):
-    """Episode at CORRECTED status with a corrected transcript file."""
+    """Episode at CORRECTED status with a corrected transcript file and approved Review Gate 1."""
+    transcript_dir = tmp_path / "transcripts" / "ep_test"
+    transcript_dir.mkdir(parents=True)
+    corrected_path = transcript_dir / "transcript.corrected.de.txt"
+    corrected_path.write_text(
+        "Heute sprechen wir über Bitcoin und die Blockchain-Technologie.\n\n"
+        "Es ist eine dezentrale Währung, die von Satoshi Nakamoto erfunden wurde.",
+        encoding="utf-8",
+    )
+
+    episode = Episode(
+        episode_id="ep_test",
+        source="youtube_rss",
+        title="Bitcoin Grundlagen",
+        url="https://youtube.com/watch?v=ep_test",
+        status=EpisodeStatus.CORRECTED,
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    # Add approved ReviewTask for Review Gate 1 (correction stage)
+    # This is required for translation to proceed per MASTERPLAN §3.1
+    review_task = ReviewTask(
+        episode_id="ep_test",
+        stage="correct",
+        status=ReviewStatus.APPROVED.value,
+        artifact_paths="[]",
+    )
+    db_session.add(review_task)
+    db_session.commit()
+
+    return episode
+
+
+@pytest.fixture
+def corrected_episode_no_approval(db_session, tmp_path):
+    """Episode at CORRECTED status without Review Gate 1 approval (for testing approval checks)."""
     transcript_dir = tmp_path / "transcripts" / "ep_test"
     transcript_dir.mkdir(parents=True)
     corrected_path = transcript_dir / "transcript.corrected.de.txt"
@@ -408,7 +445,7 @@ class TestTranslateTranscript:
             translate_transcript(db_session, "ep_wrong", mock_settings, force=False)
 
     def test_translate_fails_without_review_approval(
-        self, db_session, corrected_episode, mock_settings
+        self, db_session, corrected_episode_no_approval, mock_settings
     ):
         """Test that translation fails if Review Gate 1 is not approved."""
         # Episode is CORRECTED but no approved ReviewTask exists
@@ -416,7 +453,7 @@ class TestTranslateTranscript:
             translate_transcript(db_session, "ep_test", mock_settings, force=False)
 
     def test_translate_fails_with_pending_review(
-        self, db_session, corrected_episode, mock_settings
+        self, db_session, corrected_episode_no_approval, mock_settings
     ):
         """Test that translation fails if Review Gate 1 is still pending."""
         # Create pending ReviewTask
@@ -433,7 +470,7 @@ class TestTranslateTranscript:
             translate_transcript(db_session, "ep_test", mock_settings, force=False)
 
     def test_translate_succeeds_with_review_approval(
-        self, db_session, corrected_episode, mock_settings
+        self, db_session, corrected_episode_no_approval, mock_settings
     ):
         """Test that translation succeeds when Review Gate 1 is approved."""
         # Create approved ReviewTask
@@ -464,7 +501,7 @@ class TestTranslateTranscript:
             assert result.cost_usd > 0
 
     def test_translate_force_bypasses_approval_check(
-        self, db_session, corrected_episode, mock_settings
+        self, db_session, corrected_episode_no_approval, mock_settings
     ):
         """Test that --force flag bypasses Review Gate 1 approval check."""
         # No approved ReviewTask exists, but force=True should bypass check
@@ -496,6 +533,16 @@ class TestTranslateTranscript:
             pipeline_version=2,
         )
         db_session.add(episode)
+        db_session.commit()
+
+        # Add approved ReviewTask so we can test file-not-found error (not approval error)
+        review_task = ReviewTask(
+            episode_id="ep_missing",
+            stage="correct",
+            status=ReviewStatus.APPROVED.value,
+            artifact_paths="[]",
+        )
+        db_session.add(review_task)
         db_session.commit()
 
         with pytest.raises(FileNotFoundError):

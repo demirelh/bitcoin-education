@@ -39,6 +39,7 @@ def cli(ctx: click.Context) -> None:
         # The actual command will fail properly if it tries to access the database
         # This allows --help to work even when the database is unavailable
         import sqlalchemy.exc
+
         if isinstance(e, (sqlalchemy.exc.OperationalError, sqlalchemy.exc.DatabaseError)):
             ctx.obj["db_init_error"] = e
         else:

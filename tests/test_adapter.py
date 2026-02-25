@@ -565,7 +565,7 @@ def test_adapt_script_with_reviewer_feedback(
 
     def capture_call(*args, **kwargs):
         nonlocal captured_user_message
-        captured_user_message = kwargs.get("user_message") or args[1] if len(args) > 1 else None
+        captured_user_message = kwargs.get("user_message") or (args[1] if len(args) > 1 else None)
         return type("Response", (), mock_claude_adapt_response)
 
     mock_call_claude.side_effect = capture_call

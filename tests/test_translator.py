@@ -584,6 +584,80 @@ class TestTranslateTranscript:
             assert "\n\n" in translated_text  # Paragraphs preserved
 
 
+class TestCascadeInvalidation:
+    def test_translation_marks_adaptation_stale(
+        self, db_session, corrected_episode, mock_settings, tmp_path
+    ):
+        """Test that re-translating marks downstream adaptation as stale."""
+        with patch("btcedu.core.translator.call_claude") as mock_claude:
+            mock_claude.return_value = type(
+                "Response",
+                (),
+                {
+                    "text": "Turkish translation v1.",
+                    "input_tokens": 100,
+                    "output_tokens": 110,
+                    "cost_usd": 0.002,
+                },
+            )
+
+            # First translation
+            result1 = translate_transcript(db_session, "ep_test", mock_settings, force=False)
+            translated_path = Path(result1.translated_path)
+            assert translated_path.exists()
+
+            # Create a fake adapted script (simulating adaptation stage already run)
+            adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
+            adapted_path.parent.mkdir(parents=True, exist_ok=True)
+            adapted_path.write_text("Adapted Turkish script v1.", encoding="utf-8")
+
+            # Now re-translate (force)
+            mock_claude.return_value = type(
+                "Response",
+                (),
+                {
+                    "text": "Turkish translation v2 (updated).",
+                    "input_tokens": 100,
+                    "output_tokens": 120,
+                    "cost_usd": 0.002,
+                },
+            )
+            result2 = translate_transcript(db_session, "ep_test", mock_settings, force=True)
+
+            # Verify stale marker was created
+            stale_marker = adapted_path.parent / (adapted_path.name + ".stale")
+            assert stale_marker.exists(), "Stale marker should be created for downstream adaptation"
+
+            # Verify stale marker content
+            stale_data = json.loads(stale_marker.read_text(encoding="utf-8"))
+            assert stale_data["invalidated_by"] == "translate"
+            assert stale_data["reason"] == "translation_changed"
+            assert "invalidated_at" in stale_data
+
+    def test_translation_no_stale_marker_if_no_adaptation(
+        self, db_session, corrected_episode, mock_settings, tmp_path
+    ):
+        """Test that no stale marker is created if adaptation doesn't exist."""
+        with patch("btcedu.core.translator.call_claude") as mock_claude:
+            mock_claude.return_value = type(
+                "Response",
+                (),
+                {
+                    "text": "Turkish translation.",
+                    "input_tokens": 100,
+                    "output_tokens": 110,
+                    "cost_usd": 0.002,
+                },
+            )
+
+            result = translate_transcript(db_session, "ep_test", mock_settings, force=False)
+
+            # Verify no stale marker (since adaptation doesn't exist)
+            adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
+            stale_marker = adapted_path.parent / (adapted_path.name + ".stale")
+            assert not stale_marker.exists(), "No stale marker should be created if adaptation doesn't exist"
+
+
 # ---------------------------------------------------------------------------
 # CLI tests
 # ---------------------------------------------------------------------------

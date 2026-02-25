@@ -227,6 +227,21 @@ def translate_transcript(
         translated_path.parent.mkdir(parents=True, exist_ok=True)
         translated_path.write_text(translated_text, encoding="utf-8")
 
+        # Mark downstream adaptation as stale if it exists (cascade invalidation)
+        adapted_path = Path(settings.outputs_dir) / episode_id / "script.adapted.tr.md"
+        if adapted_path.exists():
+            stale_marker = adapted_path.parent / (adapted_path.name + ".stale")
+            stale_data = {
+                "invalidated_at": _utcnow().isoformat(),
+                "invalidated_by": "translate",
+                "reason": "translation_changed",
+            }
+            stale_marker.parent.mkdir(parents=True, exist_ok=True)
+            stale_marker.write_text(
+                json.dumps(stale_data, indent=2), encoding="utf-8"
+            )
+            logger.info("Marked downstream adaptation as stale: %s", adapted_path.name)
+
         # Write provenance
         elapsed = time.monotonic() - t0
         provenance = {

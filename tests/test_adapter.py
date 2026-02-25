@@ -422,11 +422,13 @@ def test_adapt_script_reprocesses_on_stale_marker(
     adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
     stale_marker = adapted_path.parent / (adapted_path.name + ".stale")
     stale_marker.write_text(
-        json.dumps({
-            "invalidated_at": "2026-02-24T12:00:00Z",
-            "invalidated_by": "translate",
-            "reason": "translation_changed",
-        }),
+        json.dumps(
+            {
+                "invalidated_at": "2026-02-24T12:00:00Z",
+                "invalidated_by": "translate",
+                "reason": "translation_changed",
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -563,17 +565,20 @@ def test_adapt_script_with_reviewer_feedback(
 
     def capture_call(*args, **kwargs):
         nonlocal captured_user_message
-        captured_user_message = kwargs.get("user_message") or args[1] if len(args) > 1 else None
+        captured_user_message = kwargs.get("user_message") or (args[1] if len(args) > 1 else None)
         return type("Response", (), mock_claude_adapt_response)
 
     mock_call_claude.side_effect = capture_call
 
     # Run adaptation with force=True (to re-adapt with feedback)
-    result = adapt_script(db_session, "ep_test", mock_settings, force=True)
+    adapt_script(db_session, "ep_test", mock_settings, force=True)
 
     # Verify feedback was injected into prompt
     assert captured_user_message is not None
-    assert "Revisor Geri Bildirimi" in captured_user_message or "reviewer" in captured_user_message.lower()
+    assert (
+        "Revisor Geri Bildirimi" in captured_user_message
+        or "reviewer" in captured_user_message.lower()
+    )
     assert "banka" in captured_user_message
     assert "Sparkasse" in captured_user_message
 

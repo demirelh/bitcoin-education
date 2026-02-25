@@ -622,7 +622,7 @@ class TestCascadeInvalidation:
                     "cost_usd": 0.002,
                 },
             )
-            result2 = translate_transcript(db_session, "ep_test", mock_settings, force=True)
+            translate_transcript(db_session, "ep_test", mock_settings, force=True)
 
             # Verify stale marker was created
             stale_marker = adapted_path.parent / (adapted_path.name + ".stale")
@@ -650,12 +650,14 @@ class TestCascadeInvalidation:
                 },
             )
 
-            result = translate_transcript(db_session, "ep_test", mock_settings, force=False)
+            translate_transcript(db_session, "ep_test", mock_settings, force=False)
 
             # Verify no stale marker (since adaptation doesn't exist)
             adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
             stale_marker = adapted_path.parent / (adapted_path.name + ".stale")
-            assert not stale_marker.exists(), "No stale marker should be created if adaptation doesn't exist"
+            assert not stale_marker.exists(), (
+                "No stale marker should be created if adaptation doesn't exist"
+            )
 
 
 # ---------------------------------------------------------------------------

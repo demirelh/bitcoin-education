@@ -237,9 +237,7 @@ def translate_transcript(
                 "reason": "translation_changed",
             }
             stale_marker.parent.mkdir(parents=True, exist_ok=True)
-            stale_marker.write_text(
-                json.dumps(stale_data, indent=2), encoding="utf-8"
-            )
+            stale_marker.write_text(json.dumps(stale_data, indent=2), encoding="utf-8")
             logger.info("Marked downstream adaptation as stale: %s", adapted_path.name)
 
         # Write provenance

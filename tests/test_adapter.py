@@ -404,6 +404,39 @@ def test_adapt_script_idempotent(
 
 
 @patch("btcedu.core.adapter.call_claude")
+def test_adapt_script_reprocesses_on_stale_marker(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+):
+    """Test that adaptation re-processes when stale marker exists (cascade invalidation)."""
+    mock_call_claude.return_value = type("Response", (), mock_claude_adapt_response)
+
+    # First run
+    result1 = adapt_script(db_session, "ep_test", mock_settings, force=False)
+    assert result1.skipped is False
+
+    # Create stale marker (simulating upstream translation change)
+    adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
+    stale_marker = adapted_path.parent / (adapted_path.name + ".stale")
+    stale_marker.write_text(
+        json.dumps({
+            "invalidated_at": "2026-02-24T12:00:00Z",
+            "invalidated_by": "translate",
+            "reason": "translation_changed",
+        }),
+        encoding="utf-8",
+    )
+
+    # Second run (should NOT skip due to stale marker)
+    result2 = adapt_script(db_session, "ep_test", mock_settings, force=False)
+    assert result2.skipped is False, "Should re-process when stale marker exists"
+    assert result2.adaptation_count == 2
+
+
+@patch("btcedu.core.adapter.call_claude")
 def test_adapt_script_force_rerun(
     mock_call_claude,
     translated_episode,
@@ -501,6 +534,48 @@ def test_adapt_script_pipeline_run_tracking(
     assert pipeline_run.input_tokens == 200
     assert pipeline_run.output_tokens == 150
     assert pipeline_run.estimated_cost_usd == 0.005
+
+
+@patch("btcedu.core.adapter.call_claude")
+def test_adapt_script_with_reviewer_feedback(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+):
+    """Test that reviewer feedback is injected into the adaptation prompt."""
+    # Create a CHANGES_REQUESTED review with reviewer notes
+    from btcedu.models.review import ReviewStatus, ReviewTask
+
+    review_task = ReviewTask(
+        episode_id="ep_test",
+        stage="adapt",
+        status=ReviewStatus.CHANGES_REQUESTED.value,
+        artifact_paths="[]",
+        reviewer_notes="Please use generic 'banka' instead of 'Sparkasse'.",
+    )
+    db_session.add(review_task)
+    db_session.commit()
+
+    # Mock Claude call to capture the prompt
+    captured_user_message = None
+
+    def capture_call(*args, **kwargs):
+        nonlocal captured_user_message
+        captured_user_message = kwargs.get("user_message") or args[1] if len(args) > 1 else None
+        return type("Response", (), mock_claude_adapt_response)
+
+    mock_call_claude.side_effect = capture_call
+
+    # Run adaptation with force=True (to re-adapt with feedback)
+    result = adapt_script(db_session, "ep_test", mock_settings, force=True)
+
+    # Verify feedback was injected into prompt
+    assert captured_user_message is not None
+    assert "Revisor Geri Bildirimi" in captured_user_message or "reviewer" in captured_user_message.lower()
+    assert "banka" in captured_user_message
+    assert "Sparkasse" in captured_user_message
 
 
 @patch("btcedu.core.adapter.call_claude")

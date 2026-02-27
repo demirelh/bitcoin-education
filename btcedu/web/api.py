@@ -352,6 +352,7 @@ _FILE_MAP = {
     "outline_v2": ("outputs_dir", "{eid}/outline.tr.v2.md"),
     "script_v2": ("outputs_dir", "{eid}/script.long.tr.v2.md"),
     "publishing_v2": ("outputs_dir", "{eid}/publishing_pack.v2.json"),
+    "chapters": ("outputs_dir", "{eid}/chapters.json"),
 }
 
 

@@ -59,8 +59,10 @@ _V2_STAGES = [
     ("translate", EpisodeStatus.CORRECTED),  # after review approved
     ("adapt", EpisodeStatus.TRANSLATED),
     ("review_gate_2", EpisodeStatus.ADAPTED),
+    ("chapterize", EpisodeStatus.ADAPTED),  # after review approved
     # Future sprints will add:
-    # ("chapterize", EpisodeStatus.ADAPTED),  # after review approved
+    # ("imagegen", EpisodeStatus.CHAPTERIZED),
+    # ("tts", EpisodeStatus.CHAPTERIZED),
     # ...
 ]
 
@@ -351,6 +353,26 @@ def _run_stage(
                 elapsed,
                 detail="adaptation review task created",
             )
+
+        elif stage_name == "chapterize":
+            from btcedu.core.chapterizer import chapterize_script
+
+            result = chapterize_script(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("chapterize", "skipped", elapsed, detail="already up-to-date")
+            else:
+                return StageResult(
+                    "chapterize",
+                    "success",
+                    elapsed,
+                    detail=(
+                        f"{result.chapter_count} chapters, "
+                        f"~{result.estimated_duration_seconds}s, "
+                        f"${result.cost_usd:.4f}"
+                    ),
+                )
 
         else:
             raise ValueError(f"Unknown stage: {stage_name}")

@@ -340,6 +340,18 @@ def adapt_script(
         episode.error_message = None
         session.commit()
 
+        # Mark downstream chapterization as stale if it exists
+        chapters_path = Path(settings.outputs_dir) / episode_id / "chapters.json"
+        if chapters_path.exists():
+            stale_marker = chapters_path.parent / (chapters_path.name + ".stale")
+            stale_data = {
+                "invalidated_at": _utcnow().isoformat(),
+                "invalidated_by": "adapt",
+                "reason": "adapted_script_changed",
+            }
+            stale_marker.write_text(json.dumps(stale_data, indent=2), encoding="utf-8")
+            logger.info("Marked downstream chapterization as stale: %s", chapters_path.name)
+
         logger.info(
             "Adapted %s (%d→%d chars, %d adaptations, $%.4f)",
             episode_id,

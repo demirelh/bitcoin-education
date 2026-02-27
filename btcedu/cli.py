@@ -656,6 +656,52 @@ def adapt(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run
         session.close()
 
 
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to chapterize (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-chapterize even if output exists.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Write request JSON instead of calling Claude API.",
+)
+@click.pass_context
+def chapterize(
+    ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run: bool
+) -> None:
+    """Chapterize adapted script into production JSON (v2 pipeline)."""
+    from btcedu.core.chapterizer import chapterize_script
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = chapterize_script(session, eid, settings, force=force)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
+                else:
+                    click.echo(
+                        f"[OK] {eid} -> {result.chapter_count} chapters, "
+                        f"~{result.estimated_duration_seconds}s total, "
+                        f"{result.input_tokens} in / {result.output_tokens} out "
+                        f"(${result.cost_usd:.4f})"
+                    )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.group()
 @click.pass_context
 def review(ctx: click.Context) -> None:

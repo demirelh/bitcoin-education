@@ -672,7 +672,9 @@ def adapt(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run
     help="Write request JSON instead of calling Claude API.",
 )
 @click.pass_context
-def chapterize(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run: bool) -> None:
+def chapterize(
+    ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run: bool
+) -> None:
     """Chapterize adapted script into production JSON (v2 pipeline)."""
     from btcedu.core.chapterizer import chapterize_script
 

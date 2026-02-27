@@ -1,7 +1,6 @@
 """Pydantic models for chapter JSON schema validation."""
 
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -59,7 +58,7 @@ class Visual(BaseModel):
 
     type: VisualType = Field(..., description="Visual type")
     description: str = Field(..., min_length=1, description="Description of visual")
-    image_prompt: Optional[str] = Field(
+    image_prompt: str | None = Field(
         None, description="Image generation prompt (null for non-generated types)"
     )
 
@@ -109,7 +108,7 @@ class Chapter(BaseModel):
         default_factory=list, description="Overlays (can be empty)"
     )
     transitions: Transitions = Field(..., description="Transitions")
-    notes: Optional[str] = Field(None, description="Production notes (optional)")
+    notes: str | None = Field(None, description="Production notes (optional)")
 
 
 class ChapterDocument(BaseModel):

@@ -3,7 +3,6 @@
 import hashlib
 import json
 import logging
-import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -535,7 +534,9 @@ def _compute_duration_estimate(word_count: int) -> int:
     return round(duration_seconds)
 
 
-def _parse_json_response(response_text: str, episode_id: str, segment: str, settings: Settings) -> dict:
+def _parse_json_response(
+    response_text: str, episode_id: str, segment: str, settings: Settings
+) -> dict:
     """Parse JSON from LLM response, stripping markdown code fences if present.
 
     Args:

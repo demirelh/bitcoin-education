@@ -110,7 +110,9 @@ def test_chapter_model_valid():
             image_prompt=None,
         ),
         overlays=[],
-        transitions=Transitions(**{"in": TransitionType.FADE, "out": TransitionType.CUT}),
+        transitions=Transitions(
+            **{"in": TransitionType.FADE, "out": TransitionType.CUT}
+        ),
     )
     assert chapter.chapter_id == "ch01"
     assert chapter.order == 1
@@ -129,12 +131,16 @@ def test_chapter_document_valid():
                 chapter_id="ch01",
                 title="Intro",
                 order=1,
-                narration=Narration(text="Intro text.", word_count=2, estimated_duration_seconds=60),
+                narration=Narration(
+                    text="Intro text.", word_count=2, estimated_duration_seconds=60
+                ),
                 visual=Visual(
                     type=VisualType.TITLE_CARD, description="Title", image_prompt=None
                 ),
                 overlays=[],
-                transitions=Transitions(**{"in": TransitionType.FADE, "out": TransitionType.CUT}),
+                transitions=Transitions(
+                    **{"in": TransitionType.FADE, "out": TransitionType.CUT}
+                ),
             ),
             Chapter(
                 chapter_id="ch02",
@@ -149,7 +155,9 @@ def test_chapter_document_valid():
                     image_prompt="Clean diagram of Bitcoin",
                 ),
                 overlays=[],
-                transitions=Transitions(**{"in": TransitionType.CUT, "out": TransitionType.FADE}),
+                transitions=Transitions(
+                    **{"in": TransitionType.CUT, "out": TransitionType.FADE}
+                ),
             ),
         ],
     )
@@ -178,7 +186,9 @@ def test_chapter_document_total_chapters_mismatch():
                         type=VisualType.TITLE_CARD, description="Title", image_prompt=None
                     ),
                     overlays=[],
-                    transitions=Transitions(**{"in": TransitionType.FADE, "out": TransitionType.CUT}),
+                    transitions=Transitions(
+                        **{"in": TransitionType.FADE, "out": TransitionType.CUT}
+                    ),
                 ),
             ],
         )
@@ -206,7 +216,9 @@ def test_chapter_document_duplicate_chapter_ids():
                         type=VisualType.TITLE_CARD, description="Title", image_prompt=None
                     ),
                     overlays=[],
-                    transitions=Transitions(**{"in": TransitionType.FADE, "out": TransitionType.CUT}),
+                    transitions=Transitions(
+                        **{"in": TransitionType.FADE, "out": TransitionType.CUT}
+                    ),
                 ),
                 Chapter(
                     chapter_id="ch01",  # Duplicate
@@ -219,7 +231,9 @@ def test_chapter_document_duplicate_chapter_ids():
                         type=VisualType.TITLE_CARD, description="Title", image_prompt=None
                     ),
                     overlays=[],
-                    transitions=Transitions(**{"in": TransitionType.CUT, "out": TransitionType.FADE}),
+                    transitions=Transitions(
+                        **{"in": TransitionType.CUT, "out": TransitionType.FADE}
+                    ),
                 ),
             ],
         )
@@ -247,7 +261,9 @@ def test_chapter_document_non_sequential_order():
                         type=VisualType.TITLE_CARD, description="Title", image_prompt=None
                     ),
                     overlays=[],
-                    transitions=Transitions(**{"in": TransitionType.FADE, "out": TransitionType.CUT}),
+                    transitions=Transitions(
+                        **{"in": TransitionType.FADE, "out": TransitionType.CUT}
+                    ),
                 ),
                 Chapter(
                     chapter_id="ch02",
@@ -260,7 +276,9 @@ def test_chapter_document_non_sequential_order():
                         type=VisualType.TITLE_CARD, description="Title", image_prompt=None
                     ),
                     overlays=[],
-                    transitions=Transitions(**{"in": TransitionType.CUT, "out": TransitionType.FADE}),
+                    transitions=Transitions(
+                        **{"in": TransitionType.CUT, "out": TransitionType.FADE}
+                    ),
                 ),
             ],
         )
@@ -288,7 +306,9 @@ def test_chapter_document_duration_mismatch():
                         type=VisualType.TITLE_CARD, description="Title", image_prompt=None
                     ),
                     overlays=[],
-                    transitions=Transitions(**{"in": TransitionType.FADE, "out": TransitionType.CUT}),
+                    transitions=Transitions(
+                        **{"in": TransitionType.FADE, "out": TransitionType.CUT}
+                    ),
                 ),
                 Chapter(
                     chapter_id="ch02",
@@ -301,7 +321,9 @@ def test_chapter_document_duration_mismatch():
                         type=VisualType.TITLE_CARD, description="Title", image_prompt=None
                     ),
                     overlays=[],
-                    transitions=Transitions(**{"in": TransitionType.CUT, "out": TransitionType.FADE}),
+                    transitions=Transitions(
+                        **{"in": TransitionType.CUT, "out": TransitionType.FADE}
+                    ),
                 ),
             ],
         )
@@ -329,7 +351,9 @@ def test_chapter_document_schema_version_pattern():
                         type=VisualType.TITLE_CARD, description="Title", image_prompt=None
                     ),
                     overlays=[],
-                    transitions=Transitions(**{"in": TransitionType.FADE, "out": TransitionType.CUT}),
+                    transitions=Transitions(
+                        **{"in": TransitionType.FADE, "out": TransitionType.CUT}
+                    ),
                 ),
             ],
         )

@@ -1,5 +1,6 @@
 """Tests for the chapterizer module (Sprint 6)."""
 
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -159,7 +160,9 @@ def test_is_chapterization_current_stale_marker(tmp_path):
     stale_marker.write_text('{"reason": "test"}', encoding="utf-8")
 
     provenance_path = tmp_path / "provenance.json"
-    provenance_path.write_text('{"prompt_hash": "hash1", "input_content_hash": "hash2"}', encoding="utf-8")
+    provenance_path.write_text(
+        '{"prompt_hash": "hash1", "input_content_hash": "hash2"}', encoding="utf-8"
+    )
 
     result = _is_chapterization_current(
         chapters_path, provenance_path, "hash2", "hash1"
@@ -193,7 +196,9 @@ def test_is_chapterization_current_valid(tmp_path):
 
 @patch("btcedu.core.chapterizer.call_claude")
 @patch("btcedu.core.chapterizer.PromptRegistry")
-def test_chapterize_script_success(mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path):
+def test_chapterize_script_success(
+    mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path
+):
     """Test successful chapterization."""
     # Mock settings
     settings = MagicMock()
@@ -217,7 +222,10 @@ def test_chapterize_script_success(mock_registry, mock_call_claude, adapted_epis
     mock_version = MagicMock()
     mock_version.version = 1
     mock_registry.return_value.register_version.return_value = mock_version
-    mock_registry.return_value.load_template.return_value = ("", "# System\n\n# Input\n\n{{episode_id}}\n{{adapted_script}}")
+    mock_registry.return_value.load_template.return_value = (
+        "",
+        "# System\n\n# Input\n\n{{episode_id}}\n{{adapted_script}}",
+    )
     mock_registry.return_value.compute_hash.return_value = "prompt_hash_123"
 
     # Mock Claude API response
@@ -284,10 +292,17 @@ def test_chapterize_script_success(mock_registry, mock_call_claude, adapted_epis
     assert not result.skipped
 
     # Check files were created
-    chapters_path = Path(settings.outputs_dir) / "ep_test" / "chapters.json"
+    chapters_path = (
+        Path(settings.outputs_dir) / "ep_test" / "chapters.json"
+    )
     assert chapters_path.exists()
 
-    provenance_path = Path(settings.outputs_dir) / "ep_test" / "provenance" / "chapterize_provenance.json"
+    provenance_path = (
+        Path(settings.outputs_dir)
+        / "ep_test"
+        / "provenance"
+        / "chapterize_provenance.json"
+    )
     assert provenance_path.exists()
 
     # Check episode status updated
@@ -297,7 +312,9 @@ def test_chapterize_script_success(mock_registry, mock_call_claude, adapted_epis
 
 @patch("btcedu.core.chapterizer.call_claude")
 @patch("btcedu.core.chapterizer.PromptRegistry")
-def test_chapterize_script_idempotency(mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path):
+def test_chapterize_script_idempotency(
+    mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path
+):
     """Test chapterization idempotency: second run skips if output is current."""
     settings = MagicMock()
     settings.outputs_dir = str(tmp_path / "outputs")
@@ -317,7 +334,10 @@ def test_chapterize_script_idempotency(mock_registry, mock_call_claude, adapted_
     mock_version = MagicMock()
     mock_version.version = 1
     mock_registry.return_value.register_version.return_value = mock_version
-    mock_registry.return_value.load_template.return_value = ("", "# System\n\n# Input\n\n{{episode_id}}")
+    mock_registry.return_value.load_template.return_value = (
+        "",
+        "# System\n\n# Input\n\n{{episode_id}}",
+    )
     prompt_hash = "prompt_hash_123"
     mock_registry.return_value.compute_hash.return_value = prompt_hash
 
@@ -326,11 +346,14 @@ def test_chapterize_script_idempotency(mock_registry, mock_call_claude, adapted_
     chapters_path.parent.mkdir(parents=True, exist_ok=True)
     chapters_path.write_text('{"schema_version": "1.0"}', encoding="utf-8")
 
-    import hashlib
-
     adapted_hash = hashlib.sha256(adapted_text.encode("utf-8")).hexdigest()
 
-    provenance_path = Path(settings.outputs_dir) / "ep_test" / "provenance" / "chapterize_provenance.json"
+    provenance_path = (
+        Path(settings.outputs_dir)
+        / "ep_test"
+        / "provenance"
+        / "chapterize_provenance.json"
+    )
     provenance_path.parent.mkdir(parents=True, exist_ok=True)
     provenance = {
         "prompt_hash": prompt_hash,
@@ -355,7 +378,9 @@ def test_chapterize_script_idempotency(mock_registry, mock_call_claude, adapted_
 
 @patch("btcedu.core.chapterizer.call_claude")
 @patch("btcedu.core.chapterizer.PromptRegistry")
-def test_chapterize_script_force(mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path):
+def test_chapterize_script_force(
+    mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path
+):
     """Test chapterization with force=True always re-runs."""
     settings = MagicMock()
     settings.outputs_dir = str(tmp_path / "outputs")
@@ -378,7 +403,10 @@ def test_chapterize_script_force(mock_registry, mock_call_claude, adapted_episod
     mock_version = MagicMock()
     mock_version.version = 1
     mock_registry.return_value.register_version.return_value = mock_version
-    mock_registry.return_value.load_template.return_value = ("", "# System\n\n# Input\n\n{{episode_id}}")
+    mock_registry.return_value.load_template.return_value = (
+        "",
+        "# System\n\n# Input\n\n{{episode_id}}",
+    )
     mock_registry.return_value.compute_hash.return_value = "prompt_hash"
 
     # Mock Claude API response

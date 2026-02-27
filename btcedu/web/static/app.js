@@ -183,12 +183,12 @@
   const FILE_KEYS = [
     "audio", "transcript_raw", "transcript_clean", "chunks",
     "outline", "script", "shorts", "visuals", "qa", "publishing",
-    "outline_v2", "script_v2", "publishing_v2"
+    "outline_v2", "script_v2", "publishing_v2", "chapters"
   ];
   const FILE_LABELS = [
     "Audio", "Transcript DE", "Transcript Clean", "Chunks",
     "Outline TR", "Script TR", "Shorts", "Visuals", "QA", "Publishing",
-    "Outline v2", "Script v2", "Publishing v2"
+    "Outline v2", "Script v2", "Publishing v2", "Chapters"
   ];
 
   function renderTable(eps) {
@@ -319,6 +319,7 @@
         <div class="tab" data-tab="outline_v2">Outline v2</div>
         <div class="tab" data-tab="script_v2">Script v2</div>
         <div class="tab" data-tab="publishing_v2">Publishing v2</div>
+        <div class="tab" data-tab="chapters">Chapters</div>
         <div class="tab" data-tab="report">Report</div>
         <div class="tab" data-tab="logs">Logs</div>
       </div>

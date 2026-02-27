@@ -144,9 +144,7 @@ def test_is_chapterization_current_no_output():
     """Test idempotency check: returns False if output doesn't exist."""
     chapters_path = Path("/tmp/nonexistent/chapters.json")
     provenance_path = Path("/tmp/nonexistent/provenance.json")
-    result = _is_chapterization_current(
-        chapters_path, provenance_path, "hash1", "hash2"
-    )
+    result = _is_chapterization_current(chapters_path, provenance_path, "hash1", "hash2")
     assert result is False
 
 
@@ -163,9 +161,7 @@ def test_is_chapterization_current_stale_marker(tmp_path):
         '{"prompt_hash": "hash1", "input_content_hash": "hash2"}', encoding="utf-8"
     )
 
-    result = _is_chapterization_current(
-        chapters_path, provenance_path, "hash2", "hash1"
-    )
+    result = _is_chapterization_current(chapters_path, provenance_path, "hash2", "hash1")
     assert result is False
     assert not stale_marker.exists()  # Marker should be consumed
 
@@ -182,9 +178,7 @@ def test_is_chapterization_current_valid(tmp_path):
     }
     provenance_path.write_text(json.dumps(provenance), encoding="utf-8")
 
-    result = _is_chapterization_current(
-        chapters_path, provenance_path, "hash2", "hash1"
-    )
+    result = _is_chapterization_current(chapters_path, provenance_path, "hash2", "hash1")
     assert result is True
 
 
@@ -212,8 +206,7 @@ def test_chapterize_script_success(
     adapted_path = Path(settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
     adapted_path.parent.mkdir(parents=True)
     adapted_path.write_text(
-        "# Bitcoin Nedir?\n\n"
-        "Merhaba arkadaşlar, bugün Bitcoin hakkında konuşacağız. " * 50,
+        "# Bitcoin Nedir?\n\nMerhaba arkadaşlar, bugün Bitcoin hakkında konuşacağız. " * 50,
         encoding="utf-8",
     )
 
@@ -229,49 +222,51 @@ def test_chapterize_script_success(
 
     # Mock Claude API response
     mock_response = MagicMock()
-    mock_response.text = json.dumps({
-        "schema_version": "1.0",
-        "episode_id": "ep_test",
-        "title": "Bitcoin Nedir?",
-        "total_chapters": 2,
-        "estimated_duration_seconds": 120,
-        "chapters": [
-            {
-                "chapter_id": "ch01",
-                "title": "Giriş",
-                "order": 1,
-                "narration": {
-                    "text": "Merhaba arkadaşlar.",
-                    "word_count": 2,
-                    "estimated_duration_seconds": 60,
+    mock_response.text = json.dumps(
+        {
+            "schema_version": "1.0",
+            "episode_id": "ep_test",
+            "title": "Bitcoin Nedir?",
+            "total_chapters": 2,
+            "estimated_duration_seconds": 120,
+            "chapters": [
+                {
+                    "chapter_id": "ch01",
+                    "title": "Giriş",
+                    "order": 1,
+                    "narration": {
+                        "text": "Merhaba arkadaşlar.",
+                        "word_count": 2,
+                        "estimated_duration_seconds": 60,
+                    },
+                    "visual": {
+                        "type": "title_card",
+                        "description": "Channel logo",
+                        "image_prompt": None,
+                    },
+                    "overlays": [],
+                    "transitions": {"in": "fade", "out": "cut"},
                 },
-                "visual": {
-                    "type": "title_card",
-                    "description": "Channel logo",
-                    "image_prompt": None,
+                {
+                    "chapter_id": "ch02",
+                    "title": "İçerik",
+                    "order": 2,
+                    "narration": {
+                        "text": "Bitcoin nedir?",
+                        "word_count": 2,
+                        "estimated_duration_seconds": 60,
+                    },
+                    "visual": {
+                        "type": "diagram",
+                        "description": "Bitcoin diagram",
+                        "image_prompt": "Clean Bitcoin diagram",
+                    },
+                    "overlays": [],
+                    "transitions": {"in": "cut", "out": "fade"},
                 },
-                "overlays": [],
-                "transitions": {"in": "fade", "out": "cut"},
-            },
-            {
-                "chapter_id": "ch02",
-                "title": "İçerik",
-                "order": 2,
-                "narration": {
-                    "text": "Bitcoin nedir?",
-                    "word_count": 2,
-                    "estimated_duration_seconds": 60,
-                },
-                "visual": {
-                    "type": "diagram",
-                    "description": "Bitcoin diagram",
-                    "image_prompt": "Clean Bitcoin diagram",
-                },
-                "overlays": [],
-                "transitions": {"in": "cut", "out": "fade"},
-            },
-        ],
-    })
+            ],
+        }
+    )
     mock_response.input_tokens = 1000
     mock_response.output_tokens = 500
     mock_response.cost_usd = 0.05
@@ -291,16 +286,11 @@ def test_chapterize_script_success(
     assert not result.skipped
 
     # Check files were created
-    chapters_path = (
-        Path(settings.outputs_dir) / "ep_test" / "chapters.json"
-    )
+    chapters_path = Path(settings.outputs_dir) / "ep_test" / "chapters.json"
     assert chapters_path.exists()
 
     provenance_path = (
-        Path(settings.outputs_dir)
-        / "ep_test"
-        / "provenance"
-        / "chapterize_provenance.json"
+        Path(settings.outputs_dir) / "ep_test" / "provenance" / "chapterize_provenance.json"
     )
     assert provenance_path.exists()
 
@@ -348,10 +338,7 @@ def test_chapterize_script_idempotency(
     adapted_hash = hashlib.sha256(adapted_text.encode("utf-8")).hexdigest()
 
     provenance_path = (
-        Path(settings.outputs_dir)
-        / "ep_test"
-        / "provenance"
-        / "chapterize_provenance.json"
+        Path(settings.outputs_dir) / "ep_test" / "provenance" / "chapterize_provenance.json"
     )
     provenance_path.parent.mkdir(parents=True, exist_ok=True)
     provenance = {
@@ -410,24 +397,30 @@ def test_chapterize_script_force(
 
     # Mock Claude API response
     mock_response = MagicMock()
-    mock_response.text = json.dumps({
-        "schema_version": "1.0",
-        "episode_id": "ep_test",
-        "title": "Test",
-        "total_chapters": 1,
-        "estimated_duration_seconds": 60,
-        "chapters": [
-            {
-                "chapter_id": "ch01",
-                "title": "Test",
-                "order": 1,
-                "narration": {"text": "Test.", "word_count": 1, "estimated_duration_seconds": 60},
-                "visual": {"type": "title_card", "description": "Title", "image_prompt": None},
-                "overlays": [],
-                "transitions": {"in": "fade", "out": "fade"},
-            },
-        ],
-    })
+    mock_response.text = json.dumps(
+        {
+            "schema_version": "1.0",
+            "episode_id": "ep_test",
+            "title": "Test",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 60,
+            "chapters": [
+                {
+                    "chapter_id": "ch01",
+                    "title": "Test",
+                    "order": 1,
+                    "narration": {
+                        "text": "Test.",
+                        "word_count": 1,
+                        "estimated_duration_seconds": 60,
+                    },
+                    "visual": {"type": "title_card", "description": "Title", "image_prompt": None},
+                    "overlays": [],
+                    "transitions": {"in": "fade", "out": "fade"},
+                },
+            ],
+        }
+    )
     mock_response.input_tokens = 100
     mock_response.output_tokens = 50
     mock_response.cost_usd = 0.01

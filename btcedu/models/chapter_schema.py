@@ -104,9 +104,7 @@ class Chapter(BaseModel):
     order: int = Field(..., ge=1, description="Sequential order")
     narration: Narration = Field(..., description="Narration data")
     visual: Visual = Field(..., description="Visual data")
-    overlays: list[Overlay] = Field(
-        default_factory=list, description="Overlays (can be empty)"
-    )
+    overlays: list[Overlay] = Field(default_factory=list, description="Overlays (can be empty)")
     transitions: Transitions = Field(..., description="Transitions")
     notes: str | None = Field(None, description="Production notes (optional)")
 

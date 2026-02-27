@@ -18,7 +18,6 @@ from btcedu.core.chapterizer import (
 from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.models.review import ReviewStatus, ReviewTask
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

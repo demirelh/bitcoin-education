@@ -204,7 +204,7 @@ def test_chapterize_script_success(
 
     # Create adapted script
     adapted_path = Path(settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
-    adapted_path.parent.mkdir(parents=True)
+    adapted_path.parent.mkdir(parents=True, exist_ok=True)
     adapted_path.write_text(
         "# Bitcoin Nedir?\n\nMerhaba arkadaşlar, bugün Bitcoin hakkında konuşacağız. " * 50,
         encoding="utf-8",
@@ -315,7 +315,7 @@ def test_chapterize_script_idempotency(
 
     # Create adapted script
     adapted_path = Path(settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
-    adapted_path.parent.mkdir(parents=True)
+    adapted_path.parent.mkdir(parents=True, exist_ok=True)
     adapted_text = "# Bitcoin Nedir?\n\nTest script."
     adapted_path.write_text(adapted_text, encoding="utf-8")
 
@@ -378,7 +378,7 @@ def test_chapterize_script_force(
 
     # Create adapted script
     adapted_path = Path(settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
-    adapted_path.parent.mkdir(parents=True)
+    adapted_path.parent.mkdir(parents=True, exist_ok=True)
     adapted_path.write_text("# Test\n\nContent.", encoding="utf-8")
 
     # Pre-create existing output
@@ -448,6 +448,16 @@ def test_chapterize_script_missing_adapted(db_session, tmp_path):
         pipeline_version=2,
     )
     db_session.add(episode)
+    db_session.commit()
+
+    # Add approved ReviewTask for Review Gate 2 (so we can reach the FileNotFoundError check)
+    review_task = ReviewTask(
+        episode_id="ep_missing",
+        stage="adapt",
+        status=ReviewStatus.APPROVED.value,
+        artifact_paths="[]",
+    )
+    db_session.add(review_task)
     db_session.commit()
 
     with pytest.raises(FileNotFoundError) as exc_info:

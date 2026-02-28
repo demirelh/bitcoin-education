@@ -381,7 +381,7 @@ class CreateMediaAssetsTableMigration(Migration):
                         mime_type TEXT NOT NULL,
                         size_bytes INTEGER NOT NULL,
                         duration_seconds REAL,
-                        metadata TEXT,
+                        meta TEXT,
                         prompt_version_id INTEGER,
                         created_at TIMESTAMP NOT NULL,
                         FOREIGN KEY (prompt_version_id) REFERENCES prompt_versions(id)

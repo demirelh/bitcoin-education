@@ -36,7 +36,7 @@ class MediaAsset(Base):
     mime_type = Column(String(64), nullable=False)  # e.g., "image/png", "audio/mp3"
     size_bytes = Column(Integer, nullable=False)
     duration_seconds = Column(Float, nullable=True)  # For audio/video assets
-    metadata = Column(JSON, nullable=True)  # JSON with generation params, cost, etc.
+    meta = Column(JSON, nullable=True)  # JSON with generation params, cost, etc.
     prompt_version_id = Column(Integer, ForeignKey("prompt_versions.id"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC))
 

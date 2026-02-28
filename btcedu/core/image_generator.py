@@ -652,7 +652,7 @@ def _create_media_asset_record(
         file_path=image_entry.file_path,
         mime_type=image_entry.mime_type,
         size_bytes=image_entry.size_bytes,
-        metadata=json.dumps(image_entry.metadata, ensure_ascii=False),
+        meta=json.dumps(image_entry.metadata, ensure_ascii=False),
         prompt_version_id=prompt_version_id,
         created_at=_utcnow(),
     )

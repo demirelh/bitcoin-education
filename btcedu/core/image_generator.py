@@ -408,7 +408,11 @@ def _compute_chapters_content_hash(chapters_doc: ChapterDocument) -> str:
             {
                 "chapter_id": ch.chapter_id,
                 "title": ch.title,
-                "visual": {"type": ch.visual.type, "description": ch.visual.description},
+                "visual": (
+                    {"type": ch.visual.type, "description": ch.visual.description}
+                    if ch.visual
+                    else None
+                ),
             }
             for ch in chapters_doc.chapters
         ],

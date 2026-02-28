@@ -351,12 +351,67 @@ class CreateReviewTablesMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateMediaAssetsTableMigration(Migration):
+    """Migration v5: Create media_assets table for tracking generated media files."""
+
+    @property
+    def version(self) -> str:
+        return "005_create_media_assets"
+
+    @property
+    def description(self) -> str:
+        return "Create media_assets table for tracking images, audio, and video files"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        # Create media_assets table
+        result = session.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='media_assets'")
+        )
+        if not result.fetchone():
+            session.execute(
+                text("""
+                    CREATE TABLE media_assets (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        episode_id TEXT NOT NULL,
+                        asset_type TEXT NOT NULL,
+                        chapter_id TEXT,
+                        file_path TEXT NOT NULL,
+                        mime_type TEXT NOT NULL,
+                        size_bytes INTEGER NOT NULL,
+                        duration_seconds REAL,
+                        metadata TEXT,
+                        prompt_version_id INTEGER,
+                        created_at TIMESTAMP NOT NULL,
+                        FOREIGN KEY (prompt_version_id) REFERENCES prompt_versions(id)
+                    )
+                """)
+            )
+            session.execute(
+                text(
+                    "CREATE INDEX idx_media_assets_episode_type_chapter "
+                    "ON media_assets(episode_id, asset_type, chapter_id)"
+                )
+            )
+            session.execute(text("CREATE INDEX idx_media_assets_type ON media_assets(asset_type)"))
+            session.execute(
+                text("CREATE INDEX idx_media_assets_episode ON media_assets(episode_id)")
+            )
+            session.commit()
+            logger.info("Created media_assets table with indexes")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
     CreatePromptVersionsTableMigration(),
     CreateReviewTablesMigration(),
+    CreateMediaAssetsTableMigration(),
 ]
 
 

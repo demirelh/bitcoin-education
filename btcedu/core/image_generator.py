@@ -408,7 +408,7 @@ def _compute_chapters_content_hash(chapters_doc: ChapterDocument) -> str:
             {
                 "chapter_id": ch.chapter_id,
                 "title": ch.title,
-                "visuals": [{"type": v.type, "description": v.description} for v in ch.visuals],
+                "visual": {"type": ch.visual.type, "description": ch.visual.description},
             }
             for ch in chapters_doc.chapters
         ],

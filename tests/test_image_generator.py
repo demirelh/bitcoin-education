@@ -76,17 +76,15 @@ def test_compute_chapters_content_hash():
                 "narration": {
                     "text": "Test narration",
                     "word_count": 2,
-                    "estimated_duration_seconds": 1,
+                    "estimated_duration_seconds": 100,
                 },
-                "visuals": [
-                    {
-                        "type": "diagram",
-                        "description": "Test diagram",
-                        "image_prompt": None,
-                    }
-                ],
+                "visual": {
+                    "type": "diagram",
+                    "description": "Test diagram",
+                    "image_prompt": "A test diagram showing Bitcoin",
+                },
                 "overlays": [],
-                "transitions": {"in_transition": "fade", "out_transition": "fade"},
+                "transitions": {"in": "fade", "out": "fade"},
                 "notes": "",
             }
         ],
@@ -101,7 +99,7 @@ def test_compute_chapters_content_hash():
     assert hash1 == hash2
 
     # Different visual description should produce different hash
-    chapters_json["chapters"][0]["visuals"][0]["description"] = "Different description"
+    chapters_json["chapters"][0]["visual"]["description"] = "Different description"
     doc3 = ChapterDocument(**chapters_json)
     hash3 = _compute_chapters_content_hash(doc3)
     assert hash1 != hash3
@@ -120,7 +118,7 @@ def test_dalle3_service_cost_computation():
     assert service._compute_cost("1792x1024", "hd") > DALLE3_COST_STANDARD_1792
 
 
-@patch("btcedu.services.image_gen_service.OpenAI")
+@patch("openai.OpenAI")
 def test_dalle3_service_generate_image_mock(mock_openai_class):
     """Test image generation with mocked OpenAI API."""
     # Mock the OpenAI client and response

@@ -144,9 +144,7 @@ def generate_images(
             logger.info(
                 "Image generation is current for %s (use --force to regenerate)", episode_id
             )
-            existing_provenance = json.loads(
-                provenance_path.read_text(encoding="utf-8")
-            )
+            existing_provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
             return ImageGenResult(
                 episode_id=episode_id,
                 images_path=output_dir,
@@ -198,8 +196,7 @@ def generate_images(
                 }
             except (json.JSONDecodeError, KeyError):
                 logger.warning(
-                    f"Could not load existing manifest from {manifest_path}, "
-                    "will regenerate all"
+                    f"Could not load existing manifest from {manifest_path}, will regenerate all"
                 )
 
         # Process each chapter
@@ -294,9 +291,7 @@ def generate_images(
 
             # Record MediaAsset in database
             if image_entry.generation_method != "failed":
-                _create_media_asset_record(
-                    session, episode_id, image_entry, prompt_version.id
-                )
+                _create_media_asset_record(session, episode_id, image_entry, prompt_version.id)
 
         # Write manifest
         manifest_data = {

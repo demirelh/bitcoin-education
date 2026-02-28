@@ -83,9 +83,7 @@ class DallE3ImageService:
             RuntimeError: If API call fails after retries
         """
         # Prepend style prefix if configured
-        full_prompt = (
-            self.style_prefix + request.prompt if self.style_prefix else request.prompt
-        )
+        full_prompt = self.style_prefix + request.prompt if self.style_prefix else request.prompt
 
         # Use request params or defaults
         size = request.size or self.default_size
@@ -105,9 +103,7 @@ class DallE3ImageService:
         # Compute cost
         cost = self._compute_cost(size, quality)
 
-        logger.info(
-            f"DALL-E 3 generated image: size={size}, quality={quality}, cost=${cost:.3f}"
-        )
+        logger.info(f"DALL-E 3 generated image: size={size}, quality={quality}, cost=${cost:.3f}")
 
         return ImageGenResponse(
             image_url=image_url,

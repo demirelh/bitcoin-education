@@ -60,8 +60,8 @@ _V2_STAGES = [
     ("adapt", EpisodeStatus.TRANSLATED),
     ("review_gate_2", EpisodeStatus.ADAPTED),
     ("chapterize", EpisodeStatus.ADAPTED),  # after review approved
+    ("imagegen", EpisodeStatus.CHAPTERIZED),  # Sprint 7
     # Future sprints will add:
-    # ("imagegen", EpisodeStatus.CHAPTERIZED),
     # ("tts", EpisodeStatus.CHAPTERIZED),
     # ...
 ]
@@ -370,6 +370,27 @@ def _run_stage(
                     detail=(
                         f"{result.chapter_count} chapters, "
                         f"~{result.estimated_duration_seconds}s, "
+                        f"${result.cost_usd:.4f}"
+                    ),
+                )
+
+        elif stage_name == "imagegen":
+            from btcedu.core.image_generator import generate_images
+
+            result = generate_images(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("imagegen", "skipped", elapsed, detail="already up-to-date")
+            else:
+                return StageResult(
+                    "imagegen",
+                    "success",
+                    elapsed,
+                    detail=(
+                        f"{result.generated_count}/{result.image_count} images generated "
+                        f"({result.template_count} placeholders, "
+                        f"{result.failed_count} failed), "
                         f"${result.cost_usd:.4f}"
                     ),
                 )

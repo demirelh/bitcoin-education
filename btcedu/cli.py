@@ -702,6 +702,67 @@ def chapterize(
         session.close()
 
 
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to generate images for (repeatable).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Regenerate all images even if they exist.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Write request JSON instead of calling APIs.",
+)
+@click.option(
+    "--chapter",
+    "chapter_id",
+    default=None,
+    help="Regenerate images for a specific chapter only.",
+)
+@click.pass_context
+def imagegen(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+    dry_run: bool,
+    chapter_id: str | None,
+) -> None:
+    """Generate images for chapters (v2 pipeline, Sprint 7)."""
+    from btcedu.core.image_generator import generate_images
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = generate_images(session, eid, settings, force=force, chapter_id=chapter_id)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
+                else:
+                    click.echo(
+                        f"[OK] {eid} -> {result.generated_count}/{result.image_count} "
+                        f"images generated, {result.template_count} placeholders, "
+                        f"{result.failed_count} failed, {result.input_tokens} in / "
+                        f"{result.output_tokens} out (${result.cost_usd:.4f})"
+                    )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.group()
 @click.pass_context
 def review(ctx: click.Context) -> None:

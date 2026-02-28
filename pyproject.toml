@@ -20,6 +20,7 @@ dependencies = [
     "feedparser>=6.0.0",
     "yt-dlp>=2024.0.0",
     "pydub>=0.25.0",
+    "requests>=2.31.0",
 ]
 
 [project.optional-dependencies]

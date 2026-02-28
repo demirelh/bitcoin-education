@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     pipeline_version: int = 1  # 1 = legacy (chunk->generate->refine), 2 = v2 pipeline
     max_episode_cost_usd: float = 10.0  # per-episode cost safety cap
 
+    # Image Generation (Sprint 7)
+    image_gen_provider: str = "dalle3"  # "dalle3" (only option for now)
+    image_gen_model: str = "dall-e-3"
+    image_gen_size: str = "1792x1024"  # DALL-E 3 landscape (closest to 1920x1080)
+    image_gen_quality: str = "standard"  # "standard" or "hd"
+    image_gen_style_prefix: str = (
+        "Professional educational content illustration for Bitcoin/cryptocurrency video. "
+        "Clean, modern, minimalist design. "
+    )
+
     # Output
     outputs_dir: str = "data/outputs"
 

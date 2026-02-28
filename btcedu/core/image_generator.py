@@ -3,7 +3,6 @@
 import hashlib
 import json
 import logging
-import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -104,7 +103,10 @@ def generate_images(
         )
 
     # Check episode status (allow CHAPTERIZED or IMAGES_GENERATED for idempotency)
-    if episode.status not in (EpisodeStatus.CHAPTERIZED, EpisodeStatus.IMAGES_GENERATED) and not force:
+    if (
+        episode.status not in (EpisodeStatus.CHAPTERIZED, EpisodeStatus.IMAGES_GENERATED)
+        and not force
+    ):
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'chapterized' or 'images_generated'. Use --force to override."
@@ -136,9 +138,15 @@ def generate_images(
 
     # Idempotency check (skip if not force and not chapter-specific and output is current)
     if not force and chapter_id is None:
-        if _is_image_gen_current(manifest_path, provenance_path, chapters_hash, prompt_content_hash):
-            logger.info("Image generation is current for %s (use --force to regenerate)", episode_id)
-            existing_provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        if _is_image_gen_current(
+            manifest_path, provenance_path, chapters_hash, prompt_content_hash
+        ):
+            logger.info(
+                "Image generation is current for %s (use --force to regenerate)", episode_id
+            )
+            existing_provenance = json.loads(
+                provenance_path.read_text(encoding="utf-8")
+            )
             return ImageGenResult(
                 episode_id=episode_id,
                 images_path=output_dir,
@@ -189,7 +197,10 @@ def generate_images(
                     entry["chapter_id"]: entry for entry in existing_manifest.get("images", [])
                 }
             except (json.JSONDecodeError, KeyError):
-                logger.warning(f"Could not load existing manifest from {manifest_path}, will regenerate all")
+                logger.warning(
+                    f"Could not load existing manifest from {manifest_path}, "
+                    "will regenerate all"
+                )
 
         # Process each chapter
         image_entries = []
@@ -210,7 +221,11 @@ def generate_images(
                 continue
 
             # If partial regeneration and this chapter isn't being regenerated, keep existing
-            if chapter_id and chapter.chapter_id != chapter_id and chapter.chapter_id in existing_entries:
+            if (
+                chapter_id
+                and chapter.chapter_id != chapter_id
+                and chapter.chapter_id in existing_entries
+            ):
                 existing_entry_dict = existing_entries[chapter.chapter_id]
                 # Convert dict to ImageEntry
                 image_entry = ImageEntry(**existing_entry_dict)
@@ -235,9 +250,12 @@ def generate_images(
                         prompt_tokens, completion_tokens, prompt_cost = 0, 0, 0.0
                     else:
                         # Generate prompt via LLM
-                        image_prompt, prompt_tokens, completion_tokens, prompt_cost = _generate_image_prompt(
-                            chapter, template_body, settings
-                        )
+                        (
+                            image_prompt,
+                            prompt_tokens,
+                            completion_tokens,
+                            prompt_cost,
+                        ) = _generate_image_prompt(chapter, template_body, settings)
                         total_input_tokens += prompt_tokens
                         total_output_tokens += completion_tokens
                         total_cost += prompt_cost
@@ -287,7 +305,9 @@ def generate_images(
             "generated_at": _utcnow().isoformat(),
             "images": [asdict(entry) for entry in image_entries],
         }
-        manifest_path.write_text(json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding="utf-8")
+        manifest_path.write_text(
+            json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         # Write provenance
         provenance_data = {
@@ -301,7 +321,8 @@ def generate_images(
             "image_gen_model": getattr(settings, "image_gen_model", "dall-e-3"),
             "input_files": [str(chapters_path)],
             "input_content_hash": chapters_hash,
-            "output_files": [str(manifest_path)] + [str(output_dir / entry.file_path) for entry in image_entries],
+            "output_files": [str(manifest_path)]
+            + [str(output_dir / entry.file_path) for entry in image_entries],
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
             "image_count": len(image_entries),
@@ -311,7 +332,9 @@ def generate_images(
             "cost_usd": total_cost,
         }
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
-        provenance_path.write_text(json.dumps(provenance_data, indent=2, ensure_ascii=False), encoding="utf-8")
+        provenance_path.write_text(
+            json.dumps(provenance_data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         # Create ContentArtifact record
         artifact = ContentArtifact(
@@ -472,7 +495,11 @@ def _generate_image_prompt(
 
     # Build user message with chapter data
     visual = chapter.visuals[0]
-    narration_context = chapter.narration.text[:300] + "..." if len(chapter.narration.text) > 300 else chapter.narration.text
+    narration_context = (
+        chapter.narration.text[:300] + "..."
+        if len(chapter.narration.text) > 300
+        else chapter.narration.text
+    )
 
     user_message = user_template.replace("{{ chapter_title }}", chapter.title)
     user_message = user_message.replace("{{ visual_type }}", visual.type)
@@ -482,12 +509,16 @@ def _generate_image_prompt(
     # Call Claude
     dry_run_path = None
     if settings.dry_run:
-        dry_run_path = Path(settings.outputs_dir) / "dry_run" / f"imagegen_{chapter.chapter_id}.json"
+        dry_run_path = (
+            Path(settings.outputs_dir) / "dry_run" / f"imagegen_{chapter.chapter_id}.json"
+        )
 
     response = call_claude(system_prompt, user_message, settings, dry_run_path)
 
     image_prompt = response.text.strip()
-    logger.info(f"Generated image prompt for chapter {chapter.chapter_id} ({len(image_prompt)} chars)")
+    logger.info(
+        f"Generated image prompt for chapter {chapter.chapter_id} ({len(image_prompt)} chars)"
+    )
 
     return image_prompt, response.input_tokens, response.output_tokens, response.cost_usd
 
@@ -563,7 +594,11 @@ def _create_template_placeholder(chapter, output_dir: Path) -> ImageEntry:
 
     # Create simple placeholder (solid color with text)
     width, height = 1920, 1080
-    bg_color = (247, 147, 26) if chapter.visuals[0].type == "title_card" else (200, 200, 200)  # Bitcoin orange or gray
+    bg_color = (
+        (247, 147, 26)
+        if chapter.visuals[0].type == "title_card"
+        else (200, 200, 200)  # Bitcoin orange or gray
+    )
 
     img = Image.new("RGB", (width, height), color=bg_color)
     draw = ImageDraw.Draw(img)
@@ -571,7 +606,7 @@ def _create_template_placeholder(chapter, output_dir: Path) -> ImageEntry:
     # Draw chapter title
     try:
         font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 80)
-    except:
+    except OSError:
         font = ImageDraw.getfont()  # Fallback to default
 
     text = chapter.title

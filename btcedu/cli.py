@@ -752,10 +752,10 @@ def imagegen(
                     click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
                 else:
                     click.echo(
-                        f"[OK] {eid} -> {result.generated_count}/{result.image_count} images generated, "
-                        f"{result.template_count} placeholders, {result.failed_count} failed, "
-                        f"{result.input_tokens} in / {result.output_tokens} out "
-                        f"(${result.cost_usd:.4f})"
+                        f"[OK] {eid} -> {result.generated_count}/{result.image_count} "
+                        f"images generated, {result.template_count} placeholders, "
+                        f"{result.failed_count} failed, {result.input_tokens} in / "
+                        f"{result.output_tokens} out (${result.cost_usd:.4f})"
                     )
             except Exception as e:
                 click.echo(f"[FAIL] {eid}: {e}", err=True)

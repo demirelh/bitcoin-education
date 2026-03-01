@@ -3,7 +3,7 @@
 import enum
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Column, DateTime, Enum, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Column, DateTime, Enum, Float, Integer, String, Text
 from sqlalchemy.orm import declarative_base
 
 Base = declarative_base()
@@ -37,7 +37,7 @@ class MediaAsset(Base):
     size_bytes = Column(Integer, nullable=False)
     duration_seconds = Column(Float, nullable=True)  # For audio/video assets
     meta = Column(JSON, nullable=True)  # JSON with generation params, cost, etc.
-    prompt_version_id = Column(Integer, ForeignKey("prompt_versions.id"), nullable=True)
+    prompt_version_id = Column(Integer, nullable=True)  # FK to prompt_versions.id (DB-level constraint via migration)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC))
 
     def __repr__(self) -> str:

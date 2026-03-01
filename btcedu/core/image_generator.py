@@ -212,9 +212,9 @@ def generate_images(
 
         for chapter in chapters_to_process:
             # Skip if no visual or processing only a specific chapter
-            visual = chapter.visuals[0] if chapter.visuals else None
+            visual = chapter.visual
             if not visual:
-                logger.warning(f"Chapter {chapter.chapter_id} has no visuals, skipping")
+                logger.warning(f"Chapter {chapter.chapter_id} has no visual, skipping")
                 continue
 
             # If partial regeneration and this chapter isn't being regenerated, keep existing
@@ -336,11 +336,8 @@ def generate_images(
             episode_id=episode_id,
             artifact_type="images",
             file_path=str(manifest_path.relative_to(Path(settings.outputs_dir) / episode_id)),
+            model=settings.image_gen_model,
             prompt_hash=prompt_content_hash,
-            prompt_version_id=prompt_version.id,
-            input_tokens=total_input_tokens,
-            output_tokens=total_output_tokens,
-            cost_usd=total_cost,
             created_at=_utcnow(),
         )
         session.add(artifact)
@@ -493,7 +490,7 @@ def _generate_image_prompt(
     system_prompt, user_template = _split_prompt(template_body)
 
     # Build user message with chapter data
-    visual = chapter.visuals[0]
+    visual = chapter.visual
     narration_context = (
         chapter.narration.text[:300] + "..."
         if len(chapter.narration.text) > 300
@@ -563,7 +560,7 @@ def _generate_single_image(
     return ImageEntry(
         chapter_id=chapter.chapter_id,
         chapter_title=chapter.title,
-        visual_type=chapter.visuals[0].type,
+        visual_type=chapter.visual.type,
         file_path=f"images/{filename}",
         prompt=image_prompt,
         generation_method="dalle3",
@@ -595,7 +592,7 @@ def _create_template_placeholder(chapter, output_dir: Path) -> ImageEntry:
     width, height = 1920, 1080
     bg_color = (
         (247, 147, 26)
-        if chapter.visuals[0].type == "title_card"
+        if chapter.visual.type == "title_card"
         else (200, 200, 200)  # Bitcoin orange or gray
     )
 
@@ -626,7 +623,7 @@ def _create_template_placeholder(chapter, output_dir: Path) -> ImageEntry:
     return ImageEntry(
         chapter_id=chapter.chapter_id,
         chapter_title=chapter.title,
-        visual_type=chapter.visuals[0].type,
+        visual_type=chapter.visual.type,
         file_path=f"images/{filename}",
         prompt=None,
         generation_method="template",
@@ -635,7 +632,7 @@ def _create_template_placeholder(chapter, output_dir: Path) -> ImageEntry:
         mime_type="image/png",
         size_bytes=file_size,
         metadata={
-            "template_name": f"{chapter.visuals[0].type}_placeholder",
+            "template_name": f"{chapter.visual.type}_placeholder",
             "background_color": f"rgb{bg_color}",
             "text_overlay": chapter.title,
         },
@@ -656,7 +653,7 @@ def _create_media_asset_record(
         file_path=image_entry.file_path,
         mime_type=image_entry.mime_type,
         size_bytes=image_entry.size_bytes,
-        meta=json.dumps(image_entry.metadata, ensure_ascii=False),
+        meta=image_entry.metadata,
         prompt_version_id=prompt_version_id,
         created_at=_utcnow(),
     )

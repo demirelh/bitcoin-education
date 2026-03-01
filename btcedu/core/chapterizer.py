@@ -206,6 +206,9 @@ def chapterize_script(
             # Parse JSON response
             chapter_data = _parse_json_response(response.text, episode_id, segment, settings)
 
+            # Fix common LLM output issues before validation
+            chapter_data = _fix_chapter_data(chapter_data, episode_id)
+
             # Validate with Pydantic
             try:
                 chapter_doc = ChapterDocument.model_validate(chapter_data)
@@ -215,6 +218,7 @@ def chapterize_script(
                 chapter_data = _retry_with_correction(
                     e, episode_id, segment, system_prompt, settings
                 )
+                chapter_data = _fix_chapter_data(chapter_data, episode_id)
                 # Validate retry
                 chapter_doc = ChapterDocument.model_validate(chapter_data)
 
@@ -639,6 +643,66 @@ def _clean_json(text: str) -> str:
     return text
 
 
+_VALID_VISUAL_TYPES = {"title_card", "diagram", "b_roll", "talking_head", "screen_share"}
+
+_VISUAL_TYPE_MAP = {
+    "historical_image": "b_roll",
+    "illustration": "diagram",
+    "image": "b_roll",
+    "photo": "b_roll",
+    "animation": "diagram",
+    "chart": "diagram",
+    "graph": "diagram",
+    "infographic": "diagram",
+    "video": "b_roll",
+    "text": "title_card",
+}
+
+
+def _fix_chapter_data(data: dict, episode_id: str) -> dict:
+    """Fix common LLM output issues before Pydantic validation.
+
+    - Maps invalid visual types to valid enum values
+    - Recalculates estimated_duration_seconds from word counts
+    - Ensures episode_id is present
+    """
+    if "episode_id" not in data or not data["episode_id"]:
+        data["episode_id"] = episode_id
+
+    chapters = data.get("chapters", [])
+    total_duration = 0
+
+    for ch in chapters:
+        # Fix visual type
+        visual = ch.get("visual")
+        if isinstance(visual, dict):
+            vtype = visual.get("type", "")
+            if vtype not in _VALID_VISUAL_TYPES:
+                mapped = _VISUAL_TYPE_MAP.get(vtype.lower(), "b_roll")
+                logger.info(
+                    "Fixing visual type '%s' -> '%s' in chapter %s",
+                    vtype, mapped, ch.get("chapter_id", "?"),
+                )
+                visual["type"] = mapped
+
+        # Recalculate duration from word count if narration is a dict
+        narration = ch.get("narration")
+        if isinstance(narration, dict):
+            text = narration.get("text", "")
+            word_count = len(text.split())
+            narration["word_count"] = word_count
+            duration = _compute_duration_estimate(word_count)
+            narration["estimated_duration_seconds"] = duration
+            total_duration += duration
+
+    # Fix total duration to match sum of chapter durations
+    if chapters and total_duration > 0:
+        data["estimated_duration_seconds"] = total_duration
+        data["total_chapters"] = len(chapters)
+
+    return data
+
+
 def _retry_with_correction(
     validation_error: ValidationError,
     episode_id: str,
@@ -666,13 +730,54 @@ The previous JSON output had validation errors:
 
 {validation_error}
 
-Please correct the JSON and return a valid document matching the schema exactly.
-Pay special attention to:
-- All required fields present
-- chapter_id values unique
-- order values sequential (1, 2, 3, ...)
-- total_chapters = len(chapters)
-- estimated_duration_seconds = sum of chapter durations
+Please correct the JSON and return a valid document matching this EXACT schema:
+
+{{
+  "schema_version": "1.0",
+  "episode_id": "{episode_id}",
+  "title": "...",
+  "total_chapters": N,
+  "estimated_duration_seconds": N,
+  "chapters": [
+    {{
+      "chapter_id": "ch01",
+      "title": "...",
+      "order": 1,
+      "narration": {{
+        "text": "...",
+        "word_count": N,
+        "estimated_duration_seconds": N
+      }},
+      "visual": {{
+        "type": "diagram",
+        "description": "...",
+        "image_prompt": "..."
+      }},
+      "overlays": [
+        {{
+          "type": "lower_third",
+          "text": "...",
+          "start_offset_seconds": 0.0,
+          "duration_seconds": 5.0
+        }}
+      ],
+      "transitions": {{
+        "in": "fade",
+        "out": "cut"
+      }},
+      "notes": "..."
+    }}
+  ]
+}}
+
+CRITICAL: narration, visual, overlays, and transitions MUST be objects/arrays as shown above, NOT strings.
+- narration must be an object with text, word_count, estimated_duration_seconds
+- visual must be an object with type, description, image_prompt
+- overlays must be an array of objects with type, text, start_offset_seconds, duration_seconds
+- transitions must be an object with "in" and "out" keys
+- episode_id field is REQUIRED at the top level
+- total_chapters must equal len(chapters)
+- estimated_duration_seconds must equal sum of chapter durations
 
 Original input:
 {segment}

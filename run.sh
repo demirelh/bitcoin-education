@@ -73,6 +73,11 @@ check_prerequisites() {
         log_warn "ffmpeg not found. Video rendering will not work. Install with: sudo apt install ffmpeg"
     fi
 
+    # Check if .env exists (required by systemd EnvironmentFile)
+    if [ ! -f "${PROJECT_ROOT}/.env" ]; then
+        log_warn ".env not found. Systemd services require EnvironmentFile=${PROJECT_ROOT}/.env"
+    fi
+
     # Check if btcedu is installed
     if ! "${VENV_PATH}/bin/python" -c "import btcedu" 2>/dev/null; then
         log_warn "btcedu package not installed in venv. Will install dependencies."
@@ -147,18 +152,20 @@ run_migrations() {
     log_info "Database migrations completed successfully."
 }
 
-# Restart web service
-restart_service() {
-    log_info "Restarting ${SERVICE_NAME} service..."
+# Restart services and timers
+restart_services() {
+    log_info "Restarting services..."
 
-    # Check if service exists
+    # Reload systemd in case unit files changed
+    sudo systemctl daemon-reload
+
+    # Restart web service
     if ! systemctl list-unit-files | grep -q "${SERVICE_NAME}.service"; then
         log_warn "Service ${SERVICE_NAME} not found. Skipping restart."
-        log_warn "To enable the service, run: sudo cp deploy/${SERVICE_NAME}.service /etc/systemd/system/ && sudo systemctl enable --now ${SERVICE_NAME}"
+        log_warn "To set up services, run: deploy/setup-web.sh"
         return 0
     fi
 
-    # Restart service
     if ! sudo systemctl restart "${SERVICE_NAME}"; then
         error_exit "Failed to restart ${SERVICE_NAME} service."
     fi
@@ -183,6 +190,14 @@ restart_service() {
         log_error "Service ${SERVICE_NAME} failed to start. Check logs with: sudo journalctl -u ${SERVICE_NAME} -n 50"
         exit 1
     fi
+
+    # Restart pipeline timers (if installed)
+    for timer in btcedu-detect.timer btcedu-run.timer; do
+        if systemctl list-unit-files | grep -q "${timer}"; then
+            sudo systemctl restart "${timer}"
+            log_info "Restarted ${timer}."
+        fi
+    done
 }
 
 # Main execution
@@ -198,7 +213,7 @@ main() {
     pull_latest_code
     install_dependencies
     run_migrations
-    restart_service
+    restart_services
 
     log_info "=========================================="
     log_info "Deployment completed successfully!"

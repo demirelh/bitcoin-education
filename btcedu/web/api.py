@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -91,6 +92,10 @@ def _get_job_manager():
     return current_app.config["job_manager"]
 
 
+# Allowlist: only alphanumeric, hyphens, underscores, and dots (no leading dot).
+_SAFE_PATH_COMPONENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
 def _validate_episode_path(episode_id: str, base_dir: Path, *path_parts: str) -> Path | None:
     """Validate episode_id exists in DB and construct safe path within base_dir.
 
@@ -104,13 +109,14 @@ def _validate_episode_path(episode_id: str, base_dir: Path, *path_parts: str) ->
     Returns:
         Resolved path if valid, None otherwise
     """
-    # Reject path traversal characters in episode_id before any path construction
-    if not episode_id or os.path.basename(episode_id) != episode_id:
+    # Reject empty or structurally unsafe episode_id / path parts.
+    # The allowlist regex ensures no slashes, "..", leading dots, or
+    # other characters that could enable path traversal.
+    if not episode_id or not _SAFE_PATH_COMPONENT_RE.match(episode_id):
         return None
 
-    # Reject path traversal in each path component
     for part in path_parts:
-        if not part or os.path.basename(part) != part:
+        if not part or not _SAFE_PATH_COMPONENT_RE.match(part):
             return None
 
     session = _get_session()

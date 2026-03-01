@@ -746,6 +746,10 @@
     toast(msg, false);
   }
 
+  function showSuccess(msg) {
+    toast(msg, true);
+  }
+
   // ── Utils ────────────────────────────────────────────────────
   function esc(s) {
     if (!s) return "";

@@ -1261,12 +1261,16 @@ def youtube_status(ctx: click.Context) -> None:
 
     try:
         status = check_token_status(credentials_path=credentials_path)
+        has_creds = "error" not in status or "No credentials" not in status.get("error", "")
         click.echo(f"Credentials file : {credentials_path}")
-        click.echo(f"Credentials exist: {status['exists']}")
-        if status["exists"]:
+        click.echo(f"Credentials exist: {has_creds}")
+        if has_creds:
             click.echo(f"Token valid      : {status.get('valid', False)}")
-            click.echo(f"Scopes           : {status.get('scopes', [])}")
+            click.echo(f"Token expired    : {status.get('expired', 'N/A')}")
             click.echo(f"Expiry           : {status.get('expiry', 'N/A')}")
+            click.echo(f"Can refresh      : {status.get('can_refresh', False)}")
+        if "error" in status:
+            click.echo(f"Error            : {status['error']}")
     except Exception as e:
         click.echo(f"[FAIL] Could not check status: {e}", err=True)
 

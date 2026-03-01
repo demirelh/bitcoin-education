@@ -92,10 +92,7 @@ def generate_tts(
         )
 
     # Check episode status (allow IMAGES_GENERATED or TTS_DONE for idempotency)
-    if (
-        episode.status not in (EpisodeStatus.IMAGES_GENERATED, EpisodeStatus.TTS_DONE)
-        and not force
-    ):
+    if episode.status not in (EpisodeStatus.IMAGES_GENERATED, EpisodeStatus.TTS_DONE) and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'images_generated' or 'tts_done'. Use --force to override."
@@ -110,9 +107,7 @@ def generate_tts(
 
     tts_dir = Path(settings.outputs_dir) / episode_id / "tts"
     manifest_path = tts_dir / "manifest.json"
-    provenance_path = (
-        Path(settings.outputs_dir) / episode_id / "provenance" / "tts_provenance.json"
-    )
+    provenance_path = Path(settings.outputs_dir) / episode_id / "provenance" / "tts_provenance.json"
 
     # Load chapters
     chapters_doc = _load_chapters(chapters_path)
@@ -121,9 +116,7 @@ def generate_tts(
     # Idempotency check
     if not force and chapter_id is None:
         if _is_tts_current(manifest_path, provenance_path, chapters_hash):
-            logger.info(
-                "TTS is current for %s (use --force to regenerate)", episode_id
-            )
+            logger.info("TTS is current for %s (use --force to regenerate)", episode_id)
             return TTSResult(
                 episode_id=episode_id,
                 tts_path=tts_dir,
@@ -155,9 +148,7 @@ def generate_tts(
         # Filter chapters to process
         chapters_to_process = chapters_doc.chapters
         if chapter_id:
-            chapters_to_process = [
-                c for c in chapters_doc.chapters if c.chapter_id == chapter_id
-            ]
+            chapters_to_process = [c for c in chapters_doc.chapters if c.chapter_id == chapter_id]
             if not chapters_to_process:
                 raise ValueError(f"Chapter {chapter_id} not found in chapters.json")
 
@@ -167,8 +158,7 @@ def generate_tts(
             try:
                 existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
                 existing_entries = {
-                    entry["chapter_id"]: entry
-                    for entry in existing_manifest.get("segments", [])
+                    entry["chapter_id"]: entry for entry in existing_manifest.get("segments", [])
                 }
             except (json.JSONDecodeError, KeyError):
                 logger.warning("Could not load existing manifest, will regenerate all")
@@ -220,9 +210,7 @@ def generate_tts(
                 )
 
             # Generate audio
-            entry = _generate_single_audio(
-                chapter, tts_service, tts_dir, settings
-            )
+            entry = _generate_single_audio(chapter, tts_service, tts_dir, settings)
             audio_entries.append(entry)
             total_cost += entry.cost_usd
             total_duration += entry.duration_seconds

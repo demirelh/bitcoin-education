@@ -292,9 +292,7 @@ def test_probe_media_success(tmp_path):
     }
 
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=json.dumps(ffprobe_output)
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(ffprobe_output))
 
         info = probe_media(str(video))
 
@@ -330,9 +328,7 @@ def test_probe_media_video_only(tmp_path):
     }
 
     with patch("subprocess.run") as mock_run:
-        mock_run.return_value = MagicMock(
-            returncode=0, stdout=json.dumps(ffprobe_output)
-        )
+        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps(ffprobe_output))
 
         info = probe_media(str(video))
 

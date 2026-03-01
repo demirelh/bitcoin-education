@@ -95,10 +95,7 @@ def render_video(
         )
 
     # Check episode status (allow TTS_DONE or RENDERED for idempotency)
-    if (
-        episode.status not in (EpisodeStatus.TTS_DONE, EpisodeStatus.RENDERED)
-        and not force
-    ):
+    if episode.status not in (EpisodeStatus.TTS_DONE, EpisodeStatus.RENDERED) and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'tts_done' or 'rendered'. Use --force to override."
@@ -135,9 +132,7 @@ def render_video(
     # Idempotency check
     if not force:
         if _is_render_current(manifest_path, provenance_path, draft_path, content_hash):
-            logger.info(
-                "Render is current for %s (use --force to re-render)", episode_id
-            )
+            logger.info("Render is current for %s (use --force to re-render)", episode_id)
             existing_provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
             return RenderResult(
                 episode_id=episode_id,
@@ -262,8 +257,7 @@ def render_video(
             raise RuntimeError("No segments were rendered")
 
         segment_abs_paths = [
-            str((base_dir / entry.segment_path).absolute())
-            for entry in segment_entries
+            str((base_dir / entry.segment_path).absolute()) for entry in segment_entries
         ]
 
         logger.info("Concatenating %d segments into draft video", len(segment_entries))
@@ -334,9 +328,7 @@ def render_video(
 
         # Create MediaAsset record for draft video
         if not settings.dry_run:
-            _create_media_asset_record(
-                session, episode_id, draft_path, total_duration, total_size
-            )
+            _create_media_asset_record(session, episode_id, draft_path, total_duration, total_size)
 
         # Update episode status
         episode.status = EpisodeStatus.RENDERED

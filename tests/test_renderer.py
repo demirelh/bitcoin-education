@@ -262,9 +262,7 @@ def test_compute_render_content_hash():
     }
 
     tts_manifest = {
-        "segments": [
-            {"chapter_id": "ch01", "file_path": "tts/ch01.mp3", "duration_seconds": 60.0}
-        ]
+        "segments": [{"chapter_id": "ch01", "file_path": "tts/ch01.mp3", "duration_seconds": 60.0}]
     }
 
     hash1 = _compute_render_content_hash(chapters_doc, image_manifest, tts_manifest)

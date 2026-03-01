@@ -270,13 +270,7 @@ def test_is_tts_current_missing_mp3(tmp_path):
     provenance = tmp_path / "provenance.json"
 
     manifest.write_text(
-        json.dumps(
-            {
-                "segments": [
-                    {"chapter_id": "ch01", "file_path": "tts/ch01.mp3"}
-                ]
-            }
-        )
+        json.dumps({"segments": [{"chapter_id": "ch01", "file_path": "tts/ch01.mp3"}]})
     )
     provenance.write_text(json.dumps({"input_content_hash": "hash"}))
 
@@ -295,13 +289,7 @@ def test_is_tts_current_all_good(tmp_path):
     (tmp_path / "tts" / "ch01.mp3").write_bytes(b"fake_mp3")
 
     manifest.write_text(
-        json.dumps(
-            {
-                "segments": [
-                    {"chapter_id": "ch01", "file_path": "tts/ch01.mp3"}
-                ]
-            }
-        )
+        json.dumps({"segments": [{"chapter_id": "ch01", "file_path": "tts/ch01.mp3"}]})
     )
     provenance.write_text(json.dumps({"input_content_hash": "hash"}))
 

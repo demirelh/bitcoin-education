@@ -120,15 +120,11 @@ def find_font_path(font_name: str) -> str:
             continue
         dejavu_bold = base_dir / "DejaVuSans-Bold.ttf"
         if dejavu_bold.exists():
-            logger.warning(
-                "Font %s not found, using DejaVuSans-Bold fallback", font_name
-            )
+            logger.warning("Font %s not found, using DejaVuSans-Bold fallback", font_name)
             return str(dejavu_bold.absolute())
 
     # Last resort: return fontconfig name and let ffmpeg handle it
-    logger.warning(
-        "Font %s not found in system paths, passing to fontconfig", font_name
-    )
+    logger.warning("Font %s not found in system paths, passing to fontconfig", font_name)
     return font_name
 
 
@@ -255,19 +251,32 @@ def create_segment(
     cmd = [
         "ffmpeg",
         "-y",  # Overwrite output
-        "-loop", "1",  # Loop image
-        "-i", image_path,
-        "-i", audio_path,
-        "-filter_complex", filter_complex,
-        "-map", "[v]",
-        "-map", "1:a",
-        "-c:v", "libx264",
-        "-preset", preset,
-        "-crf", str(crf),
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac",
-        "-b:a", audio_bitrate,
-        "-t", str(duration),
+        "-loop",
+        "1",  # Loop image
+        "-i",
+        image_path,
+        "-i",
+        audio_path,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-map",
+        "1:a",
+        "-c:v",
+        "libx264",
+        "-preset",
+        preset,
+        "-crf",
+        str(crf),
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        audio_bitrate,
+        "-t",
+        str(duration),
         "-shortest",
         output_path,
     ]
@@ -295,9 +304,7 @@ def create_segment(
         size_bytes = Path(output_path).stat().st_size
 
     if returncode != 0:
-        raise RuntimeError(
-            f"ffmpeg segment creation failed (exit code {returncode}): {stderr}"
-        )
+        raise RuntimeError(f"ffmpeg segment creation failed (exit code {returncode}): {stderr}")
 
     return SegmentResult(
         segment_path=output_path,
@@ -353,10 +360,14 @@ def concatenate_segments(
     cmd = [
         "ffmpeg",
         "-y",
-        "-f", "concat",
-        "-safe", "0",
-        "-i", str(concat_list_path),
-        "-c", "copy",  # Stream copy (no re-encoding)
+        "-f",
+        "concat",
+        "-safe",
+        "0",
+        "-i",
+        str(concat_list_path),
+        "-c",
+        "copy",  # Stream copy (no re-encoding)
         output_path,
     ]
 
@@ -388,9 +399,7 @@ def concatenate_segments(
             logger.warning("Could not probe concatenated video duration: %s", e)
 
     if returncode != 0:
-        raise RuntimeError(
-            f"ffmpeg concatenation failed (exit code {returncode}): {stderr}"
-        )
+        raise RuntimeError(f"ffmpeg concatenation failed (exit code {returncode}): {stderr}")
 
     return ConcatResult(
         output_path=output_path,
@@ -421,8 +430,10 @@ def probe_media(file_path: str) -> MediaInfo:
 
     cmd = [
         "ffprobe",
-        "-v", "quiet",
-        "-print_format", "json",
+        "-v",
+        "quiet",
+        "-print_format",
+        "json",
         "-show_format",
         "-show_streams",
         file_path,

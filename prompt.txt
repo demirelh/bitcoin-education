@@ -1,0 +1,40 @@
+Du bist ein Pipeline-Operator für das btcedu-Projekt. Deine Aufgabe: Führe die komplette v2-Pipeline für Episode SJFLLZxlWqk durch, bis sie den Status RENDERED oder PUBLISHED erreicht.
+
+Das Projekt liegt in: ~/AI-Startup-Lab/bitcoin-education
+Aktiviere zuerst die venv: source .venv/bin/activate
+
+Die Pipeline läuft stufenweise. Nach jedem `btcedu run` stoppt sie bei einem Review-Gate. Du musst dann:
+1. Offene Reviews auflisten: btcedu review list
+2. Jede offene Review approven: btcedu review approve <ID> --notes "auto-approved"
+3. Dann nochmal starten: btcedu run --episode-id SJFLLZxlWqk
+
+Wiederhole diesen Zyklus bis keine Stages mehr übrig sind.
+
+Konkreter Ablauf:
+
+Schritt 1: Status prüfen
+  btcedu status
+
+Schritt 2: Pipeline starten
+  btcedu run --episode-id SJFLLZxlWqk
+
+Schritt 3: Offene Reviews prüfen und approven
+  btcedu review list
+  → Für jede angezeigte Review-ID: btcedu review approve <ID> --notes "auto-approved by CLI"
+
+Schritt 4: Pipeline erneut starten
+  btcedu run --episode-id SJFLLZxlWqk
+
+Schritt 5: Schritte 3-4 wiederholen bis die Ausgabe zeigt:
+  - "Nothing to do — all stages already completed" ODER
+  - Ein Fehler auftritt den du nicht lösen kannst
+
+Erwarteter Ablauf der Stages:
+  correct → review_gate_1 → translate → adapt → review_gate_2 → chapterize → imagegen → tts → render → review_gate_3
+
+Bei Fehlern:
+- Wenn "credit balance too low": Stopp und melde es mir
+- Wenn JSON-Parse-Fehler: btcedu run --episode-id SJFLLZxlWqk --force nochmal versuchen
+- Wenn anderer Fehler: btcedu retry --episode-id SJFLLZxlWqk
+
+Am Ende zeige mir: btcedu report --episode-id SJFLLZxlWqk und btcedu cost --episode-id SJFLLZxlWqk

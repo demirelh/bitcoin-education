@@ -350,7 +350,7 @@ def test_create_segment_with_fade_in(tmp_path):
     with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
         mock_ffmpeg.return_value = (0, "success")
 
-        result = create_segment(
+        create_segment(
             image_path=str(image),
             audio_path=str(audio),
             output_path=str(output),
@@ -386,7 +386,7 @@ def test_create_segment_with_fade_out(tmp_path):
     with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
         mock_ffmpeg.return_value = (0, "success")
 
-        result = create_segment(
+        create_segment(
             image_path=str(image),
             audio_path=str(audio),
             output_path=str(output),
@@ -420,7 +420,7 @@ def test_create_segment_with_both_fades(tmp_path):
     with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
         mock_ffmpeg.return_value = (0, "success")
 
-        result = create_segment(
+        create_segment(
             image_path=str(image),
             audio_path=str(audio),
             output_path=str(output),
@@ -457,7 +457,7 @@ def test_create_segment_no_fades(tmp_path):
     with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
         mock_ffmpeg.return_value = (0, "success")
 
-        result = create_segment(
+        create_segment(
             image_path=str(image),
             audio_path=str(audio),
             output_path=str(output),

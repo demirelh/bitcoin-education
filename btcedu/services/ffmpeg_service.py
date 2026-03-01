@@ -294,24 +294,26 @@ def create_segment(
         cmd.extend(["-af", ",".join(audio_filters)])
 
     # Continue with codec and output settings
-    cmd.extend([
-        "-c:v",
-        "libx264",
-        "-preset",
-        preset,
-        "-crf",
-        str(crf),
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        audio_bitrate,
-        "-t",
-        str(duration),
-        "-shortest",
-        output_path,
-    ])
+    cmd.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            audio_bitrate,
+            "-t",
+            str(duration),
+            "-shortest",
+            output_path,
+        ]
+    )
 
     if dry_run:
         logger.info("Dry-run: would run ffmpeg command (not executing)")

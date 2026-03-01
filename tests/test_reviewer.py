@@ -352,6 +352,7 @@ def test_revert_episode_corrected_to_transcribed(db_session):
     db_session.commit()
 
     _revert_episode(db_session, "ep_rg1")
+    db_session.commit()
     db_session.refresh(episode)
 
     assert episode.status == EpisodeStatus.TRANSCRIBED
@@ -372,6 +373,7 @@ def test_revert_episode_adapted_to_translated(db_session):
     db_session.commit()
 
     _revert_episode(db_session, "ep_rg2")
+    db_session.commit()
     db_session.refresh(episode)
 
     assert episode.status == EpisodeStatus.TRANSLATED
@@ -392,6 +394,7 @@ def test_revert_episode_rendered_to_tts_done(db_session):
     db_session.commit()
 
     _revert_episode(db_session, "ep_rg3")
+    db_session.commit()
     db_session.refresh(episode)
 
     assert episode.status == EpisodeStatus.TTS_DONE
@@ -462,7 +465,7 @@ def test_get_review_detail_video_fields(db_session, tmp_path):
 
     mock_settings = Settings(outputs_dir=str(tmp_path / "outputs"))
 
-    with patch("btcedu.core.reviewer.Settings", return_value=mock_settings):
+    with patch("btcedu.config.Settings", return_value=mock_settings):
         detail = get_review_detail(db_session, task.id)
 
     assert detail["stage"] == "render"
@@ -497,7 +500,7 @@ def test_get_review_detail_video_fields_missing_files(db_session, tmp_path):
 
     mock_settings = Settings(outputs_dir=str(tmp_path / "outputs"))
 
-    with patch("btcedu.core.reviewer.Settings", return_value=mock_settings):
+    with patch("btcedu.config.Settings", return_value=mock_settings):
         detail = get_review_detail(db_session, task.id)
 
     assert detail["stage"] == "render"

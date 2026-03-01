@@ -51,15 +51,19 @@ def _revert_episode(session: Session, episode_id: str) -> None:
 
     # Reversion mapping for all three review gates
     _REVERT_MAP = {
-        EpisodeStatus.CORRECTED: EpisodeStatus.TRANSCRIBED,   # RG1
-        EpisodeStatus.ADAPTED: EpisodeStatus.TRANSLATED,       # RG2
-        EpisodeStatus.RENDERED: EpisodeStatus.TTS_DONE,        # RG3
+        EpisodeStatus.CORRECTED: EpisodeStatus.TRANSCRIBED,  # RG1
+        EpisodeStatus.ADAPTED: EpisodeStatus.TRANSLATED,  # RG2
+        EpisodeStatus.RENDERED: EpisodeStatus.TTS_DONE,  # RG3
     }
 
     target_status = _REVERT_MAP.get(episode.status)
     if target_status:
-        logger.info("Reverted episode %s from %s to %s",
-                    episode_id, episode.status.value, target_status.value)
+        logger.info(
+            "Reverted episode %s from %s to %s",
+            episode_id,
+            episode.status.value,
+            target_status.value,
+        )
         episode.status = target_status
     else:
         logger.warning(
@@ -355,13 +359,16 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
     if task.stage == "render" and episode:
         # Check if draft.mp4 exists
         from btcedu.config import Settings
+
         settings = Settings()
         draft_path = Path(settings.outputs_dir) / episode.episode_id / "render" / "draft.mp4"
         if draft_path.exists():
             video_url = f"/api/episodes/{episode.episode_id}/render/draft.mp4"
 
         # Load render manifest
-        manifest_path = Path(settings.outputs_dir) / episode.episode_id / "render" / "render_manifest.json"
+        manifest_path = (
+            Path(settings.outputs_dir) / episode.episode_id / "render" / "render_manifest.json"
+        )
         if manifest_path.exists():
             try:
                 render_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

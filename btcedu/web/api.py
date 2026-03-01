@@ -432,9 +432,7 @@ def get_file(episode_id: str, file_type: str):
         report_dir = Path(settings.reports_dir) / episode_id
         # Verify resolved path stays within reports_dir
         try:
-            if not report_dir.resolve().is_relative_to(
-                Path(settings.reports_dir).resolve()
-            ):
+            if not report_dir.resolve().is_relative_to(Path(settings.reports_dir).resolve()):
                 return jsonify({"error": "Invalid episode ID"}), 400
         except (OSError, RuntimeError):
             return jsonify({"error": "Invalid episode ID"}), 400

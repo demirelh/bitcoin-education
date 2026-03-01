@@ -190,18 +190,28 @@ def render_video(
             # Convert overlays to OverlaySpec
             overlay_specs = _chapter_to_overlay_specs(chapter, settings.render_font)
 
+            # Compute fade durations based on transition types (Sprint 10)
+            fade_in_dur = 0.0
+            fade_out_dur = 0.0
+            if chapter.transitions.in_transition.value in ("fade", "dissolve"):
+                fade_in_dur = settings.render_transition_duration
+            if chapter.transitions.out_transition.value in ("fade", "dissolve"):
+                fade_out_dur = settings.render_transition_duration
+
             # Render segment
             segment_filename = f"{chapter.chapter_id}.mp4"
             segment_path = segments_dir / segment_filename
             segment_rel_path = f"render/segments/{segment_filename}"
 
             logger.info(
-                "Rendering segment %s (%d/%d): %.1fs, %d overlays",
+                "Rendering segment %s (%d/%d): %.1fs, %d overlays, fade_in=%.1fs, fade_out=%.1fs",
                 chapter.chapter_id,
                 chapter.order,
                 chapters_doc.total_chapters,
                 duration,
                 len(overlay_specs),
+                fade_in_dur,
+                fade_out_dur,
             )
 
             segment_result = create_segment(
@@ -216,6 +226,8 @@ def render_video(
                 preset=settings.render_preset,
                 audio_bitrate=settings.render_audio_bitrate,
                 font=settings.render_font,
+                fade_in_duration=fade_in_dur,  # Sprint 10
+                fade_out_duration=fade_out_dur,  # Sprint 10
                 timeout_seconds=settings.render_timeout_segment,
                 dry_run=settings.dry_run,
             )
@@ -280,6 +292,7 @@ def render_video(
             "generated_at": _utcnow().isoformat(),
             "total_duration_seconds": total_duration,
             "total_size_bytes": total_size,
+            "transition_duration": settings.render_transition_duration,  # Sprint 10
             "segments": [asdict(entry) for entry in segment_entries],
             "output_path": "render/draft.mp4",
             "ffmpeg_version": ffmpeg_version,

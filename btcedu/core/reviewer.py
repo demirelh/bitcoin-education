@@ -37,22 +37,33 @@ def _validate_actionable(task: ReviewTask) -> None:
 
 
 def _revert_episode(session: Session, episode_id: str) -> None:
-    """Revert episode from CORRECTED back to TRANSCRIBED.
+    """Revert episode to previous stage based on current status.
 
-    [ASSUMPTION] Only handles CORRECTED -> TRANSCRIBED (Review Gate 1).
-    Future gates will add more reversion mappings.
+    Reversion map:
+    - CORRECTED → TRANSCRIBED (Review Gate 1)
+    - ADAPTED → TRANSLATED (Review Gate 2)
+    - RENDERED → TTS_DONE (Review Gate 3)
     """
     episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         logger.warning("Cannot revert episode %s: not found", episode_id)
         return
 
-    if episode.status == EpisodeStatus.CORRECTED:
-        episode.status = EpisodeStatus.TRANSCRIBED
-        logger.info("Reverted episode %s from CORRECTED to TRANSCRIBED", episode_id)
+    # Reversion mapping for all three review gates
+    _REVERT_MAP = {
+        EpisodeStatus.CORRECTED: EpisodeStatus.TRANSCRIBED,   # RG1
+        EpisodeStatus.ADAPTED: EpisodeStatus.TRANSLATED,       # RG2
+        EpisodeStatus.RENDERED: EpisodeStatus.TTS_DONE,        # RG3
+    }
+
+    target_status = _REVERT_MAP.get(episode.status)
+    if target_status:
+        logger.info("Reverted episode %s from %s to %s",
+                    episode_id, episode.status.value, target_status.value)
+        episode.status = target_status
     else:
         logger.warning(
-            "Episode %s is in status '%s', not CORRECTED — skipping revert",
+            "Episode %s is in status '%s', no reversion mapping defined",
             episode_id,
             episode.status.value,
         )
@@ -338,6 +349,25 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         for d in task.decisions
     ]
 
+    # Video-specific fields for render review (Review Gate 3)
+    video_url = None
+    render_manifest = None
+    if task.stage == "render" and episode:
+        # Check if draft.mp4 exists
+        from btcedu.config import Settings
+        settings = Settings()
+        draft_path = Path(settings.outputs_dir) / episode.episode_id / "render" / "draft.mp4"
+        if draft_path.exists():
+            video_url = f"/api/episodes/{episode.episode_id}/render/draft.mp4"
+
+        # Load render manifest
+        manifest_path = Path(settings.outputs_dir) / episode.episode_id / "render" / "render_manifest.json"
+        if manifest_path.exists():
+            try:
+                render_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                render_manifest = {"error": "Could not load render manifest"}
+
     return {
         "id": task.id,
         "episode_id": task.episode_id,
@@ -352,6 +382,8 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         "original_text": original_text,
         "corrected_text": corrected_text,
         "decisions": decisions,
+        "video_url": video_url,  # Sprint 10: for render review
+        "render_manifest": render_manifest,  # Sprint 10: for render review
     }
 
 

@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     elevenlabs_style: float = 0.0
     elevenlabs_use_speaker_boost: bool = True
 
-    # Render / ffmpeg (Sprint 9)
+    # Render / ffmpeg (Sprint 9-10)
     render_resolution: str = "1920x1080"
     render_fps: int = 30
     render_crf: int = 23
@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     render_font: str = "NotoSans-Bold"
     render_timeout_segment: int = 300  # 5 minutes
     render_timeout_concat: int = 600  # 10 minutes
+    render_transition_duration: float = 0.5  # seconds for fade in/out (Sprint 10)
 
     # Output
     outputs_dir: str = "data/outputs"

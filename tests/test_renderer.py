@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -19,7 +20,9 @@ from btcedu.core.renderer import (
 )
 from btcedu.db import Base
 from btcedu.models.chapter_schema import ChapterDocument
-from btcedu.models.episode import Episode, EpisodeStatus
+from btcedu.models.content_artifact import ContentArtifact
+from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun
+from btcedu.models.media_asset import MediaAsset, MediaAssetType
 
 
 @pytest.fixture
@@ -580,3 +583,235 @@ def test_render_video_force_rerender(db_session, settings, tmp_path):
     # Force re-render
     result2 = render_video(db_session, "ep001", settings, force=True)
     assert not result2.skipped
+
+
+def _mock_segment_result(output_path, **kwargs):
+    """Create a mock SegmentResult."""
+    from btcedu.services.ffmpeg_service import SegmentResult
+
+    # Create a non-empty file to simulate ffmpeg output
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_bytes(b"\x00" * 1024)
+    return SegmentResult(
+        segment_path=output_path,
+        duration_seconds=kwargs.get("duration", 60.0),
+        size_bytes=1024,
+        ffmpeg_command=["ffmpeg", "-i", "input"],
+        returncode=0,
+        stderr="",
+    )
+
+
+def _mock_concat_result(output_path, **kwargs):
+    """Create a mock ConcatResult."""
+    from btcedu.services.ffmpeg_service import ConcatResult
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    Path(output_path).write_bytes(b"\x00" * 2048)
+    return ConcatResult(
+        output_path=output_path,
+        duration_seconds=120.0,
+        size_bytes=2048,
+        segment_count=2,
+        ffmpeg_command=["ffmpeg", "-f", "concat"],
+        returncode=0,
+        stderr="",
+    )
+
+
+def test_render_video_non_dry_run(db_session, settings, tmp_path):
+    """Test non-dry-run render with mocked ffmpeg service.
+
+    Verifies the full render path: segment creation, concatenation,
+    PipelineRun, ContentArtifact, and MediaAsset records.
+    """
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.dry_run = False
+
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    _create_test_chapters_json("ep001", Path(settings.outputs_dir))
+    _create_test_image_manifest("ep001", Path(settings.outputs_dir))
+    _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
+
+    def mock_create_segment(image_path, audio_path, output_path, duration, **kw):
+        return _mock_segment_result(output_path, duration=duration)
+
+    def mock_concatenate_segments(segment_paths, output_path, **kw):
+        return _mock_concat_result(output_path, segment_count=len(segment_paths))
+
+    with (
+        patch(
+            "btcedu.services.ffmpeg_service.create_segment",
+            side_effect=mock_create_segment,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.concatenate_segments",
+            side_effect=mock_concatenate_segments,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.get_ffmpeg_version",
+            return_value="ffmpeg version 6.0-mock",
+        ),
+    ):
+        result = render_video(db_session, "ep001", settings)
+
+    assert isinstance(result, RenderResult)
+    assert result.episode_id == "ep001"
+    assert result.segment_count == 2
+    assert not result.skipped
+    assert result.total_size_bytes > 0
+
+    # Episode status updated
+    db_session.refresh(episode)
+    assert episode.status == EpisodeStatus.RENDERED
+
+    # PipelineRun record exists with success
+    run = db_session.query(PipelineRun).filter_by(episode_id="ep001", stage="render").first()
+    assert run is not None
+    assert run.status == "success"
+    assert run.completed_at is not None
+
+    # ContentArtifact record exists
+    artifact = (
+        db_session.query(ContentArtifact)
+        .filter_by(episode_id="ep001", artifact_type="render")
+        .first()
+    )
+    assert artifact is not None
+    assert artifact.model == "ffmpeg"
+
+    # MediaAsset record exists (non-dry-run)
+    asset = (
+        db_session.query(MediaAsset)
+        .filter_by(episode_id="ep001", asset_type=MediaAssetType.VIDEO)
+        .first()
+    )
+    assert asset is not None
+    assert asset.size_bytes > 0
+
+
+def test_render_video_error_rollback(db_session, settings, tmp_path):
+    """Test that render failure sets PipelineRun to failed and records error.
+
+    When all chapters have missing media, render raises RuntimeError and
+    the PipelineRun and episode error_message are updated accordingly.
+    """
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.dry_run = False
+
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    # Create chapters.json referencing 2 chapters but with manifests
+    # that point to non-existent image/audio files (no dummy files created)
+    chapters_data = {
+        "schema_version": "1.0",
+        "episode_id": "ep001",
+        "title": "Test Episode",
+        "total_chapters": 2,
+        "estimated_duration_seconds": 120,
+        "chapters": [
+            {
+                "chapter_id": "ch01",
+                "title": "Intro",
+                "order": 1,
+                "narration": {
+                    "text": "Chapter one.",
+                    "word_count": 2,
+                    "estimated_duration_seconds": 60,
+                },
+                "visual": {
+                    "type": "title_card",
+                    "description": "Title",
+                    "image_prompt": None,
+                },
+                "overlays": [],
+                "transitions": {"in": "cut", "out": "cut"},
+            },
+            {
+                "chapter_id": "ch02",
+                "title": "Main",
+                "order": 2,
+                "narration": {
+                    "text": "Chapter two.",
+                    "word_count": 2,
+                    "estimated_duration_seconds": 60,
+                },
+                "visual": {
+                    "type": "title_card",
+                    "description": "Title card",
+                    "image_prompt": None,
+                },
+                "overlays": [],
+                "transitions": {"in": "cut", "out": "cut"},
+            },
+        ],
+    }
+    ep_dir = Path(settings.outputs_dir) / "ep001"
+    chapters_path = ep_dir / "chapters.json"
+    chapters_path.parent.mkdir(parents=True, exist_ok=True)
+    chapters_path.write_text(json.dumps(chapters_data))
+
+    # Image manifest references files that don't exist
+    image_manifest = {
+        "episode_id": "ep001",
+        "schema_version": "1.0",
+        "images": [
+            {"chapter_id": "ch01", "file_path": "images/ch01.png", "generation_method": "template"},
+            {"chapter_id": "ch02", "file_path": "images/ch02.png", "generation_method": "template"},
+        ],
+    }
+    img_manifest_path = ep_dir / "images" / "manifest.json"
+    img_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    img_manifest_path.write_text(json.dumps(image_manifest))
+    # NOTE: no actual image files created — _resolve_chapter_media will raise ValueError
+
+    # TTS manifest
+    tts_manifest = {
+        "episode_id": "ep001",
+        "schema_version": "1.0",
+        "segments": [
+            {"chapter_id": "ch01", "file_path": "tts/ch01.mp3", "duration_seconds": 60.0},
+            {"chapter_id": "ch02", "file_path": "tts/ch02.mp3", "duration_seconds": 60.0},
+        ],
+    }
+    tts_manifest_path = ep_dir / "tts" / "manifest.json"
+    tts_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    tts_manifest_path.write_text(json.dumps(tts_manifest))
+    # NOTE: no actual audio files created
+
+    with (
+        patch(
+            "btcedu.services.ffmpeg_service.get_ffmpeg_version",
+            return_value="ffmpeg version 6.0-mock",
+        ),
+        pytest.raises(RuntimeError, match="No segments were rendered"),
+    ):
+        render_video(db_session, "ep001", settings)
+
+    # PipelineRun should be marked as failed
+    run = db_session.query(PipelineRun).filter_by(episode_id="ep001", stage="render").first()
+    assert run is not None
+    assert run.status == "failed"
+    assert "No segments were rendered" in run.error_message
+
+    # Episode error_message should be set
+    db_session.refresh(episode)
+    assert episode.error_message is not None
+    assert "No segments were rendered" in episode.error_message

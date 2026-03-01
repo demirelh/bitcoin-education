@@ -570,7 +570,8 @@ def run_pending(
     """Process all pending episodes through the pipeline.
 
     Queries episodes with status in (NEW, DOWNLOADED, TRANSCRIBED, CHUNKED,
-    GENERATED, CORRECTED), ordered by published_at ASC (oldest first).
+    GENERATED, CORRECTED, TRANSLATED, ADAPTED, CHAPTERIZED, IMAGES_GENERATED,
+    TTS_DONE), ordered by published_at ASC (oldest first).
 
     Args:
         session: DB session.
@@ -597,6 +598,7 @@ def run_pending(
                     EpisodeStatus.ADAPTED,
                     EpisodeStatus.CHAPTERIZED,
                     EpisodeStatus.IMAGES_GENERATED,
+                    EpisodeStatus.TTS_DONE,  # Sprint 9: render stage
                 ]
             )
         )

@@ -467,7 +467,7 @@ class JobManager:
             session.commit()
 
         # Log the pipeline plan
-        plan = resolve_pipeline_plan(session, episode, force=job.force)
+        plan = resolve_pipeline_plan(session, episode, force=job.force, settings=settings)
         for p in plan:
             self._log(job, f"Plan: {p.stage} \u2192 {p.decision} ({p.reason})")
 
@@ -532,7 +532,7 @@ class JobManager:
         self._log(job, f"Last error: {episode.error_message}")
 
         # Show what will happen after error is cleared
-        plan = resolve_pipeline_plan(session, episode, force=False)
+        plan = resolve_pipeline_plan(session, episode, force=False, settings=settings)
         for p in plan:
             self._log(job, f"Plan: {p.stage} \u2192 {p.decision} ({p.reason})")
 

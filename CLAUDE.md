@@ -33,7 +33,8 @@ IMAGES_GENERATED → TTS_DONE → RENDERED → APPROVED → PUBLISHED
 | 6 | Phase 3 | Chapterization (`chapterizer.py`, production JSON, chapter viewer) | Complete |
 | 7 | Phase 3 | Image Generation (`image_generator.py`, image_gen_service, DALL-E 3) | Complete |
 | 8 | Phase 4 | TTS (`tts.py`, elevenlabs_service, per-chapter MP3, audio preview) | Complete |
-| 9-10 | Phase 5 | Video Rendering (ffmpeg, render manifest) | Next |
+| 9 | Phase 5 | Video Rendering (`renderer.py`, ffmpeg_service, draft MP4 generation) | Complete |
+| 10 | Phase 5 | Video Polish (transitions, mixing, thumbnails) | Next |
 | 11 | Phase 6 | YouTube Publishing | Future |
 
 ## Directory Layout

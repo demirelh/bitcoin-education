@@ -405,6 +405,54 @@ class CreateMediaAssetsTableMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreatePublishJobsTableMigration(Migration):
+    """Migration 006: Create publish_jobs table for YouTube publishing (Sprint 11)."""
+
+    @property
+    def version(self) -> str:
+        return "006_create_publish_jobs"
+
+    @property
+    def description(self) -> str:
+        return "Create publish_jobs table for tracking YouTube upload jobs"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='publish_jobs'")
+        )
+        if not result.fetchone():
+            session.execute(
+                text("""
+                    CREATE TABLE publish_jobs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        episode_id VARCHAR(128) NOT NULL,
+                        status VARCHAR(32) NOT NULL DEFAULT 'pending',
+                        youtube_video_id VARCHAR(64),
+                        youtube_url VARCHAR(512),
+                        metadata_snapshot TEXT,
+                        published_at TIMESTAMP,
+                        error_message TEXT,
+                        created_at TIMESTAMP NOT NULL
+                    )
+                """)
+            )
+            session.execute(
+                text("CREATE INDEX idx_publish_jobs_episode ON publish_jobs(episode_id)")
+            )
+            session.execute(
+                text("CREATE INDEX idx_publish_jobs_status ON publish_jobs(status)")
+            )
+            session.commit()
+            logger.info("Created publish_jobs table with indexes")
+        else:
+            logger.info("publish_jobs table already exists (skipped)")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -412,6 +460,7 @@ MIGRATIONS = [
     CreatePromptVersionsTableMigration(),
     CreateReviewTablesMigration(),
     CreateMediaAssetsTableMigration(),
+    CreatePublishJobsTableMigration(),
 ]
 
 

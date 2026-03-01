@@ -295,6 +295,7 @@
           <span class="badge badge-${ep.status}">${ep.status}</span>
           ${ep.episode_id} &middot; ${ep.published_at ? ep.published_at.slice(0, 10) : "\u2014"}
           &middot; <a href="${esc(ep.url)}" target="_blank" style="color:var(--accent)">source</a>
+          ${ep.youtube_video_id ? `&middot; <a href="https://youtu.be/${esc(ep.youtube_video_id)}" target="_blank" style="color:#f90">▶ YouTube</a>` : ""}
           ${ep.error_message ? `<br><span style="color:var(--red)">Error: ${esc(trunc(ep.error_message, 120))}</span>` : ""}
           ${ep.retry_count > 0 ? ` &middot; retries: ${ep.retry_count}` : ""}
         </div>
@@ -306,6 +307,7 @@
           <button class="btn btn-sm" onclick="actions.refine()" title="Refine generated content using QA feedback (v1 → v2)">Refine</button>
           <button class="btn btn-sm" onclick="actions.run()" title="Run full pipeline from the earliest incomplete stage">Run All</button>
           <button class="btn btn-sm btn-danger" onclick="actions.retry()" title="Resume from the last failed stage">Retry</button>
+          <button class="btn btn-sm btn-success" onclick="actions.publish()" title="Publish approved video to YouTube">Publish</button>
           <label><input type="checkbox" id="chk-force"> force</label>
           <label><input type="checkbox" id="chk-dryrun"> dry-run</label>
         </div>
@@ -503,6 +505,25 @@
             ${chapterRows}
           </div>
         </div>`;
+
+      // Publish panel below video
+      const publishStatus = await GET(`/episodes/${selected.episode_id}/publish-status`).catch(() => null);
+      if (publishStatus) {
+        const ytId = publishStatus.youtube_video_id;
+        const ytUrl = publishStatus.youtube_url;
+        const publishHtml = ytId && ytUrl
+          ? `<div class="publish-panel">
+              <strong>YouTube:</strong>
+              <a href="${esc(ytUrl)}" target="_blank" class="yt-link">${esc(ytUrl)}</a>
+              <span class="badge badge-published">Published</span>
+             </div>`
+          : `<div class="publish-panel">
+              <strong>Publish to YouTube:</strong>
+              <button class="btn btn-sm btn-success" onclick="actions.publish()">Upload Now</button>
+              <small style="color:#888"> (episode must be APPROVED)</small>
+             </div>`;
+        viewer.insertAdjacentHTML('beforeend', publishHtml);
+      }
     } catch (err) {
       viewer.innerHTML = `
         <div class="video-panel">
@@ -552,6 +573,10 @@
     render() {
       if (!selected) return;
       submitJob("Render", `/episodes/${selected.episode_id}/render`, { force: isForce() });
+    },
+    publish() {
+      if (!selected) return;
+      submitJob("Publish", `/episodes/${selected.episode_id}/publish`, { force: isForce() });
     },
   };
 

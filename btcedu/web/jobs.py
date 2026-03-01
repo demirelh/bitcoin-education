@@ -44,6 +44,7 @@ class Job:
     force: bool = False
     dry_run: bool = False
     top_k: int = 16
+    privacy: str | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
     result: dict | None = None
@@ -100,6 +101,7 @@ class JobManager:
         force: bool = False,
         dry_run: bool = False,
         top_k: int = 16,
+        privacy: str | None = None,
     ) -> Job:
         job_id = uuid.uuid4().hex[:12]
         job = Job(
@@ -109,6 +111,7 @@ class JobManager:
             force=force,
             dry_run=dry_run,
             top_k=top_k,
+            privacy=privacy,
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -225,6 +228,8 @@ class JobManager:
                     self._do_tts(job, session, settings)
                 elif job.action == "render":
                     self._do_render(job, session, settings)
+                elif job.action == "publish":
+                    self._do_publish(job, session, settings)
                 elif job.action == "run":
                     self._do_full_pipeline(job, session, settings)
                 elif job.action == "retry":
@@ -399,6 +404,43 @@ class JobManager:
                 f"{result.total_duration_seconds:.1f}s, "
                 f"{result.total_size_bytes / 1024 / 1024:.1f}MB",
             )
+
+    def _do_publish(self, job, session, settings):
+        from btcedu.core.publisher import publish_video
+
+        self._update(job, stage="publishing")
+        self._log(job, "Publishing video to YouTube...")
+        result = publish_video(
+            session,
+            job.episode_id,
+            settings,
+            force=job.force,
+            privacy=job.privacy,
+        )
+        if result.skipped:
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "skipped": True,
+                    "youtube_video_id": result.youtube_video_id,
+                    "youtube_url": result.youtube_url,
+                },
+            )
+            self._log(job, f"Already published: {result.youtube_url}")
+        else:
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "dry_run": result.dry_run,
+                    "youtube_video_id": result.youtube_video_id,
+                    "youtube_url": result.youtube_url,
+                    "publish_job_id": result.publish_job_id,
+                },
+            )
+            status = "(dry-run)" if result.dry_run else ""
+            self._log(job, f"Published {status}: {result.youtube_url}")
 
     def _do_full_pipeline(self, job, session, settings):
         from btcedu.core.pipeline import (

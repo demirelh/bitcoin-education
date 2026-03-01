@@ -1172,3 +1172,105 @@ def llm_report(ctx: click.Context, json_only: bool, output: str | None) -> None:
         click.echo(f"Report written to: {output_path}")
     else:
         click.echo(content)
+
+
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to publish to YouTube (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-publish even if already published.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Simulate upload without calling YouTube API.",
+)
+@click.option(
+    "--privacy",
+    type=click.Choice(["unlisted", "private", "public"]),
+    default=None,
+    help="Override privacy setting (default: youtube_default_privacy from config).",
+)
+@click.pass_context
+def publish(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+    dry_run: bool,
+    privacy: str | None,
+) -> None:
+    """Publish approved episode video to YouTube (v2 pipeline, Sprint 11)."""
+    from btcedu.core.publisher import publish_video
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = publish_video(session, eid, settings, force=force, privacy=privacy)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already published at {result.youtube_url}")
+                elif result.dry_run:
+                    click.echo(f"[DRY-RUN] {eid} -> would publish (video_id={result.youtube_video_id})")
+                else:
+                    click.echo(f"[OK] {eid} -> {result.youtube_url}")
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
+@cli.command(name="youtube-auth")
+@click.pass_context
+def youtube_auth(ctx: click.Context) -> None:
+    """Run OAuth2 authentication flow for YouTube Data API.
+
+    Opens a browser window to authorize the app. Saves credentials to
+    the path specified by youtube_credentials_path in config.
+    """
+    from btcedu.services.youtube_service import authenticate
+
+    settings = ctx.obj["settings"]
+    client_secrets = getattr(settings, "youtube_client_secrets_path", "data/client_secret.json")
+    credentials_out = getattr(settings, "youtube_credentials_path", "data/.youtube_credentials.json")
+
+    click.echo(f"Starting OAuth2 flow using: {client_secrets}")
+    click.echo("A browser window will open to authorize this app...")
+    try:
+        authenticate(client_secrets_path=client_secrets, credentials_path=credentials_out)
+        click.echo(f"[OK] Credentials saved to: {credentials_out}")
+    except Exception as e:
+        click.echo(f"[FAIL] Authentication failed: {e}", err=True)
+
+
+@cli.command(name="youtube-status")
+@click.pass_context
+def youtube_status(ctx: click.Context) -> None:
+    """Check YouTube API credential status and quota."""
+    from btcedu.services.youtube_service import check_token_status
+
+    settings = ctx.obj["settings"]
+    credentials_path = getattr(settings, "youtube_credentials_path", "data/.youtube_credentials.json")
+
+    try:
+        status = check_token_status(credentials_path=credentials_path)
+        has_creds = "error" not in status or "No credentials" not in status.get("error", "")
+        click.echo(f"Credentials file : {credentials_path}")
+        click.echo(f"Credentials exist: {has_creds}")
+        if has_creds:
+            click.echo(f"Token valid      : {status.get('valid', False)}")
+            click.echo(f"Token expired    : {status.get('expired', 'N/A')}")
+            click.echo(f"Expiry           : {status.get('expiry', 'N/A')}")
+            click.echo(f"Can refresh      : {status.get('can_refresh', False)}")
+        if "error" in status:
+            click.echo(f"Error            : {status['error']}")
+    except Exception as e:
+        click.echo(f"[FAIL] Could not check status: {e}", err=True)
+

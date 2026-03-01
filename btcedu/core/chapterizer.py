@@ -199,6 +199,7 @@ def chapterize_script(
                 user_message=user_message,
                 settings=settings,
                 dry_run_path=dry_run_path,
+                max_tokens=16384,  # chapter JSON needs much more than default 4096
             )
 
             # Parse JSON response
@@ -667,6 +668,7 @@ Original input:
         system_prompt=system_prompt,
         user_message=corrective_prompt,
         settings=settings,
+        max_tokens=16384,
     )
 
     # Parse and return (let caller validate)

@@ -77,6 +77,7 @@ def call_claude(
     user_message: str,
     settings,
     dry_run_path: Path | None = None,
+    max_tokens: int | None = None,
 ) -> ClaudeResponse:
     """Call LLM API (Anthropic or OpenAI fallback).
 
@@ -89,6 +90,7 @@ def call_claude(
         user_message: User message content.
         settings: Application settings.
         dry_run_path: If settings.dry_run, write payload here instead of calling API.
+        max_tokens: Override settings.claude_max_tokens for this call.
 
     Returns:
         ClaudeResponse with text, token counts, and cost.
@@ -99,17 +101,20 @@ def call_claude(
     provider = _resolve_provider(settings)
 
     if provider == "openai":
-        return _call_openai(system_prompt, user_message, settings)
-    return _call_anthropic(system_prompt, user_message, settings)
+        return _call_openai(system_prompt, user_message, settings, max_tokens=max_tokens)
+    return _call_anthropic(system_prompt, user_message, settings, max_tokens=max_tokens)
 
 
 def _call_anthropic(
     system_prompt: str,
     user_message: str,
     settings,
+    max_tokens: int | None = None,
 ) -> ClaudeResponse:
     """Call Anthropic Claude Messages API."""
     from anthropic import Anthropic
+
+    effective_max_tokens = max_tokens or settings.claude_max_tokens
 
     client = Anthropic(
         api_key=settings.anthropic_api_key,
@@ -118,7 +123,7 @@ def _call_anthropic(
 
     response = client.messages.create(
         model=settings.claude_model,
-        max_tokens=settings.claude_max_tokens,
+        max_tokens=effective_max_tokens,
         temperature=settings.claude_temperature,
         system=system_prompt,
         messages=[{"role": "user", "content": user_message}],
@@ -154,16 +159,18 @@ def _call_openai(
     system_prompt: str,
     user_message: str,
     settings,
+    max_tokens: int | None = None,
 ) -> ClaudeResponse:
     """Call OpenAI Chat Completions API as fallback."""
     from openai import OpenAI
 
+    effective_max_tokens = max_tokens or settings.claude_max_tokens
     model = getattr(settings, "openai_llm_model", "gpt-4o")
     client = OpenAI(api_key=settings.openai_api_key)
 
     response = client.chat.completions.create(
         model=model,
-        max_tokens=settings.claude_max_tokens,
+        max_tokens=effective_max_tokens,
         temperature=settings.claude_temperature,
         messages=[
             {"role": "system", "content": system_prompt},

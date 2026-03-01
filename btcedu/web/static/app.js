@@ -307,6 +307,7 @@
           <button class="btn btn-sm" onclick="actions.refine()" title="Refine generated content using QA feedback (v1 → v2)">Refine</button>
           <button class="btn btn-sm" onclick="actions.run()" title="Run full pipeline from the earliest incomplete stage">Run All</button>
           <button class="btn btn-sm btn-danger" onclick="actions.retry()" title="Resume from the last failed stage">Retry</button>
+          <button class="btn btn-sm" onclick="actions.resetV2()" title="Reset to TRANSCRIBED & switch to v2 pipeline" style="border-color:var(--orange,#f90);color:var(--orange,#f90)">↻ v2</button>
           <button class="btn btn-sm btn-success" onclick="actions.publish()" title="Publish approved video to YouTube">Publish</button>
           <label><input type="checkbox" id="chk-force"> force</label>
           <label><input type="checkbox" id="chk-dryrun"> dry-run</label>
@@ -643,6 +644,16 @@
     publish() {
       if (!selected) return;
       submitJob("Publish", `/episodes/${selected.episode_id}/publish`, { force: isForce() });
+    },
+    async resetV2() {
+      if (!selected) return;
+      if (!confirm(`Episode "${selected.title}" auf v2 zurücksetzen?\n\nStatus wird auf TRANSCRIBED gesetzt, v2-Pipeline startet ab correct.`)) return;
+      try {
+        const r = await POST(`/episodes/${selected.episode_id}/reset-v2`);
+        if (r.error) { showError(r.error); return; }
+        showSuccess(`Reset: ${r.old_status} → TRANSCRIBED (v2)`);
+        refresh();
+      } catch (e) { showError("Reset failed: " + e.message); }
     },
   };
 

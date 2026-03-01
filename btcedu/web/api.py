@@ -351,6 +351,51 @@ def retry_episode(episode_id: str):
     return _submit_job("retry", episode_id)
 
 
+@api_bp.route("/episodes/<episode_id>/reset-v2", methods=["POST"])
+def reset_episode_v2(episode_id: str):
+    """Reset episode to TRANSCRIBED so the v2 pipeline can run from correct stage.
+
+    Only allowed for episodes with a completed transcript.
+    Resets status to TRANSCRIBED and pipeline_version to 2.
+    """
+    session = _get_session()
+    try:
+        ep = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if not ep:
+            return jsonify({"error": f"Episode not found: {episode_id}"}), 404
+
+        # Must have at least been transcribed
+        v1_complete = {"CHUNKED", "GENERATED", "REFINED", "COMPLETED"}
+        if ep.status.value not in v1_complete and ep.status != EpisodeStatus.TRANSCRIBED:
+            return jsonify(
+                {"error": f"Cannot reset: episode is {ep.status.value}. "
+                 "Must be at least TRANSCRIBED."}
+            ), 400
+
+        old_status = ep.status.value
+        ep.status = EpisodeStatus.TRANSCRIBED
+        ep.pipeline_version = 2
+        ep.error_message = None
+        session.commit()
+
+        logger.info(
+            "Reset episode %s from %s to TRANSCRIBED (v2)",
+            episode_id, old_status,
+        )
+        return jsonify({
+            "success": True,
+            "episode_id": episode_id,
+            "old_status": old_status,
+            "new_status": "TRANSCRIBED",
+            "pipeline_version": 2,
+        })
+    except Exception as e:
+        logger.exception("Reset-v2 failed for %s", episode_id)
+        return jsonify({"error": str(e)}), 500
+    finally:
+        session.close()
+
+
 # ---------------------------------------------------------------------------
 # Job status + logs
 # ---------------------------------------------------------------------------

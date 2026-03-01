@@ -90,6 +90,47 @@ def _get_job_manager():
     return current_app.config["job_manager"]
 
 
+def _validate_episode_path(episode_id: str, base_dir: Path, *path_parts: str) -> Path | None:
+    """Validate episode_id exists in DB and construct safe path within base_dir.
+
+    Returns resolved path if valid, None if episode doesn't exist or path escapes base_dir.
+
+    Args:
+        episode_id: Episode identifier from URL parameter
+        base_dir: Base directory (e.g., outputs_dir)
+        *path_parts: Additional path components (e.g., "render", "draft.mp4")
+
+    Returns:
+        Resolved path if valid, None otherwise
+    """
+    session = _get_session()
+    try:
+        # Verify episode exists in database
+        episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if not episode:
+            return None
+
+        # Construct and resolve the full path
+        full_path = base_dir / episode_id / Path(*path_parts)
+        try:
+            resolved_path = full_path.resolve()
+        except (OSError, RuntimeError):
+            # Handle path resolution errors
+            return None
+
+        # Verify resolved path is still within base_dir
+        resolved_base = base_dir.resolve()
+        try:
+            resolved_path.relative_to(resolved_base)
+        except ValueError:
+            # Path escapes base directory
+            return None
+
+        return resolved_path
+    finally:
+        session.close()
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -954,7 +995,12 @@ def request_changes_route(review_id: int):
 def get_tts_manifest(episode_id: str):
     """Return TTS manifest JSON for an episode."""
     settings = _get_settings()
-    manifest_path = Path(settings.outputs_dir) / episode_id / "tts" / "manifest.json"
+    manifest_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "tts", "manifest.json"
+    )
+
+    if not manifest_path:
+        return jsonify({"error": "Episode not found"}), 404
 
     if not manifest_path.exists():
         return jsonify({"error": "TTS manifest not found"}), 404
@@ -969,7 +1015,13 @@ def get_tts_audio(episode_id: str, chapter_id: str):
     from flask import send_file
 
     settings = _get_settings()
-    mp3_path = Path(settings.outputs_dir) / episode_id / "tts" / f"{chapter_id}.mp3"
+    # Validate episode exists and construct safe path
+    mp3_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "tts", f"{chapter_id}.mp3"
+    )
+
+    if not mp3_path:
+        return jsonify({"error": "Episode not found"}), 404
 
     if not mp3_path.exists():
         return jsonify({"error": f"Audio file not found: {chapter_id}.mp3"}), 404
@@ -993,7 +1045,12 @@ def trigger_tts(episode_id: str):
 def get_render_manifest(episode_id: str):
     """Return render manifest JSON for an episode."""
     settings = _get_settings()
-    manifest_path = Path(settings.outputs_dir) / episode_id / "render" / "render_manifest.json"
+    manifest_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "render", "render_manifest.json"
+    )
+
+    if not manifest_path:
+        return jsonify({"error": "Episode not found"}), 404
 
     if not manifest_path.exists():
         return jsonify({"error": "Render manifest not found"}), 404
@@ -1008,7 +1065,12 @@ def get_render_video(episode_id: str):
     from flask import send_file
 
     settings = _get_settings()
-    video_path = Path(settings.outputs_dir) / episode_id / "render" / "draft.mp4"
+    video_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "render", "draft.mp4"
+    )
+
+    if not video_path:
+        return jsonify({"error": "Episode not found"}), 404
 
     if not video_path.exists():
         return jsonify({"error": "Draft video not found"}), 404

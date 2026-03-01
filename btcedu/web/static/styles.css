@@ -1430,4 +1430,31 @@ body {
     font-size: 0.9em;
     color: var(--fg-muted);
 }
+.review-script-panel {
+    padding: 10px 12px;
+    background: var(--surface);
+    border-radius: 6px;
+    margin: 12px 0;
+}
+.review-script-list {
+    margin-top: 8px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.review-script-chapter {
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+}
+.review-script-chapter:last-child {
+    border-bottom: none;
+}
+.review-script-title {
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+.review-script-text {
+    white-space: pre-wrap;
+    color: var(--text);
+}
 

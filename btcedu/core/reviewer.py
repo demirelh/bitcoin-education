@@ -42,18 +42,17 @@ def _revert_episode(session: Session, episode_id: str) -> None:
     Reversion map:
     - CORRECTED → TRANSCRIBED (Review Gate 1)
     - ADAPTED → TRANSLATED (Review Gate 2)
-    - RENDERED → TTS_DONE (Review Gate 3)
     """
     episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         logger.warning("Cannot revert episode %s: not found", episode_id)
         return
 
-    # Reversion mapping for all three review gates
+    # Reversion mapping for review gates 1 and 2 only.
+    # Review Gate 3 rejections keep the episode at RENDERED.
     _REVERT_MAP = {
         EpisodeStatus.CORRECTED: EpisodeStatus.TRANSCRIBED,  # RG1
         EpisodeStatus.ADAPTED: EpisodeStatus.TRANSLATED,  # RG2
-        EpisodeStatus.RENDERED: EpisodeStatus.TTS_DONE,  # RG3
     }
 
     target_status = _REVERT_MAP.get(episode.status)
@@ -113,6 +112,22 @@ def _compute_artifact_hash(paths: list[str]) -> str:
         if path.exists():
             h.update(path.read_bytes())
     return h.hexdigest()
+
+
+def _get_runtime_settings():
+    """Return active app settings if available, else default Settings()."""
+    try:
+        from flask import current_app
+
+        settings = current_app.config.get("settings")
+        if settings is not None:
+            return settings
+    except (ImportError, RuntimeError):
+        pass
+
+    from btcedu.config import Settings
+
+    return Settings()
 
 
 # ---------------------------------------------------------------------------
@@ -213,7 +228,8 @@ def reject_review(
 ) -> ReviewDecision:
     """Reject a review task.
 
-    Sets task status to REJECTED, reverts episode to TRANSCRIBED.
+    Sets task status to REJECTED, reverts episode for RG1/RG2 only.
+    Render reviews keep the episode at RENDERED.
 
     Returns:
         The created ReviewDecision.
@@ -221,13 +237,17 @@ def reject_review(
     task = _get_task_or_raise(session, review_task_id)
     _validate_actionable(task)
 
+    if task.stage == "render" and (notes is None or not notes.strip()):
+        raise ValueError("Notes are required when rejecting a render review")
+
     now = _utcnow()
     task.status = ReviewStatus.REJECTED.value
     task.reviewed_at = now
     if notes:
         task.reviewer_notes = notes
 
-    _revert_episode(session, task.episode_id)
+    if task.stage != "render":
+        _revert_episode(session, task.episode_id)
 
     decision = ReviewDecision(
         review_task_id=task.id,
@@ -249,7 +269,8 @@ def request_changes(
     """Request changes on a review task.
 
     Sets task status to CHANGES_REQUESTED, stores reviewer notes,
-    reverts episode, and creates .stale markers on artifacts.
+    reverts episode for RG1/RG2, and creates .stale markers on artifacts.
+    Render reviews keep the episode at RENDERED.
 
     Args:
         notes: Required — reviewer feedback for the re-correction.
@@ -271,7 +292,8 @@ def request_changes(
     task.reviewed_at = now
     task.reviewer_notes = notes
 
-    _revert_episode(session, task.episode_id)
+    if task.stage != "render":
+        _revert_episode(session, task.episode_id)
     _mark_output_stale(task)
 
     decision = ReviewDecision(
@@ -356,11 +378,10 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
     # Video-specific fields for render review (Review Gate 3)
     video_url = None
     render_manifest = None
+    chapter_script = None
     if task.stage == "render" and episode:
         # Check if draft.mp4 exists
-        from btcedu.config import Settings
-
-        settings = Settings()
+        settings = _get_runtime_settings()
         draft_path = Path(settings.outputs_dir) / episode.episode_id / "render" / "draft.mp4"
         if draft_path.exists():
             video_url = f"/api/episodes/{episode.episode_id}/render/draft.mp4"
@@ -374,6 +395,23 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
                 render_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             except (json.JSONDecodeError, OSError):
                 render_manifest = {"error": "Could not load render manifest"}
+
+        chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
+        if chapters_path.exists():
+            try:
+                chapters_data = json.loads(chapters_path.read_text(encoding="utf-8"))
+                chapters = chapters_data.get("chapters", [])
+                chapter_script = [
+                    {
+                        "chapter_id": ch.get("chapter_id"),
+                        "title": ch.get("title"),
+                        "order": ch.get("order"),
+                        "text": (ch.get("narration") or {}).get("text"),
+                    }
+                    for ch in chapters
+                ]
+            except (json.JSONDecodeError, OSError, TypeError):
+                chapter_script = None
 
     return {
         "id": task.id,
@@ -391,6 +429,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         "decisions": decisions,
         "video_url": video_url,  # Sprint 10: for render review
         "render_manifest": render_manifest,  # Sprint 10: for render review
+        "chapter_script": chapter_script,  # Sprint 10: for render review
     }
 
 

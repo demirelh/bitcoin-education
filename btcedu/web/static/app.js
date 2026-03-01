@@ -1086,6 +1086,22 @@
           ${m.resolution || '1920x1080'} @ ${m.fps || 30}fps
         </div>`;
       }
+
+      if (data.chapter_script && data.chapter_script.length > 0) {
+        const chaptersHtml = data.chapter_script.map((ch) => {
+          const title = ch.title ? ` — ${esc(ch.title)}` : "";
+          const text = ch.text ? esc(ch.text) : "(no narration text)";
+          return `
+            <div class="review-script-chapter">
+              <div class="review-script-title">${esc(ch.chapter_id || "")}${title}</div>
+              <div class="review-script-text">${text}</div>
+            </div>`;
+        }).join("");
+        html += `<div class="review-script-panel">
+          <strong>Chapter Script:</strong>
+          <div class="review-script-list">${chaptersHtml}</div>
+        </div>`;
+      }
     }
 
     // Diff viewer (for correct/adapt stages)
@@ -1235,8 +1251,19 @@
   window.approveReview = approveReview;
 
   async function rejectReview(id) {
-    if (!confirm("Reject this review? The episode will be reverted to TRANSCRIBED.")) return;
-    const r = await POST("/reviews/" + id + "/reject");
+    const isRender = selectedReview && selectedReview.stage === "render";
+    if (!confirm("Reject this review?")) return;
+
+    let notes = "";
+    if (isRender) {
+      notes = prompt("Reject notes (required):", "") || "";
+      if (!notes.trim()) {
+        toast("Notes are required to reject render review", false);
+        return;
+      }
+    }
+
+    const r = await POST("/reviews/" + id + "/reject", isRender ? { notes } : null);
     if (r.error) {
       toast(r.error, false);
     } else {

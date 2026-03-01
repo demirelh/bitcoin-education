@@ -992,10 +992,19 @@ def reject_review_route(review_id: int):
     session = _get_session()
     try:
         from btcedu.core.reviewer import reject_review
+        from btcedu.models.review import ReviewTask
 
         body = request.get_json(silent=True) or {}
+        notes = body.get("notes", "").strip()
+
+        task = session.query(ReviewTask).filter(ReviewTask.id == review_id).first()
+        if not task:
+            return jsonify({"error": f"Review not found: {review_id}"}), 404
+
+        if task.stage == "render" and not notes:
+            return jsonify({"error": "Notes are required when rejecting render review"}), 400
         try:
-            decision = reject_review(session, review_id, notes=body.get("notes"))
+            decision = reject_review(session, review_id, notes=notes or None)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 

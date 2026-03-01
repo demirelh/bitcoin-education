@@ -334,6 +334,96 @@ class TestReviewGate1Pipeline:
         assert "approved" in result.detail
 
 
+# ---------------------------------------------------------------------------
+# Pipeline review_gate_3 integration (Sprint 10)
+# ---------------------------------------------------------------------------
+
+
+class TestReviewGate3Pipeline:
+    """Tests that _run_stage('review_gate_3') works end-to-end."""
+
+    @pytest.fixture
+    def gate_settings(self, tmp_path):
+        from btcedu.config import Settings
+
+        return Settings(
+            outputs_dir=str(tmp_path / "outputs"),
+            reports_dir=str(tmp_path / "reports"),
+            anthropic_api_key="test-key",
+            pipeline_version=2,
+        )
+
+    def _create_render_outputs(self, tmp_path, episode_id):
+        output_root = tmp_path / "outputs" / episode_id
+        render_dir = output_root / "render"
+        render_dir.mkdir(parents=True, exist_ok=True)
+        (render_dir / "draft.mp4").write_bytes(b"fake video")
+        (render_dir / "render_manifest.json").write_text(
+            json.dumps({"episode_id": episode_id}), encoding="utf-8"
+        )
+        (output_root / "chapters.json").write_text(
+            json.dumps({"episode_id": episode_id, "chapters": []}), encoding="utf-8"
+        )
+
+    def test_creates_review_task_with_artifacts(self, db_session, tmp_path, gate_settings):
+        episode = Episode(
+            episode_id="ep_rg3_gate",
+            source="youtube_rss",
+            title="RG3 Gate",
+            url="https://youtube.com/watch?v=rg3",
+            status=EpisodeStatus.RENDERED,
+        )
+        db_session.add(episode)
+        db_session.commit()
+
+        self._create_render_outputs(tmp_path, episode.episode_id)
+
+        result = _run_stage(db_session, episode, gate_settings, "review_gate_3")
+        assert result.status == "review_pending"
+
+        task = (
+            db_session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == episode.episode_id,
+                ReviewTask.stage == "render",
+            )
+            .first()
+        )
+        assert task is not None
+        artifacts = json.loads(task.artifact_paths)
+        assert any(path.endswith("draft.mp4") for path in artifacts)
+        assert any(path.endswith("chapters.json") for path in artifacts)
+
+    def test_sets_approved_status_after_review(self, db_session, tmp_path, gate_settings):
+        episode = Episode(
+            episode_id="ep_rg3_approved",
+            source="youtube_rss",
+            title="RG3 Approved",
+            url="https://youtube.com/watch?v=rg3a",
+            status=EpisodeStatus.RENDERED,
+        )
+        db_session.add(episode)
+        db_session.commit()
+
+        self._create_render_outputs(tmp_path, episode.episode_id)
+
+        _run_stage(db_session, episode, gate_settings, "review_gate_3")
+        task = (
+            db_session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == episode.episode_id,
+                ReviewTask.stage == "render",
+            )
+            .first()
+        )
+        approve_review(db_session, task.id)
+
+        result = _run_stage(db_session, episode, gate_settings, "review_gate_3")
+        assert result.status == "success"
+        db_session.refresh(episode)
+        assert episode.status == EpisodeStatus.APPROVED
+
+
 # Sprint 10: Revert episode tests for all three gates
 
 
@@ -379,8 +469,8 @@ def test_revert_episode_adapted_to_translated(db_session):
     assert episode.status == EpisodeStatus.TRANSLATED
 
 
-def test_revert_episode_rendered_to_tts_done(db_session):
-    """Test _revert_episode reverts RENDERED to TTS_DONE (RG3)."""
+def test_revert_episode_rendered_no_revert(db_session):
+    """Test _revert_episode does not change RENDERED (RG3 handled elsewhere)."""
     from btcedu.core.reviewer import _revert_episode
 
     episode = Episode(
@@ -397,7 +487,7 @@ def test_revert_episode_rendered_to_tts_done(db_session):
     db_session.commit()
     db_session.refresh(episode)
 
-    assert episode.status == EpisodeStatus.TTS_DONE
+    assert episode.status == EpisodeStatus.RENDERED
 
 
 def test_revert_episode_no_mapping(db_session):
@@ -435,7 +525,8 @@ def test_get_review_detail_video_fields(db_session, tmp_path):
     db_session.commit()
 
     # Create render outputs
-    render_dir = tmp_path / "outputs" / "ep_video" / "render"
+    output_root = tmp_path / "outputs"
+    render_dir = output_root / "ep_video" / "render"
     render_dir.mkdir(parents=True)
     draft_video = render_dir / "draft.mp4"
     draft_video.write_bytes(b"fake video")
@@ -448,6 +539,20 @@ def test_get_review_detail_video_fields(db_session, tmp_path):
     }
     manifest_file = render_dir / "render_manifest.json"
     manifest_file.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    chapters_data = {
+        "episode_id": "ep_video",
+        "chapters": [
+            {
+                "chapter_id": "ch01",
+                "title": "Intro",
+                "order": 1,
+                "narration": {"text": "Hello world"},
+            }
+        ],
+    }
+    chapters_file = output_root / "ep_video" / "chapters.json"
+    chapters_file.write_text(json.dumps(chapters_data), encoding="utf-8")
 
     # Create review task
     task = create_review_task(
@@ -463,7 +568,7 @@ def test_get_review_detail_video_fields(db_session, tmp_path):
 
     from btcedu.config import Settings
 
-    mock_settings = Settings(outputs_dir=str(tmp_path / "outputs"))
+    mock_settings = Settings(outputs_dir=str(output_root))
 
     with patch("btcedu.config.Settings", return_value=mock_settings):
         detail = get_review_detail(db_session, task.id)
@@ -472,6 +577,8 @@ def test_get_review_detail_video_fields(db_session, tmp_path):
     assert detail["video_url"] == "/api/episodes/ep_video/render/draft.mp4"
     assert detail["render_manifest"] is not None
     assert detail["render_manifest"]["total_duration_seconds"] == 120.5
+    assert detail["chapter_script"] is not None
+    assert detail["chapter_script"][0]["text"] == "Hello world"
 
 
 def test_get_review_detail_video_fields_missing_files(db_session, tmp_path):
@@ -506,3 +613,59 @@ def test_get_review_detail_video_fields_missing_files(db_session, tmp_path):
     assert detail["stage"] == "render"
     assert detail["video_url"] is None  # No video file
     assert detail["render_manifest"] is None  # No manifest file
+    assert detail["chapter_script"] is None  # No chapters file
+
+
+def test_reject_render_review_requires_notes(db_session, tmp_path):
+    """Test rejecting a render review requires notes and does not revert status."""
+    episode = Episode(
+        episode_id="ep_render_reject",
+        source="youtube_rss",
+        title="Render Reject",
+        url="https://youtube.com/watch?v=rr",
+        status=EpisodeStatus.RENDERED,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    draft_path = tmp_path / "draft.mp4"
+    draft_path.write_bytes(b"fake video")
+    task = create_review_task(
+        db_session,
+        "ep_render_reject",
+        stage="render",
+        artifact_paths=[str(draft_path)],
+    )
+
+    with pytest.raises(ValueError, match="Notes are required"):
+        reject_review(db_session, task.id, notes="")
+
+    reject_review(db_session, task.id, notes="Needs fixes")
+    db_session.refresh(episode)
+    assert episode.status == EpisodeStatus.RENDERED
+
+
+def test_request_changes_render_review_keeps_rendered(db_session, tmp_path):
+    """Test request changes on render review keeps episode at RENDERED."""
+    episode = Episode(
+        episode_id="ep_render_changes",
+        source="youtube_rss",
+        title="Render Changes",
+        url="https://youtube.com/watch?v=rc",
+        status=EpisodeStatus.RENDERED,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    draft_path = tmp_path / "draft.mp4"
+    draft_path.write_bytes(b"fake video")
+    task = create_review_task(
+        db_session,
+        "ep_render_changes",
+        stage="render",
+        artifact_paths=[str(draft_path)],
+    )
+
+    request_changes(db_session, task.id, notes="Adjust pacing")
+    db_session.refresh(episode)
+    assert episode.status == EpisodeStatus.RENDERED

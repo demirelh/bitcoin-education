@@ -470,12 +470,13 @@ def _run_stage(
             manifest_path = (
                 Path(settings.outputs_dir) / episode.episode_id / "render" / "render_manifest.json"
             )
+            chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
 
             create_review_task(
                 session,
                 episode.episode_id,
                 stage="render",
-                artifact_paths=[str(draft_path)],
+                artifact_paths=[str(draft_path), str(chapters_path)],
                 diff_path=str(manifest_path) if manifest_path.exists() else None,
             )
             elapsed = time.monotonic() - t0

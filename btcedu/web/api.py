@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -103,6 +104,15 @@ def _validate_episode_path(episode_id: str, base_dir: Path, *path_parts: str) ->
     Returns:
         Resolved path if valid, None otherwise
     """
+    # Reject path traversal characters in episode_id before any path construction
+    if not episode_id or os.path.basename(episode_id) != episode_id:
+        return None
+
+    # Reject path traversal in each path component
+    for part in path_parts:
+        if not part or os.path.basename(part) != part:
+            return None
+
     session = _get_session()
     try:
         # Verify episode exists in database
@@ -110,7 +120,7 @@ def _validate_episode_path(episode_id: str, base_dir: Path, *path_parts: str) ->
         if not episode:
             return None
 
-        # Construct and resolve the full path
+        # Construct and resolve the full path using sanitized components
         full_path = base_dir / episode_id / Path(*path_parts)
         try:
             resolved_path = full_path.resolve()
@@ -366,9 +376,21 @@ def get_job(job_id: str):
 
 @api_bp.route("/episodes/<episode_id>/action-log")
 def episode_action_log(episode_id: str):
+    # Reject path traversal characters in episode_id
+    if not episode_id or os.path.basename(episode_id) != episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
     settings = _get_settings()
     tail = request.args.get("tail", 200, type=int)
     log_path = Path(settings.logs_dir) / "episodes" / f"{episode_id}.log"
+
+    # Verify resolved path stays within logs_dir
+    try:
+        resolved = log_path.resolve()
+        if not resolved.is_relative_to(Path(settings.logs_dir).resolve()):
+            return jsonify({"error": "Invalid episode ID"}), 400
+    except (OSError, RuntimeError):
+        return jsonify({"error": "Invalid episode ID"}), 400
 
     if not log_path.exists():
         return jsonify({"lines": []})
@@ -399,11 +421,23 @@ _FILE_MAP = {
 
 @api_bp.route("/episodes/<episode_id>/files/<file_type>")
 def get_file(episode_id: str, file_type: str):
+    # Reject path traversal characters in episode_id
+    if not episode_id or os.path.basename(episode_id) != episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
     settings = _get_settings()
 
     # Handle report separately (find latest)
     if file_type == "report":
         report_dir = Path(settings.reports_dir) / episode_id
+        # Verify resolved path stays within reports_dir
+        try:
+            if not report_dir.resolve().is_relative_to(
+                Path(settings.reports_dir).resolve()
+            ):
+                return jsonify({"error": "Invalid episode ID"}), 400
+        except (OSError, RuntimeError):
+            return jsonify({"error": "Invalid episode ID"}), 400
         if not report_dir.exists():
             return jsonify({"error": "No reports found"}), 404
         reports = sorted(report_dir.glob("report_*.json"), reverse=True)
@@ -414,6 +448,12 @@ def get_file(episode_id: str, file_type: str):
         dir_attr, pattern = _FILE_MAP[file_type]
         base = getattr(settings, dir_attr)
         path = Path(base) / pattern.format(eid=episode_id)
+        # Verify resolved path stays within base directory
+        try:
+            if not path.resolve().is_relative_to(Path(base).resolve()):
+                return jsonify({"error": "Invalid episode ID"}), 400
+        except (OSError, RuntimeError):
+            return jsonify({"error": "Invalid episode ID"}), 400
     else:
         return jsonify({"error": f"Unknown file type: {file_type}"}), 400
 

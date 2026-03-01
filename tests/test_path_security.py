@@ -219,5 +219,5 @@ class TestPathValidationHelper:
         app.config["session_factory"] = factory
         with app.app_context():
             result = _validate_episode_path("../../../etc", Path(tmp_path), "passwd")
-            # Should fail path validation even if episode exists in DB
-            assert result is None or not result.is_relative_to(tmp_path.resolve())
+            # Should be rejected by os.path.basename sanitization
+            assert result is None

@@ -371,6 +371,16 @@ def reset_episode_v2(episode_id: str):
             EpisodeStatus.GENERATED,
             EpisodeStatus.REFINED,
             EpisodeStatus.COMPLETED,
+            EpisodeStatus.FAILED,
+            # v2 statuses
+            EpisodeStatus.CORRECTED,
+            EpisodeStatus.TRANSLATED,
+            EpisodeStatus.ADAPTED,
+            EpisodeStatus.CHAPTERIZED,
+            EpisodeStatus.IMAGES_GENERATED,
+            EpisodeStatus.TTS_DONE,
+            EpisodeStatus.RENDERED,
+            EpisodeStatus.APPROVED,
         }
         if ep.status not in resettable:
             return jsonify(

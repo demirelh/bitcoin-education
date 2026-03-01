@@ -539,6 +539,9 @@ def _parse_json_response(
 ) -> dict:
     """Parse JSON from LLM response, stripping markdown code fences if present.
 
+    Handles common LLM quirks: markdown fences, trailing commas, JS-style
+    comments, and single-line // comments.
+
     Args:
         response_text: Raw LLM response
         episode_id: Episode ID for error messages
@@ -549,7 +552,7 @@ def _parse_json_response(
         Parsed JSON dict
 
     Raises:
-        json.JSONDecodeError: If JSON is malformed
+        json.JSONDecodeError: If JSON is malformed after cleanup
     """
     # Strip markdown code fences
     text = response_text.strip()
@@ -563,10 +566,60 @@ def _parse_json_response(
 
     try:
         return json.loads(text)
-    except json.JSONDecodeError as e:
-        logger.error("Failed to parse JSON response for %s: %s", episode_id, e)
-        logger.error("Response text (first 500 chars): %s", response_text[:500])
-        raise
+    except json.JSONDecodeError:
+        # Try to fix common LLM JSON quirks
+        cleaned = _clean_json(text)
+        try:
+            return json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            logger.error("Failed to parse JSON response for %s: %s", episode_id, e)
+            logger.error("Response text (first 500 chars): %s", response_text[:500])
+            raise
+
+
+def _clean_json(text: str) -> str:
+    """Best-effort cleanup of LLM-generated JSON.
+
+    Handles:
+    - Single-line // comments
+    - Trailing commas before } or ]
+    """
+    import re
+
+    # Remove single-line // comments (but not inside strings)
+    # Simple heuristic: remove // comments only when preceded by whitespace or start of line
+    lines = []
+    for line in text.split("\n"):
+        # Skip full-line comments
+        stripped = line.lstrip()
+        if stripped.startswith("//"):
+            continue
+        # Remove inline // comments (rough: only if not inside a string value)
+        # Find // that's not inside quotes
+        in_string = False
+        escape_next = False
+        cut_pos = None
+        for i, ch in enumerate(line):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\":
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+            elif ch == "/" and not in_string and i + 1 < len(line) and line[i + 1] == "/":
+                cut_pos = i
+                break
+        if cut_pos is not None:
+            line = line[:cut_pos].rstrip()
+        lines.append(line)
+    text = "\n".join(lines)
+
+    # Remove trailing commas: ,  followed by } or ]
+    text = re.sub(r",\s*([}\]])", r"\1", text)
+
+    return text
 
 
 def _retry_with_correction(

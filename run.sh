@@ -49,6 +49,30 @@ error_exit() {
     exit 1
 }
 
+# Check if initial setup is needed and run deploy/setup-web.sh
+check_initial_setup() {
+    local needs_setup=false
+
+    # No venv, no .env, or no systemd service → initial setup needed
+    if [ ! -d "${VENV_PATH}" ]; then
+        needs_setup=true
+    elif [ ! -f "${PROJECT_ROOT}/.env" ]; then
+        needs_setup=true
+    elif ! systemctl cat "${SERVICE_NAME}.service" > /dev/null 2>&1; then
+        needs_setup=true
+    fi
+
+    if [ "${needs_setup}" = true ]; then
+        log_warn "Initial setup incomplete — running deploy/setup-web.sh first..."
+        if [ -f "${PROJECT_ROOT}/deploy/setup-web.sh" ]; then
+            bash "${PROJECT_ROOT}/deploy/setup-web.sh"
+            log_info "Initial setup completed. Continuing with update..."
+        else
+            error_exit "deploy/setup-web.sh not found. Cannot run initial setup."
+        fi
+    fi
+}
+
 # Check prerequisites
 check_prerequisites() {
     log_info "Checking prerequisites..."
@@ -207,6 +231,9 @@ main() {
 
     # Change to project root
     cd "${PROJECT_ROOT}"
+
+    # Run initial setup if needed (venv, .env, systemd missing)
+    check_initial_setup
 
     # Execute deployment steps
     check_prerequisites

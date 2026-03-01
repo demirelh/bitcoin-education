@@ -62,6 +62,7 @@ _V2_STAGES = [
     ("chapterize", EpisodeStatus.ADAPTED),  # after review approved
     ("imagegen", EpisodeStatus.CHAPTERIZED),  # Sprint 7
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
+    ("render", EpisodeStatus.TTS_DONE),  # Sprint 9
 ]
 
 # Keep _STAGES as alias for backward compat
@@ -413,6 +414,26 @@ def _run_stage(
                     ),
                 )
 
+        elif stage_name == "render":
+            from btcedu.core.renderer import render_video
+
+            result = render_video(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("render", "skipped", elapsed, detail="already up-to-date")
+            else:
+                return StageResult(
+                    "render",
+                    "success",
+                    elapsed,
+                    detail=(
+                        f"{result.segment_count} segments, "
+                        f"{result.total_duration_seconds:.1f}s, "
+                        f"{result.total_size_bytes / 1024 / 1024:.1f}MB"
+                    ),
+                )
+
         else:
             raise ValueError(f"Unknown stage: {stage_name}")
 
@@ -513,7 +534,16 @@ def run_episode_pipeline(
 
     # Calculate total cost from stage results that report costs
     for sr in report.stages:
-        success_stages = ("generate", "refine", "correct", "translate", "adapt", "chapterize", "imagegen", "tts")
+        success_stages = (
+            "generate",
+            "refine",
+            "correct",
+            "translate",
+            "adapt",
+            "chapterize",
+            "imagegen",
+            "tts",
+        )
         if sr.stage in success_stages and sr.status == "success" and "$" in sr.detail:
             try:
                 cost_str = sr.detail.split("$")[1].rstrip(")")

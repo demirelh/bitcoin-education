@@ -223,6 +223,8 @@ class JobManager:
                     self._do_refine(job, session, settings)
                 elif job.action == "tts":
                     self._do_tts(job, session, settings)
+                elif job.action == "render":
+                    self._do_render(job, session, settings)
                 elif job.action == "run":
                     self._do_full_pipeline(job, session, settings)
                 elif job.action == "retry":
@@ -361,6 +363,41 @@ class JobManager:
                 job,
                 f"TTS complete: {result.segment_count} segments, "
                 f"{result.total_duration_seconds:.1f}s, ${result.cost_usd:.4f}",
+            )
+
+    def _do_render(self, job, session, settings):
+        from btcedu.core.renderer import render_video
+
+        self._update(job, stage="rendering_video")
+        self._log(job, "Rendering draft video...")
+        result = render_video(
+            session,
+            job.episode_id,
+            settings,
+            force=job.force,
+        )
+        if result.skipped:
+            self._update(
+                job,
+                result={"success": True, "skipped": True, "message": "Already up-to-date"},
+            )
+            self._log(job, "Render already up-to-date (skipped)")
+        else:
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "segments": result.segment_count,
+                    "duration_seconds": result.total_duration_seconds,
+                    "size_bytes": result.total_size_bytes,
+                    "size_mb": result.total_size_bytes / 1024 / 1024,
+                },
+            )
+            self._log(
+                job,
+                f"Render complete: {result.segment_count} segments, "
+                f"{result.total_duration_seconds:.1f}s, "
+                f"{result.total_size_bytes / 1024 / 1024:.1f}MB",
             )
 
     def _do_full_pipeline(self, job, session, settings):

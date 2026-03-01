@@ -1,4 +1,4 @@
-"""Claude API service wrapper with dry-run support."""
+"""LLM API service wrapper with Anthropic + OpenAI fallback support."""
 
 import hashlib
 import json
@@ -13,10 +13,14 @@ logger = logging.getLogger(__name__)
 SONNET_INPUT_PRICE_PER_M = 3.0
 SONNET_OUTPUT_PRICE_PER_M = 15.0
 
+# OpenAI GPT-4o pricing (per million tokens)
+GPT4O_INPUT_PRICE_PER_M = 2.50
+GPT4O_OUTPUT_PRICE_PER_M = 10.0
+
 
 @dataclass
 class ClaudeResponse:
-    """Parsed response from Claude API."""
+    """Parsed response from LLM API (name kept for backward compat)."""
 
     text: str
     input_tokens: int
@@ -25,10 +29,18 @@ class ClaudeResponse:
     model: str
 
 
-def calculate_cost(input_tokens: int, output_tokens: int) -> float:
-    """Calculate estimated cost in USD for a Claude API call."""
-    input_cost = (input_tokens / 1_000_000) * SONNET_INPUT_PRICE_PER_M
-    output_cost = (output_tokens / 1_000_000) * SONNET_OUTPUT_PRICE_PER_M
+def calculate_cost(
+    input_tokens: int,
+    output_tokens: int,
+    provider: str = "anthropic",
+) -> float:
+    """Calculate estimated cost in USD for an LLM API call."""
+    if provider == "openai":
+        input_cost = (input_tokens / 1_000_000) * GPT4O_INPUT_PRICE_PER_M
+        output_cost = (output_tokens / 1_000_000) * GPT4O_OUTPUT_PRICE_PER_M
+    else:
+        input_cost = (input_tokens / 1_000_000) * SONNET_INPUT_PRICE_PER_M
+        output_cost = (output_tokens / 1_000_000) * SONNET_OUTPUT_PRICE_PER_M
     return round(input_cost + output_cost, 6)
 
 
@@ -43,18 +55,39 @@ def compute_prompt_hash(
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
+def _resolve_provider(settings) -> str:
+    """Determine which LLM provider to use.
+
+    Priority: settings.llm_provider, but fall back to openai if
+    anthropic key is missing and openai key is present.
+    """
+    provider = getattr(settings, "llm_provider", "anthropic")
+    if provider == "anthropic" and not settings.anthropic_api_key:
+        if settings.openai_api_key:
+            logger.warning(
+                "No ANTHROPIC_API_KEY set — falling back to OpenAI (%s)",
+                getattr(settings, "openai_llm_model", "gpt-4o"),
+            )
+            return "openai"
+    return provider
+
+
 def call_claude(
     system_prompt: str,
     user_message: str,
     settings,
     dry_run_path: Path | None = None,
 ) -> ClaudeResponse:
-    """Call Claude Messages API.
+    """Call LLM API (Anthropic or OpenAI fallback).
+
+    Provider selection:
+        1. ``settings.llm_provider`` ("anthropic" or "openai")
+        2. Auto-fallback to OpenAI when Anthropic key is empty
 
     Args:
         system_prompt: System-level instructions.
         user_message: User message content.
-        settings: Application settings (needs anthropic_api_key, claude_model, etc.).
+        settings: Application settings.
         dry_run_path: If settings.dry_run, write payload here instead of calling API.
 
     Returns:
@@ -63,6 +96,19 @@ def call_claude(
     if settings.dry_run:
         return _write_dry_run(system_prompt, user_message, settings, dry_run_path)
 
+    provider = _resolve_provider(settings)
+
+    if provider == "openai":
+        return _call_openai(system_prompt, user_message, settings)
+    return _call_anthropic(system_prompt, user_message, settings)
+
+
+def _call_anthropic(
+    system_prompt: str,
+    user_message: str,
+    settings,
+) -> ClaudeResponse:
+    """Call Anthropic Claude Messages API."""
     from anthropic import Anthropic
 
     client = Anthropic(
@@ -85,10 +131,10 @@ def call_claude(
 
     input_tokens = response.usage.input_tokens
     output_tokens = response.usage.output_tokens
-    cost = calculate_cost(input_tokens, output_tokens)
+    cost = calculate_cost(input_tokens, output_tokens, provider="anthropic")
 
     logger.info(
-        "Claude call: %d in / %d out tokens, $%.4f (%s)",
+        "Anthropic call: %d in / %d out tokens, $%.4f (%s)",
         input_tokens,
         output_tokens,
         cost,
@@ -101,6 +147,49 @@ def call_claude(
         output_tokens=output_tokens,
         cost_usd=cost,
         model=settings.claude_model,
+    )
+
+
+def _call_openai(
+    system_prompt: str,
+    user_message: str,
+    settings,
+) -> ClaudeResponse:
+    """Call OpenAI Chat Completions API as fallback."""
+    from openai import OpenAI
+
+    model = getattr(settings, "openai_llm_model", "gpt-4o")
+    client = OpenAI(api_key=settings.openai_api_key)
+
+    response = client.chat.completions.create(
+        model=model,
+        max_tokens=settings.claude_max_tokens,
+        temperature=settings.claude_temperature,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+    )
+
+    text = response.choices[0].message.content or ""
+    input_tokens = response.usage.prompt_tokens
+    output_tokens = response.usage.completion_tokens
+    cost = calculate_cost(input_tokens, output_tokens, provider="openai")
+
+    logger.info(
+        "OpenAI call: %d in / %d out tokens, $%.4f (%s)",
+        input_tokens,
+        output_tokens,
+        cost,
+        model,
+    )
+
+    return ClaudeResponse(
+        text=text,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost,
+        model=model,
     )
 
 

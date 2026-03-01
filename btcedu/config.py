@@ -58,7 +58,9 @@ class Settings(BaseSettings):
     chunk_overlap: float = 0.15  # 15% overlap
 
     # Content Generation
+    llm_provider: str = "anthropic"  # "anthropic" or "openai"
     claude_model: str = "claude-sonnet-4-20250514"
+    openai_llm_model: str = "gpt-4o"  # fallback model when using openai provider
     claude_max_tokens: int = 4096
     claude_temperature: float = 0.3
     max_retries: int = 3

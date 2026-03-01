@@ -160,7 +160,7 @@ restart_services() {
     sudo systemctl daemon-reload
 
     # Restart web service
-    if ! systemctl list-unit-files | grep -q "${SERVICE_NAME}.service"; then
+    if ! systemctl cat "${SERVICE_NAME}.service" > /dev/null 2>&1; then
         log_warn "Service ${SERVICE_NAME} not found. Skipping restart."
         log_warn "To set up services, run: deploy/setup-web.sh"
         return 0
@@ -180,7 +180,7 @@ restart_services() {
         # Health check via API
         if command -v curl > /dev/null 2>&1; then
             sleep 1
-            if curl -sf http://localhost:5000/api/health > /dev/null 2>&1; then
+            if curl -sf http://localhost:8091/api/health > /dev/null 2>&1; then
                 log_info "Health check passed (/api/health)."
             else
                 log_warn "Health check failed or endpoint not reachable yet. Service may need more time to start."
@@ -193,7 +193,7 @@ restart_services() {
 
     # Restart pipeline timers (if installed)
     for timer in btcedu-detect.timer btcedu-run.timer; do
-        if systemctl list-unit-files | grep -q "${timer}"; then
+        if systemctl cat "${timer}" > /dev/null 2>&1; then
             sudo systemctl restart "${timer}"
             log_info "Restarted ${timer}."
         fi

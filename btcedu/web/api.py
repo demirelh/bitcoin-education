@@ -984,6 +984,50 @@ def trigger_tts(episode_id: str):
     return _submit_job("tts", episode_id, force=body.get("force", False))
 
 
+# ---------------------------------------------------------------------------
+# Render endpoints (Sprint 10)
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/episodes/<episode_id>/render")
+def get_render_manifest(episode_id: str):
+    """Return render manifest JSON for an episode."""
+    settings = _get_settings()
+    manifest_path = Path(settings.outputs_dir) / episode_id / "render" / "render_manifest.json"
+
+    if not manifest_path.exists():
+        return jsonify({"error": "Render manifest not found"}), 404
+
+    content = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return jsonify(content)
+
+
+@api_bp.route("/episodes/<episode_id>/render/draft.mp4")
+def get_render_video(episode_id: str):
+    """Serve draft video MP4 file with byte-range support for HTML5 scrubbing."""
+    from flask import send_file
+
+    settings = _get_settings()
+    video_path = Path(settings.outputs_dir) / episode_id / "render" / "draft.mp4"
+
+    if not video_path.exists():
+        return jsonify({"error": "Draft video not found"}), 404
+
+    return send_file(str(video_path), mimetype="video/mp4", conditional=True)
+
+
+@api_bp.route("/episodes/<episode_id>/render", methods=["POST"])
+def trigger_render(episode_id: str):
+    """Trigger render job."""
+    body = request.get_json(silent=True) or {}
+    return _submit_job("render", episode_id, force=body.get("force", False))
+
+
+# ---------------------------------------------------------------------------
+# Channel endpoints
+# ---------------------------------------------------------------------------
+
+
 @api_bp.route("/channels/<int:channel_id>/toggle", methods=["POST"])
 def toggle_channel(channel_id):
     """Toggle channel active status."""

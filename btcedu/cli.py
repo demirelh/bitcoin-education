@@ -959,6 +959,24 @@ def reject(ctx: click.Context, review_id: int, notes: str | None) -> None:
         session.close()
 
 
+@review.command(name="request-changes")
+@click.argument("review_id", type=int)
+@click.option("--notes", required=True, help="Feedback describing changes needed.")
+@click.pass_context
+def request_changes_cmd(ctx: click.Context, review_id: int, notes: str) -> None:
+    """Request changes on a review task (reverts episode and marks artifacts stale)."""
+    from btcedu.core.reviewer import request_changes
+
+    session = ctx.obj["session_factory"]()
+    try:
+        decision = request_changes(session, review_id, notes=notes)
+        click.echo(f"[OK] Changes requested on review {review_id} (decision {decision.id})")
+    except ValueError as e:
+        click.echo(f"[FAIL] {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.command()
 @click.option("--episode-id", "episode_id", type=str, default=None, help="Filter by episode ID")
 @click.pass_context

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import func
+from werkzeug.utils import secure_filename
 
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun
 
@@ -110,14 +111,20 @@ def _validate_episode_path(episode_id: str, base_dir: Path, *path_parts: str) ->
         Resolved path if valid, None otherwise
     """
     # Reject empty or structurally unsafe episode_id / path parts.
-    # The allowlist regex ensures no slashes, "..", leading dots, or
-    # other characters that could enable path traversal.
+    # secure_filename is a CodeQL-recognized sanitizer that strips path
+    # separators, "..", leading dots, and other dangerous characters.
+    # The allowlist regex provides additional defense-in-depth.
+    episode_id = secure_filename(episode_id)
     if not episode_id or not _SAFE_PATH_COMPONENT_RE.match(episode_id):
         return None
 
+    sanitized_parts = []
     for part in path_parts:
+        part = secure_filename(part)
         if not part or not _SAFE_PATH_COMPONENT_RE.match(part):
             return None
+        sanitized_parts.append(part)
+    path_parts = tuple(sanitized_parts)
 
     session = _get_session()
     try:
@@ -382,8 +389,9 @@ def get_job(job_id: str):
 
 @api_bp.route("/episodes/<episode_id>/action-log")
 def episode_action_log(episode_id: str):
-    # Reject path traversal characters in episode_id
-    if not episode_id or os.path.basename(episode_id) != episode_id:
+    # Sanitize episode_id to prevent path traversal
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
         return jsonify({"error": "Invalid episode ID"}), 400
 
     settings = _get_settings()
@@ -427,8 +435,9 @@ _FILE_MAP = {
 
 @api_bp.route("/episodes/<episode_id>/files/<file_type>")
 def get_file(episode_id: str, file_type: str):
-    # Reject path traversal characters in episode_id
-    if not episode_id or os.path.basename(episode_id) != episode_id:
+    # Sanitize episode_id to prevent path traversal
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
         return jsonify({"error": "Invalid episode ID"}), 400
 
     settings = _get_settings()
@@ -1038,6 +1047,9 @@ def request_changes_route(review_id: int):
 @api_bp.route("/episodes/<episode_id>/tts")
 def get_tts_manifest(episode_id: str):
     """Return TTS manifest JSON for an episode."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
     settings = _get_settings()
     manifest_path = _validate_episode_path(
         episode_id, Path(settings.outputs_dir), "tts", "manifest.json"
@@ -1058,6 +1070,10 @@ def get_tts_audio(episode_id: str, chapter_id: str):
     """Serve per-chapter MP3 audio file."""
     from flask import send_file
 
+    episode_id = secure_filename(episode_id)
+    chapter_id = secure_filename(chapter_id)
+    if not episode_id or not chapter_id:
+        return jsonify({"error": "Invalid parameters"}), 400
     settings = _get_settings()
     # Validate episode exists and construct safe path
     mp3_path = _validate_episode_path(
@@ -1088,6 +1104,9 @@ def trigger_tts(episode_id: str):
 @api_bp.route("/episodes/<episode_id>/render")
 def get_render_manifest(episode_id: str):
     """Return render manifest JSON for an episode."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
     settings = _get_settings()
     manifest_path = _validate_episode_path(
         episode_id, Path(settings.outputs_dir), "render", "render_manifest.json"
@@ -1108,6 +1127,9 @@ def get_render_video(episode_id: str):
     """Serve draft video MP4 file with byte-range support for HTML5 scrubbing."""
     from flask import send_file
 
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
     settings = _get_settings()
     video_path = _validate_episode_path(
         episode_id, Path(settings.outputs_dir), "render", "draft.mp4"

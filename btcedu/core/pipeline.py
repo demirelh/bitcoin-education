@@ -62,6 +62,7 @@ _V2_STAGES = [
     ("chapterize", EpisodeStatus.ADAPTED),  # after review approved
     ("imagegen", EpisodeStatus.CHAPTERIZED),  # Sprint 7
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
+    ("render", EpisodeStatus.TTS_DONE),  # Sprint 9
 ]
 
 # Keep _STAGES as alias for backward compat
@@ -410,6 +411,26 @@ def _run_stage(
                         f"{result.segment_count} segments, "
                         f"{result.total_duration_seconds:.1f}s total, "
                         f"${result.cost_usd:.4f}"
+                    ),
+                )
+
+        elif stage_name == "render":
+            from btcedu.core.renderer import render_video
+
+            result = render_video(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("render", "skipped", elapsed, detail="already up-to-date")
+            else:
+                return StageResult(
+                    "render",
+                    "success",
+                    elapsed,
+                    detail=(
+                        f"{result.segment_count} segments, "
+                        f"{result.total_duration_seconds:.1f}s, "
+                        f"{result.total_size_bytes / 1024 / 1024:.1f}MB"
                     ),
                 )
 

@@ -824,6 +824,59 @@ def tts(
         session.close()
 
 
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to render video for (repeatable).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-render even if draft video is current.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Generate render manifest and segments without executing ffmpeg.",
+)
+@click.pass_context
+def render(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+    dry_run: bool,
+) -> None:
+    """Render draft video from chapters, images, and TTS audio (v2 pipeline, Sprint 9)."""
+    from btcedu.core.renderer import render_video
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = render_video(session, eid, settings, force=force)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
+                else:
+                    click.echo(
+                        f"[OK] {eid} -> {result.segment_count} segments, "
+                        f"{result.total_duration_seconds:.1f}s, "
+                        f"{result.total_size_bytes / 1024 / 1024:.1f}MB"
+                    )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.group()
 @click.pass_context
 def review(ctx: click.Context) -> None:

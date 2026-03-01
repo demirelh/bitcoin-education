@@ -365,8 +365,14 @@ def reset_episode_v2(episode_id: str):
             return jsonify({"error": f"Episode not found: {episode_id}"}), 404
 
         # Must have at least been transcribed
-        v1_complete = {"CHUNKED", "GENERATED", "REFINED", "COMPLETED"}
-        if ep.status.value not in v1_complete and ep.status != EpisodeStatus.TRANSCRIBED:
+        resettable = {
+            EpisodeStatus.TRANSCRIBED,
+            EpisodeStatus.CHUNKED,
+            EpisodeStatus.GENERATED,
+            EpisodeStatus.REFINED,
+            EpisodeStatus.COMPLETED,
+        }
+        if ep.status not in resettable:
             return jsonify(
                 {"error": f"Cannot reset: episode is {ep.status.value}. "
                  "Must be at least TRANSCRIBED."}

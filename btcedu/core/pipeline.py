@@ -71,9 +71,19 @@ _V2_STAGES = [
 _STAGES = _V1_STAGES
 
 
-def _get_stages(settings: Settings) -> list[tuple[str, EpisodeStatus]]:
-    """Return the appropriate stages list based on pipeline version."""
-    if settings.pipeline_version >= 2:
+def _get_stages(
+    settings: Settings,
+    episode: Episode | None = None,
+) -> list[tuple[str, EpisodeStatus]]:
+    """Return the appropriate stages list based on pipeline version.
+
+    Uses ``episode.pipeline_version`` when available (e.g. after a reset-v2),
+    falling back to ``settings.pipeline_version``.
+    """
+    version = settings.pipeline_version
+    if episode is not None and getattr(episode, "pipeline_version", None):
+        version = max(version, episode.pipeline_version)
+    if version >= 2:
         return _V2_STAGES
     return _V1_STAGES
 
@@ -133,7 +143,7 @@ def resolve_pipeline_plan(
     plan: list[StagePlan] = []
     will_advance = False
 
-    stages = _get_stages(settings) if settings else _V1_STAGES
+    stages = _get_stages(settings, episode) if settings else _V1_STAGES
     for stage_name, required_status in stages:
         required_order = _STATUS_ORDER[required_status]
 
@@ -543,7 +553,7 @@ def run_episode_pipeline(
 
     logger.info("Pipeline start: %s (%s)", episode.episode_id, episode.title)
 
-    stages = _get_stages(settings)
+    stages = _get_stages(settings, episode)
     for stage_name, required_status in stages:
         # Refresh episode status from DB
         session.refresh(episode)

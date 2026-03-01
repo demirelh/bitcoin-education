@@ -144,7 +144,7 @@ def generate_tts(
 
     try:
         # Create TTS service
-        from btcedu.services.elevenlabs_service import ElevenLabsService, TTSRequest
+        from btcedu.services.elevenlabs_service import ElevenLabsService
 
         tts_service = ElevenLabsService(
             api_key=settings.elevenlabs_api_key,

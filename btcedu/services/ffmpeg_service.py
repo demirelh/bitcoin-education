@@ -494,7 +494,7 @@ def _run_ffmpeg(cmd: list[str], timeout: int) -> tuple[int, str]:
             check=False,
         )
         return result.returncode, result.stderr
-    except subprocess.TimeoutExpired as e:
+    except subprocess.TimeoutExpired:
         logger.error("ffmpeg command timed out after %ds", timeout)
         return -1, f"Command timed out after {timeout}s"
     except FileNotFoundError:

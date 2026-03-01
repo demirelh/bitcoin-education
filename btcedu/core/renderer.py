@@ -164,9 +164,8 @@ def render_video(
     try:
         # Import ffmpeg service (lazy to avoid issues if ffmpeg not installed)
         from btcedu.services.ffmpeg_service import (
-            OverlaySpec,
-            create_segment,
             concatenate_segments,
+            create_segment,
             get_ffmpeg_version,
         )
 
@@ -262,7 +261,10 @@ def render_video(
         if not segment_entries:
             raise RuntimeError("No segments were rendered")
 
-        segment_abs_paths = [str((base_dir / entry.segment_path).absolute()) for entry in segment_entries]
+        segment_abs_paths = [
+            str((base_dir / entry.segment_path).absolute())
+            for entry in segment_entries
+        ]
 
         logger.info("Concatenating %d segments into draft video", len(segment_entries))
 

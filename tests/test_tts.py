@@ -1,7 +1,6 @@
 """Tests for Sprint 8: TTS stage implementation."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,7 +8,6 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from btcedu.core.tts import (
-    TTSResult,
     _compute_chapters_narration_hash,
     _compute_narration_hash,
     _create_silent_mp3,

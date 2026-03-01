@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -445,7 +444,7 @@ def test_render_video_v1_pipeline(db_session, settings):
     episode = Episode(
         episode_id="ep001",
         title="Test",
-        youtube_id="yt123",
+        url="https://example.com",
         status=EpisodeStatus.TTS_DONE,
         pipeline_version=1,
     )
@@ -461,7 +460,7 @@ def test_render_video_wrong_status(db_session, settings):
     episode = Episode(
         episode_id="ep001",
         title="Test",
-        youtube_id="yt123",
+        url="https://example.com",
         status=EpisodeStatus.CHAPTERIZED,  # Not TTS_DONE
         pipeline_version=2,
     )
@@ -479,7 +478,7 @@ def test_render_video_missing_inputs(db_session, settings, tmp_path):
     episode = Episode(
         episode_id="ep001",
         title="Test",
-        youtube_id="yt123",
+        url="https://example.com",
         status=EpisodeStatus.TTS_DONE,
         pipeline_version=2,
     )
@@ -498,7 +497,7 @@ def test_render_video_dry_run(db_session, settings, tmp_path):
     episode = Episode(
         episode_id="ep001",
         title="Test",
-        youtube_id="yt123",
+        url="https://example.com",
         status=EpisodeStatus.TTS_DONE,
         pipeline_version=2,
     )
@@ -534,7 +533,7 @@ def test_render_video_idempotent(db_session, settings, tmp_path):
     episode = Episode(
         episode_id="ep001",
         title="Test",
-        youtube_id="yt123",
+        url="https://example.com",
         status=EpisodeStatus.TTS_DONE,
         pipeline_version=2,
     )
@@ -564,7 +563,7 @@ def test_render_video_force_rerender(db_session, settings, tmp_path):
     episode = Episode(
         episode_id="ep001",
         title="Test",
-        youtube_id="yt123",
+        url="https://example.com",
         status=EpisodeStatus.RENDERED,
         pipeline_version=2,
     )

@@ -534,7 +534,10 @@ def run_episode_pipeline(
 
     # Calculate total cost from stage results that report costs
     for sr in report.stages:
-        success_stages = ("generate", "refine", "correct", "translate", "adapt", "chapterize", "imagegen", "tts")
+        success_stages = (
+            "generate", "refine", "correct", "translate",
+            "adapt", "chapterize", "imagegen", "tts",
+        )
         if sr.stage in success_stages and sr.status == "success" and "$" in sr.detail:
             try:
                 cost_str = sr.detail.split("$")[1].rstrip(")")

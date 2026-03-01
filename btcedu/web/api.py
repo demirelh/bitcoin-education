@@ -2,11 +2,13 @@
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import func
+from werkzeug.utils import secure_filename
 
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun
 
@@ -88,6 +90,67 @@ def _get_settings():
 
 def _get_job_manager():
     return current_app.config["job_manager"]
+
+
+# Allowlist: only alphanumeric, hyphens, underscores, and dots (no leading dot).
+_SAFE_PATH_COMPONENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+
+
+def _validate_episode_path(episode_id: str, base_dir: Path, *path_parts: str) -> Path | None:
+    """Validate episode_id exists in DB and construct safe path within base_dir.
+
+    Returns resolved path if valid, None if episode doesn't exist or path escapes base_dir.
+
+    Args:
+        episode_id: Episode identifier from URL parameter
+        base_dir: Base directory (e.g., outputs_dir)
+        *path_parts: Additional path components (e.g., "render", "draft.mp4")
+
+    Returns:
+        Resolved path if valid, None otherwise
+    """
+    # Reject empty or structurally unsafe episode_id / path parts.
+    # secure_filename is a CodeQL-recognized sanitizer that strips path
+    # separators, "..", leading dots, and other dangerous characters.
+    # The allowlist regex provides additional defense-in-depth.
+    episode_id = secure_filename(episode_id)
+    if not episode_id or not _SAFE_PATH_COMPONENT_RE.match(episode_id):
+        return None
+
+    sanitized_parts = []
+    for part in path_parts:
+        part = secure_filename(part)
+        if not part or not _SAFE_PATH_COMPONENT_RE.match(part):
+            return None
+        sanitized_parts.append(part)
+    path_parts = tuple(sanitized_parts)
+
+    session = _get_session()
+    try:
+        # Verify episode exists in database
+        episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if not episode:
+            return None
+
+        # Construct and resolve the full path using sanitized components
+        full_path = base_dir / episode_id / Path(*path_parts)
+        try:
+            resolved_path = full_path.resolve()
+        except (OSError, RuntimeError):
+            # Handle path resolution errors
+            return None
+
+        # Verify resolved path is still within base_dir
+        resolved_base = base_dir.resolve()
+        try:
+            resolved_path.relative_to(resolved_base)
+        except ValueError:
+            # Path escapes base directory
+            return None
+
+        return resolved_path
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -325,9 +388,22 @@ def get_job(job_id: str):
 
 @api_bp.route("/episodes/<episode_id>/action-log")
 def episode_action_log(episode_id: str):
+    # Sanitize episode_id to prevent path traversal
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
     settings = _get_settings()
     tail = request.args.get("tail", 200, type=int)
     log_path = Path(settings.logs_dir) / "episodes" / f"{episode_id}.log"
+
+    # Verify resolved path stays within logs_dir
+    try:
+        resolved = log_path.resolve()
+        if not resolved.is_relative_to(Path(settings.logs_dir).resolve()):
+            return jsonify({"error": "Invalid episode ID"}), 400
+    except (OSError, RuntimeError):
+        return jsonify({"error": "Invalid episode ID"}), 400
 
     if not log_path.exists():
         return jsonify({"lines": []})
@@ -358,11 +434,22 @@ _FILE_MAP = {
 
 @api_bp.route("/episodes/<episode_id>/files/<file_type>")
 def get_file(episode_id: str, file_type: str):
+    # Sanitize episode_id to prevent path traversal
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
     settings = _get_settings()
 
     # Handle report separately (find latest)
     if file_type == "report":
         report_dir = Path(settings.reports_dir) / episode_id
+        # Verify resolved path stays within reports_dir
+        try:
+            if not report_dir.resolve().is_relative_to(Path(settings.reports_dir).resolve()):
+                return jsonify({"error": "Invalid episode ID"}), 400
+        except (OSError, RuntimeError):
+            return jsonify({"error": "Invalid episode ID"}), 400
         if not report_dir.exists():
             return jsonify({"error": "No reports found"}), 404
         reports = sorted(report_dir.glob("report_*.json"), reverse=True)
@@ -373,6 +460,12 @@ def get_file(episode_id: str, file_type: str):
         dir_attr, pattern = _FILE_MAP[file_type]
         base = getattr(settings, dir_attr)
         path = Path(base) / pattern.format(eid=episode_id)
+        # Verify resolved path stays within base directory
+        try:
+            if not path.resolve().is_relative_to(Path(base).resolve()):
+                return jsonify({"error": "Invalid episode ID"}), 400
+        except (OSError, RuntimeError):
+            return jsonify({"error": "Invalid episode ID"}), 400
     else:
         return jsonify({"error": f"Unknown file type: {file_type}"}), 400
 
@@ -899,10 +992,19 @@ def reject_review_route(review_id: int):
     session = _get_session()
     try:
         from btcedu.core.reviewer import reject_review
+        from btcedu.models.review import ReviewTask
 
         body = request.get_json(silent=True) or {}
+        notes = body.get("notes", "").strip()
+
+        task = session.query(ReviewTask).filter(ReviewTask.id == review_id).first()
+        if not task:
+            return jsonify({"error": f"Review not found: {review_id}"}), 404
+
+        if task.stage == "render" and not notes:
+            return jsonify({"error": "Notes are required when rejecting render review"}), 400
         try:
-            decision = reject_review(session, review_id, notes=body.get("notes"))
+            decision = reject_review(session, review_id, notes=notes or None)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
@@ -953,8 +1055,16 @@ def request_changes_route(review_id: int):
 @api_bp.route("/episodes/<episode_id>/tts")
 def get_tts_manifest(episode_id: str):
     """Return TTS manifest JSON for an episode."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
     settings = _get_settings()
-    manifest_path = Path(settings.outputs_dir) / episode_id / "tts" / "manifest.json"
+    manifest_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "tts", "manifest.json"
+    )
+
+    if not manifest_path:
+        return jsonify({"error": "Episode not found"}), 404
 
     if not manifest_path.exists():
         return jsonify({"error": "TTS manifest not found"}), 404
@@ -968,8 +1078,18 @@ def get_tts_audio(episode_id: str, chapter_id: str):
     """Serve per-chapter MP3 audio file."""
     from flask import send_file
 
+    episode_id = secure_filename(episode_id)
+    chapter_id = secure_filename(chapter_id)
+    if not episode_id or not chapter_id:
+        return jsonify({"error": "Invalid parameters"}), 400
     settings = _get_settings()
-    mp3_path = Path(settings.outputs_dir) / episode_id / "tts" / f"{chapter_id}.mp3"
+    # Validate episode exists and construct safe path
+    mp3_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "tts", f"{chapter_id}.mp3"
+    )
+
+    if not mp3_path:
+        return jsonify({"error": "Episode not found"}), 404
 
     if not mp3_path.exists():
         return jsonify({"error": f"Audio file not found: {chapter_id}.mp3"}), 404
@@ -982,6 +1102,66 @@ def trigger_tts(episode_id: str):
     """Trigger TTS generation job."""
     body = request.get_json(silent=True) or {}
     return _submit_job("tts", episode_id, force=body.get("force", False))
+
+
+# ---------------------------------------------------------------------------
+# Render endpoints (Sprint 10)
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/episodes/<episode_id>/render")
+def get_render_manifest(episode_id: str):
+    """Return render manifest JSON for an episode."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+    settings = _get_settings()
+    manifest_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "render", "render_manifest.json"
+    )
+
+    if not manifest_path:
+        return jsonify({"error": "Episode not found"}), 404
+
+    if not manifest_path.exists():
+        return jsonify({"error": "Render manifest not found"}), 404
+
+    content = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return jsonify(content)
+
+
+@api_bp.route("/episodes/<episode_id>/render/draft.mp4")
+def get_render_video(episode_id: str):
+    """Serve draft video MP4 file with byte-range support for HTML5 scrubbing."""
+    from flask import send_file
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+    settings = _get_settings()
+    video_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "render", "draft.mp4"
+    )
+
+    if not video_path:
+        return jsonify({"error": "Episode not found"}), 404
+
+    if not video_path.exists():
+        return jsonify({"error": "Draft video not found"}), 404
+
+    return send_file(str(video_path), mimetype="video/mp4", conditional=True)
+
+
+@api_bp.route("/episodes/<episode_id>/render", methods=["POST"])
+def trigger_render(episode_id: str):
+    """Trigger render job."""
+    body = request.get_json(silent=True) or {}
+    return _submit_job("render", episode_id, force=body.get("force", False))
+
+
+# ---------------------------------------------------------------------------
+# Channel endpoints
+# ---------------------------------------------------------------------------
 
 
 @api_bp.route("/channels/<int:channel_id>/toggle", methods=["POST"])

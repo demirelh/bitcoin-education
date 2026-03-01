@@ -63,6 +63,7 @@ _V2_STAGES = [
     ("imagegen", EpisodeStatus.CHAPTERIZED),  # Sprint 7
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
     ("render", EpisodeStatus.TTS_DONE),  # Sprint 9
+    ("review_gate_3", EpisodeStatus.RENDERED),  # Sprint 10
 ]
 
 # Keep _STAGES as alias for backward compat
@@ -434,6 +435,58 @@ def _run_stage(
                     ),
                 )
 
+        elif stage_name == "review_gate_3":
+            from btcedu.core.reviewer import (
+                create_review_task,
+                has_approved_review,
+                has_pending_review,
+            )
+
+            # Check if already approved
+            if has_approved_review(session, episode.episode_id, "render"):
+                # Set episode status to APPROVED (final state before publish)
+                episode.status = EpisodeStatus.APPROVED
+                session.commit()
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_3",
+                    "success",
+                    elapsed,
+                    detail="video review approved, episode marked APPROVED",
+                )
+
+            # Check if a pending review already exists
+            if has_pending_review(session, episode.episode_id):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_3",
+                    "review_pending",
+                    elapsed,
+                    detail="awaiting video review",
+                )
+
+            # Create a new review task
+            draft_path = Path(settings.outputs_dir) / episode.episode_id / "render" / "draft.mp4"
+            manifest_path = (
+                Path(settings.outputs_dir) / episode.episode_id / "render" / "render_manifest.json"
+            )
+            chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
+
+            create_review_task(
+                session,
+                episode.episode_id,
+                stage="render",
+                artifact_paths=[str(draft_path), str(chapters_path)],
+                diff_path=str(manifest_path) if manifest_path.exists() else None,
+            )
+            elapsed = time.monotonic() - t0
+            return StageResult(
+                "review_gate_3",
+                "review_pending",
+                elapsed,
+                detail="video review task created",
+            )
+
         else:
             raise ValueError(f"Unknown stage: {stage_name}")
 
@@ -571,7 +624,7 @@ def run_pending(
 
     Queries episodes with status in (NEW, DOWNLOADED, TRANSCRIBED, CHUNKED,
     GENERATED, CORRECTED, TRANSLATED, ADAPTED, CHAPTERIZED, IMAGES_GENERATED,
-    TTS_DONE), ordered by published_at ASC (oldest first).
+    TTS_DONE, RENDERED), ordered by published_at ASC (oldest first).
 
     Args:
         session: DB session.
@@ -599,6 +652,7 @@ def run_pending(
                     EpisodeStatus.CHAPTERIZED,
                     EpisodeStatus.IMAGES_GENERATED,
                     EpisodeStatus.TTS_DONE,  # Sprint 9: render stage
+                    EpisodeStatus.RENDERED,  # Sprint 10: review gate 3
                 ]
             )
         )
@@ -672,6 +726,8 @@ def run_latest(
                     EpisodeStatus.ADAPTED,
                     EpisodeStatus.CHAPTERIZED,
                     EpisodeStatus.IMAGES_GENERATED,
+                    EpisodeStatus.TTS_DONE,  # Sprint 9
+                    EpisodeStatus.RENDERED,  # Sprint 10
                 ]
             )
         )

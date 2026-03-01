@@ -190,6 +190,8 @@ def create_segment(
     preset: str = "medium",
     audio_bitrate: str = "192k",
     font: str = "NotoSans-Bold",
+    fade_in_duration: float = 0.0,  # Sprint 10: fade in duration (seconds)
+    fade_out_duration: float = 0.0,  # Sprint 10: fade out duration (seconds)
     timeout_seconds: int = 300,
     dry_run: bool = False,
 ) -> SegmentResult:
@@ -207,6 +209,8 @@ def create_segment(
         preset: H.264 encoding speed preset
         audio_bitrate: AAC audio bitrate
         font: Font name for text overlays
+        fade_in_duration: Fade in duration (Sprint 10)
+        fade_out_duration: Fade out duration (Sprint 10)
         timeout_seconds: Max execution time
         dry_run: If True, build command but don't execute
 
@@ -238,12 +242,26 @@ def create_segment(
         last_label = "scaled"
         for i, overlay in enumerate(overlays):
             drawtext_filter = _build_drawtext_filter(overlay, font_path)
-            out_label = f"overlay{i}" if i < len(overlays) - 1 else "v"
+            out_label = f"overlay{i}" if i < len(overlays) - 1 else "pre_fade"
             filter_parts.append(f"[{last_label}]{drawtext_filter}[{out_label}]")
             last_label = out_label
     else:
-        # No overlays: just rename final label
-        filter_parts.append("[scaled]copy[v]")
+        # No overlays: rename to pre_fade
+        filter_parts.append("[scaled]copy[pre_fade]")
+
+    # Add fade filters (Sprint 10)
+    if fade_in_duration > 0 or fade_out_duration > 0:
+        fade_filters = []
+        if fade_in_duration > 0:
+            fade_filters.append(f"fade=t=in:st=0:d={fade_in_duration}")
+        if fade_out_duration > 0:
+            fade_out_start = max(0, duration - fade_out_duration)
+            fade_filters.append(f"fade=t=out:st={fade_out_start}:d={fade_out_duration}")
+        fade_chain = ",".join(fade_filters)
+        filter_parts.append(f"[pre_fade]{fade_chain}[v]")
+    else:
+        # No fades: rename final label
+        filter_parts.append("[pre_fade]copy[v]")
 
     filter_complex = ";".join(filter_parts)
 
@@ -263,23 +281,39 @@ def create_segment(
         "[v]",
         "-map",
         "1:a",
-        "-c:v",
-        "libx264",
-        "-preset",
-        preset,
-        "-crf",
-        str(crf),
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        audio_bitrate,
-        "-t",
-        str(duration),
-        "-shortest",
-        output_path,
     ]
+
+    # Add audio fade filter (Sprint 10)
+    if fade_in_duration > 0 or fade_out_duration > 0:
+        audio_filters = []
+        if fade_in_duration > 0:
+            audio_filters.append(f"afade=t=in:st=0:d={fade_in_duration}")
+        if fade_out_duration > 0:
+            afade_out_start = max(0, duration - fade_out_duration)
+            audio_filters.append(f"afade=t=out:st={afade_out_start}:d={fade_out_duration}")
+        cmd.extend(["-af", ",".join(audio_filters)])
+
+    # Continue with codec and output settings
+    cmd.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            audio_bitrate,
+            "-t",
+            str(duration),
+            "-shortest",
+            output_path,
+        ]
+    )
 
     if dry_run:
         logger.info("Dry-run: would run ffmpeg command (not executing)")

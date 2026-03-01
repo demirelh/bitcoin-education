@@ -78,6 +78,7 @@ def call_claude(
     settings,
     dry_run_path: Path | None = None,
     max_tokens: int | None = None,
+    json_mode: bool = False,
 ) -> ClaudeResponse:
     """Call LLM API (Anthropic or OpenAI fallback).
 
@@ -91,6 +92,7 @@ def call_claude(
         settings: Application settings.
         dry_run_path: If settings.dry_run, write payload here instead of calling API.
         max_tokens: Override settings.claude_max_tokens for this call.
+        json_mode: If True, request JSON output from the API (OpenAI response_format).
 
     Returns:
         ClaudeResponse with text, token counts, and cost.
@@ -101,7 +103,10 @@ def call_claude(
     provider = _resolve_provider(settings)
 
     if provider == "openai":
-        return _call_openai(system_prompt, user_message, settings, max_tokens=max_tokens)
+        return _call_openai(
+            system_prompt, user_message, settings,
+            max_tokens=max_tokens, json_mode=json_mode,
+        )
     return _call_anthropic(system_prompt, user_message, settings, max_tokens=max_tokens)
 
 
@@ -160,6 +165,7 @@ def _call_openai(
     user_message: str,
     settings,
     max_tokens: int | None = None,
+    json_mode: bool = False,
 ) -> ClaudeResponse:
     """Call OpenAI Chat Completions API as fallback."""
     from openai import OpenAI
@@ -168,15 +174,19 @@ def _call_openai(
     model = getattr(settings, "openai_llm_model", "gpt-4o")
     client = OpenAI(api_key=settings.openai_api_key)
 
-    response = client.chat.completions.create(
-        model=model,
-        max_tokens=effective_max_tokens,
-        temperature=settings.claude_temperature,
-        messages=[
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": effective_max_tokens,
+        "temperature": settings.claude_temperature,
+        "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ],
-    )
+    }
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    response = client.chat.completions.create(**kwargs)
 
     text = response.choices[0].message.content or ""
     input_tokens = response.usage.prompt_tokens

@@ -200,6 +200,7 @@ def chapterize_script(
                 settings=settings,
                 dry_run_path=dry_run_path,
                 max_tokens=16384,  # chapter JSON needs much more than default 4096
+                json_mode=True,
             )
 
             # Parse JSON response
@@ -555,6 +556,8 @@ def _parse_json_response(
     Raises:
         json.JSONDecodeError: If JSON is malformed after cleanup
     """
+    import re as _re
+
     # Strip markdown code fences
     text = response_text.strip()
     if text.startswith("```json"):
@@ -564,6 +567,19 @@ def _parse_json_response(
 
     if text.endswith("```"):
         text = text[: -len("```")].strip()
+
+    # If response starts with non-JSON text, try to extract the JSON object
+    if text and not text.startswith("{") and not text.startswith("["):
+        # Find the first { and last }
+        first_brace = text.find("{")
+        last_brace = text.rfind("}")
+        if first_brace != -1 and last_brace > first_brace:
+            logger.warning(
+                "Response for %s starts with non-JSON text, extracting JSON object "
+                "(chars %d-%d of %d)",
+                episode_id, first_brace, last_brace, len(text),
+            )
+            text = text[first_brace : last_brace + 1]
 
     try:
         return json.loads(text)
@@ -669,6 +685,7 @@ Original input:
         user_message=corrective_prompt,
         settings=settings,
         max_tokens=16384,
+        json_mode=True,
     )
 
     # Parse and return (let caller validate)

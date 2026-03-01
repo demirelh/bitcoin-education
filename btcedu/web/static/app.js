@@ -321,6 +321,7 @@
         <div class="tab" data-tab="publishing_v2">Publishing v2</div>
         <div class="tab" data-tab="chapters">Chapters</div>
         <div class="tab" data-tab="tts_audio">TTS Audio</div>
+        <div class="tab" data-tab="video">Video</div>
         <div class="tab" data-tab="report">Report</div>
         <div class="tab" data-tab="logs">Logs</div>
       </div>
@@ -361,6 +362,13 @@
       viewer.classList.remove("log-viewer");
       viewer.innerHTML = "Loading TTS data...";
       await loadTTSPanel();
+      return;
+    }
+
+    if (type === "video") {
+      viewer.classList.remove("log-viewer");
+      viewer.innerHTML = "Loading video...";
+      await loadVideoPanel();
       return;
     }
 
@@ -446,6 +454,64 @@
     }
   }
 
+  // ── Video Panel ──────────────────────────────────────────────
+  async function loadVideoPanel() {
+    if (!selected) return;
+    const viewer = document.getElementById("viewer");
+
+    try {
+      const data = await GET(`/episodes/${selected.episode_id}/render`);
+      if (data.error) {
+        viewer.innerHTML = `
+          <div class="video-panel">
+            <p>No video rendered yet.</p>
+            <button class="btn btn-sm btn-primary" onclick="actions.render()">Render Video</button>
+          </div>`;
+        return;
+      }
+
+      const totalDur = (data.total_duration_seconds || 0).toFixed(1);
+      const totalSize = ((data.total_size_bytes || 0) / 1024 / 1024).toFixed(1);
+      const segments = data.segments || [];
+      const videoUrl = `api/episodes/${selected.episode_id}/render/draft.mp4`;
+
+      let chapterRows = segments.map(s => {
+        const dur = (s.duration_seconds || 0).toFixed(1);
+        return `
+          <div class="video-chapter-row">
+            <span class="video-chapter-id">${esc(s.chapter_id)}</span>
+            <span class="video-duration">${dur}s</span>
+            <span class="video-transition">${esc(s.transition_in)} → ${esc(s.transition_out)}</span>
+          </div>`;
+      }).join('');
+
+      viewer.innerHTML = `
+        <div class="video-panel">
+          <div class="video-summary">
+            <strong>Render Summary:</strong>
+            ${segments.length} segments &middot; ${totalDur}s &middot; ${totalSize} MB
+            <button class="btn btn-sm" style="margin-left:1em" onclick="actions.render()">Re-render</button>
+          </div>
+          <div class="video-player">
+            <video controls preload="metadata" style="width:100%;max-width:800px;background:#000">
+              <source src="${videoUrl}" type="video/mp4">
+              Your browser does not support video playback.
+            </video>
+          </div>
+          <div class="video-chapters">
+            <strong>Chapter Timeline:</strong>
+            ${chapterRows}
+          </div>
+        </div>`;
+    } catch (err) {
+      viewer.innerHTML = `
+        <div class="video-panel">
+          <p>No video rendered yet.</p>
+          <button class="btn btn-sm btn-primary" onclick="actions.render()">Render Video</button>
+        </div>`;
+    }
+  }
+
   // ── Actions ──────────────────────────────────────────────────
   window.actions = {
     download() {
@@ -482,6 +548,10 @@
     tts() {
       if (!selected) return;
       submitJob("TTS", `/episodes/${selected.episode_id}/tts`, { force: isForce() });
+    },
+    render() {
+      if (!selected) return;
+      submitJob("Render", `/episodes/${selected.episode_id}/render`, { force: isForce() });
     },
   };
 
@@ -998,10 +1068,30 @@
       </div>
     </div>`;
 
-    // Diff viewer
+    // Video player for render reviews (Sprint 10)
+    if (data.stage === "render" && data.video_url) {
+      html += `<div class="review-video-player">
+        <video controls preload="metadata">
+          <source src="${data.video_url}" type="video/mp4">
+          Your browser does not support video playback.
+        </video>
+      </div>`;
+
+      if (data.render_manifest) {
+        const m = data.render_manifest;
+        const dur = (m.total_duration_seconds || 0).toFixed(1);
+        const size = ((m.total_size_bytes || 0) / 1024 / 1024).toFixed(1);
+        html += `<div class="review-render-info">
+          <strong>Render Info:</strong> ${(m.segments || []).length} segments &middot; ${dur}s &middot; ${size} MB &middot;
+          ${m.resolution || '1920x1080'} @ ${m.fps || 30}fps
+        </div>`;
+      }
+    }
+
+    // Diff viewer (for correct/adapt stages)
     if (data.diff) {
       html += renderDiffViewer(data.diff, data.original_text, data.corrected_text);
-    } else {
+    } else if (data.stage !== "render") {
       html += '<div class="empty">No diff data available.</div>';
     }
 

@@ -1,5 +1,8 @@
 # MASTER PLAN: btcedu Video Production Pipeline
 
+> **Status: All 11 sprints complete.** The full v2 pipeline is operational.
+> This document serves as the authoritative design reference. For current implementation details, see `CLAUDE.md`.
+
 ## 1) Executive Summary
 
 ### What Exists Today

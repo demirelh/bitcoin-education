@@ -2,63 +2,72 @@
 
 ## Worum geht es?
 
-`btcedu` ist eine Python-basierte Automations-Pipeline, die **deutsche Bitcoin-Podcast-Episoden** (YouTube/RSS) verarbeitet und daraus **tuerkische, publikationsfertige YouTube-Content-Pakete** erzeugt.
+`btcedu` ist eine Python-basierte Automations-Pipeline, die **deutsche Bitcoin-Podcast-Episoden** (YouTube/RSS) verarbeitet und daraus **tuerkische YouTube-Videos** erzeugt.
 
-Pro Episode entstehen standardmaessig 6 Artefakte:
-- `outline.tr.md`
-- `script.long.tr.md`
-- `shorts.tr.json`
-- `visuals.json`
-- `qa.json`
-- `publishing_pack.json`
+Die v2-Pipeline produziert pro Episode ein fertiges Video:
+- Korrigiertes DE-Transkript
+- Tuerkische Uebersetzung + kulturelle Adaptation
+- Kapitelstruktur mit Bildern (DALL-E 3) + Sprachausgabe (ElevenLabs)
+- Gerendertes MP4-Video (ffmpeg)
+- Upload zu YouTube
 
-## Pipeline (End-to-End)
+## Pipeline
 
-High-level:
+Zwei Pipeline-Versionen koexistieren. `PIPELINE_VERSION` in `.env` (Default=1) steuert den Ablauf.
 
-`detect -> download -> transcribe -> chunk -> generate` (optional: `refine`)
+### v1 Pipeline (Legacy)
+```
+detect -> download -> transcribe -> chunk -> generate (optional: refine)
+```
+Erzeugt 6 Text-Artefakte (Outline, Script, Shorts, Visuals, QA, Publishing Pack).
 
-- `detect`: neue Episoden aus Feed in DB eintragen (schnell, keine Medienverarbeitung)
-- `download`: Audio via `yt-dlp`
-- `transcribe`: Whisper API (OpenAI) -> DE-Transkript (raw + bereinigt)
-- `chunk`: Transcript in ueberlappende Text-Chunks + **SQLite FTS5** Index
-- `generate`: Claude (Anthropic) erzeugt die 6 Artefakte mit Retrieval aus FTS5 (RAG + Zitierbarkeit)
-- `refine`: optionale zweite Politur-Generation (v1 -> v2 Dateien)
+### v2 Pipeline (aktiv, vollstaendig)
+```
+detect -> download -> transcribe -> correct -> [review_gate_1] ->
+translate -> adapt -> [review_gate_2] -> chapterize ->
+imagegen -> tts -> render -> [review_gate_3] -> publish
+```
 
 Wichtige Eigenschaften:
 - **Idempotent**: Stages skippen, wenn bereits erledigt (ausser `--force`).
+- **Review Gates**: Pipeline pausiert, erstellt ReviewTask, setzt nach Approval fort.
 - **Retry-faehig**: `btcedu retry` setzt an der letzten erfolgreichen Stage wieder an.
-- **Kosten-Tracking**: PipelineRuns speichern Token-/Cost-Metriken; Reports als JSON.
+- **Kosten-Tracking**: PipelineRuns speichern Token-/Cost-Metriken; Sicherheits-Cap pro Episode.
+- **Dry-Run**: `--dry-run` Flag fuer Platzhalter statt API-Calls.
 
 ## Tech-Stack / Abhaengigkeiten
 
 - Python `>=3.12` (siehe `pyproject.toml`)
-- CLI: `click` (`btcedu` Entry-Point)
-- Web: `flask` (+ optional `gunicorn` fuer Produktion)
-- DB: `sqlite` via `sqlalchemy` + **FTS5**
+- CLI: `click` (`btcedu` Entry-Point, 34 Commands)
+- Web: `flask` (+ `gunicorn` fuer Produktion)
+- DB: `sqlite` via `sqlalchemy 2.0` + **FTS5**
+- Config: `pydantic-settings` (`.env`)
 - Externals:
   - Download: `yt-dlp`
-  - Audio-Splitting: `pydub` (benoetigt `ffmpeg` auf dem System)
+  - Audio-Splitting: `pydub` (benoetigt `ffmpeg`)
   - Transkription: OpenAI Whisper (`openai`)
-  - Generierung: Anthropic Claude (`anthropic`)
+  - LLM: Anthropic Claude (`anthropic`)
+  - Bilder: DALL-E 3 (`openai`)
+  - TTS: ElevenLabs (raw HTTP)
+  - Video: `ffmpeg` (Rendering)
+  - Upload: YouTube Data API v3 (optional: `pip install -e ".[youtube]"`)
 
 ## Projektstruktur (wichtigste Ordner)
 
 - `btcedu/`: Hauptpaket
-  - `btcedu/cli.py`: alle CLI-Commands
-  - `btcedu/config.py`: Settings aus `.env` (pydantic-settings)
-  - `btcedu/db.py`: DB-Init + Session Factory
-  - `btcedu/core/`: Pipeline-Stages + Orchestrierung (`pipeline.py`)
-  - `btcedu/services/`: Wrapper fuer RSS/yt-dlp/Whisper/Claude
-  - `btcedu/models/`: SQLAlchemy ORM + Schemas + Migration-Model
-  - `btcedu/migrations/`: DB-Migrations-Registry
-  - `btcedu/prompts/`: Prompt-Templates je Artefakt + Refinement
-  - `btcedu/web/`: Flask-App + REST API + Job-System + UI (templates/static)
-- `data/`: Laufzeitdaten (DB, audio, transcripts, chunks, outputs, reports, logs)
+  - `cli.py`: alle CLI-Commands (34 Stueck)
+  - `config.py`: Settings aus `.env` (pydantic-settings)
+  - `db.py`: DB-Init + Session Factory
+  - `core/`: Pipeline-Stages + Orchestrierung (`pipeline.py`)
+  - `services/`: Wrapper fuer RSS/yt-dlp/Whisper/Claude/ElevenLabs/DALL-E/YouTube
+  - `models/`: SQLAlchemy ORM + Schemas + Migration-Model
+  - `migrations/`: DB-Migrations-Registry (6 Migrationen)
+  - `prompts/templates/`: YAML-Frontmatter + Jinja2 Templates (6 Stueck)
+  - `web/`: Flask-App + REST API (30+ Endpoints) + Job-System + SPA-Dashboard
+- `data/`: Laufzeitdaten (DB, audio, transcripts, outputs, reports, logs)
 - `deploy/`: systemd Units + Caddy Snippet + Setup Script
-- `docs/`: Architektur/Deployment/Feature-Dokus
-- `scripts/`: Hilfsskripte (z.B. Migration fuer Multi-Channel)
-- `tests/`: pytest Suite
+- `docs/`: Feature-Dokus + Sprint-Logs
+- `tests/`: pytest Suite (629 Tests)
 
 ## Einstieg (lokal)
 
@@ -90,10 +99,15 @@ Wichtige Variablen:
 - `ANTHROPIC_API_KEY`, `OPENAI_API_KEY` (optional `WHISPER_API_KEY`)
 - Quelle: `SOURCE_TYPE=youtube_rss` + `PODCAST_YOUTUBE_CHANNEL_ID` (oder `PODCAST_RSS_URL`)
 - DB: `DATABASE_URL` (Default: `sqlite:///data/btcedu.db`)
-- Pfade: `RAW_DATA_DIR`, `TRANSCRIPTS_DIR`, `CHUNKS_DIR`, `OUTPUT_DIR`, `OUTPUTS_DIR`, `REPORTS_DIR`, `LOGS_DIR`
-- Chunking: `CHUNK_SIZE`, `CHUNK_OVERLAP`
-- Optional Retrieval: `USE_CHROMA`, `CHROMADB_PERSIST_DIR`
-- Generation: `CLAUDE_MODEL`, `CLAUDE_MAX_TOKENS`, `CLAUDE_TEMPERATURE`, `DRY_RUN`
+- Pipeline: `PIPELINE_VERSION` (1=v1, 2=v2), `MAX_EPISODE_COST_USD`, `DRY_RUN`
+- Pfade: `RAW_DATA_DIR`, `TRANSCRIPTS_DIR`, `OUTPUTS_DIR`, `REPORTS_DIR`, `LOGS_DIR`
+- LLM: `CLAUDE_MODEL`, `CLAUDE_MAX_TOKENS`, `CLAUDE_TEMPERATURE`
+- Bilder: `IMAGE_GEN_PROVIDER`, `IMAGE_GEN_MODEL`, `IMAGE_GEN_SIZE`, `IMAGE_GEN_QUALITY`
+- TTS: `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL`
+- Render: `RENDER_RESOLUTION`, `RENDER_FPS`, `RENDER_CRF`, `RENDER_FONT`
+- YouTube: `YOUTUBE_CLIENT_SECRETS_PATH`, `YOUTUBE_DEFAULT_PRIVACY`
+
+Vollstaendige Liste: siehe `CLAUDE.md` Config-Tabelle.
 
 ## Wichtige CLI-Commands (Auswahl)
 
@@ -101,49 +115,70 @@ Wichtige Variablen:
   - `btcedu run-latest`
   - `btcedu run-pending --max N --since YYYY-MM-DD`
   - `btcedu retry --episode-id ID`
-- Stages:
+- v2 Stages:
   - `btcedu detect`, `btcedu backfill`
   - `btcedu download --episode-id ID`
   - `btcedu transcribe --episode-id ID`
-  - `btcedu chunk --episode-id ID`
-  - `btcedu generate --episode-id ID [--top-k 16] [--force]`
-  - `btcedu refine --episode-id ID [--force]`
+  - `btcedu correct --episode-id ID`
+  - `btcedu translate --episode-id ID`
+  - `btcedu adapt --episode-id ID`
+  - `btcedu chapterize --episode-id ID`
+  - `btcedu imagegen --episode-id ID`
+  - `btcedu tts --episode-id ID`
+  - `btcedu render --episode-id ID`
+  - `btcedu publish --episode-id ID`
+- v1 Stages (Legacy):
+  - `btcedu chunk`, `btcedu generate`, `btcedu refine`
+- Reviews:
+  - `btcedu review list`, `btcedu review approve ID`, `btcedu review reject ID`
+- Prompts:
+  - `btcedu prompt list`, `btcedu prompt promote ID`
+- YouTube:
+  - `btcedu youtube-auth`, `btcedu youtube-status`
 - Monitoring/DB:
   - `btcedu status`, `btcedu report --episode-id ID`, `btcedu cost`
-  - `btcedu migrate-status`, `btcedu migrate`
+  - `btcedu init-db`, `btcedu migrate`, `btcedu migrate-status`
+  - `btcedu journal`, `btcedu llm-report`
+
+Vollstaendige Liste: siehe `CLAUDE.md` CLI-Tabelle.
 
 ## Web-Dashboard: Architektur in Kurzform
 
-- Backend: `btcedu/web/app.py` (Flask Factory) + `btcedu/web/api.py` (REST)
+- Backend: `btcedu/web/app.py` (Flask Factory) + `btcedu/web/api.py` (30+ REST Endpoints)
 - Async/Jobs: `btcedu/web/jobs.py` mit `ThreadPoolExecutor(max_workers=1)` (SQLite single-writer kompatibel)
-- UI: `btcedu/web/templates/index.html` + `btcedu/web/static/app.js` + `btcedu/web/static/styles.css`
-- Features u.a.: Episode-Table, Artefakt-Viewer, Job-Logs, Kosten, Batch/"Process All", Multi-Channel
+- UI: SPA mit `btcedu/web/static/app.js` + `btcedu/web/static/styles.css`
+- Features: Episode-Table, Pipeline-Steuerung, Artefakt-Viewer, Review-Queue, TTS-Player, Job-Logs, Kosten, Batch/"Process All", Multi-Channel
 
 ## Deployment (Raspberry Pi / systemd / GitHub Actions)
 
 - Update/Deploy Script: `run.sh`
-  - `git pull` + `pip install -e ".[web]"` + `btcedu migrate` + `sudo systemctl restart btcedu-web`
-- systemd Units: `deploy/btcedu-web.service`, `deploy/btcedu-detect.*`, `deploy/btcedu-run.*`
-- Reverse Proxy (optional): `deploy/Caddyfile.dashboard` (HTTPS + basic auth + /dashboard Prefix)
+  - `git pull` + `pip install` + `btcedu migrate` + `daemon-reload` + Restart aller Services/Timers
+- systemd Units:
+  - `btcedu-web.service` (Web-Dashboard, gunicorn auf Port 8091)
+  - `btcedu-detect.timer` (RSS-Scan alle 6 Stunden)
+  - `btcedu-run.timer` (Pipeline-Verarbeitung taeglich um 02:00)
+- Reverse Proxy: `deploy/Caddyfile.dashboard` (HTTPS + basic auth + /dashboard Prefix)
 - GitHub Actions:
   - CI: `.github/workflows/ci.yml` (ruff + pytest, Python 3.12/3.13)
   - Security: `.github/workflows/security.yml` (pip-audit + CodeQL)
   - Deploy: `.github/workflows/deploy.yml` (SSH -> `bash .../run.sh`)
+- Setup: `deploy/setup-web.sh` (installiert alle Units + Caddy-Config)
 
 ## Tests & Quality
 
 ```bash
-pytest tests/ -v
+pytest tests/ -v          # 629 Tests
 ruff check btcedu/ tests/
 ruff format --check btcedu/ tests/
 ```
 
 Pre-commit: `.pre-commit-config.yaml` (ruff + format + Standard-Hooks).
 
-## Weitere wichtige Dokus (lesen statt raten)
+## Weitere wichtige Dokus
 
-- Architektur: `docs/ARCHITECTURE.md`
-- Server Setup/Service: `docs/SERVER_DEPLOYMENT_GUIDE.md`
+- Design-Dokument: `MASTERPLAN.md`
+- Referenz (vollstaendig): `CLAUDE.md`
+- Server Setup: `docs/SERVER_DEPLOYMENT_GUIDE.md`
 - Batch + Multi-Channel: `docs/PROCESS_ALL_MULTI_CHANNEL.md`
-- Modelle/Constraints: `docs/CLAUDE_MODELS.md`, `docs/MODELS_TABLE.md`, `docs/CONSTRAINTS_TABLE.md`
-- Deployment-Nachweise: `DEPLOYMENT_VERIFICATION_REPORT.md`, `DEPLOYMENT_FINALIZATION_SUMMARY.md`
+- Sprint-Logs: `docs/sprints/`
+- Archiv (historisch): `docs/archive/`

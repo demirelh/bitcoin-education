@@ -89,7 +89,7 @@ Manage multiple YouTube channels or RSS feeds, with per-channel episode filterin
 Run the migration script to add multi-channel support to existing database:
 
 ```bash
-python scripts/migrate_channels.py
+btcedu migrate
 ```
 
 This will:

@@ -1111,6 +1111,60 @@ def trigger_tts(episode_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Image gallery endpoints (Sprint 12 — post-audit)
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/episodes/<episode_id>/images")
+def get_images_manifest(episode_id: str):
+    """Return image manifest JSON for an episode."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+    settings = _get_settings()
+    manifest_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "images", "manifest.json"
+    )
+
+    if not manifest_path:
+        return jsonify({"error": "Episode not found"}), 404
+
+    if not manifest_path.exists():
+        return jsonify({"error": "Image manifest not found"}), 404
+
+    content = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return jsonify(content)
+
+
+@api_bp.route("/episodes/<episode_id>/images/<filename>")
+def get_image_file(episode_id: str, filename: str):
+    """Serve a generated chapter image file (PNG)."""
+    from flask import send_file
+
+    episode_id = secure_filename(episode_id)
+    filename = secure_filename(filename)
+    if not episode_id or not filename:
+        return jsonify({"error": "Invalid parameters"}), 400
+
+    # Only serve PNG files
+    if not filename.lower().endswith(".png"):
+        return jsonify({"error": "Only PNG files are served"}), 400
+
+    settings = _get_settings()
+    img_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "images", filename
+    )
+
+    if not img_path:
+        return jsonify({"error": "Episode not found"}), 404
+
+    if not img_path.exists():
+        return jsonify({"error": f"Image not found: {filename}"}), 404
+
+    return send_file(str(img_path), mimetype="image/png")
+
+
+# ---------------------------------------------------------------------------
 # Render endpoints (Sprint 10)
 # ---------------------------------------------------------------------------
 

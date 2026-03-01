@@ -7,6 +7,8 @@ import pytest
 
 from btcedu.core.pipeline import StageResult, _run_stage
 from btcedu.core.reviewer import (
+    _is_minor_correction,
+    _is_punctuation_only,
     approve_review,
     create_review_task,
     get_latest_reviewer_feedback,
@@ -669,3 +671,138 @@ def test_request_changes_render_review_keeps_rendered(db_session, tmp_path):
     request_changes(db_session, task.id, notes="Adjust pacing")
     db_session.refresh(episode)
     assert episode.status == EpisodeStatus.RENDERED
+
+
+# ---------------------------------------------------------------------------
+# Auto-approve for minor corrections (MASTERPLAN §9.4)
+# ---------------------------------------------------------------------------
+
+
+class TestIsPunctuationOnly:
+    def test_identical(self):
+        assert _is_punctuation_only("hello world", "hello world")
+
+    def test_punctuation_added(self):
+        assert _is_punctuation_only("hello world", "hello, world")
+
+    def test_punctuation_removed(self):
+        assert _is_punctuation_only("hello, world!", "hello world")
+
+    def test_word_changed(self):
+        assert not _is_punctuation_only("hello world", "hello earth")
+
+    def test_word_added(self):
+        assert not _is_punctuation_only("hello", "hello world")
+
+
+class TestIsMinorCorrection:
+    def test_no_diff_path(self):
+        assert not _is_minor_correction(None)
+
+    def test_missing_file(self, tmp_path):
+        assert not _is_minor_correction(str(tmp_path / "nonexistent.json"))
+
+    def test_zero_changes(self, tmp_path):
+        diff = tmp_path / "diff.json"
+        diff.write_text(json.dumps({
+            "changes": [],
+            "summary": {"total_changes": 0},
+        }))
+        assert _is_minor_correction(str(diff))
+
+    def test_minor_punctuation_changes(self, tmp_path):
+        diff = tmp_path / "diff.json"
+        diff.write_text(json.dumps({
+            "changes": [
+                {"type": "replace", "original": "Bitcoin", "corrected": "Bitcoin,"},
+                {"type": "replace", "original": "ist", "corrected": "ist."},
+            ],
+            "summary": {"total_changes": 2},
+        }))
+        assert _is_minor_correction(str(diff))
+
+    def test_too_many_changes(self, tmp_path):
+        diff = tmp_path / "diff.json"
+        changes = [
+            {"type": "replace", "original": f"w{i}", "corrected": f"w{i},"}
+            for i in range(6)
+        ]
+        diff.write_text(json.dumps({
+            "changes": changes,
+            "summary": {"total_changes": 6},
+        }))
+        assert not _is_minor_correction(str(diff))
+
+    def test_word_change_disqualifies(self, tmp_path):
+        diff = tmp_path / "diff.json"
+        diff.write_text(json.dumps({
+            "changes": [
+                {"type": "replace", "original": "Bitcon", "corrected": "Bitcoin"},
+            ],
+            "summary": {"total_changes": 1},
+        }))
+        assert not _is_minor_correction(str(diff))
+
+    def test_invalid_json(self, tmp_path):
+        diff = tmp_path / "diff.json"
+        diff.write_text("not json")
+        assert not _is_minor_correction(str(diff))
+
+
+class TestAutoApproveMinorCorrections:
+    def test_auto_approves_minor_correction(self, db_session, corrected_episode, tmp_path):
+        """Minor correction creates an auto-approved review task."""
+        # Write a minor diff (punctuation only)
+        diff_path = tmp_path / "minor_diff.json"
+        diff_path.write_text(json.dumps({
+            "changes": [
+                {"type": "replace", "original": "Bitcoin", "corrected": "Bitcoin,"},
+            ],
+            "summary": {"total_changes": 1},
+        }))
+
+        task = create_review_task(
+            db_session,
+            episode_id="ep001",
+            stage="correct",
+            artifact_paths=[corrected_episode["corrected_path"]],
+            diff_path=str(diff_path),
+        )
+
+        db_session.refresh(task)
+        assert task.status == ReviewStatus.APPROVED.value
+        assert has_approved_review(db_session, "ep001", "correct")
+
+    def test_no_auto_approve_for_word_changes(self, db_session, corrected_episode):
+        """Non-trivial corrections stay pending."""
+        task = create_review_task(
+            db_session,
+            episode_id="ep001",
+            stage="correct",
+            artifact_paths=[corrected_episode["corrected_path"]],
+            diff_path=corrected_episode["diff_path"],  # has a word replacement
+        )
+
+        db_session.refresh(task)
+        assert task.status == ReviewStatus.PENDING.value
+
+    def test_no_auto_approve_for_non_correct_stage(self, db_session, corrected_episode, tmp_path):
+        """Auto-approve only applies to 'correct' stage."""
+        diff_path = tmp_path / "minor_diff.json"
+        diff_path.write_text(json.dumps({
+            "changes": [
+                {"type": "replace", "original": "x", "corrected": "x,"},
+            ],
+            "summary": {"total_changes": 1},
+        }))
+
+        task = create_review_task(
+            db_session,
+            episode_id="ep001",
+            stage="adapt",
+            artifact_paths=[corrected_episode["corrected_path"]],
+            diff_path=str(diff_path),
+        )
+
+        db_session.refresh(task)
+        assert task.status == ReviewStatus.PENDING.value

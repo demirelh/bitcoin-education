@@ -12,6 +12,7 @@ from btcedu.core.pipeline import (
     PipelineReport,
     StagePlan,
     StageResult,
+    _run_stage,
     resolve_pipeline_plan,
     retry_episode,
     run_episode_pipeline,
@@ -627,3 +628,252 @@ class TestResolvePipelinePlan:
             stage_callback=lambda s: called_stages.append(s),
         )
         assert called_stages == ["generate"]
+
+
+# ── V2 Pipeline End-to-End ───────────────────────────────────────
+
+
+class TestV2PipelineE2E:
+    """End-to-end test for the v2 pipeline including review gates.
+
+    Simulates a full NEW → PUBLISHED flow by mocking _run_stage to
+    advance episode status at each stage, with review gates pausing
+    the pipeline until manually approved.
+    """
+
+    @pytest.fixture
+    def v2_settings(self, tmp_path):
+        """Settings for v2 pipeline tests."""
+        s = _make_settings(tmp_path)
+        s.pipeline_version = 2
+        return s
+
+    @pytest.fixture
+    def v2_episode(self, db_session):
+        ep = Episode(
+            episode_id="ep_v2_e2e",
+            source="youtube_rss",
+            title="V2 E2E Test Episode",
+            url="https://youtube.com/watch?v=v2e2e",
+            status=EpisodeStatus.NEW,
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
+            pipeline_version=2,
+        )
+        db_session.add(ep)
+        db_session.commit()
+        return ep
+
+    @pytest.fixture
+    def v2_files(self, v2_settings, tmp_path):
+        """Create required output files for review gates."""
+        ep_id = "ep_v2_e2e"
+        t_dir = Path(v2_settings.transcripts_dir) / ep_id
+        t_dir.mkdir(parents=True, exist_ok=True)
+        (t_dir / "transcript.corrected.de.txt").write_text("corrected", encoding="utf-8")
+
+        o_dir = Path(v2_settings.outputs_dir) / ep_id
+        review_dir = o_dir / "review"
+        review_dir.mkdir(parents=True, exist_ok=True)
+        render_dir = o_dir / "render"
+        render_dir.mkdir(parents=True, exist_ok=True)
+
+        # Diff with a real word change — should NOT auto-approve
+        (review_dir / "correction_diff.json").write_text(
+            json.dumps({
+                "changes": [
+                    {"type": "replace", "original": "Bitcon", "corrected": "Bitcoin"},
+                ],
+                "summary": {"total_changes": 1},
+            }),
+            encoding="utf-8",
+        )
+        (o_dir / "script.adapted.tr.md").write_text("adapted", encoding="utf-8")
+        (render_dir / "draft.mp4").write_bytes(b"video")
+        (o_dir / "chapters.json").write_text(
+            json.dumps({"chapters": []}), encoding="utf-8"
+        )
+
+    def _make_stage_side_effect(self, db_session):
+        """Return a mock side effect that advances episode status like real stages."""
+        _STAGE_RESULT_STATUS = {
+            "download": EpisodeStatus.DOWNLOADED,
+            "transcribe": EpisodeStatus.TRANSCRIBED,
+            "correct": EpisodeStatus.CORRECTED,
+            "translate": EpisodeStatus.TRANSLATED,
+            "adapt": EpisodeStatus.ADAPTED,
+            "chapterize": EpisodeStatus.CHAPTERIZED,
+            "imagegen": EpisodeStatus.IMAGES_GENERATED,
+            "tts": EpisodeStatus.TTS_DONE,
+            "render": EpisodeStatus.RENDERED,
+            "publish": EpisodeStatus.PUBLISHED,
+        }
+
+        def side_effect(session, episode, settings, stage_name, force=False):
+            # Review gates need real logic — delegate to actual _run_stage
+            if stage_name.startswith("review_gate"):
+                return _run_stage(session, episode, settings, stage_name, force=force)
+
+            # Normal stages: advance status and return success
+            new_status = _STAGE_RESULT_STATUS.get(stage_name)
+            if new_status:
+                episode.status = new_status
+                session.commit()
+            return StageResult(stage_name, "success", 0.1, detail=f"mock ($0.0010)")
+
+        return side_effect
+
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_pauses_at_review_gate_1(
+        self, mock_stage, db_session, v2_episode, v2_settings, v2_files
+    ):
+        """Pipeline runs through correct, then pauses at review_gate_1."""
+        mock_stage.side_effect = self._make_stage_side_effect(db_session)
+
+        report = run_episode_pipeline(db_session, v2_episode, v2_settings)
+
+        assert report.success is True  # review_pending is not a failure
+        # Should have run: download, transcribe, correct, then paused at review_gate_1
+        stage_names = [s.stage for s in report.stages if s.status != "skipped"]
+        assert "download" in stage_names
+        assert "transcribe" in stage_names
+        assert "correct" in stage_names
+        assert "review_gate_1" in stage_names
+
+        # Episode stays at CORRECTED
+        db_session.refresh(v2_episode)
+        assert v2_episode.status == EpisodeStatus.CORRECTED
+
+        # Review pending — should not have processed translate
+        gate_result = next(s for s in report.stages if s.stage == "review_gate_1")
+        assert gate_result.status == "review_pending"
+
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_resumes_after_gate_1_approval(
+        self, mock_stage, db_session, v2_episode, v2_settings, v2_files
+    ):
+        """After approving gate 1, pipeline continues to gate 2."""
+        from btcedu.core.reviewer import approve_review
+        from btcedu.models.review import ReviewTask
+
+        mock_stage.side_effect = self._make_stage_side_effect(db_session)
+
+        # First run: pauses at gate 1
+        run_episode_pipeline(db_session, v2_episode, v2_settings)
+
+        # Approve the review
+        task = (
+            db_session.query(ReviewTask)
+            .filter(ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "correct")
+            .first()
+        )
+        assert task is not None
+        approve_review(db_session, task.id)
+
+        # Second run: should get past gate 1 and pause at gate 2
+        db_session.refresh(v2_episode)
+        report2 = run_episode_pipeline(db_session, v2_episode, v2_settings)
+
+        assert report2.success is True
+        gate1_result = next(s for s in report2.stages if s.stage == "review_gate_1")
+        assert gate1_result.status == "success"
+
+        # Should have translated + adapted, then paused at gate 2
+        stage_statuses = {s.stage: s.status for s in report2.stages}
+        assert stage_statuses.get("translate") == "success"
+        assert stage_statuses.get("adapt") == "success"
+        assert stage_statuses.get("review_gate_2") == "review_pending"
+
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_full_pipeline_new_to_published(
+        self, mock_stage, db_session, v2_episode, v2_settings, v2_files
+    ):
+        """Full pipeline: NEW → review_gate_1 → review_gate_2 → review_gate_3 → PUBLISHED."""
+        from btcedu.core.reviewer import approve_review
+        from btcedu.models.review import ReviewTask
+
+        mock_stage.side_effect = self._make_stage_side_effect(db_session)
+
+        # Run 1: pauses at gate 1
+        run_episode_pipeline(db_session, v2_episode, v2_settings)
+        db_session.refresh(v2_episode)
+        assert v2_episode.status == EpisodeStatus.CORRECTED
+
+        # Approve gate 1
+        task1 = db_session.query(ReviewTask).filter(
+            ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "correct"
+        ).first()
+        approve_review(db_session, task1.id)
+
+        # Run 2: pauses at gate 2
+        db_session.refresh(v2_episode)
+        run_episode_pipeline(db_session, v2_episode, v2_settings)
+        db_session.refresh(v2_episode)
+        assert v2_episode.status == EpisodeStatus.ADAPTED
+
+        # Approve gate 2
+        task2 = db_session.query(ReviewTask).filter(
+            ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "adapt"
+        ).first()
+        approve_review(db_session, task2.id)
+
+        # Run 3: pauses at gate 3
+        db_session.refresh(v2_episode)
+        run_episode_pipeline(db_session, v2_episode, v2_settings)
+        db_session.refresh(v2_episode)
+        assert v2_episode.status == EpisodeStatus.RENDERED
+
+        # Approve gate 3
+        task3 = db_session.query(ReviewTask).filter(
+            ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "render"
+        ).first()
+        approve_review(db_session, task3.id)
+
+        # Run 4: publishes
+        db_session.refresh(v2_episode)
+        report = run_episode_pipeline(db_session, v2_episode, v2_settings)
+        db_session.refresh(v2_episode)
+
+        assert report.success is True
+        assert v2_episode.status == EpisodeStatus.PUBLISHED
+
+        # Verify all 13 stages were reached across the 4 runs
+        stage_statuses = {s.stage: s.status for s in report.stages}
+        assert stage_statuses.get("review_gate_3") == "success"
+        assert stage_statuses.get("publish") == "success"
+
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_v2_plan_shows_all_13_stages(self, mock_stage, db_session, v2_episode, v2_settings):
+        """resolve_pipeline_plan returns all 13 v2 stages."""
+        plan = resolve_pipeline_plan(db_session, v2_episode, settings=v2_settings)
+        assert len(plan) == 13
+        stage_names = [p.stage for p in plan]
+        assert stage_names == [
+            "download", "transcribe", "correct",
+            "review_gate_1", "translate", "adapt",
+            "review_gate_2", "chapterize", "imagegen",
+            "tts", "render", "review_gate_3", "publish",
+        ]
+
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_v2_cost_accumulation(
+        self, mock_stage, db_session, v2_settings, tmp_path
+    ):
+        """Costs from v2 stages are accumulated in PipelineReport."""
+        ep = Episode(
+            episode_id="ep_cost",
+            source="youtube_rss",
+            title="Cost Test",
+            url="https://youtube.com/watch?v=cost",
+            status=EpisodeStatus.TRANSLATED,
+            pipeline_version=2,
+        )
+        db_session.add(ep)
+        db_session.commit()
+
+        # Simulate adapt returning with a cost (TRANSLATED → runs adapt)
+        mock_stage.return_value = StageResult(
+            "adapt", "success", 0.5, detail="3 adaptations (T1:2, T2:1, $0.0250)"
+        )
+        report = run_episode_pipeline(db_session, ep, v2_settings)
+
+        assert report.total_cost_usd == pytest.approx(0.025, abs=0.001)

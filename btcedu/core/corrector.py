@@ -199,6 +199,23 @@ def correct_transcript(
         diff_path.parent.mkdir(parents=True, exist_ok=True)
         diff_path.write_text(json.dumps(diff_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
+        # Mark downstream translation as stale if it exists (cascade invalidation)
+        translated_path = (
+            Path(settings.transcripts_dir) / episode_id / "transcript.tr.txt"
+        )
+        if translated_path.exists():
+            stale_marker = translated_path.parent / (translated_path.name + ".stale")
+            stale_data = {
+                "invalidated_at": _utcnow().isoformat(),
+                "invalidated_by": "correct",
+                "reason": "correction_changed",
+            }
+            stale_marker.parent.mkdir(parents=True, exist_ok=True)
+            stale_marker.write_text(json.dumps(stale_data, indent=2), encoding="utf-8")
+            logger.info(
+                "Marked downstream translation as stale: %s", translated_path.name
+            )
+
         # Write provenance
         elapsed = time.monotonic() - t0
         provenance = {

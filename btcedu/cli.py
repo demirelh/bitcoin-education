@@ -977,6 +977,71 @@ def request_changes_cmd(ctx: click.Context, review_id: int, notes: str) -> None:
         session.close()
 
 
+@cli.group()
+@click.pass_context
+def prompt(ctx: click.Context) -> None:
+    """Prompt version management commands."""
+    pass
+
+
+@prompt.command(name="list")
+@click.option("--name", default=None, help="Filter by prompt name.")
+@click.pass_context
+def prompt_list(ctx: click.Context, name: str | None) -> None:
+    """List prompt versions."""
+    from btcedu.core.prompt_registry import PromptRegistry
+    from btcedu.models.prompt_version import PromptVersion
+
+    session = ctx.obj["session_factory"]()
+    try:
+        if name:
+            registry = PromptRegistry(session)
+            versions = registry.get_history(name)
+        else:
+            versions = (
+                session.query(PromptVersion)
+                .order_by(PromptVersion.name, PromptVersion.version.desc())
+                .all()
+            )
+
+        if not versions:
+            click.echo("No prompt versions registered.")
+            return
+
+        click.echo(
+            f"{'ID':<5} {'Name':<25} {'Ver':<5} {'Default':<9} {'Hash':<14} {'Model':<30} {'Created'}"
+        )
+        click.echo("-" * 110)
+        for pv in versions:
+            created = pv.created_at.strftime("%Y-%m-%d %H:%M") if pv.created_at else "?"
+            default = "✓" if pv.is_default else ""
+            hash_short = pv.content_hash[:12] if pv.content_hash else "?"
+            click.echo(
+                f"{pv.id:<5} {pv.name:<25} {pv.version:<5} {default:<9} {hash_short:<14} "
+                f"{(pv.model or ''):<30} {created}"
+            )
+    finally:
+        session.close()
+
+
+@prompt.command()
+@click.argument("version_id", type=int)
+@click.pass_context
+def promote(ctx: click.Context, version_id: int) -> None:
+    """Promote a prompt version to default."""
+    from btcedu.core.prompt_registry import PromptRegistry
+
+    session = ctx.obj["session_factory"]()
+    try:
+        registry = PromptRegistry(session)
+        registry.promote_to_default(version_id)
+        click.echo(f"[OK] Prompt version {version_id} promoted to default.")
+    except ValueError as e:
+        click.echo(f"[FAIL] {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.command()
 @click.option("--episode-id", "episode_id", type=str, default=None, help="Filter by episode ID")
 @click.pass_context

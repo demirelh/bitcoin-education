@@ -322,6 +322,7 @@
         <div class="tab" data-tab="script_v2">Script v2</div>
         <div class="tab" data-tab="publishing_v2">Publishing v2</div>
         <div class="tab" data-tab="chapters">Chapters</div>
+        <div class="tab" data-tab="images">Images</div>
         <div class="tab" data-tab="tts_audio">TTS Audio</div>
         <div class="tab" data-tab="video">Video</div>
         <div class="tab" data-tab="report">Report</div>
@@ -357,6 +358,13 @@
       if (activeJobId) {
         logPollTimer = setInterval(loadLogTail, 2000);
       }
+      return;
+    }
+
+    if (type === "images") {
+      viewer.classList.remove("log-viewer");
+      viewer.innerHTML = "Loading images...";
+      await loadImagesPanel();
       return;
     }
 
@@ -397,6 +405,64 @@
       }
     } catch (err) {
       viewer.textContent = "Failed to load logs.";
+    }
+  }
+
+  // ── Images Gallery Panel ─────────────────────────────────────
+  async function loadImagesPanel() {
+    if (!selected) return;
+    const viewer = document.getElementById("viewer");
+
+    try {
+      const data = await GET(`/episodes/${selected.episode_id}/images`);
+      if (data.error) {
+        viewer.innerHTML = `
+          <div class="images-panel">
+            <p>No images generated yet.</p>
+            <button class="btn btn-sm btn-primary" onclick="actions.imagegen()">Generate Images</button>
+          </div>`;
+        return;
+      }
+
+      const images = data.images || [];
+      const generated = images.filter(i => i.generation_method !== 'failed');
+
+      let cards = images.map(img => {
+        const imgUrl = `api/episodes/${selected.episode_id}/images/${esc(img.filename || img.chapter_id + '.png')}`;
+        const isFailed = img.generation_method === 'failed';
+        return `
+          <div class="image-card ${isFailed ? 'image-failed' : ''}">
+            <div class="image-card-header">
+              <strong>${esc(img.chapter_id)}</strong>
+              <span class="image-method">${esc(img.generation_method || 'generated')}</span>
+            </div>
+            ${isFailed
+              ? '<div class="image-placeholder">Generation failed</div>'
+              : `<img src="${imgUrl}" alt="${esc(img.chapter_id)}" loading="lazy" style="max-width:100%;border-radius:4px;cursor:pointer" onclick="window.open('${imgUrl}','_blank')">`
+            }
+            <div class="image-prompt" style="font-size:0.8em;color:#888;margin-top:4px;max-height:60px;overflow:auto">
+              ${esc((img.prompt || '').substring(0, 200))}
+            </div>
+          </div>`;
+      }).join('');
+
+      viewer.innerHTML = `
+        <div class="images-panel">
+          <div class="images-summary">
+            <strong>Images:</strong>
+            ${generated.length}/${images.length} generated
+            <button class="btn btn-sm" style="margin-left:1em" onclick="actions.imagegen()">Regenerate</button>
+          </div>
+          <div class="images-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1em;margin-top:1em">
+            ${cards}
+          </div>
+        </div>`;
+    } catch (err) {
+      viewer.innerHTML = `
+        <div class="images-panel">
+          <p>No images generated yet.</p>
+          <button class="btn btn-sm btn-primary" onclick="actions.imagegen()">Generate Images</button>
+        </div>`;
     }
   }
 

@@ -252,7 +252,7 @@ Validators: `ChapterDocument` validates total_chapters == len(chapters), sequent
 | `reports_dir` | str | "data/reports" | |
 | `logs_dir` | str | "data/logs" | |
 
-## CLI Commands (`btcedu`)
+## CLI Commands (`btcedu`) — 34 commands
 
 | Command | Key Options | Purpose |
 |---------|-------------|---------|
@@ -283,6 +283,9 @@ Validators: `ChapterDocument` validates total_chapters == len(chapters), sequent
 | `review approve` | `REVIEW_ID`, `--notes` | Approve review |
 | `review reject` | `REVIEW_ID`, `--notes` | Reject review |
 | `review request-changes` | `REVIEW_ID`, `--notes` | Request changes |
+| `prompt` (group) | | Prompt version management |
+| `prompt list` | `--name` | List all prompt versions |
+| `prompt promote` | `VERSION_ID` | Promote prompt to default |
 | `youtube-auth` | | Interactive OAuth flow |
 | `youtube-status` | | Check YouTube credential status |
 | `init-db` | | Create all tables |
@@ -401,7 +404,7 @@ Each v2 stage follows this structure (reference: `image_generator.py`, `tts.py`,
 Format: YAML frontmatter (name, version, model, temperature, max_tokens) + Jinja2 body.
 `PromptRegistry` loads templates, computes SHA-256 content hash, registers `PromptVersion` in DB.
 
-## Tests (581 passing, pytest)
+## Tests (629 passing, pytest)
 
 ### Fixtures (conftest.py)
 - `db_engine` — in-memory SQLite + FTS5
@@ -420,7 +423,7 @@ Format: YAML frontmatter (name, version, model, temperature, max_tokens) + Jinja
 **Required**: click, anthropic, openai, sqlalchemy, pydantic, pydantic-settings, python-dotenv, pyyaml, feedparser, yt-dlp, pydub, requests
 **Optional (web)**: flask, gunicorn
 **Optional (dev)**: pytest, ruff, flask
-**Optional (youtube)**: google-api-python-client, google-auth-httplib2, google-auth-oauthlib (commented out — install separately)
+**Optional (youtube)**: google-api-python-client, google-auth-httplib2, google-auth-oauthlib (`pip install -e ".[youtube]"`)
 
 **Ruff config**: target py312, line-length 100, select E/W/F/I/UP, ignore UP042
 
@@ -433,6 +436,9 @@ Format: YAML frontmatter (name, version, model, temperature, max_tokens) + Jinja
 5. **v1/v2 coexistence** — `pipeline_version` field; v1 code untouched
 6. **YouTube OAuth** — interactive `youtube-auth` CLI; credentials stored at `youtube_credentials_path`
 7. **Safety checks before publish** — approval gate + artifact integrity + metadata completeness + cost sanity
+8. **Auto-approve for minor corrections** — corrections with <5 punctuation-only changes are auto-approved (MASTERPLAN §9.4)
+9. **Review history file** — all review decisions appended to `data/outputs/{ep_id}/review/review_history.json` for file-level audit trail
+10. **Corrector cascade invalidation** — re-correction marks `transcript.tr.txt.stale` to trigger re-translation
 
 ## Known Gotchas
 
@@ -441,7 +447,7 @@ Format: YAML frontmatter (name, version, model, temperature, max_tokens) + Jinja
 - **Chapter schema**: `Chapter.visual` is singular (`Visual`), not a list. `Narration` has `.text`, `.word_count`, `.estimated_duration_seconds`.
 - **Lazy imports**: Stage functions lazy-imported inside `_run_stage()` to avoid circular imports.
 - **Cost extraction**: `run_episode_pipeline()` parses cost from `StageResult.detail` string (splits on `$`).
-- **YouTube deps commented out**: `google-api-python-client` etc. are in pyproject.toml but commented. Install manually for publishing.
+- **YouTube deps are optional**: Install via `pip install -e ".[youtube]"`. `run.sh` auto-installs if `data/client_secret.json` exists.
 - **check_token_status return**: returns `{valid, expired, expiry, can_refresh, error}` — no `exists` key.
 - **Datetime helper**: all models use `_utcnow() → datetime.now(UTC)` for defaults.
 

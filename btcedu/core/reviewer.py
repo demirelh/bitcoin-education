@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -114,6 +115,102 @@ def _compute_artifact_hash(paths: list[str]) -> str:
     return h.hexdigest()
 
 
+# Regex: strip everything except word characters and whitespace
+_STRIP_PUNCT_RE = re.compile(r"[^\w\s]", re.UNICODE)
+
+# Max changes for auto-approve eligibility
+_AUTO_APPROVE_MAX_CHANGES = 5
+
+
+def _is_punctuation_only(original: str, corrected: str) -> bool:
+    """Return True if the only difference is punctuation characters."""
+    stripped_orig = _STRIP_PUNCT_RE.sub("", original).split()
+    stripped_corr = _STRIP_PUNCT_RE.sub("", corrected).split()
+    return stripped_orig == stripped_corr
+
+
+def _is_minor_correction(diff_path: str | None) -> bool:
+    """Check if a correction diff qualifies for auto-approval.
+
+    A correction is minor if:
+    1. The diff file exists and is valid JSON.
+    2. Total changes < _AUTO_APPROVE_MAX_CHANGES.
+    3. Every change is punctuation-only (no word content changed).
+
+    Returns False conservatively on any error.
+    """
+    if not diff_path:
+        return False
+
+    path = Path(diff_path)
+    if not path.exists():
+        return False
+
+    try:
+        diff_data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+
+    changes = diff_data.get("changes", [])
+    total = diff_data.get("summary", {}).get("total_changes", len(changes))
+
+    if total == 0:
+        # Zero changes — trivially minor
+        return True
+
+    if total >= _AUTO_APPROVE_MAX_CHANGES:
+        return False
+
+    # Every change must be punctuation-only
+    for change in changes:
+        original = change.get("original", "")
+        corrected = change.get("corrected", "")
+        if not _is_punctuation_only(original, corrected):
+            return False
+
+    return True
+
+
+def _write_review_history(task: ReviewTask, decision: ReviewDecision) -> None:
+    """Append a review decision to the episode's review_history.json.
+
+    Creates the file if it doesn't exist. Each entry captures the decision,
+    reviewer notes, and timestamps for file-level audit trail.
+    """
+    settings = _get_runtime_settings()
+    history_path = (
+        Path(settings.outputs_dir) / task.episode_id / "review" / "review_history.json"
+    )
+
+    # Load existing history or start fresh
+    history: list[dict] = []
+    if history_path.exists():
+        try:
+            history = json.loads(history_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            history = []
+
+    entry = {
+        "review_task_id": task.id,
+        "episode_id": task.episode_id,
+        "stage": task.stage,
+        "decision": decision.decision,
+        "notes": decision.notes,
+        "decided_at": decision.decided_at.isoformat() if decision.decided_at else None,
+        "artifact_hash": task.artifact_hash,
+        "task_status": task.status,
+    }
+    history.append(entry)
+
+    try:
+        history_path.parent.mkdir(parents=True, exist_ok=True)
+        history_path.write_text(
+            json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+    except OSError as e:
+        logger.warning("Could not write review history to %s: %s", history_path, e)
+
+
 def _get_runtime_settings():
     """Return active app settings if available, else default Settings()."""
     try:
@@ -176,6 +273,15 @@ def create_review_task(
         episode_id,
         stage,
     )
+
+    # Auto-approve minor corrections (MASTERPLAN §9.4)
+    if stage == "correct" and _is_minor_correction(diff_path):
+        logger.info(
+            "Auto-approving review task %d — minor correction (<5 punctuation-only changes)",
+            task.id,
+        )
+        approve_review(session, task.id, notes="auto-approved: minor punctuation-only correction")
+
     return task
 
 
@@ -217,6 +323,8 @@ def approve_review(
     session.add(decision)
     session.commit()
 
+    _write_review_history(task, decision)
+
     logger.info("Approved review task %d (episode %s)", task.id, task.episode_id)
     return decision
 
@@ -256,6 +364,8 @@ def reject_review(
     )
     session.add(decision)
     session.commit()
+
+    _write_review_history(task, decision)
 
     logger.info("Rejected review task %d (episode %s)", task.id, task.episode_id)
     return decision
@@ -303,6 +413,8 @@ def request_changes(
     )
     session.add(decision)
     session.commit()
+
+    _write_review_history(task, decision)
 
     logger.info(
         "Requested changes on review task %d (episode %s)",

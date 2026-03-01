@@ -68,6 +68,11 @@ check_prerequisites() {
         error_exit "Python not found in virtual environment."
     fi
 
+    # Check for ffmpeg (required for renderer stage)
+    if ! command -v ffmpeg > /dev/null 2>&1; then
+        log_warn "ffmpeg not found. Video rendering will not work. Install with: sudo apt install ffmpeg"
+    fi
+
     # Check if btcedu is installed
     if ! "${VENV_PATH}/bin/python" -c "import btcedu" 2>/dev/null; then
         log_warn "btcedu package not installed in venv. Will install dependencies."
@@ -104,9 +109,17 @@ pull_latest_code() {
 install_dependencies() {
     log_info "Installing/updating Python dependencies..."
 
-    # Activate virtual environment and install
+    # Activate virtual environment and install core + web
     if ! "${VENV_PATH}/bin/pip" install -e ".[web]" --quiet; then
         error_exit "Failed to install dependencies."
+    fi
+
+    # Install YouTube publishing deps if client_secret.json exists
+    if [ -f "data/client_secret.json" ]; then
+        log_info "YouTube client secrets found, installing YouTube dependencies..."
+        if ! "${VENV_PATH}/bin/pip" install -e ".[youtube]" --quiet 2>/dev/null; then
+            log_warn "Failed to install YouTube dependencies. Publishing will not work."
+        fi
     fi
 
     log_info "Dependencies installed successfully."
@@ -115,6 +128,11 @@ install_dependencies() {
 # Run database migrations
 run_migrations() {
     log_info "Running database migrations..."
+
+    # Ensure tables exist (idempotent)
+    if ! "${VENV_PATH}/bin/btcedu" init-db > /dev/null 2>&1; then
+        log_warn "init-db encountered an issue. Proceeding with migrations."
+    fi
 
     # Check migration status first
     if ! "${VENV_PATH}/bin/btcedu" migrate-status > /dev/null 2>&1; then
@@ -151,6 +169,16 @@ restart_service() {
     # Check service status
     if sudo systemctl is-active --quiet "${SERVICE_NAME}"; then
         log_info "Service ${SERVICE_NAME} restarted successfully and is running."
+
+        # Health check via API
+        if command -v curl > /dev/null 2>&1; then
+            sleep 1
+            if curl -sf http://localhost:5000/api/health > /dev/null 2>&1; then
+                log_info "Health check passed (/api/health)."
+            else
+                log_warn "Health check failed or endpoint not reachable yet. Service may need more time to start."
+            fi
+        fi
     else
         log_error "Service ${SERVICE_NAME} failed to start. Check logs with: sudo journalctl -u ${SERVICE_NAME} -n 50"
         exit 1

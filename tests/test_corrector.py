@@ -434,6 +434,39 @@ class TestReviewerFeedbackInjection:
         )
         assert runs_after == runs_before + 1
 
+    def test_marks_downstream_translation_stale(
+        self, db_session, transcribed_episode, mock_settings
+    ):
+        """Re-correcting a transcript marks the translation as stale."""
+        # Create a fake translation file that should be invalidated
+        tr_path = Path(mock_settings.transcripts_dir) / "ep_test" / "transcript.tr.txt"
+        tr_path.parent.mkdir(parents=True, exist_ok=True)
+        tr_path.write_text("Sahte çeviri", encoding="utf-8")
+
+        # Run correction
+        correct_transcript(db_session, "ep_test", mock_settings)
+
+        # The translation's stale marker should now exist
+        stale_marker = tr_path.parent / (tr_path.name + ".stale")
+        assert stale_marker.exists(), "Correction should mark downstream translation as stale"
+
+        stale_data = json.loads(stale_marker.read_text(encoding="utf-8"))
+        assert stale_data["invalidated_by"] == "correct"
+        assert stale_data["reason"] == "correction_changed"
+
+    def test_no_stale_marker_when_no_translation(
+        self, db_session, transcribed_episode, mock_settings
+    ):
+        """If no translation exists yet, no stale marker is created."""
+        correct_transcript(db_session, "ep_test", mock_settings)
+
+        tr_stale = (
+            Path(mock_settings.transcripts_dir)
+            / "ep_test"
+            / "transcript.tr.txt.stale"
+        )
+        assert not tr_stale.exists()
+
 
 # ---------------------------------------------------------------------------
 # CLI test

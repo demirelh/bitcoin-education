@@ -334,3 +334,146 @@ def test_probe_media_video_only(tmp_path):
 
         assert info.codec_video == "h264"
         assert info.codec_audio is None
+
+
+# Sprint 10: Fade transition tests
+
+
+def test_create_segment_with_fade_in(tmp_path):
+    """Test create_segment with fade_in_duration."""
+    image = tmp_path / "test.png"
+    audio = tmp_path / "test.mp3"
+    output = tmp_path / "output.mp4"
+    image.write_bytes(b"fake image")
+    audio.write_bytes(b"fake audio")
+
+    with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
+        mock_ffmpeg.return_value = (0, "success")
+
+        result = create_segment(
+            image_path=str(image),
+            audio_path=str(audio),
+            output_path=str(output),
+            duration=10.0,
+            overlays=[],
+            fade_in_duration=0.5,
+            dry_run=False,
+        )
+
+        # Check that ffmpeg was called
+        assert mock_ffmpeg.called
+        cmd = mock_ffmpeg.call_args[0][0]
+
+        # Check filter_complex contains fade=t=in
+        filter_idx = cmd.index("-filter_complex")
+        filter_complex = cmd[filter_idx + 1]
+        assert "fade=t=in:st=0:d=0.5" in filter_complex
+
+        # Check audio fade filter
+        af_idx = cmd.index("-af")
+        af_filter = cmd[af_idx + 1]
+        assert "afade=t=in:st=0:d=0.5" in af_filter
+
+
+def test_create_segment_with_fade_out(tmp_path):
+    """Test create_segment with fade_out_duration."""
+    image = tmp_path / "test.png"
+    audio = tmp_path / "test.mp3"
+    output = tmp_path / "output.mp4"
+    image.write_bytes(b"fake image")
+    audio.write_bytes(b"fake audio")
+
+    with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
+        mock_ffmpeg.return_value = (0, "success")
+
+        result = create_segment(
+            image_path=str(image),
+            audio_path=str(audio),
+            output_path=str(output),
+            duration=10.0,
+            overlays=[],
+            fade_out_duration=0.5,
+            dry_run=False,
+        )
+
+        cmd = mock_ffmpeg.call_args[0][0]
+
+        # Check filter_complex contains fade=t=out
+        filter_idx = cmd.index("-filter_complex")
+        filter_complex = cmd[filter_idx + 1]
+        assert "fade=t=out:st=9.5:d=0.5" in filter_complex
+
+        # Check audio fade filter
+        af_idx = cmd.index("-af")
+        af_filter = cmd[af_idx + 1]
+        assert "afade=t=out:st=9.5:d=0.5" in af_filter
+
+
+def test_create_segment_with_both_fades(tmp_path):
+    """Test create_segment with both fade_in and fade_out."""
+    image = tmp_path / "test.png"
+    audio = tmp_path / "test.mp3"
+    output = tmp_path / "output.mp4"
+    image.write_bytes(b"fake image")
+    audio.write_bytes(b"fake audio")
+
+    with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
+        mock_ffmpeg.return_value = (0, "success")
+
+        result = create_segment(
+            image_path=str(image),
+            audio_path=str(audio),
+            output_path=str(output),
+            duration=10.0,
+            overlays=[],
+            fade_in_duration=0.5,
+            fade_out_duration=0.5,
+            dry_run=False,
+        )
+
+        cmd = mock_ffmpeg.call_args[0][0]
+
+        # Check both fades in filter_complex
+        filter_idx = cmd.index("-filter_complex")
+        filter_complex = cmd[filter_idx + 1]
+        assert "fade=t=in:st=0:d=0.5" in filter_complex
+        assert "fade=t=out:st=9.5:d=0.5" in filter_complex
+
+        # Check both audio fades
+        af_idx = cmd.index("-af")
+        af_filter = cmd[af_idx + 1]
+        assert "afade=t=in:st=0:d=0.5" in af_filter
+        assert "afade=t=out:st=9.5:d=0.5" in af_filter
+
+
+def test_create_segment_no_fades(tmp_path):
+    """Test create_segment without fades (backward compatibility)."""
+    image = tmp_path / "test.png"
+    audio = tmp_path / "test.mp3"
+    output = tmp_path / "output.mp4"
+    image.write_bytes(b"fake image")
+    audio.write_bytes(b"fake audio")
+
+    with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
+        mock_ffmpeg.return_value = (0, "success")
+
+        result = create_segment(
+            image_path=str(image),
+            audio_path=str(audio),
+            output_path=str(output),
+            duration=10.0,
+            overlays=[],
+            fade_in_duration=0.0,
+            fade_out_duration=0.0,
+            dry_run=False,
+        )
+
+        cmd = mock_ffmpeg.call_args[0][0]
+
+        # Check NO fade filters in filter_complex
+        filter_idx = cmd.index("-filter_complex")
+        filter_complex = cmd[filter_idx + 1]
+        assert "fade=" not in filter_complex
+
+        # Check NO -af parameter (no audio fades)
+        assert "-af" not in cmd

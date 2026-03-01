@@ -332,3 +332,174 @@ class TestReviewGate1Pipeline:
         result = _run_stage(db_session, episode, gate_settings, "review_gate_1")
         assert result.status == "success"
         assert "approved" in result.detail
+
+
+# Sprint 10: Revert episode tests for all three gates
+
+
+def test_revert_episode_corrected_to_transcribed(db_session):
+    """Test _revert_episode reverts CORRECTED to TRANSCRIBED (RG1)."""
+    from btcedu.core.reviewer import _revert_episode
+
+    episode = Episode(
+        episode_id="ep_rg1",
+        source="youtube_rss",
+        title="Test RG1",
+        url="https://youtube.com/watch?v=1",
+        status=EpisodeStatus.CORRECTED,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    _revert_episode(db_session, "ep_rg1")
+    db_session.refresh(episode)
+
+    assert episode.status == EpisodeStatus.TRANSCRIBED
+
+
+def test_revert_episode_adapted_to_translated(db_session):
+    """Test _revert_episode reverts ADAPTED to TRANSLATED (RG2)."""
+    from btcedu.core.reviewer import _revert_episode
+
+    episode = Episode(
+        episode_id="ep_rg2",
+        source="youtube_rss",
+        title="Test RG2",
+        url="https://youtube.com/watch?v=2",
+        status=EpisodeStatus.ADAPTED,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    _revert_episode(db_session, "ep_rg2")
+    db_session.refresh(episode)
+
+    assert episode.status == EpisodeStatus.TRANSLATED
+
+
+def test_revert_episode_rendered_to_tts_done(db_session):
+    """Test _revert_episode reverts RENDERED to TTS_DONE (RG3)."""
+    from btcedu.core.reviewer import _revert_episode
+
+    episode = Episode(
+        episode_id="ep_rg3",
+        source="youtube_rss",
+        title="Test RG3",
+        url="https://youtube.com/watch?v=3",
+        status=EpisodeStatus.RENDERED,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    _revert_episode(db_session, "ep_rg3")
+    db_session.refresh(episode)
+
+    assert episode.status == EpisodeStatus.TTS_DONE
+
+
+def test_revert_episode_no_mapping(db_session):
+    """Test _revert_episode logs warning for unmapped status."""
+    from btcedu.core.reviewer import _revert_episode
+
+    episode = Episode(
+        episode_id="ep_unmapped",
+        source="youtube_rss",
+        title="Test Unmapped",
+        url="https://youtube.com/watch?v=u",
+        status=EpisodeStatus.NEW,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    # Should not change status
+    _revert_episode(db_session, "ep_unmapped")
+    db_session.refresh(episode)
+
+    assert episode.status == EpisodeStatus.NEW
+
+
+def test_get_review_detail_video_fields(db_session, tmp_path):
+    """Test get_review_detail returns video_url and render_manifest for render stage."""
+    # Create episode
+    episode = Episode(
+        episode_id="ep_video",
+        source="youtube_rss",
+        title="Video Test",
+        url="https://youtube.com/watch?v=v",
+        status=EpisodeStatus.RENDERED,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    # Create render outputs
+    render_dir = tmp_path / "outputs" / "ep_video" / "render"
+    render_dir.mkdir(parents=True)
+    draft_video = render_dir / "draft.mp4"
+    draft_video.write_bytes(b"fake video")
+
+    manifest_data = {
+        "episode_id": "ep_video",
+        "total_duration_seconds": 120.5,
+        "total_size_bytes": 10240000,
+        "segments": [],
+    }
+    manifest_file = render_dir / "render_manifest.json"
+    manifest_file.write_text(json.dumps(manifest_data), encoding="utf-8")
+
+    # Create review task
+    task = create_review_task(
+        db_session,
+        "ep_video",
+        stage="render",
+        artifact_paths=[str(draft_video)],
+        diff_path=str(manifest_file),
+    )
+
+    # Mock Settings to point to tmp_path
+    from unittest.mock import patch
+
+    from btcedu.config import Settings
+
+    mock_settings = Settings(outputs_dir=str(tmp_path / "outputs"))
+
+    with patch("btcedu.core.reviewer.Settings", return_value=mock_settings):
+        detail = get_review_detail(db_session, task.id)
+
+    assert detail["stage"] == "render"
+    assert detail["video_url"] == "/api/episodes/ep_video/render/draft.mp4"
+    assert detail["render_manifest"] is not None
+    assert detail["render_manifest"]["total_duration_seconds"] == 120.5
+
+
+def test_get_review_detail_video_fields_missing_files(db_session, tmp_path):
+    """Test get_review_detail handles missing video/manifest gracefully."""
+    episode = Episode(
+        episode_id="ep_no_video",
+        source="youtube_rss",
+        title="No Video Test",
+        url="https://youtube.com/watch?v=nv",
+        status=EpisodeStatus.RENDERED,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    # Create review task but no actual files
+    task = create_review_task(
+        db_session,
+        "ep_no_video",
+        stage="render",
+        artifact_paths=["/nonexistent/draft.mp4"],
+    )
+
+    from unittest.mock import patch
+
+    from btcedu.config import Settings
+
+    mock_settings = Settings(outputs_dir=str(tmp_path / "outputs"))
+
+    with patch("btcedu.core.reviewer.Settings", return_value=mock_settings):
+        detail = get_review_detail(db_session, task.id)
+
+    assert detail["stage"] == "render"
+    assert detail["video_url"] is None  # No video file
+    assert detail["render_manifest"] is None  # No manifest file

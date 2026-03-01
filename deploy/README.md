@@ -2,7 +2,7 @@
 
 This directory contains all files needed for production deployment of the btcedu application.
 
-## Quick Start - Install Service on Server
+## Quick Start - Install Services on Server
 
 **Run this on the server (lnodebtc.duckdns.org) as user pi:**
 
@@ -14,19 +14,24 @@ cd /home/pi/AI-Startup-Lab/bitcoin-education
 
 # Option 2: Manual installation
 sudo cp deploy/btcedu-web.service /etc/systemd/system/
+sudo cp deploy/btcedu-detect.service deploy/btcedu-detect.timer /etc/systemd/system/
+sudo cp deploy/btcedu-run.service deploy/btcedu-run.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now btcedu-web.service
+sudo systemctl enable --now btcedu-detect.timer
+sudo systemctl enable --now btcedu-run.timer
 
 # Configure passwordless sudo for automated deployments
-echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart btcedu-web, /bin/systemctl status btcedu-web, /bin/systemctl stop btcedu-web, /bin/systemctl start btcedu-web, /bin/systemctl is-active btcedu-web" | sudo tee /etc/sudoers.d/pi-btcedu
+echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart btcedu-web, /bin/systemctl status btcedu-web, /bin/systemctl stop btcedu-web, /bin/systemctl start btcedu-web, /bin/systemctl is-active btcedu-web, /bin/systemctl daemon-reload, /bin/systemctl restart btcedu-detect.timer, /bin/systemctl restart btcedu-run.timer" | sudo tee /etc/sudoers.d/pi-btcedu
 sudo chmod 0440 /etc/sudoers.d/pi-btcedu
 
 # Verify installation
 sudo systemctl status btcedu-web.service
+sudo systemctl list-timers btcedu-*
 curl http://127.0.0.1:8091/api/health
 ```
 
-📖 **For detailed instructions, see:** [docs/SERVER_DEPLOYMENT_GUIDE.md](../docs/SERVER_DEPLOYMENT_GUIDE.md)
+For detailed instructions, see: [docs/SERVER_DEPLOYMENT_GUIDE.md](../docs/SERVER_DEPLOYMENT_GUIDE.md)
 
 ---
 
@@ -50,7 +55,7 @@ curl http://127.0.0.1:8091/api/health
 
 | File | Purpose |
 |------|---------|
-| `setup-web.sh` | Interactive setup script for web dashboard deployment |
+| `setup-web.sh` | Interactive setup: installs all systemd services/timers, configures Caddy auth |
 
 ---
 
@@ -58,17 +63,24 @@ curl http://127.0.0.1:8091/api/health
 
 ```
 GitHub Actions Workflow (deploy.yml)
-    ↓ (push to main)
+    | (push to main)
 SSH to lnodebtc.duckdns.org
-    ↓
+    |
 run.sh deployment script
-    ├─ git pull origin main
-    ├─ pip install dependencies
-    ├─ btcedu migrate (database)
-    └─ sudo systemctl restart btcedu-web ← Requires service installation
-           ↓
+    |- git pull origin main
+    |- pip install dependencies
+    |- btcedu migrate (database)
+    |- sudo systemctl daemon-reload
+    |- sudo systemctl restart btcedu-web
+    |- sudo systemctl restart btcedu-detect.timer
+    +- sudo systemctl restart btcedu-run.timer
+           |
     btcedu-web.service (systemd)
-        └─ gunicorn → Flask app (port 8091)
+        +- gunicorn -> Flask app (port 8091)
+    btcedu-detect.timer (every 6h)
+        +- btcedu detect
+    btcedu-run.timer (daily 02:00)
+        +- btcedu run-latest
 ```
 
 ---
@@ -77,88 +89,76 @@ run.sh deployment script
 
 ### btcedu-web.service
 
-**What it does:**
 - Runs the web dashboard continuously in the background
 - Listens on `127.0.0.1:8091` (localhost only, not exposed to internet)
-- Automatically restarts on failure
+- Automatically restarts on failure (5s delay)
 - Starts on server boot
 - Logs to journalctl
 
-**Service configuration:**
-- **User:** pi
-- **Working Directory:** /home/pi/AI-Startup-Lab/bitcoin-education
-- **Command:** gunicorn with 1 worker, 4 threads
-- **Environment:** Loads from .env file
-- **Restart Policy:** on-failure with 5 second delay
+**Configuration:** User `pi`, 1 gunicorn worker, 4 threads, environment from `.env`.
+
+### btcedu-detect.timer
+
+- Runs `btcedu detect` every 6 hours (with up to 5 min random delay)
+- Scans RSS feed for new podcast episodes
+- Persistent: catches up on missed runs after reboot
+
+### btcedu-run.timer
+
+- Runs `btcedu run-latest` daily at 02:00 (with up to 10 min random delay)
+- Processes the latest pending episode through the v2 pipeline
+- Timeout: 30 minutes (`TimeoutStartSec=1800`)
 
 **View logs:**
 ```bash
-sudo journalctl -u btcedu-web.service -f
-```
-
-**Restart service:**
-```bash
-sudo systemctl restart btcedu-web.service
+sudo journalctl -u btcedu-web -f
+sudo journalctl -u btcedu-detect -n 20
+sudo journalctl -u btcedu-run -n 20
+sudo systemctl list-timers btcedu-*
 ```
 
 ---
 
 ## Automated Deployment Flow
 
-Once the service is installed, deployments work automatically:
+Once services are installed, deployments work automatically:
 
 1. **Developer pushes to main branch**
-   ```bash
-   git push origin main
-   ```
-
 2. **GitHub Actions triggers** (`.github/workflows/deploy.yml`)
-   - Workflow runs automatically on push to main
-
-3. **GitHub Actions connects via SSH**
-   - Uses DEPLOY_SSH_KEY secret
-   - Connects to pi@lnodebtc.duckdns.org
-
-4. **Runs deployment script**
-   ```bash
-   bash /home/pi/AI-Startup-Lab/bitcoin-education/run.sh
-   ```
-
-5. **run.sh executes deployment steps:**
-   - ✅ Pulls latest code from git
-   - ✅ Installs/updates Python dependencies
-   - ✅ Runs database migrations
-   - ✅ Restarts btcedu-web service ← **Requires service to be installed**
-
-6. **Service restarts**
-   - Gunicorn reloads with new code
-   - Dashboard updates are live
-   - Zero downtime (systemd manages graceful restart)
+3. **GitHub Actions connects via SSH** (uses `DEPLOY_SSH_KEY` secret)
+4. **Runs `run.sh`**, which:
+   - Pulls latest code from git
+   - Installs/updates Python dependencies (`.[web]` + `.[youtube]` if configured)
+   - Runs database migrations
+   - Reloads systemd daemon (picks up unit file changes)
+   - Restarts web service + pipeline timers
 
 ---
 
-## Prerequisites for Service Installation
+## Prerequisites
 
-Before installing btcedu-web.service, ensure:
+Before running `setup-web.sh` or manual installation, ensure:
 
-1. ✅ Virtual environment exists: `/home/pi/AI-Startup-Lab/bitcoin-education/.venv`
-2. ✅ Gunicorn is installed: `.venv/bin/pip install 'gunicorn>=22.0.0'`
-3. ✅ Environment file exists: `.env` (copy from `.env.example`)
-4. ✅ Application is installed: `.venv/bin/pip install -e ".[web]"`
-5. ✅ Database is initialized: `.venv/bin/btcedu init-db && .venv/bin/btcedu migrate`
+1. Virtual environment exists: `.venv/` (create with `python -m venv .venv`)
+2. Application is installed: `.venv/bin/pip install -e ".[web]"` (includes gunicorn)
+3. Environment file exists: `.env` (systemd units load it via `EnvironmentFile`)
+4. Database is initialized: `.venv/bin/btcedu init-db && .venv/bin/btcedu migrate`
+5. (Optional) YouTube credentials: `pip install -e ".[youtube]"` + `data/client_secret.json`
 
 ---
 
 ## Verification Checklist
 
-After installing the service, verify it works:
+After installing services, verify everything works:
 
 ```bash
-# 1. Service is running
+# 1. Web service is running
 sudo systemctl status btcedu-web.service | grep "active (running)"
 
-# 2. Service is enabled (starts on boot)
-sudo systemctl is-enabled btcedu-web.service | grep "enabled"
+# 2. All services enabled (start on boot)
+sudo systemctl is-enabled btcedu-web.service
+sudo systemctl is-enabled btcedu-detect.timer
+sudo systemctl is-enabled btcedu-run.timer
 
 # 3. Port is listening
 sudo ss -tlnp | grep 8091 | grep gunicorn
@@ -166,13 +166,27 @@ sudo ss -tlnp | grep 8091 | grep gunicorn
 # 4. Health check passes
 curl -f http://127.0.0.1:8091/api/health
 
-# 5. Sudo restart works without password
+# 5. Timers are active
+sudo systemctl list-timers btcedu-*
+
+# 6. Sudo restart works without password
 sudo -n systemctl restart btcedu-web.service
 
-# 6. Test automated deployment
+# 7. Test automated deployment
 # Go to: https://github.com/demirelh/bitcoin-education/actions/workflows/deploy.yml
 # Click "Run workflow" and verify it completes successfully
 ```
+
+---
+
+## Public Access via Caddy
+
+To access the dashboard from the internet:
+
+1. **Run `setup-web.sh`** — it generates a password hash for basic auth
+2. **Edit `/etc/caddy/Caddyfile`** — add the reverse proxy configuration (see [Caddyfile.dashboard](Caddyfile.dashboard))
+3. **Reload Caddy**: `sudo systemctl reload caddy`
+4. **Access dashboard at**: https://lnodebtc.duckdns.org/dashboard/
 
 ---
 
@@ -185,10 +199,10 @@ sudo -n systemctl restart btcedu-web.service
 sudo journalctl -u btcedu-web.service -n 50
 
 # Common issues:
-# - Virtual environment missing → create it
-# - Gunicorn not installed → pip install gunicorn
-# - .env file missing → copy from .env.example
-# - Database not initialized → run btcedu init-db
+# - Virtual environment missing -> python -m venv .venv
+# - Dependencies not installed -> pip install -e ".[web]"
+# - .env file missing -> create from template
+# - Database not initialized -> btcedu init-db && btcedu migrate
 ```
 
 ### Service starts but crashes
@@ -208,57 +222,25 @@ tail -f /home/pi/AI-Startup-Lab/bitcoin-education/data/logs/web_errors.log
 sudo -n systemctl restart btcedu-web.service
 
 # If it asks for password, configure sudo:
-echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart btcedu-web, /bin/systemctl status btcedu-web, /bin/systemctl stop btcedu-web, /bin/systemctl start btcedu-web, /bin/systemctl is-active btcedu-web" | sudo tee /etc/sudoers.d/pi-btcedu
+echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart btcedu-web, /bin/systemctl status btcedu-web, /bin/systemctl stop btcedu-web, /bin/systemctl start btcedu-web, /bin/systemctl is-active btcedu-web, /bin/systemctl daemon-reload, /bin/systemctl restart btcedu-detect.timer, /bin/systemctl restart btcedu-run.timer" | sudo tee /etc/sudoers.d/pi-btcedu
 sudo chmod 0440 /etc/sudoers.d/pi-btcedu
 ```
 
----
-
-## Additional Services (Optional)
-
-### btcedu-detect (RSS Detection)
-
-Automatically checks for new podcast episodes every 6 hours.
+### Timers not firing
 
 ```bash
-sudo cp deploy/btcedu-detect.service /etc/systemd/system/
-sudo cp deploy/btcedu-detect.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now btcedu-detect.timer
+# Check timer status and next trigger time
+sudo systemctl list-timers btcedu-*
+
+# Manually trigger a timer's service
+sudo systemctl start btcedu-detect.service
+sudo systemctl start btcedu-run.service
 ```
-
-### btcedu-run (Episode Processing)
-
-Automatically processes pending episodes daily at 02:00.
-
-```bash
-sudo cp deploy/btcedu-run.service /etc/systemd/system/
-sudo cp deploy/btcedu-run.timer /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now btcedu-run.timer
-```
-
----
-
-## Public Access via Caddy (Optional)
-
-To access the dashboard from the internet:
-
-1. **Follow the setup-web.sh script** - it generates a password hash for basic auth
-2. **Edit /etc/caddy/Caddyfile** - add the reverse proxy configuration
-3. **Reload Caddy**: `sudo systemctl reload caddy`
-4. **Access dashboard at**: https://lnodebtc.duckdns.org/dashboard/
-
-See: [deploy/Caddyfile.dashboard](Caddyfile.dashboard) for the configuration snippet.
 
 ---
 
 ## Support
 
-For detailed deployment instructions, troubleshooting, and architecture details:
+For detailed deployment instructions and architecture details:
 
-📖 **[docs/SERVER_DEPLOYMENT_GUIDE.md](../docs/SERVER_DEPLOYMENT_GUIDE.md)**
-
-For deployment verification and security audit:
-
-📋 **[DEPLOYMENT_VERIFICATION_REPORT.md](../DEPLOYMENT_VERIFICATION_REPORT.md)**
+[docs/SERVER_DEPLOYMENT_GUIDE.md](../docs/SERVER_DEPLOYMENT_GUIDE.md)

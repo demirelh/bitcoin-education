@@ -78,6 +78,15 @@ class Settings(BaseSettings):
         "Clean, modern, minimalist design. "
     )
 
+    # TTS / ElevenLabs (Sprint 8)
+    elevenlabs_api_key: str = ""
+    elevenlabs_voice_id: str = ""
+    elevenlabs_model: str = "eleven_multilingual_v2"
+    elevenlabs_stability: float = 0.5
+    elevenlabs_similarity_boost: float = 0.75
+    elevenlabs_style: float = 0.0
+    elevenlabs_use_speaker_boost: bool = True
+
     # Output
     outputs_dir: str = "data/outputs"
 

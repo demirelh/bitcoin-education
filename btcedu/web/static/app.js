@@ -320,6 +320,7 @@
         <div class="tab" data-tab="script_v2">Script v2</div>
         <div class="tab" data-tab="publishing_v2">Publishing v2</div>
         <div class="tab" data-tab="chapters">Chapters</div>
+        <div class="tab" data-tab="tts_audio">TTS Audio</div>
         <div class="tab" data-tab="report">Report</div>
         <div class="tab" data-tab="logs">Logs</div>
       </div>
@@ -356,6 +357,13 @@
       return;
     }
 
+    if (type === "tts_audio") {
+      viewer.classList.remove("log-viewer");
+      viewer.innerHTML = "Loading TTS data...";
+      await loadTTSPanel();
+      return;
+    }
+
     viewer.classList.remove("log-viewer");
     viewer.textContent = "Loading...";
     const data = await GET(`/episodes/${selected.episode_id}/files/${type}`);
@@ -379,6 +387,62 @@
       }
     } catch (err) {
       viewer.textContent = "Failed to load logs.";
+    }
+  }
+
+  // ── TTS Audio Panel ─────────────────────────────────────────
+  async function loadTTSPanel() {
+    if (!selected) return;
+    const viewer = document.getElementById("viewer");
+
+    try {
+      const data = await GET(`/episodes/${selected.episode_id}/tts`);
+      if (data.error) {
+        viewer.innerHTML = `
+          <div class="tts-panel">
+            <p>No TTS audio generated yet.</p>
+            <button class="btn btn-sm btn-primary" onclick="actions.tts()">Generate TTS Audio</button>
+          </div>`;
+        return;
+      }
+
+      const totalDur = (data.total_duration_seconds || 0).toFixed(1);
+      const totalChars = data.total_characters || 0;
+      const totalCost = (data.total_cost_usd || 0).toFixed(3);
+      const segments = data.segments || [];
+
+      let rows = segments.map(s => {
+        const dur = (s.duration_seconds || 0).toFixed(1);
+        const audioUrl = `api/episodes/${selected.episode_id}/tts/${s.chapter_id}.mp3`;
+        return `
+          <div class="tts-chapter-row">
+            <div class="tts-chapter-header">
+              <strong>${esc(s.chapter_id)}</strong> — ${esc(s.chapter_title || '')}
+              <span class="tts-duration">${dur}s</span>
+              <span class="tts-chars">${s.text_length || 0} chars</span>
+            </div>
+            <audio class="tts-player" controls preload="none">
+              <source src="${audioUrl}" type="audio/mpeg">
+            </audio>
+          </div>`;
+      }).join('');
+
+      viewer.innerHTML = `
+        <div class="tts-panel">
+          <div class="tts-summary">
+            <strong>TTS Summary:</strong>
+            ${segments.length} segments &middot; ${totalDur}s total &middot;
+            ${totalChars} chars &middot; $${totalCost}
+            <button class="btn btn-sm" style="margin-left:1em" onclick="actions.tts()">Regenerate</button>
+          </div>
+          ${rows}
+        </div>`;
+    } catch (err) {
+      viewer.innerHTML = `
+        <div class="tts-panel">
+          <p>No TTS audio generated yet.</p>
+          <button class="btn btn-sm btn-primary" onclick="actions.tts()">Generate TTS Audio</button>
+        </div>`;
     }
   }
 
@@ -414,6 +478,10 @@
     retry() {
       if (!selected) return;
       submitJob("Retry", `/episodes/${selected.episode_id}/retry`);
+    },
+    tts() {
+      if (!selected) return;
+      submitJob("TTS", `/episodes/${selected.episode_id}/tts`, { force: isForce() });
     },
   };
 

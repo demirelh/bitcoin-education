@@ -221,6 +221,8 @@ class JobManager:
                     self._do_generate(job, session, settings)
                 elif job.action == "refine":
                     self._do_refine(job, session, settings)
+                elif job.action == "tts":
+                    self._do_tts(job, session, settings)
                 elif job.action == "run":
                     self._do_full_pipeline(job, session, settings)
                 elif job.action == "retry":
@@ -326,6 +328,40 @@ class JobManager:
             job,
             f"Refinement complete: {len(result.artifacts)} artifacts, ${result.total_cost_usd:.4f}",
         )
+
+    def _do_tts(self, job, session, settings):
+        from btcedu.core.tts import generate_tts
+
+        self._update(job, stage="generating_tts")
+        self._log(job, "Generating TTS audio...")
+        result = generate_tts(
+            session,
+            job.episode_id,
+            settings,
+            force=job.force,
+        )
+        if result.skipped:
+            self._update(
+                job,
+                result={"success": True, "skipped": True, "message": "Already up-to-date"},
+            )
+            self._log(job, "TTS already up-to-date (skipped)")
+        else:
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "segments": result.segment_count,
+                    "duration_seconds": result.total_duration_seconds,
+                    "characters": result.total_characters,
+                    "cost_usd": result.cost_usd,
+                },
+            )
+            self._log(
+                job,
+                f"TTS complete: {result.segment_count} segments, "
+                f"{result.total_duration_seconds:.1f}s, ${result.cost_usd:.4f}",
+            )
 
     def _do_full_pipeline(self, job, session, settings):
         from btcedu.core.pipeline import (

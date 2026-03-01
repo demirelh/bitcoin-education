@@ -763,6 +763,67 @@ def imagegen(
         session.close()
 
 
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to generate TTS audio for (repeatable).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Regenerate all audio even if current.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Write silent MP3 placeholders instead of calling ElevenLabs API.",
+)
+@click.option(
+    "--chapter",
+    "chapter_id",
+    default=None,
+    help="Regenerate audio for a specific chapter only.",
+)
+@click.pass_context
+def tts(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+    dry_run: bool,
+    chapter_id: str | None,
+) -> None:
+    """Generate TTS audio for chapters (v2 pipeline, Sprint 8)."""
+    from btcedu.core.tts import generate_tts
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = generate_tts(session, eid, settings, force=force, chapter_id=chapter_id)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
+                else:
+                    click.echo(
+                        f"[OK] {eid} -> {result.segment_count} segments, "
+                        f"{result.total_duration_seconds:.1f}s total, "
+                        f"{result.total_characters} chars "
+                        f"(${result.cost_usd:.4f})"
+                    )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.group()
 @click.pass_context
 def review(ctx: click.Context) -> None:

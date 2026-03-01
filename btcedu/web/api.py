@@ -945,6 +945,45 @@ def request_changes_route(review_id: int):
         session.close()
 
 
+# ---------------------------------------------------------------------------
+# TTS Audio (Sprint 8)
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/episodes/<episode_id>/tts")
+def get_tts_manifest(episode_id: str):
+    """Return TTS manifest JSON for an episode."""
+    settings = _get_settings()
+    manifest_path = Path(settings.outputs_dir) / episode_id / "tts" / "manifest.json"
+
+    if not manifest_path.exists():
+        return jsonify({"error": "TTS manifest not found"}), 404
+
+    content = json.loads(manifest_path.read_text(encoding="utf-8"))
+    return jsonify(content)
+
+
+@api_bp.route("/episodes/<episode_id>/tts/<chapter_id>.mp3")
+def get_tts_audio(episode_id: str, chapter_id: str):
+    """Serve per-chapter MP3 audio file."""
+    from flask import send_file
+
+    settings = _get_settings()
+    mp3_path = Path(settings.outputs_dir) / episode_id / "tts" / f"{chapter_id}.mp3"
+
+    if not mp3_path.exists():
+        return jsonify({"error": f"Audio file not found: {chapter_id}.mp3"}), 404
+
+    return send_file(str(mp3_path), mimetype="audio/mpeg")
+
+
+@api_bp.route("/episodes/<episode_id>/tts", methods=["POST"])
+def trigger_tts(episode_id: str):
+    """Trigger TTS generation job."""
+    body = request.get_json(silent=True) or {}
+    return _submit_job("tts", episode_id, force=body.get("force", False))
+
+
 @api_bp.route("/channels/<int:channel_id>/toggle", methods=["POST"])
 def toggle_channel(channel_id):
     """Toggle channel active status."""

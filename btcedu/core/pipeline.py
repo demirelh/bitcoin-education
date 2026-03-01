@@ -64,6 +64,7 @@ _V2_STAGES = [
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
     ("render", EpisodeStatus.TTS_DONE),  # Sprint 9
     ("review_gate_3", EpisodeStatus.RENDERED),  # Sprint 10
+    ("publish", EpisodeStatus.APPROVED),  # Sprint 11
 ]
 
 # Keep _STAGES as alias for backward compat
@@ -487,6 +488,16 @@ def _run_stage(
                 detail="video review task created",
             )
 
+        elif stage_name == "publish":
+            from btcedu.core.publisher import publish_video
+
+            result = publish_video(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+            if result.skipped:
+                return StageResult("publish", "skipped", elapsed, detail="already published")
+            detail = result.youtube_url or "published (dry-run)"
+            return StageResult("publish", "success", elapsed, detail=detail)
+
         else:
             raise ValueError(f"Unknown stage: {stage_name}")
 
@@ -653,6 +664,7 @@ def run_pending(
                     EpisodeStatus.IMAGES_GENERATED,
                     EpisodeStatus.TTS_DONE,  # Sprint 9: render stage
                     EpisodeStatus.RENDERED,  # Sprint 10: review gate 3
+                    EpisodeStatus.APPROVED,  # Sprint 11: publish stage
                 ]
             )
         )
@@ -728,6 +740,7 @@ def run_latest(
                     EpisodeStatus.IMAGES_GENERATED,
                     EpisodeStatus.TTS_DONE,  # Sprint 9
                     EpisodeStatus.RENDERED,  # Sprint 10
+                    EpisodeStatus.APPROVED,  # Sprint 11: publish
                 ]
             )
         )

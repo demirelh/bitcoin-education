@@ -195,6 +195,12 @@ def _episode_to_dict(ep: Episode, settings) -> dict:
         "completed_at": ep.completed_at.isoformat() if ep.completed_at else None,
         "error_message": ep.error_message,
         "retry_count": ep.retry_count,
+        "youtube_video_id": getattr(ep, "youtube_video_id", None),
+        "published_at_youtube": (
+            ep.published_at_youtube.isoformat()
+            if getattr(ep, "published_at_youtube", None)
+            else None
+        ),
         "files": _file_presence(ep.episode_id, settings),
     }
 
@@ -1157,6 +1163,39 @@ def trigger_render(episode_id: str):
     """Trigger render job."""
     body = request.get_json(silent=True) or {}
     return _submit_job("render", episode_id, force=body.get("force", False))
+
+
+@api_bp.route("/episodes/<episode_id>/publish", methods=["POST"])
+def trigger_publish(episode_id: str):
+    """Trigger YouTube publish job for an approved episode."""
+    body = request.get_json(silent=True) or {}
+    return _submit_job(
+        "publish",
+        episode_id,
+        force=body.get("force", False),
+        privacy=body.get("privacy"),
+    )
+
+
+@api_bp.route("/episodes/<episode_id>/publish-status")
+def get_publish_status(episode_id: str):
+    """Return the latest publish job status for an episode."""
+    session = _get_session()
+    try:
+        from btcedu.core.publisher import get_latest_publish_job
+
+        job = get_latest_publish_job(session, episode_id)
+        if not job:
+            return jsonify({"status": "not_started", "youtube_video_id": None, "youtube_url": None})
+        return jsonify({
+            "status": job.status,
+            "youtube_video_id": job.youtube_video_id,
+            "youtube_url": job.youtube_url,
+            "published_at": job.published_at.isoformat() if job.published_at else None,
+            "error_message": job.error_message,
+        })
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------

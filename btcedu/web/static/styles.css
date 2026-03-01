@@ -92,6 +92,15 @@ body {
 .btn-danger:hover {
     background: linear-gradient(180deg, #e5534b 0%, #da3633 100%);
 }
+.btn-success {
+    background: linear-gradient(180deg, #2ea043 0%, #238636 100%);
+    border-color: #2ea043;
+    color: #fff;
+    font-weight: 500;
+}
+.btn-success:hover {
+    background: linear-gradient(180deg, #3fb950 0%, #2ea043 100%);
+}
 .btn-sm { padding: 2px 8px; font-size: 11px; }
 
 /* Layout */
@@ -184,6 +193,16 @@ body {
 .badge-refined { background: #58a6ff33; color: var(--accent); }
 .badge-completed { background: #3fb95033; color: var(--green); }
 .badge-failed { background: #f8514933; color: var(--red); }
+/* v2 pipeline status badges (Sprint 11) */
+.badge-corrected { background: #bc8cff33; color: var(--purple); }
+.badge-translated { background: #58a6ff33; color: var(--accent); }
+.badge-adapted { background: #d1861633; color: var(--orange); }
+.badge-chapterized { background: #3fb95033; color: var(--green); }
+.badge-images_generated { background: #d2992233; color: var(--yellow); }
+.badge-tts_done { background: #1f6feb33; color: var(--accent); }
+.badge-rendered { background: #bc8cff33; color: var(--purple); }
+.badge-approved { background: #3fb95033; color: var(--green); }
+.badge-published { background: #f0a50033; color: #f0a500; }
 
 /* File indicators */
 .files-row {
@@ -1458,3 +1477,22 @@ body {
     color: var(--text);
 }
 
+/* Publish panel (Sprint 11) */
+.publish-panel {
+    margin-top: 16px;
+    padding: 12px 16px;
+    background: var(--surface);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.yt-link {
+    color: #f0a500;
+    text-decoration: none;
+    font-weight: 500;
+}
+.yt-link:hover {
+    text-decoration: underline;
+}

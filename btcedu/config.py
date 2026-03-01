@@ -98,6 +98,14 @@ class Settings(BaseSettings):
     render_timeout_concat: int = 600  # 10 minutes
     render_transition_duration: float = 0.5  # seconds for fade in/out (Sprint 10)
 
+    # YouTube Publishing (Sprint 11)
+    youtube_client_secrets_path: str = "data/client_secret.json"
+    youtube_credentials_path: str = "data/.youtube_credentials.json"
+    youtube_default_privacy: str = "unlisted"  # "unlisted", "private", or "public"
+    youtube_upload_chunk_size_mb: int = 10
+    youtube_category_id: str = "27"  # Education
+    youtube_default_language: str = "tr"
+
     # Output
     outputs_dir: str = "data/outputs"
 

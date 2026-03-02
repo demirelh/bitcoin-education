@@ -158,8 +158,7 @@ def _build_drawtext_filter(overlay: OverlaySpec, font_path: str) -> str:
     escaped_text = _escape_drawtext(overlay.text)
     position = OVERLAY_POSITIONS.get(overlay.position, OVERLAY_POSITIONS["center"])
 
-    parts = [
-        "drawtext",
+    option_parts = [
         f"fontfile={font_path}",
         f"text='{escaped_text}'",
         f"fontsize={overlay.fontsize}",
@@ -168,14 +167,14 @@ def _build_drawtext_filter(overlay: OverlaySpec, font_path: str) -> str:
     ]
 
     if overlay.box:
-        parts.append(f"box={1 if overlay.box else 0}")
-        parts.append(f"boxcolor={overlay.boxcolor}")
-        parts.append(f"boxborderw={overlay.boxborderw}")
+        option_parts.append(f"box={1 if overlay.box else 0}")
+        option_parts.append(f"boxcolor={overlay.boxcolor}")
+        option_parts.append(f"boxborderw={overlay.boxborderw}")
 
     # Add timing constraint
-    parts.append(f"enable='between(t\\,{overlay.start}\\,{overlay.end})'")
+    option_parts.append(f"enable='between(t\\,{overlay.start}\\,{overlay.end})'")
 
-    return ":".join(parts)
+    return "drawtext=" + ":".join(option_parts)
 
 
 def create_segment(

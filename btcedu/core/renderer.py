@@ -133,6 +133,10 @@ def render_video(
     if not force:
         if _is_render_current(manifest_path, provenance_path, draft_path, content_hash):
             logger.info("Render is current for %s (use --force to re-render)", episode_id)
+            # Still advance episode status so pipeline can proceed
+            if episode.status == EpisodeStatus.TTS_DONE:
+                episode.status = EpisodeStatus.RENDERED
+                session.commit()
             existing_provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
             return RenderResult(
                 episode_id=episode_id,

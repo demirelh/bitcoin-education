@@ -1,0 +1,52 @@
+{
+  "total_results": 42,
+  "page": 1,
+  "per_page": 5,
+  "photos": [
+    {
+      "id": 12345,
+      "width": 5000,
+      "height": 3333,
+      "url": "https://www.pexels.com/photo/golden-bitcoin-12345/",
+      "photographer": "Test Photographer",
+      "photographer_url": "https://www.pexels.com/@test-photographer",
+      "src": {
+        "original": "https://images.pexels.com/photos/12345/pexels-photo-12345.jpeg?auto=compress&cs=tinysrgb",
+        "large2x": "https://images.pexels.com/photos/12345/pexels-photo-12345.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "landscape": "https://images.pexels.com/photos/12345/pexels-photo-12345.jpeg?auto=compress&cs=tinysrgb&fit=crop&h=627&w=1200"
+      },
+      "alt": "Golden Bitcoin coin on dark background",
+      "avg_color": "#2D2D2D"
+    },
+    {
+      "id": 12346,
+      "width": 4000,
+      "height": 2667,
+      "url": "https://www.pexels.com/photo/cryptocurrency-chart-12346/",
+      "photographer": "Finance Photos",
+      "photographer_url": "https://www.pexels.com/@finance-photos",
+      "src": {
+        "original": "https://images.pexels.com/photos/12346/pexels-photo-12346.jpeg?auto=compress&cs=tinysrgb",
+        "large2x": "https://images.pexels.com/photos/12346/pexels-photo-12346.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "landscape": "https://images.pexels.com/photos/12346/pexels-photo-12346.jpeg?auto=compress&cs=tinysrgb&fit=crop&h=627&w=1200"
+      },
+      "alt": "Cryptocurrency trading chart on screen",
+      "avg_color": "#1A1A2E"
+    },
+    {
+      "id": 12347,
+      "width": 6000,
+      "height": 4000,
+      "url": "https://www.pexels.com/photo/money-and-economics-12347/",
+      "photographer": "Stock Expert",
+      "photographer_url": "https://www.pexels.com/@stock-expert",
+      "src": {
+        "original": "https://images.pexels.com/photos/12347/pexels-photo-12347.jpeg?auto=compress&cs=tinysrgb",
+        "large2x": "https://images.pexels.com/photos/12347/pexels-photo-12347.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+        "landscape": "https://images.pexels.com/photos/12347/pexels-photo-12347.jpeg?auto=compress&cs=tinysrgb&fit=crop&h=627&w=1200"
+      },
+      "alt": "Stack of coins with financial graphs",
+      "avg_color": "#3D3D3D"
+    }
+  ]
+}

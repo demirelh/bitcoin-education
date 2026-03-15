@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     max_episode_cost_usd: float = 10.0  # per-episode cost safety cap
 
     # Image Generation (Sprint 7)
-    image_gen_provider: str = "dalle3"  # "dalle3" (only option for now)
+    image_gen_provider: str = "dalle3"  # "dalle3" or "pexels"
     image_gen_model: str = "dall-e-3"
     image_gen_size: str = "1792x1024"  # DALL-E 3 landscape (closest to 1920x1080)
     image_gen_quality: str = "standard"  # "standard" or "hd"
@@ -79,6 +79,12 @@ class Settings(BaseSettings):
         "Professional educational content illustration for Bitcoin/cryptocurrency video. "
         "Clean, modern, minimalist design. "
     )
+
+    # Stock Images / Pexels
+    pexels_api_key: str = ""
+    pexels_results_per_chapter: int = 5  # Candidates to fetch per chapter (3-8)
+    pexels_orientation: str = "landscape"  # "landscape" | "portrait" | "square"
+    pexels_download_size: str = "large2x"  # "original" | "large2x" | "landscape"
 
     # TTS / ElevenLabs (Sprint 8)
     elevenlabs_api_key: str = ""

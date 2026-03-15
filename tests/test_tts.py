@@ -560,5 +560,49 @@ def test_v2_stages_include_tts():
     assert tts_entry[1] == EpisodeStatus.IMAGES_GENERATED
 
 
+def test_tts_skipped_advances_status(db_session, tmp_path):
+    """When TTS is current (skipped), episode status should still advance to TTS_DONE."""
+    episode = Episode(
+        episode_id="ep_skip_status",
+        title="Status advance test",
+        url="https://example.com/test",
+        status=EpisodeStatus.IMAGES_GENERATED,
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    # Create chapters.json, tts dir, manifest, provenance
+    ep_dir = tmp_path / "ep_skip_status"
+    ep_dir.mkdir()
+    chapters_path = ep_dir / "chapters.json"
+    chapters_path.write_text(json.dumps(CHAPTERS_JSON), encoding="utf-8")
+
+    tts_dir = ep_dir / "tts"
+    tts_dir.mkdir()
+    manifest_path = tts_dir / "manifest.json"
+    provenance_path = ep_dir / "provenance"
+    provenance_path.mkdir()
+    prov_file = provenance_path / "tts_provenance.json"
+
+    # Compute real hash so idempotency check passes
+    doc = ChapterDocument(**CHAPTERS_JSON)
+    chapters_hash = _compute_chapters_narration_hash(doc)
+
+    manifest_path.write_text(json.dumps({"segments": []}), encoding="utf-8")
+    prov_file.write_text(
+        json.dumps({"input_content_hash": chapters_hash}), encoding="utf-8"
+    )
+
+    settings = MagicMock()
+    settings.outputs_dir = str(tmp_path)
+    settings.dry_run = False
+
+    result = generate_tts(db_session, "ep_skip_status", settings, force=False)
+    assert result.skipped is True
+    db_session.refresh(episode)
+    assert episode.status == EpisodeStatus.TTS_DONE
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

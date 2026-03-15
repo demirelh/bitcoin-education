@@ -1211,6 +1211,197 @@ def web(host: str, port: int, production: bool) -> None:
     app.run(host=host, port=port, debug=False)
 
 
+@cli.group()
+@click.pass_context
+def stock(ctx: click.Context) -> None:
+    """Stock image management (Pexels)."""
+    pass
+
+
+@stock.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to search images for (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-search even if candidates exist.")
+@click.option("--per-page", default=None, type=int, help="Override candidates per chapter.")
+@click.pass_context
+def search(
+    ctx: click.Context, episode_ids: tuple[str, ...], force: bool, per_page: int | None
+) -> None:
+    """Search Pexels for candidate images per chapter."""
+    from btcedu.core.stock_images import search_stock_images
+
+    settings = ctx.obj["settings"]
+    if per_page is not None:
+        settings.pexels_results_per_chapter = per_page
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = search_stock_images(session, eid, settings, force=force)
+                click.echo(
+                    f"[OK] {eid} -> {result.chapters_searched} chapters, "
+                    f"{result.total_candidates} candidates "
+                    f"({result.skipped_chapters} skipped)"
+                )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
+@stock.command(name="list")
+@click.option("--episode-id", required=True, help="Episode ID to show status for.")
+@click.pass_context
+def stock_list(ctx: click.Context, episode_id: str) -> None:
+    """Show stock image selection status per chapter."""
+    import json as json_mod
+    from pathlib import Path
+
+    settings = ctx.obj["settings"]
+    ep_dir = Path(settings.outputs_dir) / episode_id
+    manifest_path = ep_dir / "images" / "candidates" / "candidates_manifest.json"
+
+    if not manifest_path.exists():
+        click.echo(f"No candidates manifest for {episode_id}. Run 'btcedu stock search' first.")
+        return
+
+    manifest = json_mod.loads(manifest_path.read_text(encoding="utf-8"))
+    chapters = manifest.get("chapters", {})
+
+    if not chapters:
+        click.echo("No chapter candidates found.")
+        return
+
+    click.echo(f"{'Chapter':<8} {'Rank':<6} {'Status':<12} {'Details':<35} {'Query'}")
+    click.echo("-" * 100)
+
+    for ch_id in sorted(chapters.keys()):
+        ch_data = chapters[ch_id]
+        candidates = ch_data.get("candidates", [])
+        query = ch_data.get("search_query", "")
+
+        locked = [c for c in candidates if c.get("locked")]
+        selected = [c for c in candidates if c.get("selected")]
+
+        if locked:
+            status = "[locked]"
+            detail = f"pexels:{locked[0]['pexels_id']}"
+            rank = str(locked[0].get("rank", "-"))
+        elif selected:
+            status = "[selected]"
+            detail = f"pexels:{selected[0]['pexels_id']}"
+            rank = str(selected[0].get("rank", "-"))
+        elif candidates:
+            status = "[pending]"
+            detail = f"{len(candidates)} candidates"
+            rank = "-"
+        else:
+            status = "[empty]"
+            detail = "no candidates"
+            rank = "-"
+
+        click.echo(
+            f"{ch_id:<8} {rank:<6} {status:<12} {detail:<35} {query[:35]}"
+        )
+
+
+@stock.command(name="select")
+@click.option("--episode-id", required=True)
+@click.option(
+    "--chapter", "chapter_id", required=True,
+    help="Chapter to select image for (e.g. ch03).",
+)
+@click.option(
+    "--photo-id", "pexels_id", required=True, type=int,
+    help="Pexels photo ID to select.",
+)
+@click.option(
+    "--lock", is_flag=True, default=False,
+    help="Lock selection (won't change on re-search).",
+)
+@click.pass_context
+def stock_select(
+    ctx: click.Context, episode_id: str, chapter_id: str,
+    pexels_id: int, lock: bool,
+) -> None:
+    """Select a specific Pexels photo for a chapter."""
+    from btcedu.core.stock_images import select_stock_image
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        select_stock_image(
+            session, episode_id, chapter_id, pexels_id, settings, lock=lock
+        )
+        locked_msg = " (locked)" if lock else ""
+        click.echo(
+            f"[OK] Selected pexels:{pexels_id} for "
+            f"{episode_id}/{chapter_id}{locked_msg}"
+        )
+    except Exception as e:
+        click.echo(f"[FAIL] {e}", err=True)
+    finally:
+        session.close()
+
+
+@stock.command(name="rank")
+@click.option(
+    "--episode-id", required=True,
+    help="Episode ID to rank candidates for.",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-rank even locked chapters.")
+@click.option("--dry-run", "dry_run", is_flag=True, default=False, help="Skip LLM calls.")
+@click.pass_context
+def stock_rank(
+    ctx: click.Context, episode_id: str, force: bool, dry_run: bool
+) -> None:
+    """Rank stock image candidates using LLM."""
+    from btcedu.core.stock_images import rank_candidates
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+    session = ctx.obj["session_factory"]()
+    try:
+        result = rank_candidates(session, episode_id, settings, force=force)
+        click.echo(
+            f"[OK] {episode_id} -> {result.chapters_ranked} ranked, "
+            f"{result.chapters_skipped} skipped, "
+            f"${result.total_cost_usd:.4f}"
+        )
+    except Exception as e:
+        click.echo(f"[FAIL] {e}", err=True)
+    finally:
+        session.close()
+
+
+@stock.command(name="auto-select")
+@click.option("--episode-id", required=True)
+@click.pass_context
+def stock_auto_select(ctx: click.Context, episode_id: str) -> None:
+    """Auto-select first candidate per chapter and finalize manifest (dev/test only)."""
+    from btcedu.core.stock_images import auto_select_best
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        result = auto_select_best(session, episode_id, settings)
+        click.echo(
+            f"[OK] {episode_id} -> {result.selected_count} selected, "
+            f"{result.placeholder_count} placeholders"
+        )
+    except Exception as e:
+        click.echo(f"[FAIL] {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.command(context_settings={"allow_interspersed_args": False, "ignore_unknown_options": True})
 @click.option("--json-only", is_flag=True, help="Output only the JSON summary.")
 @click.option("--output", "-o", type=click.Path(), help="Write output to file instead of stdout.")

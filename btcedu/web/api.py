@@ -1172,6 +1172,163 @@ def trigger_tts(episode_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Stock image endpoints (Phase 2 — Pexels pinning + ranking)
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/episodes/<episode_id>/stock/candidates")
+def get_stock_candidates(episode_id: str):
+    """Return full candidates manifest with review info."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    settings = _get_settings()
+    manifest_path = _validate_episode_path(
+        episode_id,
+        Path(settings.outputs_dir),
+        "images",
+        "candidates",
+        "candidates_manifest.json",
+    )
+
+    if not manifest_path or not manifest_path.exists():
+        return jsonify({"error": "No candidates manifest found"}), 404
+
+    content = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    # Attach review info
+    session = _get_session()
+    try:
+        from btcedu.models.review import ReviewTask
+
+        task = (
+            session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == episode_id,
+                ReviewTask.stage == "stock_images",
+            )
+            .order_by(ReviewTask.created_at.desc())
+            .first()
+        )
+        if task:
+            content["review_task_id"] = task.id
+            content["review_status"] = task.status
+        else:
+            content["review_task_id"] = None
+            content["review_status"] = None
+    finally:
+        session.close()
+
+    return jsonify(content)
+
+
+@api_bp.route("/episodes/<episode_id>/stock/pin", methods=["POST"])
+def pin_stock_image(episode_id: str):
+    """Pin a specific candidate for a chapter."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    data = request.get_json(silent=True) or {}
+    chapter_id = data.get("chapter_id")
+    pexels_id = data.get("pexels_id")
+    lock = data.get("lock", True)
+
+    if not chapter_id or pexels_id is None:
+        return jsonify({"error": "chapter_id and pexels_id are required"}), 400
+
+    try:
+        pexels_id = int(pexels_id)
+    except (TypeError, ValueError):
+        return jsonify({"error": "pexels_id must be an integer"}), 400
+
+    settings = _get_settings()
+    session = _get_session()
+    try:
+        from btcedu.core.stock_images import select_stock_image
+
+        select_stock_image(
+            session, episode_id, chapter_id, pexels_id, settings, lock=lock
+        )
+        return jsonify({
+            "status": "pinned",
+            "chapter_id": chapter_id,
+            "pexels_id": pexels_id,
+        })
+    except (ValueError, FileNotFoundError) as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@api_bp.route("/episodes/<episode_id>/stock/rank", methods=["POST"])
+def rank_stock_images(episode_id: str):
+    """Trigger LLM re-ranking for all unlocked chapters."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    settings = _get_settings()
+    session = _get_session()
+    try:
+        from btcedu.core.stock_images import rank_candidates
+
+        data = request.get_json(silent=True) or {}
+        force = data.get("force", False)
+        result = rank_candidates(session, episode_id, settings, force=force)
+        return jsonify({
+            "status": "ranked",
+            "chapters_ranked": result.chapters_ranked,
+            "chapters_skipped": result.chapters_skipped,
+            "cost_usd": result.total_cost_usd,
+        })
+    except (ValueError, FileNotFoundError) as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@api_bp.route("/episodes/<episode_id>/stock/candidate-image")
+def get_stock_candidate_image(episode_id: str):
+    """Serve a candidate image file."""
+    from flask import send_file
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    chapter = request.args.get("chapter", "")
+    filename = request.args.get("filename", "")
+
+    chapter = secure_filename(chapter)
+    filename = secure_filename(filename)
+
+    if not chapter or not filename:
+        return jsonify({"error": "chapter and filename params required"}), 400
+
+    # Only serve image files
+    if not filename.lower().endswith((".jpg", ".jpeg", ".png")):
+        return jsonify({"error": "Only image files are served"}), 400
+
+    settings = _get_settings()
+    img_path = _validate_episode_path(
+        episode_id,
+        Path(settings.outputs_dir),
+        "images",
+        "candidates",
+        chapter,
+        filename,
+    )
+
+    if not img_path or not img_path.exists():
+        return jsonify({"error": "Image not found"}), 404
+
+    mimetype = "image/jpeg" if filename.lower().endswith((".jpg", ".jpeg")) else "image/png"
+    return send_file(str(img_path), mimetype=mimetype)
+
+
+# ---------------------------------------------------------------------------
 # Image gallery endpoints (Sprint 12 — post-audit)
 # ---------------------------------------------------------------------------
 

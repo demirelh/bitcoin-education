@@ -842,16 +842,17 @@ class TestV2PipelineE2E:
         assert stage_statuses.get("publish") == "success"
 
     @patch("btcedu.core.pipeline._run_stage")
-    def test_v2_plan_shows_all_13_stages(self, mock_stage, db_session, v2_episode, v2_settings):
-        """resolve_pipeline_plan returns all 13 v2 stages."""
+    def test_v2_plan_shows_all_14_stages(self, mock_stage, db_session, v2_episode, v2_settings):
+        """resolve_pipeline_plan returns all 14 v2 stages."""
         plan = resolve_pipeline_plan(db_session, v2_episode, settings=v2_settings)
-        assert len(plan) == 13
+        assert len(plan) == 14
         stage_names = [p.stage for p in plan]
         assert stage_names == [
             "download", "transcribe", "correct",
             "review_gate_1", "translate", "adapt",
             "review_gate_2", "chapterize", "imagegen",
-            "tts", "render", "review_gate_3", "publish",
+            "review_gate_stock", "tts", "render",
+            "review_gate_3", "publish",
         ]
 
     @patch("btcedu.core.pipeline._run_stage")

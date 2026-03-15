@@ -354,7 +354,9 @@ def reject_review(
     if notes:
         task.reviewer_notes = notes
 
-    if task.stage != "render":
+    # Revert for stages that have a reversion mapping (RG1, RG2).
+    # stock_images and render rejections keep the episode at current status.
+    if task.stage not in ("render", "stock_images"):
         _revert_episode(session, task.episode_id)
 
     decision = ReviewDecision(
@@ -402,7 +404,7 @@ def request_changes(
     task.reviewed_at = now
     task.reviewer_notes = notes
 
-    if task.stage != "render":
+    if task.stage not in ("render", "stock_images"):
         _revert_episode(session, task.episode_id)
     _mark_output_stale(task)
 

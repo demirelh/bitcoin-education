@@ -323,6 +323,7 @@
         <div class="tab" data-tab="script_v2">Script v2</div>
         <div class="tab" data-tab="publishing_v2">Publishing v2</div>
         <div class="tab" data-tab="chapters">Chapters</div>
+        <div class="tab" data-tab="stock_images">Stock Images</div>
         <div class="tab" data-tab="images">Images</div>
         <div class="tab" data-tab="tts_audio">TTS Audio</div>
         <div class="tab" data-tab="video">Video</div>
@@ -359,6 +360,13 @@
       if (activeJobId) {
         logPollTimer = setInterval(loadLogTail, 2000);
       }
+      return;
+    }
+
+    if (type === "stock_images") {
+      viewer.classList.remove("log-viewer");
+      viewer.innerHTML = "Loading stock image candidates...";
+      await loadStockImagesPanel();
       return;
     }
 
@@ -466,6 +474,146 @@
         </div>`;
     }
   }
+
+  // ── Stock Images Panel ─────────────────────────────────────
+  async function loadStockImagesPanel() {
+    if (!selected) return;
+    const viewer = document.getElementById("viewer");
+
+    try {
+      const data = await GET(`/episodes/${selected.episode_id}/stock/candidates`);
+      if (data.error) {
+        viewer.innerHTML = `
+          <div class="stock-panel">
+            <p>No stock image candidates yet.</p>
+            <button class="btn btn-sm btn-primary" onclick="actions.imagegen()">Search Stock Images</button>
+          </div>`;
+        return;
+      }
+
+      const chapters = data.chapters || {};
+      const chapterIds = Object.keys(chapters).sort();
+      const reviewId = data.review_task_id;
+      const reviewStatus = data.review_status;
+      const rankedAt = data.ranked_at;
+
+      let html = '<div class="stock-panel">';
+
+      // Summary bar
+      const totalCh = chapterIds.length;
+      const pinnedCh = chapterIds.filter(id => {
+        const cands = (chapters[id].candidates || []);
+        return cands.some(c => c.selected);
+      }).length;
+
+      html += `<div class="stock-summary">
+        <strong>Stock Images:</strong> ${pinnedCh}/${totalCh} chapters pinned`;
+      if (rankedAt) {
+        html += ` &middot; Ranked: ${new Date(rankedAt).toLocaleString()}`;
+      }
+      if (reviewStatus) {
+        html += ` &middot; Review: <span class="badge badge-review-${reviewStatus.replace('_','-')}">${reviewStatus}</span>`;
+      }
+      html += `</div>`;
+
+      // Action bar
+      html += '<div class="stock-actions">';
+      if (reviewId && (reviewStatus === 'pending' || reviewStatus === 'in_review')) {
+        html += `<button class="btn btn-sm btn-primary" onclick="approveStockReview(${reviewId})">Approve All Selections</button> `;
+      }
+      html += `<button class="btn btn-sm" onclick="rerankStock('${esc(selected.episode_id)}')">Re-rank with LLM</button>`;
+      html += '</div>';
+
+      // Chapter sections
+      chapterIds.forEach(chId => {
+        const ch = chapters[chId];
+        const candidates = ch.candidates || [];
+        const query = ch.search_query || '';
+        const pinnedBy = ch.pinned_by || '';
+
+        html += `<div class="stock-chapter">
+          <div class="stock-chapter-header">
+            <strong>${esc(chId)}</strong>
+            <span class="stock-query">${esc(query)}</span>
+            ${pinnedBy ? `<span class="badge">${esc(pinnedBy)}</span>` : ''}
+          </div>
+          <div class="stock-grid">`;
+
+        candidates.sort((a, b) => (a.rank || 999) - (b.rank || 999));
+
+        candidates.forEach(c => {
+          const imgUrl = `api/episodes/${selected.episode_id}/stock/candidate-image?chapter=${esc(chId)}&filename=pexels_${c.pexels_id}.jpg`;
+          const isPinned = c.selected && c.locked;
+          const isSelected = c.selected;
+          const rankLabel = c.rank ? `#${c.rank}` : '';
+          const reason = c.rank_reason || '';
+
+          html += `<div class="stock-thumb ${isPinned ? 'pinned' : ''} ${isSelected ? 'selected' : ''}">
+            ${rankLabel ? `<span class="stock-rank-badge">${rankLabel}</span>` : ''}
+            <img src="${imgUrl}" alt="${esc(c.alt_text || '')}" loading="lazy"
+                 onclick="window.open('${imgUrl}','_blank')" title="${esc(reason)}">
+            <div class="stock-thumb-info">
+              <span class="stock-photographer">${esc(c.photographer || '')}</span>
+              ${isPinned ? '<span class="stock-locked">PINNED</span>' : ''}
+            </div>
+            <button class="btn btn-sm stock-pin-btn" onclick="pinStockImage('${esc(selected.episode_id)}','${esc(chId)}',${c.pexels_id})">
+              ${isSelected ? 'Pinned' : 'Pin'}
+            </button>
+          </div>`;
+        });
+
+        html += '</div></div>';
+      });
+
+      html += '</div>';
+      viewer.innerHTML = html;
+    } catch (err) {
+      viewer.innerHTML = `
+        <div class="stock-panel">
+          <p>No stock image candidates yet.</p>
+          <button class="btn btn-sm btn-primary" onclick="actions.imagegen()">Search Stock Images</button>
+        </div>`;
+    }
+  }
+
+  async function pinStockImage(episodeId, chapterId, pexelsId) {
+    const result = await POST(`/episodes/${episodeId}/stock/pin`, {
+      chapter_id: chapterId,
+      pexels_id: pexelsId,
+      lock: true,
+    });
+    if (result.error) {
+      toast(result.error, false);
+    } else {
+      toast(`Pinned pexels:${pexelsId} for ${chapterId}`);
+      await loadStockImagesPanel();
+    }
+  }
+  window.pinStockImage = pinStockImage;
+
+  async function rerankStock(episodeId) {
+    toast("Re-ranking with LLM...");
+    const result = await POST(`/episodes/${episodeId}/stock/rank`, {});
+    if (result.error) {
+      toast(result.error, false);
+    } else {
+      toast(`Ranked ${result.chapters_ranked} chapters ($${(result.cost_usd || 0).toFixed(4)})`);
+      await loadStockImagesPanel();
+    }
+  }
+  window.rerankStock = rerankStock;
+
+  async function approveStockReview(reviewId) {
+    if (!confirm("Approve stock image selections for all chapters?")) return;
+    const result = await POST(`/reviews/${reviewId}/approve`, { notes: "Stock images approved via dashboard" });
+    if (result.error) {
+      toast(result.error, false);
+    } else {
+      toast("Stock images approved!");
+      await loadStockImagesPanel();
+    }
+  }
+  window.approveStockReview = approveStockReview;
 
   // ── TTS Audio Panel ─────────────────────────────────────────
   async function loadTTSPanel() {

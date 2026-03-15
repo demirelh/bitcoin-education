@@ -60,7 +60,8 @@ _V2_STAGES = [
     ("adapt", EpisodeStatus.TRANSLATED),
     ("review_gate_2", EpisodeStatus.ADAPTED),
     ("chapterize", EpisodeStatus.ADAPTED),  # after review approved
-    ("imagegen", EpisodeStatus.CHAPTERIZED),  # Sprint 7
+    ("imagegen", EpisodeStatus.CHAPTERIZED),  # search + rank (no finalize)
+    ("review_gate_stock", EpisodeStatus.CHAPTERIZED),  # human pins + approve
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
     ("render", EpisodeStatus.TTS_DONE),  # Sprint 9
     ("review_gate_3", EpisodeStatus.RENDERED),  # Sprint 10
@@ -386,25 +387,94 @@ def _run_stage(
                 )
 
         elif stage_name == "imagegen":
-            from btcedu.core.image_generator import generate_images
+            # v2 pipeline: stock images only (no AI image generation)
+            from btcedu.core.stock_images import rank_candidates, search_stock_images
 
-            result = generate_images(session, episode.episode_id, settings, force=force)
+            search_stock_images(
+                session, episode.episode_id, settings, force=force
+            )
+            rank_result = rank_candidates(
+                session, episode.episode_id, settings, force=force
+            )
             elapsed = time.monotonic() - t0
 
-            if result.skipped:
-                return StageResult("imagegen", "skipped", elapsed, detail="already up-to-date")
-            else:
+            return StageResult(
+                "imagegen",
+                "success",
+                elapsed,
+                detail=(
+                    f"{rank_result.chapters_ranked} chapters ranked, "
+                    f"{rank_result.chapters_skipped} skipped, "
+                    f"${rank_result.total_cost_usd:.4f}"
+                ),
+            )
+
+        elif stage_name == "review_gate_stock":
+            from btcedu.core.reviewer import (
+                create_review_task,
+                has_approved_review,
+                has_pending_review,
+            )
+            from btcedu.core.stock_images import finalize_selections
+
+            # Check if already approved
+            if has_approved_review(session, episode.episode_id, "stock_images"):
+                select_result = finalize_selections(
+                    session, episode.episode_id, settings
+                )
+                elapsed = time.monotonic() - t0
                 return StageResult(
-                    "imagegen",
+                    "review_gate_stock",
                     "success",
                     elapsed,
                     detail=(
-                        f"{result.generated_count}/{result.image_count} images generated "
-                        f"({result.template_count} placeholders, "
-                        f"{result.failed_count} failed), "
-                        f"${result.cost_usd:.4f}"
+                        f"stock images approved, "
+                        f"{select_result.selected_count} finalized, "
+                        f"{select_result.placeholder_count} placeholders"
                     ),
                 )
+
+            # Check if pending review exists
+            if has_pending_review(session, episode.episode_id):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_stock",
+                    "review_pending",
+                    elapsed,
+                    detail="awaiting stock image review",
+                )
+
+            # Create review task
+            candidates_manifest_path = (
+                Path(settings.outputs_dir)
+                / episode.episode_id
+                / "images"
+                / "candidates"
+                / "candidates_manifest.json"
+            )
+            chapters_path = (
+                Path(settings.outputs_dir)
+                / episode.episode_id
+                / "chapters.json"
+            )
+
+            create_review_task(
+                session,
+                episode.episode_id,
+                stage="stock_images",
+                artifact_paths=[
+                    str(candidates_manifest_path),
+                    str(chapters_path),
+                ],
+                diff_path=None,
+            )
+            elapsed = time.monotonic() - t0
+            return StageResult(
+                "review_gate_stock",
+                "review_pending",
+                elapsed,
+                detail="stock image review task created",
+            )
 
         elif stage_name == "tts":
             from btcedu.core.tts import generate_tts

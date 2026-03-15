@@ -117,6 +117,10 @@ def generate_tts(
     if not force and chapter_id is None:
         if _is_tts_current(manifest_path, provenance_path, chapters_hash):
             logger.info("TTS is current for %s (use --force to regenerate)", episode_id)
+            # Still advance episode status so pipeline can proceed
+            if episode.status == EpisodeStatus.IMAGES_GENERATED:
+                episode.status = EpisodeStatus.TTS_DONE
+                session.commit()
             return TTSResult(
                 episode_id=episode_id,
                 tts_path=tts_dir,

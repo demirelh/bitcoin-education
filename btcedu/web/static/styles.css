@@ -1621,3 +1621,146 @@ body {
 .next-action-body .btn {
     margin-right: 6px;
 }
+
+/* ── Pipeline Stepper ────────────────────────────────── */
+.pipeline-stepper {
+    display: flex;
+    align-items: flex-start;
+    gap: 0;
+    margin: 10px 0;
+    overflow-x: auto;
+    padding: 4px 0 8px;
+}
+
+/* Individual stage column */
+.ps-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 48px;
+    flex-shrink: 0;
+}
+
+/* Gate stages are visually narrower */
+.ps-gate {
+    min-width: 36px;
+}
+
+/* Blob (circle indicator) */
+.ps-blob {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 700;
+    border: 2px solid var(--border);
+    background: var(--bg);
+    color: var(--text-dim);
+    transition: all 0.2s;
+}
+
+/* Gate blobs are smaller */
+.ps-gate .ps-blob {
+    width: 18px;
+    height: 18px;
+    font-size: 9px;
+    margin-top: 3px;
+}
+
+/* State colors */
+.ps-done .ps-blob {
+    background: var(--green);
+    border-color: var(--green);
+    color: #fff;
+}
+
+.ps-active .ps-blob {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    animation: psPulse 2s ease-in-out infinite;
+}
+
+.ps-paused .ps-blob {
+    background: var(--yellow);
+    border-color: var(--yellow);
+    color: #fff;
+}
+
+.ps-failed .ps-blob {
+    background: var(--red);
+    border-color: var(--red);
+    color: #fff;
+}
+
+.ps-pending .ps-blob {
+    background: var(--bg);
+    border-color: var(--border);
+    color: var(--text-dim);
+}
+
+@keyframes psPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(88, 166, 255, 0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(88, 166, 255, 0); }
+}
+
+/* Labels */
+.ps-label {
+    font-size: 9px;
+    color: var(--text-dim);
+    margin-top: 4px;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.ps-done .ps-label { color: var(--green); }
+.ps-active .ps-label { color: var(--accent); font-weight: 600; }
+.ps-paused .ps-label { color: var(--yellow); }
+.ps-failed .ps-label { color: var(--red); }
+
+/* Duration sub-label */
+.ps-duration {
+    font-size: 8px;
+    color: var(--text-dim);
+    opacity: 0.7;
+}
+
+/* Connector lines between stages */
+.ps-connector {
+    flex: 1 0 8px;
+    max-width: 24px;
+    height: 2px;
+    margin-top: 12px;  /* Aligns with blob center */
+    background: var(--border);
+}
+
+.ps-connector.ps-done {
+    background: var(--green);
+}
+
+/* Summary line */
+.ps-summary {
+    font-size: 11px;
+    color: var(--text-dim);
+    margin-top: 2px;
+    margin-bottom: 4px;
+}
+
+/* Mobile: allow horizontal scroll, reduce label size */
+@media (max-width: 768px) {
+    .pipeline-stepper {
+        padding-bottom: 12px;
+    }
+    .ps-stage {
+        min-width: 40px;
+    }
+    .ps-gate {
+        min-width: 30px;
+    }
+    .ps-label {
+        font-size: 8px;
+    }
+}

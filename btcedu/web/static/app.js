@@ -200,6 +200,48 @@
     return html;
   }
 
+  function formatDuration(s) {
+    if (s < 60) return Math.round(s) + "s";
+    if (s < 3600) return Math.round(s / 60) + "m";
+    return (s / 3600).toFixed(1) + "h";
+  }
+
+  function renderPipelineStepper(sp) {
+    if (!sp || !sp.stages || sp.stages.length === 0) return "";
+    let html = '<div class="pipeline-stepper">';
+    sp.stages.forEach((stage, i) => {
+      if (i > 0) {
+        const prevState = sp.stages[i - 1].state;
+        const connClass = (prevState === "done" || prevState === "skipped")
+          ? "ps-done" : "ps-pending";
+        html += `<div class="ps-connector ${connClass}"></div>`;
+      }
+      const gateClass = stage.is_gate ? " ps-gate" : "";
+      const stateClass = `ps-${stage.state}`;
+      const icon = stage.state === "paused" ? "⏸"
+                 : stage.state === "failed" ? "✗"
+                 : stage.state === "done" ? "✓"
+                 : "";
+      const dur = stage.duration_seconds != null
+        ? formatDuration(stage.duration_seconds)
+        : "";
+      const cost = stage.cost_usd != null && stage.cost_usd > 0
+        ? `$${stage.cost_usd.toFixed(3)}`
+        : "";
+      const tooltip = [stage.label, dur, cost].filter(Boolean).join(" · ");
+
+      html += `
+        <div class="ps-stage${gateClass} ${stateClass}" title="${esc(tooltip)}">
+          <div class="ps-blob">${icon}</div>
+          <div class="ps-label">${esc(stage.label)}</div>
+          ${dur ? `<div class="ps-duration">${dur}</div>` : ""}
+        </div>`;
+    });
+    html += "</div>";
+    html += `<div class="ps-summary">${sp.completed_count}/${sp.total_count} stages complete</div>`;
+    return html;
+  }
+
   function renderNextAction(ep) {
     const rc = ep.review_context;
     // Failed / cost_limit episodes
@@ -360,6 +402,7 @@
           ${ep.error_message ? `<br><span style="color:var(--red)">Error: ${esc(trunc(ep.error_message, 120))}</span>` : ""}
           ${ep.retry_count > 0 ? ` &middot; retries: ${ep.retry_count}` : ""}
         </div>
+        ${renderPipelineStepper(ep.stage_progress)}
         ${renderNextAction(ep)}
         <div class="detail-actions">
           <button class="btn btn-sm" onclick="actions.download()" title="Download episode audio via yt-dlp">Download</button>

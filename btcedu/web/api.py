@@ -10,7 +10,7 @@ from flask import Blueprint, current_app, jsonify, request
 from sqlalchemy import func
 from werkzeug.utils import secure_filename
 
-from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun
+from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
 
 logger = logging.getLogger(__name__)
 
@@ -306,8 +306,190 @@ def _compute_pipeline_state(status: str, review_context: dict | None) -> str:
     return "ready"
 
 
+# ---------------------------------------------------------------------------
+# Phase 2: Pipeline stage progress
+# ---------------------------------------------------------------------------
+
+_STAGE_LABELS = {
+    # v1
+    "download": "Download",
+    "transcribe": "Transcribe",
+    "chunk": "Chunk",
+    "generate": "Generate",
+    "refine": "Refine",
+    # v2
+    "correct": "Correct",
+    "review_gate_1": "Review 1",
+    "translate": "Translate",
+    "adapt": "Adapt",
+    "review_gate_2": "Review 2",
+    "chapterize": "Chapterize",
+    "imagegen": "Images",
+    "review_gate_stock": "Review Stock",
+    "tts": "TTS",
+    "render": "Render",
+    "review_gate_3": "Review 3",
+    "publish": "Publish",
+}
+
+_STAGE_TO_PIPELINE_STAGE = {
+    "download": PipelineStage.DOWNLOAD,
+    "transcribe": PipelineStage.TRANSCRIBE,
+    "chunk": PipelineStage.CHUNK,
+    "generate": PipelineStage.GENERATE,
+    "refine": PipelineStage.REFINE,
+    "correct": PipelineStage.CORRECT,
+    "translate": PipelineStage.TRANSLATE,
+    "adapt": PipelineStage.ADAPT,
+    "chapterize": PipelineStage.CHAPTERIZE,
+    "imagegen": PipelineStage.IMAGEGEN,
+    "tts": PipelineStage.TTS,
+    "render": PipelineStage.RENDER,
+    "publish": PipelineStage.PUBLISH,
+}
+
+
+def _build_stage_progress(
+    session,
+    episode: Episode,
+    settings,
+    review_context: dict | None,
+    duration_cache: dict | None = None,
+) -> dict:
+    """Build the stage_progress dict for an episode.
+
+    Args:
+        session: DB session
+        episode: Episode ORM object
+        settings: Application settings
+        review_context: Pre-computed review context dict (or None)
+        duration_cache: Optional pre-fetched {episode.id: {PipelineStage: (duration_s, cost_usd)}}
+
+    Returns:
+        Dict with pipeline_version, stages list, current_stage, completed_count, total_count.
+    """
+    from btcedu.core.pipeline import resolve_pipeline_plan
+
+    plan = resolve_pipeline_plan(session, episode, force=False, settings=settings)
+
+    # Map StagePlan decisions to UI states
+    stages = []
+    for sp in plan:
+        is_gate = sp.stage.startswith("review_gate")
+        if sp.decision == "skip" and "already completed" in sp.reason:
+            state = "done"
+        elif sp.decision == "run":
+            state = "active"
+        else:
+            # "skip" with other reason, or "pending"
+            state = "pending"
+
+        stages.append({
+            "name": sp.stage,
+            "label": _STAGE_LABELS.get(sp.stage, sp.stage),
+            "state": state,
+            "is_gate": is_gate,
+            "duration_seconds": None,
+            "cost_usd": None,
+        })
+
+    # Override with review context
+    if review_context:
+        rc_state = review_context.get("state")
+        rc_gate = review_context.get("review_gate")
+        for s in stages:
+            if s["is_gate"] and s["name"] == rc_gate:
+                if rc_state == "paused_for_review":
+                    s["state"] = "paused"
+                elif rc_state == "review_approved":
+                    s["state"] = "done"
+
+    # Additionally: review gates that were previously approved should show "done"
+    # even without review_context (e.g. episode advanced past them)
+    # This is already handled by "already completed" → "done" from resolve_pipeline_plan
+
+    # Override with failure
+    episode_status = episode.status.value
+    if episode_status in ("failed", "cost_limit"):
+        # Find the first "active" stage and mark it failed.
+        # If none is active (FAILED has _STATUS_ORDER=-1, so all become pending),
+        # find the first non-done stage instead.
+        target = None
+        for s in stages:
+            if s["state"] == "active":
+                target = s
+                break
+        if target is None:
+            for s in stages:
+                if s["state"] not in ("done", "skipped"):
+                    target = s
+                    break
+        if target is not None:
+            target["state"] = "failed"
+            # All subsequent stages → pending
+            found = False
+            for s2 in stages:
+                if found:
+                    s2["state"] = "pending"
+                if s2 is target:
+                    found = True
+
+    # Attach durations from duration_cache or query directly
+    ep_duration_map: dict[PipelineStage, tuple[float, float]] = {}
+    if duration_cache is not None:
+        ep_duration_map = duration_cache.get(episode.id, {})
+    else:
+        # Single-episode query
+        runs = (
+            session.query(PipelineRun)
+            .filter(
+                PipelineRun.episode_id == episode.id,
+                PipelineRun.status == RunStatus.SUCCESS,
+            )
+            .order_by(PipelineRun.completed_at.desc())
+            .all()
+        )
+        seen: set[PipelineStage] = set()
+        for run in runs:
+            if run.stage not in seen:
+                seen.add(run.stage)
+                if run.completed_at and run.started_at:
+                    dur = (run.completed_at - run.started_at).total_seconds()
+                else:
+                    dur = 0.0
+                ep_duration_map[run.stage] = (dur, run.estimated_cost_usd)
+
+    for s in stages:
+        if s["is_gate"]:
+            continue
+        ps = _STAGE_TO_PIPELINE_STAGE.get(s["name"])
+        if ps and ps in ep_duration_map:
+            dur, cost = ep_duration_map[ps]
+            s["duration_seconds"] = dur
+            s["cost_usd"] = cost
+
+    # Compute summary fields
+    current_stage = None
+    for s in stages:
+        if s["state"] in ("active", "paused", "failed"):
+            current_stage = s["name"]
+            break
+
+    completed_count = sum(1 for s in stages if s["state"] in ("done", "skipped"))
+    total_count = len(stages)
+
+    return {
+        "pipeline_version": getattr(episode, "pipeline_version", 1),
+        "stages": stages,
+        "current_stage": current_stage,
+        "completed_count": completed_count,
+        "total_count": total_count,
+    }
+
+
 def _episode_to_dict(ep: Episode, settings, session=None,
-                     pending_cache: dict | None = None) -> dict:
+                     pending_cache: dict | None = None,
+                     duration_cache: dict | None = None) -> dict:
     """Serialize an Episode ORM object to a JSON-safe dict."""
     status_val = ep.status.value
     review_context = None
@@ -315,6 +497,15 @@ def _episode_to_dict(ep: Episode, settings, session=None,
         review_context = _get_review_context(
             session, ep.episode_id, status_val, pending_cache=pending_cache
         )
+
+    stage_progress = None
+    if session is not None:
+        try:
+            stage_progress = _build_stage_progress(
+                session, ep, settings, review_context, duration_cache=duration_cache
+            )
+        except Exception:
+            logger.exception("Failed to build stage_progress for %s", ep.episode_id)
 
     return {
         "episode_id": ep.episode_id,
@@ -337,6 +528,7 @@ def _episode_to_dict(ep: Episode, settings, session=None,
         "files": _file_presence(ep.episode_id, settings),
         "review_context": review_context,
         "pipeline_state": _compute_pipeline_state(status_val, review_context),
+        "stage_progress": stage_progress,
     }
 
 
@@ -401,8 +593,34 @@ def list_episodes():
             if task.episode_id not in pending_cache:
                 pending_cache[task.episode_id] = task
 
+        # Batch duration query: most recent successful PipelineRun per (episode, stage)
+        # PipelineRun.episode_id is an int FK to episodes.id
+        # Build {episode.id: {PipelineStage: (duration_seconds, cost_usd)}}
+        duration_cache: dict[int, dict[PipelineStage, tuple[float, float]]] = {}
+        all_runs = (
+            session.query(PipelineRun)
+            .filter(PipelineRun.status == RunStatus.SUCCESS)
+            .order_by(PipelineRun.episode_id, PipelineRun.stage, PipelineRun.completed_at.desc())
+            .all()
+        )
+        seen_run_keys: set[tuple[int, PipelineStage]] = set()
+        for run in all_runs:
+            key = (run.episode_id, run.stage)
+            if key not in seen_run_keys:
+                seen_run_keys.add(key)
+                if run.completed_at and run.started_at:
+                    dur = (run.completed_at - run.started_at).total_seconds()
+                else:
+                    dur = 0.0
+                if run.episode_id not in duration_cache:
+                    duration_cache[run.episode_id] = {}
+                duration_cache[run.episode_id][run.stage] = (dur, run.estimated_cost_usd)
+
         return jsonify([
-            _episode_to_dict(ep, settings, session=session, pending_cache=pending_cache)
+            _episode_to_dict(
+                ep, settings, session=session,
+                pending_cache=pending_cache, duration_cache=duration_cache,
+            )
             for ep in episodes
         ])
     finally:

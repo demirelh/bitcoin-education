@@ -600,6 +600,7 @@ def compute_adaptation_diff(
 
         adaptations.append(
             {
+                "item_id": f"adap-{len(adaptations):04d}",
                 "tier": tier,
                 "category": category,
                 "original": original_text,

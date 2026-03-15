@@ -453,6 +453,64 @@ class CreatePublishJobsTableMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class AddReviewItemDecisionsMigration(Migration):
+    """Migration 007: Create review_item_decisions table for granular diff review (Phase 5)."""
+
+    @property
+    def version(self) -> str:
+        return "007_add_review_item_decisions"
+
+    @property
+    def description(self) -> str:
+        return "Create review_item_decisions table for per-item diff review actions"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(
+            text(
+                "SELECT name FROM sqlite_master "
+                "WHERE type='table' AND name='review_item_decisions'"
+            )
+        )
+        if not result.fetchone():
+            session.execute(
+                text("""
+                    CREATE TABLE review_item_decisions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        review_task_id INTEGER NOT NULL,
+                        item_id VARCHAR(64) NOT NULL,
+                        operation_type VARCHAR(32) NOT NULL,
+                        original_text TEXT,
+                        proposed_text TEXT,
+                        action VARCHAR(32) NOT NULL DEFAULT 'pending',
+                        edited_text TEXT,
+                        decided_at TIMESTAMP,
+                        FOREIGN KEY (review_task_id) REFERENCES review_tasks(id)
+                    )
+                """)
+            )
+            session.execute(
+                text(
+                    "CREATE INDEX idx_review_item_decisions_task "
+                    "ON review_item_decisions(review_task_id)"
+                )
+            )
+            session.execute(
+                text(
+                    "CREATE INDEX idx_review_item_decisions_task_item "
+                    "ON review_item_decisions(review_task_id, item_id)"
+                )
+            )
+            session.commit()
+            logger.info("Created review_item_decisions table with indexes")
+        else:
+            logger.info("review_item_decisions table already exists (skipped)")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -461,6 +519,7 @@ MIGRATIONS = [
     CreateReviewTablesMigration(),
     CreateMediaAssetsTableMigration(),
     CreatePublishJobsTableMigration(),
+    AddReviewItemDecisionsMigration(),
 ]
 
 

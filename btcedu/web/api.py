@@ -1491,6 +1491,204 @@ def request_changes_route(review_id: int):
 
 
 # ---------------------------------------------------------------------------
+# Granular review item actions (Phase 5)
+# ---------------------------------------------------------------------------
+
+
+def _get_review_task_or_404(session, review_id: int):
+    """Helper: fetch ReviewTask or return 404 response tuple."""
+    from btcedu.models.review import ReviewTask
+
+    task = session.query(ReviewTask).filter(ReviewTask.id == review_id).first()
+    if not task:
+        return None, (jsonify({"error": f"Review not found: {review_id}"}), 404)
+    return task, None
+
+
+def _check_review_actionable(task):
+    """Return (is_ok, error_response_or_None)."""
+    from btcedu.models.review import ReviewStatus
+
+    if task.status not in (ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value):
+        return False, (
+            jsonify(
+                {"error": f"Review {task.id} is '{task.status}', must be pending or in_review"}
+            ),
+            400,
+        )
+    return True, None
+
+
+@api_bp.route("/reviews/<int:review_id>/items/<string:item_id>/accept", methods=["POST"])
+def accept_review_item(review_id: int, item_id: str):
+    """Accept a single diff item."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import upsert_item_decision
+        from btcedu.models.review_item import ReviewItemAction
+
+        task, err = _get_review_task_or_404(session, review_id)
+        if err:
+            return err
+        ok, err = _check_review_actionable(task)
+        if not ok:
+            return err
+
+        upsert_item_decision(session, review_id, item_id, ReviewItemAction.ACCEPTED.value)
+        return jsonify({"success": True, "item_id": item_id, "action": "accepted"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/<int:review_id>/items/<string:item_id>/reject", methods=["POST"])
+def reject_review_item(review_id: int, item_id: str):
+    """Reject a single diff item (revert to original)."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import upsert_item_decision
+        from btcedu.models.review_item import ReviewItemAction
+
+        task, err = _get_review_task_or_404(session, review_id)
+        if err:
+            return err
+        ok, err = _check_review_actionable(task)
+        if not ok:
+            return err
+
+        upsert_item_decision(session, review_id, item_id, ReviewItemAction.REJECTED.value)
+        return jsonify({"success": True, "item_id": item_id, "action": "rejected"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/<int:review_id>/items/<string:item_id>/edit", methods=["POST"])
+def edit_review_item(review_id: int, item_id: str):
+    """Set reviewer-provided replacement text for a single diff item."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import upsert_item_decision
+        from btcedu.models.review_item import ReviewItemAction
+
+        task, err = _get_review_task_or_404(session, review_id)
+        if err:
+            return err
+        ok, err = _check_review_actionable(task)
+        if not ok:
+            return err
+
+        body = request.get_json(silent=True) or {}
+        text_value = body.get("text", "").strip()
+        if not text_value:
+            return jsonify({"error": "Request body must include non-empty 'text' field"}), 400
+
+        upsert_item_decision(
+            session, review_id, item_id, ReviewItemAction.EDITED.value, edited_text=text_value
+        )
+        return jsonify(
+            {
+                "success": True,
+                "item_id": item_id,
+                "action": "edited",
+                "edited_text": text_value,
+            }
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/<int:review_id>/items/<string:item_id>/reset", methods=["POST"])
+def reset_review_item(review_id: int, item_id: str):
+    """Reset a diff item back to pending (undo any action)."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import upsert_item_decision
+        from btcedu.models.review_item import ReviewItemAction
+
+        task, err = _get_review_task_or_404(session, review_id)
+        if err:
+            return err
+        ok, err = _check_review_actionable(task)
+        if not ok:
+            return err
+
+        upsert_item_decision(session, review_id, item_id, ReviewItemAction.PENDING.value)
+        return jsonify({"success": True, "item_id": item_id, "action": "pending"})
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/<int:review_id>/apply", methods=["POST"])
+def apply_review_items(review_id: int):
+    """Assemble and write the reviewed sidecar file from per-item decisions.
+
+    Does NOT approve the review. Returns pending_count so UI can warn reviewer.
+    Pending items (no decision recorded) are treated as accepted (proposed change wins).
+    This behavior is explicit and visible in the API response via pending_count.
+    """
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import apply_item_decisions, get_item_decisions
+        from btcedu.models.review_item import ReviewItemAction
+
+        task, err = _get_review_task_or_404(session, review_id)
+        if err:
+            return err
+        ok, err = _check_review_actionable(task)
+        if not ok:
+            return err
+
+        decisions = get_item_decisions(session, review_id)
+        if not decisions:
+            return (
+                jsonify({"error": "No item decisions found. Act on at least one item first."}),
+                400,
+            )
+
+        try:
+            reviewed_file = apply_item_decisions(session, review_id)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        # Count pending items among all diff items
+        total_items = 0
+        if task.diff_path:
+            import json as _json
+            from pathlib import Path as _Path
+
+            try:
+                diff_data = _json.loads(_Path(task.diff_path).read_text(encoding="utf-8"))
+                all_items = diff_data.get("changes", diff_data.get("adaptations", []))
+                total_items = len(all_items)
+            except (OSError, _json.JSONDecodeError):
+                pass
+
+        pending_count = sum(
+            1 for d in decisions.values() if d.action == ReviewItemAction.PENDING.value
+        )
+        # Items with no decision record at all are also pending
+        pending_count += max(0, total_items - len(decisions))
+
+        return jsonify(
+            {
+                "success": True,
+                "reviewed_file": reviewed_file,
+                "pending_count": max(0, pending_count),
+                "total_items": total_items,
+            }
+        )
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # TTS Audio (Sprint 8)
 # ---------------------------------------------------------------------------
 

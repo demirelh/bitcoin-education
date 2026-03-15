@@ -122,6 +122,14 @@ def chapterize_script(
             f"Adapted script not found for episode {episode_id}: {adapted_path}"
         )
 
+    # Check for reviewed sidecar (Phase 5 granular review output)
+    reviewed_path = (
+        Path(settings.outputs_dir) / episode_id / "review" / "script.adapted.reviewed.tr.md"
+    )
+    if reviewed_path.exists():
+        adapted_path = reviewed_path
+        logger.info("Using reviewed adaptation sidecar for episode %s", episode_id)
+
     chapters_path = Path(settings.outputs_dir) / episode_id / "chapters.json"
     provenance_path = (
         Path(settings.outputs_dir) / episode_id / "provenance" / "chapterize_provenance.json"

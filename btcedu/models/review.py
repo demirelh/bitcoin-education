@@ -1,12 +1,23 @@
 """Review ORM models for human review workflow."""
 
+from __future__ import annotations
+
 import enum
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from btcedu.db import Base
+
+# Import ReviewItemDecision at module level so SQLAlchemy can resolve the
+# string-based back-reference in the item_decisions relationship.
+# review_item.py only uses a forward string ref "ReviewTask" so no circular import.
+from btcedu.models.review_item import ReviewItemDecision  # noqa: E402
+
+if TYPE_CHECKING:
+    pass
 
 
 def _utcnow() -> datetime:
@@ -46,6 +57,11 @@ class ReviewTask(Base):
 
     decisions: Mapped[list["ReviewDecision"]] = relationship(
         back_populates="review_task", cascade="all, delete-orphan"
+    )
+    item_decisions: Mapped[list["ReviewItemDecision"]] = relationship(
+        "ReviewItemDecision",
+        back_populates="review_task",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self) -> str:

@@ -527,6 +527,25 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
             except (json.JSONDecodeError, OSError, TypeError):
                 chapter_script = None
 
+    # Load per-item decisions (Phase 5)
+    item_decisions_map: dict = {}
+    if task.stage in ("correct", "adapt"):
+        from btcedu.models.review_item import ReviewItemDecision
+
+        records = (
+            session.query(ReviewItemDecision)
+            .filter(ReviewItemDecision.review_task_id == task.id)
+            .all()
+        )
+        item_decisions_map = {
+            r.item_id: {
+                "action": r.action,
+                "edited_text": r.edited_text,
+                "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+            }
+            for r in records
+        }
+
     return {
         "id": task.id,
         "episode_id": task.episode_id,
@@ -541,6 +560,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         "original_text": original_text,
         "corrected_text": corrected_text,
         "decisions": decisions,
+        "item_decisions": item_decisions_map,  # Phase 5: per-item review actions
         "video_url": video_url,  # Sprint 10: for render review
         "render_manifest": render_manifest,  # Sprint 10: for render review
         "chapter_script": chapter_script,  # Sprint 10: for render review
@@ -615,3 +635,332 @@ def pending_review_count(session: Session) -> int:
         .filter(ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]))
         .count()
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: Granular item-level review
+# ---------------------------------------------------------------------------
+
+
+def upsert_item_decision(
+    session: Session,
+    review_task_id: int,
+    item_id: str,
+    action: str,
+    edited_text: str | None = None,
+) -> "ReviewItemDecision":
+    """Create or update a per-item decision.
+
+    On first call for a given (review_task_id, item_id): creates record,
+    sets decided_at to now.
+    On subsequent calls: updates action (and edited_text), updates decided_at.
+
+    Args:
+        session: DB session.
+        review_task_id: FK to review_tasks.id.
+        item_id: Stable item identifier from diff JSON (e.g. "corr-0042").
+        action: One of ReviewItemAction values.
+        edited_text: Required when action == "edited", else None.
+
+    Returns:
+        The created or updated ReviewItemDecision.
+
+    Raises:
+        ValueError: If review task not found or not actionable.
+    """
+    from btcedu.models.review_item import ReviewItemAction, ReviewItemDecision
+
+    task = _get_task_or_raise(session, review_task_id)
+    _validate_actionable(task)
+
+    existing = (
+        session.query(ReviewItemDecision)
+        .filter(
+            ReviewItemDecision.review_task_id == review_task_id,
+            ReviewItemDecision.item_id == item_id,
+        )
+        .first()
+    )
+
+    now = _utcnow()
+
+    if existing:
+        existing.action = action
+        existing.edited_text = edited_text if action == ReviewItemAction.EDITED.value else None
+        existing.decided_at = now
+        session.commit()
+        return existing
+    else:
+        original_text, proposed_text, operation_type = _load_item_texts_from_diff(task, item_id)
+        record = ReviewItemDecision(
+            review_task_id=review_task_id,
+            item_id=item_id,
+            operation_type=operation_type,
+            original_text=original_text,
+            proposed_text=proposed_text,
+            action=action,
+            edited_text=edited_text if action == ReviewItemAction.EDITED.value else None,
+            decided_at=now,
+        )
+        session.add(record)
+        session.commit()
+        return record
+
+
+def get_item_decisions(
+    session: Session,
+    review_task_id: int,
+) -> "dict[str, ReviewItemDecision]":
+    """Return all item decisions for a review task, keyed by item_id.
+
+    Returns empty dict if no decisions exist yet.
+    """
+    from btcedu.models.review_item import ReviewItemDecision
+
+    records = (
+        session.query(ReviewItemDecision)
+        .filter(ReviewItemDecision.review_task_id == review_task_id)
+        .all()
+    )
+    return {r.item_id: r for r in records}
+
+
+def apply_item_decisions(
+    session: Session,
+    review_task_id: int,
+) -> str:
+    """Assemble final reviewed text from per-item decisions and write sidecar file.
+
+    Pending items default to accepting the proposed change.
+
+    Args:
+        session: DB session.
+        review_task_id: FK to review_tasks.id.
+
+    Returns:
+        Absolute path string to the written sidecar file.
+
+    Raises:
+        ValueError: If review task not found, diff file missing, or source text missing.
+    """
+    task = _get_task_or_raise(session, review_task_id)
+    item_decisions = get_item_decisions(session, review_task_id)
+
+    if not task.diff_path:
+        raise ValueError(f"Review task {review_task_id} has no diff_path")
+
+    diff_file = Path(task.diff_path)
+    if not diff_file.exists():
+        raise ValueError(f"Diff file not found: {task.diff_path}")
+
+    diff_data = json.loads(diff_file.read_text(encoding="utf-8"))
+    settings = _get_runtime_settings()
+
+    if task.stage == "correct":
+        episode = session.query(Episode).filter(Episode.episode_id == task.episode_id).first()
+        if not episode or not episode.transcript_path:
+            raise ValueError(f"Original transcript not found for episode {task.episode_id}")
+        original_text = Path(episode.transcript_path).read_text(encoding="utf-8")
+        changes = diff_data.get("changes", [])
+        _ensure_item_ids_correction(changes)
+        reviewed = _assemble_correction_review(original_text, changes, item_decisions)
+        out_path = _sidecar_path(task.episode_id, "correct", settings)
+
+    elif task.stage == "adapt":
+        adapted_path = Path(settings.outputs_dir) / task.episode_id / "script.adapted.tr.md"
+        if not adapted_path.exists():
+            raise ValueError(f"Adapted script not found: {adapted_path}")
+        adapted_text = adapted_path.read_text(encoding="utf-8")
+        adaptations = diff_data.get("adaptations", [])
+        _ensure_item_ids_adaptation(adaptations)
+        reviewed = _assemble_adaptation_review(adapted_text, adaptations, item_decisions)
+        out_path = _sidecar_path(task.episode_id, "adapt", settings)
+
+    else:
+        raise ValueError(f"apply_item_decisions not supported for stage '{task.stage}'")
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(reviewed, encoding="utf-8")
+    logger.info("Wrote reviewed sidecar to %s", out_path)
+    return str(out_path)
+
+
+def _sidecar_path(episode_id: str, stage: str, settings) -> Path:
+    """Return the sidecar file path for a reviewed artifact.
+
+    correction stage → data/outputs/{ep_id}/review/transcript.reviewed.de.txt
+    adapt stage      → data/outputs/{ep_id}/review/script.adapted.reviewed.tr.md
+    """
+    base = Path(settings.outputs_dir) / episode_id / "review"
+    if stage == "correct":
+        return base / "transcript.reviewed.de.txt"
+    elif stage == "adapt":
+        return base / "script.adapted.reviewed.tr.md"
+    else:
+        raise ValueError(f"No sidecar path defined for stage '{stage}'")
+
+
+def _load_item_texts_from_diff(
+    task: ReviewTask,
+    item_id: str,
+) -> tuple[str | None, str | None, str]:
+    """Extract original_text, proposed_text, operation_type for a given item_id.
+
+    Returns (original_text, proposed_text, operation_type).
+    Falls back to (None, None, "unknown") if item not found.
+    """
+    if not task.diff_path:
+        return (None, None, "unknown")
+    diff_file = Path(task.diff_path)
+    if not diff_file.exists():
+        return (None, None, "unknown")
+    try:
+        diff_data = json.loads(diff_file.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return (None, None, "unknown")
+
+    if task.stage == "correct":
+        changes = diff_data.get("changes", [])
+        _ensure_item_ids_correction(changes)
+        for c in changes:
+            if c.get("item_id") == item_id:
+                return (c.get("original", ""), c.get("corrected", ""), c.get("type", "replace"))
+    elif task.stage == "adapt":
+        adaptations = diff_data.get("adaptations", [])
+        _ensure_item_ids_adaptation(adaptations)
+        for a in adaptations:
+            if a.get("item_id") == item_id:
+                return (a.get("original", ""), a.get("adapted", ""), a.get("tier", "T1"))
+
+    return (None, None, "unknown")
+
+
+def _ensure_item_ids_correction(changes: list[dict]) -> None:
+    """Mutate changes in-place to add item_id if missing (backward compat)."""
+    for i, c in enumerate(changes):
+        if "item_id" not in c:
+            c["item_id"] = f"corr-{i:04d}"
+
+
+def _ensure_item_ids_adaptation(adaptations: list[dict]) -> None:
+    """Mutate adaptations in-place to add item_id if missing (backward compat)."""
+    for i, a in enumerate(adaptations):
+        if "item_id" not in a:
+            a["item_id"] = f"adap-{i:04d}"
+
+
+def _assemble_correction_review(
+    original_text: str,
+    diff_changes: list[dict],
+    item_decisions: "dict[str, ReviewItemDecision]",
+) -> str:
+    """Reconstruct reviewed transcript from original text + per-item decisions.
+
+    Algorithm (word-level reconstruction):
+    1. Tokenize original_text into words by splitting on whitespace.
+    2. Sort diff_changes by position.start_word ascending.
+    3. Walk through changes + inter-change gaps in order:
+       - Gap words: emit as-is.
+       - accepted or pending (default): emit proposed (corrected) text
+       - rejected or unchanged: emit original words
+       - edited: emit edited_text
+    4. Join output with single space.
+
+    Note: Pending items (no decision recorded) default to accepting the proposed
+    change. This behavior is explicit: pending == accept proposed.
+    """
+    from btcedu.models.review_item import ReviewItemAction
+
+    orig_words = original_text.split()
+    sorted_changes = sorted(diff_changes, key=lambda c: c["position"]["start_word"])
+
+    output_tokens: list[str] = []
+    cursor = 0  # current position in orig_words
+
+    for change in sorted_changes:
+        start_word = change["position"]["start_word"]
+        end_word = change["position"]["end_word"]
+        item_id = change.get("item_id", "")
+        decision = item_decisions.get(item_id)
+        action = decision.action if decision else ReviewItemAction.PENDING.value
+
+        # Emit gap words between last change and this one
+        if cursor < start_word:
+            output_tokens.extend(orig_words[cursor:start_word])
+
+        # Emit the change based on action
+        if action in (ReviewItemAction.ACCEPTED.value, ReviewItemAction.PENDING.value):
+            proposed = change.get("corrected", "")
+            if proposed:
+                output_tokens.extend(proposed.split())
+        elif action in (ReviewItemAction.REJECTED.value, ReviewItemAction.UNCHANGED.value):
+            output_tokens.extend(orig_words[start_word:end_word])
+        elif action == ReviewItemAction.EDITED.value:
+            edited = (
+                (decision.edited_text or change.get("corrected", ""))
+                if decision
+                else change.get("corrected", "")
+            )
+            if edited:
+                output_tokens.extend(edited.split())
+
+        # For "insert" type changes, end_word == start_word (no original words consumed)
+        cursor = end_word
+
+    # Emit remaining words after last change
+    if cursor < len(orig_words):
+        output_tokens.extend(orig_words[cursor:])
+
+    return " ".join(output_tokens)
+
+
+def _assemble_adaptation_review(
+    adapted_text: str,
+    diff_adaptations: list[dict],
+    item_decisions: "dict[str, ReviewItemDecision]",
+) -> str:
+    """Reconstruct reviewed adaptation from adapted text + per-item decisions.
+
+    Algorithm (character-level, reverse-order splicing):
+    1. Sort adaptations by position.start DESCENDING so splicing doesn't
+       shift earlier positions.
+    2. For each adaptation:
+       - accepted/pending: keep adapted text unchanged (no splice)
+       - rejected/unchanged: replace adapted span with original text
+       - edited: replace adapted span with edited_text
+
+    Note: Pending items default to accepting the proposed change (keeping
+    the adapted text). This is explicit behavior.
+    """
+    from btcedu.models.review_item import ReviewItemAction
+
+    sorted_adaptations = sorted(
+        diff_adaptations,
+        key=lambda a: a["position"]["start"],
+        reverse=True,
+    )
+
+    result = adapted_text
+
+    for adaptation in sorted_adaptations:
+        start = adaptation["position"]["start"]
+        end = adaptation["position"]["end"]
+        item_id = adaptation.get("item_id", "")
+        decision = item_decisions.get(item_id)
+        action = decision.action if decision else ReviewItemAction.PENDING.value
+
+        if action in (ReviewItemAction.ACCEPTED.value, ReviewItemAction.PENDING.value):
+            # Keep the existing adapted text (marker tag remains)
+            continue
+        elif action in (ReviewItemAction.REJECTED.value, ReviewItemAction.UNCHANGED.value):
+            replacement = adaptation.get("original", "")
+            result = result[:start] + replacement + result[end:]
+        elif action == ReviewItemAction.EDITED.value:
+            edited = (
+                (decision.edited_text or adaptation.get("adapted", ""))
+                if decision
+                else adaptation.get("adapted", "")
+            )
+            result = result[:start] + edited + result[end:]
+
+    return result

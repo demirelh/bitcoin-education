@@ -719,3 +719,22 @@ def test_cli_adapt_command_force(
     )
     assert result3.exit_code == 0
     assert "OK" in result3.output
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: item_id in adaptation diff
+# ---------------------------------------------------------------------------
+
+
+def test_compute_adaptation_diff_has_item_id():
+    """compute_adaptation_diff adds item_id to every adaptation entry."""
+    from btcedu.core.adapter import compute_adaptation_diff
+
+    translation = "Bu bir test metnidir."
+    adapted = "Bu bir [T1: test metni → test içeriği] metnidir."
+    result = compute_adaptation_diff(translation, adapted, "ep1")
+    adaptations = result["adaptations"]
+    assert len(adaptations) > 0
+    for a in adaptations:
+        assert "item_id" in a
+        assert a["item_id"].startswith("adap-")

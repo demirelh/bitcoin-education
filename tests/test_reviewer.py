@@ -806,3 +806,31 @@ class TestAutoApproveMinorCorrections:
 
         db_session.refresh(task)
         assert task.status == ReviewStatus.PENDING.value
+
+
+def test_get_review_detail_includes_item_decisions_key(db_session, corrected_episode):
+    """get_review_detail returns item_decisions dict (empty if no decisions)."""
+    from unittest.mock import patch
+
+    from btcedu.config import Settings
+
+    tmp_path = corrected_episode["tmp_path"]
+    mock_settings = Settings(
+        transcripts_dir=str(tmp_path / "transcripts"),
+        outputs_dir=str(tmp_path / "outputs"),
+    )
+
+    task = create_review_task(
+        db_session,
+        episode_id="ep001",
+        stage="correct",
+        artifact_paths=[corrected_episode["corrected_path"]],
+        diff_path=corrected_episode["diff_path"],
+    )
+
+    with patch("btcedu.core.reviewer._get_runtime_settings", return_value=mock_settings):
+        detail = get_review_detail(db_session, task.id)
+
+    assert "item_decisions" in detail
+    assert isinstance(detail["item_decisions"], dict)
+    assert detail["item_decisions"] == {}

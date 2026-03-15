@@ -447,6 +447,7 @@ def compute_correction_diff(
             context = " ".join(corr_words[ctx_start:ctx_end])
 
         change = {
+            "item_id": f"corr-{len(changes):04d}",
             "type": tag,  # "replace", "insert", "delete"
             "original": orig_span,
             "corrected": corr_span,

@@ -1832,3 +1832,96 @@ body {
     max-height: 300px;
     display: block;
 }
+
+/* ── Phase 5: Granular diff item actions ─────────────────────────── */
+
+.diff-item-actions {
+    display: flex;
+    gap: 4px;
+    justify-content: flex-end;
+    margin-top: 4px;
+}
+
+.diff-item-btn {
+    padding: 2px 8px;
+    font-size: 12px;
+    border-radius: 12px;
+    border: 1px solid currentColor;
+    background: transparent;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+
+.diff-item-btn.accept  { color: var(--green, #2a9d4a); }
+.diff-item-btn.reject  { color: var(--red, #c0392b); }
+.diff-item-btn.edit    { color: #4f46e5; }
+.diff-item-btn.reset   { color: var(--text-dim, #888); }
+
+.diff-item-btn.accept.active  { background: var(--green, #2a9d4a); color: #fff; }
+.diff-item-btn.reject.active  { background: var(--red, #c0392b); color: #fff; }
+.diff-item-btn.edit.active    { background: #4f46e5; color: #fff; }
+.diff-item-btn.reset.active   { background: var(--text-dim, #888); color: #fff; }
+
+.diff-item-accepted {
+    background: rgba(63, 185, 80, 0.08);
+    border-left: 3px solid #3fb950;
+}
+
+.diff-item-rejected {
+    background: rgba(248, 81, 73, 0.08);
+    border-left: 3px solid #f85149;
+}
+.diff-item-rejected .diff-corrected,
+.diff-item-rejected .diff-adapted {
+    text-decoration: line-through;
+    opacity: 0.6;
+}
+
+.diff-item-edited {
+    background: rgba(79, 70, 229, 0.08);
+    border-left: 3px solid #4f46e5;
+}
+
+.diff-item-unchanged {
+    background: rgba(139, 148, 158, 0.08);
+    border-left: 3px solid #8b949e;
+}
+
+.diff-edit-inline {
+    margin-top: 4px;
+}
+
+.diff-edit-textarea {
+    width: 100%;
+    font-size: 13px;
+    font-family: inherit;
+    padding: 6px 8px;
+    border: 1px solid var(--border, #30363d);
+    border-radius: 4px;
+    resize: vertical;
+    min-height: 60px;
+    box-sizing: border-box;
+    background: var(--surface, #161b22);
+    color: var(--text, #e6edf3);
+}
+
+.diff-edit-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.diff-item-summary {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    color: var(--text-dim, #8b949e);
+    margin-top: 4px;
+    padding: 4px 0;
+}
+
+.diff-item-summary .dim-count { white-space: nowrap; }
+.diff-item-summary .dim-count.accepted { color: #3fb950; }
+.diff-item-summary .dim-count.rejected { color: #f85149; }
+.diff-item-summary .dim-count.edited   { color: #4f46e5; }

@@ -483,3 +483,23 @@ class TestCorrectCLI:
         assert "Correct Whisper transcripts" in result.output
         assert "--episode-id" in result.output
         assert "--force" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Phase 5: item_id in correction diff
+# ---------------------------------------------------------------------------
+
+
+def test_compute_correction_diff_has_item_id():
+    """compute_correction_diff adds item_id to every change entry."""
+    from btcedu.core.corrector import compute_correction_diff
+
+    original = "Das ist ein Bit Coin Test."
+    corrected = "Das ist ein Bitcoin Test."
+    result = compute_correction_diff(original, corrected, "ep1")
+    changes = result["changes"]
+    assert len(changes) > 0
+    for c in changes:
+        assert "item_id" in c
+        assert c["item_id"].startswith("corr-")
+

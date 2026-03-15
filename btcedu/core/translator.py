@@ -123,6 +123,14 @@ def translate_transcript(
             f"Corrected transcript not found for episode {episode_id}: {corrected_path}"
         )
 
+    # Check for reviewed sidecar (Phase 5 granular review output)
+    reviewed_path = (
+        Path(settings.outputs_dir) / episode_id / "review" / "transcript.reviewed.de.txt"
+    )
+    if reviewed_path.exists():
+        corrected_path = reviewed_path
+        logger.info("Using reviewed transcript sidecar for episode %s", episode_id)
+
     translated_path = Path(settings.transcripts_dir) / episode_id / "transcript.tr.txt"
     provenance_path = (
         Path(settings.outputs_dir) / episode_id / "provenance" / "translate_provenance.json"

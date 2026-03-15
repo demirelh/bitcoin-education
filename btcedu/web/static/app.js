@@ -1531,8 +1531,12 @@
     }
 
     // Diff viewer (for correct/adapt stages)
+    const isActionable = (data.status === "pending" || data.status === "in_review");
     if (data.diff) {
-      html += renderDiffViewer(data.diff, data.original_text, data.corrected_text);
+      html += renderDiffViewer(
+        data.diff, data.original_text, data.corrected_text,
+        data.item_decisions || {}, isActionable, data.id
+      );
     } else if (data.stage !== "render") {
       html += '<div class="empty">No diff data available.</div>';
     }
@@ -1558,6 +1562,7 @@
         <button class="btn btn-primary" onclick="approveReview(${data.id})">Approve</button>
         <button class="btn btn-danger" onclick="rejectReview(${data.id})">Reject</button>
         <button class="btn btn-warning" onclick="toggleChangesForm()">Request Changes</button>
+        ${(data.stage === "correct" || data.stage === "adapt") ? `<button class="btn btn-secondary" onclick="applyReviewItems(${data.id})">Apply Accepted Changes</button>` : ""}
       </div>
       <div class="review-changes-form" id="review-changes-form" style="display:none;">
         <textarea class="review-notes-textarea" id="review-notes" placeholder="Describe the changes needed..."></textarea>
@@ -1569,10 +1574,13 @@
   }
   window.selectReview = selectReview;
 
-  function renderDiffViewer(diff, originalText, correctedText) {
+  function renderDiffViewer(diff, originalText, correctedText, itemDecisions, isActionable, reviewId) {
     if (diff.error) {
       return `<div class="empty">${esc(diff.error)}</div>`;
     }
+
+    itemDecisions = itemDecisions || {};
+    isActionable = !!isActionable;
 
     let html = "";
     const summary = diff.summary || {};
@@ -1613,30 +1621,48 @@
       html += "</div>";
     }
 
+    // Item summary bar (Phase 5)
+    html += renderItemSummary(changes, itemDecisions, isAdaptation);
+
     // Change/Adaptation list
     if (changes.length > 0) {
       html += '<div class="diff-changes">';
-      changes.forEach((c) => {
+      changes.forEach((c, idx) => {
+        // Determine item_id (new format or backward-compat generated from index)
+        const itemId = c.item_id || (isAdaptation
+          ? `adap-${String(idx).padStart(4, "0")}`
+          : `corr-${String(idx).padStart(4, "0")}`);
+
+        const decision = itemDecisions[itemId] || { action: "pending", edited_text: null };
+        const currentAction = decision.action || "pending";
+        const actionClass = currentAction !== "pending" ? ` diff-item-${currentAction}` : "";
+
         if (isAdaptation) {
           // Render adaptation with tier highlighting
           const tierClass = c.tier === "T1" ? "tier1" : "tier2";
           const tierLabel = c.tier === "T1" ? "T1 (mechanical)" : "T2 (editorial)";
-          html += `<div class="diff-change adaptation ${tierClass}">
+          html += `<div class="diff-change adaptation ${tierClass}${actionClass}" data-item-id="${esc(itemId)}">
             <span class="diff-tier-label">${tierLabel}</span>
             <span class="diff-category-label">${c.category || "other"}</span>`;
           if (c.original) html += `<span class="diff-original">${esc(c.original)}</span>`;
           if (c.original && c.adapted) html += ' <span class="diff-arrow">&rarr;</span> ';
           if (c.adapted) html += `<span class="diff-adapted">${esc(c.adapted)}</span>`;
           if (c.context) html += `<div class="diff-context">${esc(c.context)}</div>`;
+          if (isActionable) {
+            html += _renderItemActions(reviewId, itemId, currentAction, decision.edited_text, c.adapted || "", isAdaptation);
+          }
           html += "</div>";
         } else {
           // Render correction (existing format)
-          html += `<div class="diff-change ${c.type}">
+          html += `<div class="diff-change ${c.type}${actionClass}" data-item-id="${esc(itemId)}">
             <span class="diff-type-label">${c.type}</span>`;
           if (c.original) html += `<span class="diff-original">${esc(c.original)}</span>`;
           if (c.original && c.corrected) html += ' <span class="diff-arrow">&rarr;</span> ';
           if (c.corrected) html += `<span class="diff-corrected">${esc(c.corrected)}</span>`;
           if (c.context) html += `<div class="diff-context">${esc(c.context)}</div>`;
+          if (isActionable) {
+            html += _renderItemActions(reviewId, itemId, currentAction, decision.edited_text, c.corrected || "", isAdaptation);
+          }
           html += "</div>";
         }
       });
@@ -1726,6 +1752,134 @@
     }
   }
   window.submitRequestChanges = submitRequestChanges;
+
+  // ── Phase 5: Granular item-level review functions ─────────────────────
+  function _renderItemActions(reviewId, itemId, currentAction, editedText, proposedText, isAdaptation) {
+    const prefill = esc(editedText || proposedText);
+    return `<div class="diff-item-actions" data-item-id="${esc(itemId)}" data-review-id="${reviewId}">
+      <button class="diff-item-btn accept ${currentAction === "accepted" ? "active" : ""}"
+        onclick="itemAction(${reviewId}, '${esc(itemId)}', 'accept')">&#10003; Accept</button>
+      <button class="diff-item-btn reject ${currentAction === "rejected" ? "active" : ""}"
+        onclick="itemAction(${reviewId}, '${esc(itemId)}', 'reject')">&#10007; Reject</button>
+      <button class="diff-item-btn edit ${currentAction === "edited" ? "active" : ""}"
+        onclick="toggleEditInline('${esc(itemId)}')">&#9998; Edit</button>
+      <button class="diff-item-btn reset ${currentAction === "pending" ? "active" : ""}"
+        onclick="itemAction(${reviewId}, '${esc(itemId)}', 'reset')">&#9675; Reset</button>
+    </div>
+    <div class="diff-edit-inline" id="edit-inline-${esc(itemId)}" style="display:none">
+      <textarea class="diff-edit-textarea" id="edit-text-${esc(itemId)}">${prefill}</textarea>
+      <div class="diff-edit-actions">
+        <button class="btn btn-sm btn-primary" onclick="saveEditInline(${reviewId}, '${esc(itemId)}')">Save</button>
+        <button class="btn btn-sm" onclick="cancelEditInline('${esc(itemId)}')">Cancel</button>
+      </div>
+    </div>`;
+  }
+
+  function renderItemSummary(changes, itemDecisions, isAdaptation) {
+    const counts = { accepted: 0, rejected: 0, edited: 0, unchanged: 0, pending: 0 };
+    changes.forEach((c, idx) => {
+      const itemId = c.item_id || (isAdaptation
+        ? `adap-${String(idx).padStart(4, "0")}`
+        : `corr-${String(idx).padStart(4, "0")}`);
+      const action = (itemDecisions[itemId] || {}).action || "pending";
+      counts[action] = (counts[action] || 0) + 1;
+    });
+    return `<div class="diff-item-summary" id="diff-item-summary">
+      <span class="dim-count accepted">&#10003; ${counts.accepted} accepted</span>
+      <span class="dim-count rejected">&#10007; ${counts.rejected} rejected</span>
+      <span class="dim-count edited">&#9998; ${counts.edited} edited</span>
+      <span class="dim-count unchanged">&mdash; ${counts.unchanged} unchanged</span>
+      <span class="dim-count pending">&#8943; ${counts.pending} pending</span>
+    </div>`;
+  }
+
+  async function itemAction(reviewId, itemId, action) {
+    const r = await POST(`/reviews/${reviewId}/items/${itemId}/${action}`);
+    if (r.error) {
+      toast(r.error, false);
+    } else {
+      _updateItemVisual(itemId, r.action);
+      _updateItemSummary();
+    }
+  }
+  window.itemAction = itemAction;
+
+  function toggleEditInline(itemId) {
+    const el = document.getElementById(`edit-inline-${itemId}`);
+    if (el) el.style.display = el.style.display === "none" ? "block" : "none";
+  }
+  window.toggleEditInline = toggleEditInline;
+
+  async function saveEditInline(reviewId, itemId) {
+    const textarea = document.getElementById(`edit-text-${itemId}`);
+    if (!textarea) return;
+    const text = textarea.value.trim();
+    if (!text) { toast("Edited text cannot be empty", false); return; }
+    const r = await POST(`/reviews/${reviewId}/items/${itemId}/edit`, { text });
+    if (r.error) {
+      toast(r.error, false);
+    } else {
+      _updateItemVisual(itemId, "edited");
+      _updateItemSummary();
+      const panel = document.getElementById(`edit-inline-${itemId}`);
+      if (panel) panel.style.display = "none";
+      toast("Edit saved");
+    }
+  }
+  window.saveEditInline = saveEditInline;
+
+  function cancelEditInline(itemId) {
+    const el = document.getElementById(`edit-inline-${itemId}`);
+    if (el) el.style.display = "none";
+  }
+  window.cancelEditInline = cancelEditInline;
+
+  function _updateItemVisual(itemId, action) {
+    const container = document.querySelector(`[data-item-id="${itemId}"].diff-change`);
+    if (!container) return;
+    const actionClasses = ["diff-item-accepted", "diff-item-rejected", "diff-item-edited",
+                           "diff-item-unchanged"];
+    actionClasses.forEach(cls => container.classList.remove(cls));
+    if (action && action !== "pending") {
+      container.classList.add(`diff-item-${action}`);
+    }
+    container.querySelectorAll(".diff-item-btn").forEach(btn => btn.classList.remove("active"));
+    const activeBtn = container.querySelector(`.diff-item-btn.${action}`);
+    if (activeBtn) activeBtn.classList.add("active");
+  }
+
+  function _updateItemSummary() {
+    const counts = { accepted: 0, rejected: 0, edited: 0, unchanged: 0, pending: 0 };
+    document.querySelectorAll(".diff-change").forEach(el => {
+      if (el.classList.contains("diff-item-accepted")) counts.accepted++;
+      else if (el.classList.contains("diff-item-rejected")) counts.rejected++;
+      else if (el.classList.contains("diff-item-edited")) counts.edited++;
+      else if (el.classList.contains("diff-item-unchanged")) counts.unchanged++;
+      else counts.pending++;
+    });
+    const bar = document.getElementById("diff-item-summary");
+    if (bar) {
+      bar.innerHTML = `
+        <span class="dim-count accepted">&#10003; ${counts.accepted} accepted</span>
+        <span class="dim-count rejected">&#10007; ${counts.rejected} rejected</span>
+        <span class="dim-count edited">&#9998; ${counts.edited} edited</span>
+        <span class="dim-count unchanged">&mdash; ${counts.unchanged} unchanged</span>
+        <span class="dim-count pending">&#8943; ${counts.pending} pending</span>`;
+    }
+  }
+
+  async function applyReviewItems(reviewId) {
+    const r = await POST(`/reviews/${reviewId}/apply`);
+    if (r.error) {
+      toast(r.error, false);
+    } else {
+      const msg = r.pending_count > 0
+        ? `Reviewed file saved. ${r.pending_count} of ${r.total_items} items still pending — pending items treated as accepted.`
+        : `Reviewed file saved. All ${r.total_items} items decided.`;
+      toast(msg);
+    }
+  }
+  window.applyReviewItems = applyReviewItems;
 
   function timeAgo(dateStr) {
     const now = new Date();

@@ -349,6 +349,278 @@ def create_segment(
     )
 
 
+def normalize_video_clip(
+    input_path: str,
+    output_path: str,
+    target_duration: float | None = None,
+    resolution: str = "1920x1080",
+    fps: int = 30,
+    crf: int = 23,
+    preset: str = "medium",
+    timeout_seconds: int = 300,
+    dry_run: bool = False,
+) -> SegmentResult:
+    """Normalize a stock video clip for render pipeline compatibility.
+
+    - Scale and pad to target resolution (preserving aspect ratio)
+    - Transcode to H.264/yuv420p
+    - Match target FPS
+    - Strip audio track
+    - Optionally trim to target_duration
+
+    Args:
+        input_path: Path to input video file
+        output_path: Path for normalized output video
+        target_duration: Optional duration to trim to (seconds)
+        resolution: Target resolution (WxH)
+        fps: Target framerate
+        crf: H.264 quality (0-51, lower = better)
+        preset: H.264 encoding speed preset
+        timeout_seconds: Max execution time
+        dry_run: If True, build command but don't execute
+
+    Returns:
+        SegmentResult with paths and metadata
+
+    Raises:
+        FileNotFoundError: If input doesn't exist
+        RuntimeError: If ffmpeg execution fails
+    """
+    if not Path(input_path).exists():
+        raise FileNotFoundError(f"Video not found: {input_path}")
+
+    width, height = resolution.split("x")
+
+    filter_complex = (
+        f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+        f"format=yuv420p,"
+        f"fps={fps}[v]"
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        input_path,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-an",  # Strip audio
+        "-c:v",
+        "libx264",
+        "-preset",
+        preset,
+        "-crf",
+        str(crf),
+    ]
+
+    if target_duration is not None:
+        cmd.extend(["-t", str(target_duration)])
+
+    cmd.append(output_path)
+
+    if dry_run:
+        logger.info("Dry-run: would normalize video clip (not executing)")
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).touch()
+        return SegmentResult(
+            segment_path=output_path,
+            duration_seconds=target_duration or 0.0,
+            size_bytes=0,
+            ffmpeg_command=cmd,
+            returncode=0,
+            stderr="[dry-run]",
+        )
+
+    returncode, stderr = _run_ffmpeg(cmd, timeout_seconds)
+
+    size_bytes = 0
+    if Path(output_path).exists():
+        size_bytes = Path(output_path).stat().st_size
+
+    if returncode != 0:
+        raise RuntimeError(f"ffmpeg video normalization failed (exit code {returncode}): {stderr}")
+
+    return SegmentResult(
+        segment_path=output_path,
+        duration_seconds=target_duration or 0.0,
+        size_bytes=size_bytes,
+        ffmpeg_command=cmd,
+        returncode=returncode,
+        stderr=stderr,
+    )
+
+
+def create_video_segment(
+    video_path: str,
+    audio_path: str,
+    output_path: str,
+    duration: float,
+    overlays: list[OverlaySpec],
+    resolution: str = "1920x1080",
+    fps: int = 30,
+    crf: int = 23,
+    preset: str = "medium",
+    audio_bitrate: str = "192k",
+    font: str = "NotoSans-Bold",
+    fade_in_duration: float = 0.0,
+    fade_out_duration: float = 0.0,
+    timeout_seconds: int = 300,
+    dry_run: bool = False,
+) -> SegmentResult:
+    """Create a video segment from a video clip + TTS audio + overlays.
+
+    Similar to create_segment() but input is a video file, not a still image.
+    Uses -stream_loop -1 to loop short clips to fill the chapter duration.
+
+    Args:
+        video_path: Path to video clip file
+        audio_path: Path to audio file (TTS)
+        output_path: Path for output video
+        duration: Duration in seconds
+        overlays: List of text overlays
+        resolution: Output resolution (WxH)
+        fps: Framerate
+        crf: H.264 quality (0-51, lower = better)
+        preset: H.264 encoding speed preset
+        audio_bitrate: AAC audio bitrate
+        font: Font name for text overlays
+        fade_in_duration: Fade in duration (seconds)
+        fade_out_duration: Fade out duration (seconds)
+        timeout_seconds: Max execution time
+        dry_run: If True, build command but don't execute
+
+    Returns:
+        SegmentResult with paths and metadata
+
+    Raises:
+        FileNotFoundError: If video or audio doesn't exist
+        RuntimeError: If ffmpeg execution fails
+    """
+    if not Path(video_path).exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+    if not Path(audio_path).exists():
+        raise FileNotFoundError(f"Audio not found: {audio_path}")
+
+    width, height = resolution.split("x")
+
+    # Build filter_complex — identical to create_segment() after the scale step
+    filter_parts = [
+        f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+        f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+        f"format=yuv420p[scaled]"
+    ]
+
+    if overlays:
+        font_path = find_font_path(font)
+        last_label = "scaled"
+        for i, overlay in enumerate(overlays):
+            drawtext_filter = _build_drawtext_filter(overlay, font_path)
+            out_label = f"overlay{i}" if i < len(overlays) - 1 else "pre_fade"
+            filter_parts.append(f"[{last_label}]{drawtext_filter}[{out_label}]")
+            last_label = out_label
+    else:
+        filter_parts.append("[scaled]copy[pre_fade]")
+
+    if fade_in_duration > 0 or fade_out_duration > 0:
+        fade_filters = []
+        if fade_in_duration > 0:
+            fade_filters.append(f"fade=t=in:st=0:d={fade_in_duration}")
+        if fade_out_duration > 0:
+            fade_out_start = max(0, duration - fade_out_duration)
+            fade_filters.append(f"fade=t=out:st={fade_out_start}:d={fade_out_duration}")
+        fade_chain = ",".join(fade_filters)
+        filter_parts.append(f"[pre_fade]{fade_chain}[v]")
+    else:
+        filter_parts.append("[pre_fade]copy[v]")
+
+    filter_complex = ";".join(filter_parts)
+
+    # Build ffmpeg command — key difference: -stream_loop -1 before -i video
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-stream_loop",
+        "-1",  # Loop video indefinitely (trimmed by -t)
+        "-i",
+        video_path,
+        "-i",
+        audio_path,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-map",
+        "1:a",  # Use TTS audio, not video audio
+    ]
+
+    # Add audio fade filter
+    if fade_in_duration > 0 or fade_out_duration > 0:
+        audio_filters = []
+        if fade_in_duration > 0:
+            audio_filters.append(f"afade=t=in:st=0:d={fade_in_duration}")
+        if fade_out_duration > 0:
+            afade_out_start = max(0, duration - fade_out_duration)
+            audio_filters.append(f"afade=t=out:st={afade_out_start}:d={fade_out_duration}")
+        cmd.extend(["-af", ",".join(audio_filters)])
+
+    cmd.extend(
+        [
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            audio_bitrate,
+            "-t",
+            str(duration),
+            "-shortest",
+            output_path,
+        ]
+    )
+
+    if dry_run:
+        logger.info("Dry-run: would run ffmpeg video segment command (not executing)")
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).touch()
+        return SegmentResult(
+            segment_path=output_path,
+            duration_seconds=duration,
+            size_bytes=0,
+            ffmpeg_command=cmd,
+            returncode=0,
+            stderr="[dry-run]",
+        )
+
+    returncode, stderr = _run_ffmpeg(cmd, timeout_seconds)
+
+    size_bytes = 0
+    if Path(output_path).exists():
+        size_bytes = Path(output_path).stat().st_size
+
+    if returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg video segment creation failed (exit code {returncode}): {stderr}"
+        )
+
+    return SegmentResult(
+        segment_path=output_path,
+        duration_seconds=duration,
+        size_bytes=size_bytes,
+        ffmpeg_command=cmd,
+        returncode=returncode,
+        stderr=stderr,
+    )
+
+
 def concatenate_segments(
     segment_paths: list[str],
     output_path: str,

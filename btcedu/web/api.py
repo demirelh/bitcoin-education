@@ -1704,6 +1704,45 @@ def get_stock_candidate_image(episode_id: str):
     return send_file(str(img_path), mimetype=mimetype)
 
 
+@api_bp.route("/episodes/<episode_id>/stock/candidate-video")
+def get_stock_candidate_video(episode_id: str):
+    """Serve a video candidate file (Phase 4)."""
+    from flask import send_file
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    chapter = request.args.get("chapter", "")
+    filename = request.args.get("filename", "")
+
+    chapter = secure_filename(chapter)
+    filename = secure_filename(filename)
+
+    if not chapter or not filename:
+        return jsonify({"error": "chapter and filename params required"}), 400
+
+    # Only serve MP4 video files
+    if not filename.lower().endswith(".mp4"):
+        return jsonify({"error": "Only MP4 video files are served"}), 400
+
+    settings = _get_settings()
+    video_path = _validate_episode_path(
+        episode_id,
+        Path(settings.outputs_dir),
+        "images",
+        "candidates",
+        chapter,
+        filename,
+    )
+
+    if not video_path or not video_path.exists():
+        return jsonify({"error": "Video not found"}), 404
+
+    # Serve with range support for video seeking (HTTP 206 Partial Content)
+    return send_file(str(video_path), mimetype="video/mp4", conditional=True)
+
+
 # ---------------------------------------------------------------------------
 # Image gallery endpoints (Sprint 12 — post-audit)
 # ---------------------------------------------------------------------------

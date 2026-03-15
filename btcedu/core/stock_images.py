@@ -307,6 +307,7 @@ def search_stock_images(
 
                 ch_candidates.append({
                     "pexels_id": photo.id,
+                    "asset_type": "photo",
                     "photographer": photo.photographer,
                     "photographer_url": photo.photographer_url,
                     "source_url": photo.url,
@@ -321,18 +322,121 @@ def search_stock_images(
                     "locked": False,
                 })
 
+            # Phase 4: Search for video candidates (b_roll only, when enabled)
+            has_video_candidates = False
+            if (
+                getattr(settings, "pexels_video_enabled", False)
+                and visual.type == "b_roll"
+                and not _has_locked_selection(
+                    existing_manifest.get("chapters", {}).get(chapter.chapter_id, {})
+                )
+            ):
+                try:
+                    video_result = service.search_videos(
+                        query=query,
+                        per_page=getattr(settings, "pexels_video_per_chapter", 2),
+                        orientation=settings.pexels_orientation,
+                    )
+                    max_duration = getattr(settings, "pexels_video_max_duration", 30)
+                    preferred_quality = getattr(
+                        settings, "pexels_video_preferred_quality", "hd"
+                    )
+
+                    for video in video_result.videos:
+                        # Skip videos longer than max duration
+                        if video.duration > max_duration:
+                            logger.debug(
+                                "Skipping Pexels video %d: duration %ds > max %ds",
+                                video.id, video.duration, max_duration,
+                            )
+                            continue
+
+                        # Select the best video file
+                        selected_file = service._select_video_file(video, preferred_quality)
+                        if not selected_file:
+                            continue
+
+                        # Download video file
+                        vid_filename = f"pexels_v_{video.id}.mp4"
+                        vid_local_path = ch_dir / vid_filename
+                        vid_rel_path = (
+                            f"images/candidates/{chapter.chapter_id}/{vid_filename}"
+                        )
+
+                        # Download preview thumbnail
+                        preview_filename = f"pexels_v_{video.id}_preview.jpg"
+                        preview_local_path = ch_dir / preview_filename
+                        preview_rel_path = (
+                            f"images/candidates/{chapter.chapter_id}/{preview_filename}"
+                        )
+
+                        try:
+                            service.download_video(video, vid_local_path, preferred_quality)
+                            vid_size = vid_local_path.stat().st_size
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to download Pexels video %d: %s", video.id, e
+                            )
+                            continue
+
+                        try:
+                            service.download_video_preview(video, preview_local_path)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to download Pexels video preview %d: %s",
+                                video.id, e,
+                            )
+                            # Preview is optional — continue with empty path
+                            preview_rel_path = ""
+
+                        ch_candidates.append({
+                            "pexels_id": video.id,
+                            "asset_type": "video",
+                            "photographer": video.user_name,
+                            "photographer_url": video.user_url,
+                            "source_url": video.url,
+                            "download_url": selected_file.link,
+                            "local_path": vid_rel_path,
+                            "preview_url": video.image,
+                            "preview_path": preview_rel_path,
+                            "alt_text": "",
+                            "width": selected_file.width,
+                            "height": selected_file.height,
+                            "duration_seconds": float(video.duration),
+                            "fps": selected_file.fps,
+                            "size_bytes": vid_size,
+                            "downloaded_at": _utcnow().isoformat(),
+                            "selected": False,
+                            "locked": False,
+                        })
+                        has_video_candidates = True
+
+                except Exception as e:
+                    logger.warning(
+                        "Video search failed for chapter %s: %s", chapter.chapter_id, e
+                    )
+
             chapters_data[chapter.chapter_id] = {
                 "search_query": query,
                 "candidates": ch_candidates,
             }
             total_candidates += len(ch_candidates)
             searched += 1
+            _ = has_video_candidates  # used for schema version bump below
 
         # Write candidates manifest
+        # Bump schema version if any video candidates were found
+        has_any_video = any(
+            c.get("asset_type") == "video"
+            for ch_data in chapters_data.values()
+            for c in ch_data.get("candidates", [])
+        )
+        schema_version = "3.1" if has_any_video else "1.0"
+
         candidates_dir.mkdir(parents=True, exist_ok=True)
         manifest_data = {
             "episode_id": episode_id,
-            "schema_version": "1.0",
+            "schema_version": schema_version,
             "searched_at": _utcnow().isoformat(),
             "chapters_hash": chapters_hash,
             "chapters": chapters_data,
@@ -458,12 +562,24 @@ def rank_candidates(
         if hasattr(chapter, "narration") and chapter.narration:
             narration_text = getattr(chapter.narration, "text", "") or ""
 
-        candidate_list = "\n".join(
-            f"- Pexels ID: {c['pexels_id']}, Alt: {c.get('alt_text', '')}, "
-            f"Dimensions: {c.get('width', 0)}x{c.get('height', 0)}, "
-            f"Photographer: {c.get('photographer', '')}"
-            for c in candidates
-        )
+        def _fmt_candidate(c: dict) -> str:
+            asset_type = c.get("asset_type", "photo")
+            base = (
+                f"- Pexels ID: {c['pexels_id']}, Asset type: {asset_type}"
+            )
+            if asset_type == "video":
+                dur = c.get("duration_seconds", "")
+                base += f" ({dur}s clip)"
+                base += ", Alt: (video clip — no description available)"
+            else:
+                base += f", Alt: {c.get('alt_text', '')}"
+            base += (
+                f", Dimensions: {c.get('width', 0)}x{c.get('height', 0)}"
+                f", Photographer: {c.get('photographer', '')}"
+            )
+            return base
+
+        candidate_list = "\n".join(_fmt_candidate(c) for c in candidates)
 
         # Extract intent data for this chapter
         ch_intents = intent_map.get(ch_id, {})
@@ -484,10 +600,11 @@ def rank_candidates(
         # Already selected IDs for dedup hint
         already_selected = list(selected_so_far) if selected_so_far else []
 
+        visual_type_str = chapter.visual.type if chapter.visual else "unknown"
         user_message = (
             f"## Chapter Context\n"
             f"- Title: {chapter.title}\n"
-            f"- Visual type: {chapter.visual.type if chapter.visual else 'unknown'}\n"
+            f"- Visual type: {visual_type_str}\n"
             f"- Visual description: "
             f"{chapter.visual.description if chapter.visual else ''}\n"
             f"- Narration excerpt: {narration_text[:200]}\n"
@@ -506,6 +623,21 @@ def rank_candidates(
             user_message += (
                 f"\n## Variety Preference\n"
                 f"Already selected in other chapters: {already_str}\n"
+            )
+        # Phase 4: Motion preference hint based on visual type
+        if visual_type_str == "b_roll":
+            user_message += (
+                "\n## Motion Preference\n"
+                "This chapter uses B-roll visual type. "
+                "Short video clips are preferred over still photos "
+                "if they are semantically relevant and avoid literal traps.\n"
+            )
+        elif visual_type_str in ("diagram", "screen_share"):
+            user_message += (
+                f"\n## Asset Type Preference\n"
+                f"This chapter uses {visual_type_str} visual type. "
+                "Static images (photos) are preferred over video clips "
+                "for data graphics and technical content.\n"
             )
         user_message += (
             f"\n## Candidates\n{candidate_list}\n\n"
@@ -1119,49 +1251,128 @@ def finalize_selections(
                 continue
 
         candidate = selected[0]
+        asset_type = candidate.get("asset_type", "photo")
 
-        # Copy selected image to images/ dir
         src_path = output_base / candidate["local_path"]
-        dest_filename = f"{chapter.chapter_id}_selected.jpg"
-        dest_path = images_dir / dest_filename
 
-        if src_path.exists():
-            shutil.copy2(src_path, dest_path)
-            file_size = dest_path.stat().st_size
-        else:
-            logger.warning(f"Selected image not found: {src_path}")
-            entry = _create_placeholder_entry(chapter, images_dir)
+        if asset_type == "video":
+            # Phase 4: Normalize and finalize video candidate
+            dest_filename = f"{chapter.chapter_id}_selected.mp4"
+            dest_path = images_dir / dest_filename
+            normalized_path = images_dir / "candidates" / f"{chapter.chapter_id}_normalized.mp4"
+
+            if src_path.exists():
+                try:
+                    from btcedu.services.ffmpeg_service import normalize_video_clip
+
+                    normalize_video_clip(
+                        input_path=str(src_path),
+                        output_path=str(normalized_path),
+                        target_duration=None,  # Trimming happens at render time
+                        resolution=getattr(settings, "render_resolution", "1920x1080"),
+                        fps=getattr(settings, "render_fps", 30),
+                        crf=getattr(settings, "render_crf", 23),
+                        preset=getattr(settings, "render_preset", "medium"),
+                        timeout_seconds=getattr(settings, "render_timeout_segment", 300),
+                        dry_run=getattr(settings, "dry_run", False),
+                    )
+                    # Copy normalized clip to images/
+                    shutil.copy2(normalized_path, dest_path)
+                    file_size = dest_path.stat().st_size
+                except Exception as e:
+                    logger.warning(
+                        "Video normalization failed for %s/%s: %s — using placeholder",
+                        episode_id, chapter.chapter_id, e,
+                    )
+                    entry = _create_placeholder_entry(chapter, images_dir)
+                    image_entries.append(entry)
+                    placeholder_count += 1
+                    continue
+            else:
+                logger.warning(f"Selected video not found: {src_path}")
+                entry = _create_placeholder_entry(chapter, images_dir)
+                image_entries.append(entry)
+                placeholder_count += 1
+                continue
+
+            entry = {
+                "chapter_id": chapter.chapter_id,
+                "chapter_title": chapter.title,
+                "visual_type": visual.type,
+                "asset_type": "video",
+                "file_path": f"images/{dest_filename}",
+                "prompt": None,
+                "generation_method": "pexels_video",
+                "model": None,
+                "size": f"{candidate['width']}x{candidate['height']}",
+                "mime_type": "video/mp4",
+                "size_bytes": file_size,
+                "duration_seconds": candidate.get("duration_seconds"),
+                "metadata": {
+                    "pexels_id": candidate["pexels_id"],
+                    "photographer": candidate["photographer"],
+                    "photographer_url": candidate["photographer_url"],
+                    "source_url": candidate["source_url"],
+                    "license": "Pexels License (free for commercial use)",
+                    "search_query": ch_data.get("search_query", ""),
+                    "alt_text": "",
+                    "downloaded_at": candidate.get("downloaded_at", ""),
+                    "normalized": True,
+                    "original_duration": candidate.get("duration_seconds"),
+                },
+            }
             image_entries.append(entry)
-            placeholder_count += 1
-            continue
+            selected_count += 1
 
-        entry = {
-            "chapter_id": chapter.chapter_id,
-            "chapter_title": chapter.title,
-            "visual_type": visual.type,
-            "file_path": f"images/{dest_filename}",
-            "prompt": None,
-            "generation_method": "pexels",
-            "model": None,
-            "size": f"{candidate['width']}x{candidate['height']}",
-            "mime_type": "image/jpeg",
-            "size_bytes": file_size,
-            "metadata": {
-                "pexels_id": candidate["pexels_id"],
-                "photographer": candidate["photographer"],
-                "photographer_url": candidate["photographer_url"],
-                "source_url": candidate["source_url"],
-                "license": "Pexels License (free for commercial use)",
-                "search_query": ch_data.get("search_query", ""),
-                "alt_text": candidate.get("alt_text", ""),
-                "downloaded_at": candidate.get("downloaded_at", ""),
-            },
-        }
-        image_entries.append(entry)
-        selected_count += 1
+            # Create MediaAsset record with VIDEO type
+            _create_media_asset(
+                session, episode_id, chapter.chapter_id, entry,
+                asset_type_override=MediaAssetType.VIDEO,
+            )
 
-        # Create MediaAsset record
-        _create_media_asset(session, episode_id, chapter.chapter_id, entry)
+        else:
+            # Photo candidate: existing behavior
+            dest_filename = f"{chapter.chapter_id}_selected.jpg"
+            dest_path = images_dir / dest_filename
+
+            if src_path.exists():
+                shutil.copy2(src_path, dest_path)
+                file_size = dest_path.stat().st_size
+            else:
+                logger.warning(f"Selected image not found: {src_path}")
+                entry = _create_placeholder_entry(chapter, images_dir)
+                image_entries.append(entry)
+                placeholder_count += 1
+                continue
+
+            entry = {
+                "chapter_id": chapter.chapter_id,
+                "chapter_title": chapter.title,
+                "visual_type": visual.type,
+                "asset_type": "photo",
+                "file_path": f"images/{dest_filename}",
+                "prompt": None,
+                "generation_method": "pexels",
+                "model": None,
+                "size": f"{candidate['width']}x{candidate['height']}",
+                "mime_type": "image/jpeg",
+                "size_bytes": file_size,
+                "metadata": {
+                    "pexels_id": candidate["pexels_id"],
+                    "photographer": candidate["photographer"],
+                    "photographer_url": candidate["photographer_url"],
+                    "source_url": candidate["source_url"],
+                    "license": "Pexels License (free for commercial use)",
+                    "search_query": ch_data.get("search_query", ""),
+                    "alt_text": candidate.get("alt_text", ""),
+                    "downloaded_at": candidate.get("downloaded_at", ""),
+                },
+            }
+            image_entries.append(entry)
+            selected_count += 1
+
+            # Create MediaAsset record
+            _create_media_asset(session, episode_id, chapter.chapter_id, entry)
 
     # Write manifest (same format as DALL-E)
     manifest_data = {
@@ -1422,15 +1633,18 @@ def _create_media_asset(
     episode_id: str,
     chapter_id: str,
     entry: dict,
+    asset_type_override: MediaAssetType | None = None,
 ) -> None:
-    """Create MediaAsset database record for a stock image."""
+    """Create MediaAsset database record for a stock image or video."""
+    resolved_type = asset_type_override or MediaAssetType.IMAGE
     media_asset = MediaAsset(
         episode_id=episode_id,
-        asset_type=MediaAssetType.IMAGE,
+        asset_type=resolved_type,
         chapter_id=chapter_id,
         file_path=entry["file_path"],
         mime_type=entry["mime_type"],
         size_bytes=entry["size_bytes"],
+        duration_seconds=entry.get("duration_seconds"),
         meta=entry.get("metadata"),
         created_at=_utcnow(),
     )

@@ -414,11 +414,14 @@ def test_resolve_chapter_media(tmp_path):
         ]
     }
 
-    img, aud, dur = _resolve_chapter_media("ch01", image_manifest, tts_manifest, base_dir)
+    img, aud, dur, asset_type = _resolve_chapter_media(
+        "ch01", image_manifest, tts_manifest, base_dir
+    )
 
     assert img == image_path
     assert aud == audio_path
     assert dur == 60.5
+    assert asset_type == "photo"  # Phase 4: backward compat default
 
 
 def test_resolve_chapter_media_missing_image(tmp_path):

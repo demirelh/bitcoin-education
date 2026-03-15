@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 
 # Pexels API
 API_BASE = "https://api.pexels.com/v1"
+VIDEO_API_BASE = "https://api.pexels.com/videos"
 DEFAULT_RATE_LIMIT = 180  # requests per hour (conservative; actual limit is 200)
 
 
@@ -39,6 +40,45 @@ class PexelsSearchResult:
     query: str
     total_results: int
     photos: list[PexelsPhoto]
+    page: int
+    per_page: int
+
+
+@dataclass
+class PexelsVideoFile:
+    """A single video file variant from Pexels."""
+
+    id: int
+    quality: str      # "hd", "sd", "uhd"
+    file_type: str    # "video/mp4"
+    width: int
+    height: int
+    fps: float
+    link: str
+
+
+@dataclass
+class PexelsVideo:
+    """Single video result from Pexels Video API."""
+
+    id: int
+    width: int
+    height: int
+    url: str           # Pexels page URL
+    duration: int      # seconds
+    image: str         # preview thumbnail URL
+    user_name: str
+    user_url: str
+    video_files: list[PexelsVideoFile]
+
+
+@dataclass
+class PexelsVideoSearchResult:
+    """Response from a Pexels video search."""
+
+    query: str
+    total_results: int
+    videos: list[PexelsVideo]
     page: int
     per_page: int
 
@@ -163,6 +203,178 @@ class PexelsService:
             f"({len(response.content)} bytes)"
         )
         return target_path
+
+    def search_videos(
+        self,
+        query: str,
+        per_page: int = 5,
+        page: int = 1,
+        orientation: str = "landscape",
+        size: str = "large",
+    ) -> PexelsVideoSearchResult:
+        """Search Pexels for videos matching query.
+
+        Args:
+            query: Search terms (English works best)
+            per_page: Results per page (1-80)
+            page: Page number
+            orientation: "landscape", "portrait", or "square"
+            size: "large", "medium", or "small"
+
+        Returns:
+            PexelsVideoSearchResult with videos
+
+        Raises:
+            RuntimeError: On API error or rate limit exceeded after retries.
+        """
+        self._rate_limit_wait()
+
+        params = {
+            "query": query,
+            "per_page": per_page,
+            "page": page,
+            "orientation": orientation,
+            "size": size,
+        }
+        headers = {"Authorization": self.api_key}
+
+        response = self._request_with_retry(
+            "GET", f"{VIDEO_API_BASE}/search", headers=headers, params=params
+        )
+
+        data = response.json()
+        self._record_request()
+
+        videos = []
+        for v in data.get("videos", []):
+            user = v.get("user", {})
+            video_files = [
+                PexelsVideoFile(
+                    id=vf.get("id", 0),
+                    quality=vf.get("quality", ""),
+                    file_type=vf.get("file_type", "video/mp4"),
+                    width=vf.get("width", 0),
+                    height=vf.get("height", 0),
+                    fps=float(vf.get("fps", 0)),
+                    link=vf.get("link", ""),
+                )
+                for vf in v.get("video_files", [])
+            ]
+            videos.append(
+                PexelsVideo(
+                    id=v["id"],
+                    width=v.get("width", 0),
+                    height=v.get("height", 0),
+                    url=v.get("url", ""),
+                    duration=v.get("duration", 0),
+                    image=v.get("image", ""),
+                    user_name=user.get("name", ""),
+                    user_url=user.get("url", ""),
+                    video_files=video_files,
+                )
+            )
+
+        return PexelsVideoSearchResult(
+            query=query,
+            total_results=data.get("total_results", 0),
+            videos=videos,
+            page=data.get("page", page),
+            per_page=data.get("per_page", per_page),
+        )
+
+    def download_video(
+        self,
+        video: PexelsVideo,
+        target_path: Path,
+        preferred_quality: str = "hd",
+    ) -> Path:
+        """Download video file (HD variant preferred).
+
+        Args:
+            video: PexelsVideo to download
+            target_path: Where to save the file
+            preferred_quality: Preferred quality ("hd", "sd")
+
+        Returns:
+            Path to saved file
+        """
+        video_file = self._select_video_file(video, preferred_quality)
+        if not video_file:
+            raise ValueError(f"No suitable video file found for Pexels video {video.id}")
+
+        response = requests.get(video_file.link, timeout=120)
+        response.raise_for_status()
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(response.content)
+
+        logger.info(
+            "Downloaded Pexels video %d to %s (%d bytes, quality=%s)",
+            video.id, target_path, len(response.content), video_file.quality,
+        )
+        return target_path
+
+    def download_video_preview(
+        self,
+        video: PexelsVideo,
+        target_path: Path,
+    ) -> Path:
+        """Download video preview thumbnail.
+
+        Args:
+            video: PexelsVideo whose preview to download
+            target_path: Where to save the thumbnail
+
+        Returns:
+            Path to saved file
+        """
+        if not video.image:
+            raise ValueError(f"No preview image URL for Pexels video {video.id}")
+
+        response = requests.get(video.image, timeout=60)
+        response.raise_for_status()
+
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        target_path.write_bytes(response.content)
+
+        logger.info(
+            "Downloaded Pexels video preview %d to %s (%d bytes)",
+            video.id, target_path, len(response.content),
+        )
+        return target_path
+
+    def _select_video_file(
+        self,
+        video: PexelsVideo,
+        preferred_quality: str,
+    ) -> PexelsVideoFile | None:
+        """Select best video file from available variants.
+
+        Priority:
+        1. quality == preferred_quality and width >= 1280
+        2. Highest resolution available
+
+        Args:
+            video: PexelsVideo with video_files list
+            preferred_quality: Preferred quality string ("hd", "sd")
+
+        Returns:
+            Best PexelsVideoFile, or None if no files available
+        """
+        if not video.video_files:
+            return None
+
+        # Try to find preferred quality at minimum resolution
+        preferred = [
+            vf for vf in video.video_files
+            if vf.quality == preferred_quality and vf.width >= 1280
+        ]
+        if preferred:
+            # Pick highest resolution among preferred quality
+            return max(preferred, key=lambda vf: vf.width * vf.height)
+
+        # Fallback: highest resolution available
+        return max(video.video_files, key=lambda vf: vf.width * vf.height)
 
     def _request_with_retry(
         self,

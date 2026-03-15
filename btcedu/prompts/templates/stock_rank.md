@@ -35,13 +35,22 @@ These Pexels IDs are already selected for other chapters in this video. Prefer d
 {{ already_selected_ids | join(", ") }}
 {% endif %}
 
+{% if visual_type == "b_roll" %}
+## Motion Preference
+This chapter uses B-roll visual type. Short video clips are preferred over still photos if they are semantically relevant and avoid literal traps.
+{% elif visual_type in ["diagram", "screen_share"] %}
+## Asset Type Preference
+This chapter uses {{ visual_type }} visual type. Static images (photos) are preferred over video clips for data graphics and technical content.
+{% endif %}
+
 ## Candidates
 {% for c in candidates %}
 ### Candidate {{ loop.index }}
 - **Pexels ID**: {{ c.pexels_id }}
-- **Alt text**: {{ c.alt_text }}
+- **Asset type**: {{ c.asset_type | default("photo") }}{% if c.asset_type == "video" %} ({{ c.duration_seconds }}s clip){% endif %}
+- **Alt text**: {{ c.alt_text }}{% if not c.alt_text %} (video clip — no description available){% endif %}
 - **Dimensions**: {{ c.width }}x{{ c.height }}
-- **Photographer**: {{ c.photographer }}
+- **Photographer/Creator**: {{ c.photographer }}
 {% endfor %}
 
 ## Task

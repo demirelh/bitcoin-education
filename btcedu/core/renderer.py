@@ -37,7 +37,7 @@ class RenderSegmentEntry:
     """Metadata for a single rendered segment."""
 
     chapter_id: str
-    image: str  # Relative path from outputs dir
+    image: str  # Relative path from outputs dir (image or video)
     audio: str  # Relative path from outputs dir
     duration_seconds: float
     segment_path: str  # Relative path from outputs dir
@@ -45,6 +45,7 @@ class RenderSegmentEntry:
     transition_in: str
     transition_out: str
     size_bytes: int
+    asset_type: str = "photo"  # "photo" or "video" (Phase 4)
 
 
 @dataclass
@@ -165,6 +166,7 @@ def render_video(
         from btcedu.services.ffmpeg_service import (
             concatenate_segments,
             create_segment,
+            create_video_segment,
             get_ffmpeg_version,
         )
 
@@ -184,7 +186,7 @@ def render_video(
         for chapter in chapters_doc.chapters:
             # Resolve media files for this chapter
             try:
-                image_path, audio_path, duration = _resolve_chapter_media(
+                media_path, audio_path, duration, asset_type = _resolve_chapter_media(
                     chapter.chapter_id, image_manifest, tts_manifest, base_dir
                 )
             except ValueError as e:
@@ -208,7 +210,8 @@ def render_video(
             segment_rel_path = f"render/segments/{segment_filename}"
 
             logger.info(
-                "Rendering segment %s (%d/%d): %.1fs, %d overlays, fade_in=%.1fs, fade_out=%.1fs",
+                "Rendering segment %s (%d/%d): %.1fs, %d overlays, "
+                "fade_in=%.1fs, fade_out=%.1fs, asset_type=%s",
                 chapter.chapter_id,
                 chapter.order,
                 chapters_doc.total_chapters,
@@ -216,28 +219,49 @@ def render_video(
                 len(overlay_specs),
                 fade_in_dur,
                 fade_out_dur,
+                asset_type,
             )
 
-            segment_result = create_segment(
-                image_path=str(image_path),
-                audio_path=str(audio_path),
-                output_path=str(segment_path),
-                duration=duration,
-                overlays=overlay_specs,
-                resolution=settings.render_resolution,
-                fps=settings.render_fps,
-                crf=settings.render_crf,
-                preset=settings.render_preset,
-                audio_bitrate=settings.render_audio_bitrate,
-                font=settings.render_font,
-                fade_in_duration=fade_in_dur,  # Sprint 10
-                fade_out_duration=fade_out_dur,  # Sprint 10
-                timeout_seconds=settings.render_timeout_segment,
-                dry_run=settings.dry_run,
-            )
+            # Phase 4: Branch on asset_type for video vs image segments
+            if asset_type == "video":
+                segment_result = create_video_segment(
+                    video_path=str(media_path),
+                    audio_path=str(audio_path),
+                    output_path=str(segment_path),
+                    duration=duration,
+                    overlays=overlay_specs,
+                    resolution=settings.render_resolution,
+                    fps=settings.render_fps,
+                    crf=settings.render_crf,
+                    preset=settings.render_preset,
+                    audio_bitrate=settings.render_audio_bitrate,
+                    font=settings.render_font,
+                    fade_in_duration=fade_in_dur,
+                    fade_out_duration=fade_out_dur,
+                    timeout_seconds=settings.render_timeout_segment,
+                    dry_run=settings.dry_run,
+                )
+            else:
+                segment_result = create_segment(
+                    image_path=str(media_path),
+                    audio_path=str(audio_path),
+                    output_path=str(segment_path),
+                    duration=duration,
+                    overlays=overlay_specs,
+                    resolution=settings.render_resolution,
+                    fps=settings.render_fps,
+                    crf=settings.render_crf,
+                    preset=settings.render_preset,
+                    audio_bitrate=settings.render_audio_bitrate,
+                    font=settings.render_font,
+                    fade_in_duration=fade_in_dur,  # Sprint 10
+                    fade_out_duration=fade_out_dur,  # Sprint 10
+                    timeout_seconds=settings.render_timeout_segment,
+                    dry_run=settings.dry_run,
+                )
 
             # Record segment entry
-            # Find image and audio relative paths from manifests
+            # Find image/video and audio relative paths from manifests
             image_rel = _find_image_rel_path(chapter.chapter_id, image_manifest)
             audio_rel = _find_audio_rel_path(chapter.chapter_id, tts_manifest)
 
@@ -263,6 +287,7 @@ def render_video(
                 transition_in=chapter.transitions.in_transition.value,
                 transition_out=chapter.transitions.out_transition.value,
                 size_bytes=segment_result.size_bytes,
+                asset_type=asset_type,  # Phase 4
             )
             segment_entries.append(entry)
             total_duration += duration
@@ -449,6 +474,7 @@ def _compute_render_content_hash(
                 "chapter_id": img["chapter_id"],
                 "file_path": img["file_path"],
                 "generation_method": img.get("generation_method", "unknown"),
+                "asset_type": img.get("asset_type", "photo"),  # Phase 4
             }
             for img in image_manifest.get("images", [])
         ],
@@ -531,8 +557,8 @@ def _resolve_chapter_media(
     image_manifest: dict,
     tts_manifest: dict,
     base_dir: Path,
-) -> tuple[Path, Path, float]:
-    """Resolve image, audio paths and duration for a chapter.
+) -> tuple[Path, Path, float, str]:
+    """Resolve media, audio paths and duration for a chapter.
 
     Args:
         chapter_id: Chapter identifier
@@ -541,12 +567,13 @@ def _resolve_chapter_media(
         base_dir: Episode outputs directory
 
     Returns:
-        Tuple of (image_path, audio_path, duration_seconds)
+        Tuple of (media_path, audio_path, duration_seconds, asset_type)
+        asset_type is "photo" or "video" (Phase 4)
 
     Raises:
-        ValueError: If image or audio not found
+        ValueError: If image/video or audio not found
     """
-    # Find image
+    # Find image/video entry
     image_entry = None
     for img in image_manifest.get("images", []):
         if img["chapter_id"] == chapter_id:
@@ -556,9 +583,12 @@ def _resolve_chapter_media(
     if not image_entry:
         raise ValueError(f"No image found for chapter {chapter_id}")
 
-    image_path = base_dir / image_entry["file_path"]
-    if not image_path.exists():
-        raise ValueError(f"Image file not found: {image_path}")
+    media_path = base_dir / image_entry["file_path"]
+    if not media_path.exists():
+        raise ValueError(f"Media file not found: {media_path}")
+
+    # Phase 4: Read asset_type (default "photo" for backward compat)
+    asset_type = image_entry.get("asset_type", "photo")
 
     # Find audio
     audio_entry = None
@@ -576,7 +606,7 @@ def _resolve_chapter_media(
 
     duration = audio_entry["duration_seconds"]
 
-    return image_path, audio_path, duration
+    return media_path, audio_path, duration, asset_type
 
 
 def _find_image_rel_path(chapter_id: str, image_manifest: dict) -> str:

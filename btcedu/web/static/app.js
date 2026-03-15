@@ -659,25 +659,59 @@
         candidates.sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
         candidates.forEach(c => {
-          const imgUrl = `api/episodes/${selected.episode_id}/stock/candidate-image?chapter=${esc(chId)}&filename=pexels_${c.pexels_id}.jpg`;
           const isPinned = c.selected && c.locked;
           const isSelected = c.selected;
           const rankLabel = c.rank ? `#${c.rank}` : '';
           const reason = c.rank_reason || '';
           const trapWarning = c.trap_flag ? ' <span class="stock-trap-warning" title="Possible literal-trap mismatch — check carefully">⚠</span>' : '';
+          const isVideo = c.asset_type === 'video';
 
-          html += `<div class="stock-thumb ${isPinned ? 'pinned' : ''} ${isSelected ? 'selected' : ''}">
-            ${rankLabel ? `<span class="stock-rank-badge">${rankLabel}${trapWarning}</span>` : ''}
-            <img src="${imgUrl}" alt="${esc(c.alt_text || '')}" loading="lazy"
-                 onclick="window.open('${imgUrl}','_blank')" title="${esc(reason)}">
-            <div class="stock-thumb-info">
-              <span class="stock-photographer">${esc(c.photographer || '')}</span>
-              ${isPinned ? '<span class="stock-locked">PINNED</span>' : ''}
-            </div>
-            <button class="btn btn-sm stock-pin-btn" onclick="pinStockImage('${esc(selected.episode_id)}','${esc(chId)}',${c.pexels_id})">
-              ${isSelected ? 'Pinned' : 'Pin'}
-            </button>
-          </div>`;
+          if (isVideo) {
+            // Phase 4: Video candidate — show preview thumbnail with play badge
+            const previewFilename = (c.preview_path || '').split('/').pop();
+            const previewUrl = previewFilename
+              ? `api/episodes/${selected.episode_id}/stock/candidate-image?chapter=${esc(chId)}&filename=${encodeURIComponent(previewFilename)}`
+              : '';
+            const videoFilename = (c.local_path || '').split('/').pop();
+            const videoSrc = videoFilename
+              ? `api/episodes/${selected.episode_id}/stock/candidate-video?chapter=${esc(chId)}&filename=${encodeURIComponent(videoFilename)}`
+              : '';
+            const thumbId = `vid-thumb-${chId}-${c.pexels_id}`;
+            const previewId = `vid-preview-${chId}-${c.pexels_id}`;
+
+            html += `<div class="stock-thumb ${isPinned ? 'pinned' : ''} ${isSelected ? 'selected' : ''}">
+              ${rankLabel ? `<span class="stock-rank-badge">${rankLabel}${trapWarning}</span>` : ''}
+              <div class="stock-thumb-media" id="${thumbId}" onclick="toggleVideoPreview('${previewId}','${esc(videoSrc)}')">
+                ${previewUrl ? `<img src="${previewUrl}" alt="Video preview" loading="lazy" title="${esc(reason)}">` : '<div style="height:120px;background:#222;display:flex;align-items:center;justify-content:center;color:#aaa">No preview</div>'}
+                <span class="stock-video-badge">&#9654; ${c.duration_seconds || '?'}s</span>
+              </div>
+              <div class="stock-video-preview" id="${previewId}" style="display:none"></div>
+              <div class="stock-thumb-info">
+                <span class="stock-photographer">${esc(c.photographer || '')}</span>
+                ${isPinned ? '<span class="stock-locked">PINNED</span>' : ''}
+              </div>
+              <button class="btn btn-sm stock-pin-btn" onclick="pinStockImage('${esc(selected.episode_id)}','${esc(chId)}',${c.pexels_id})">
+                ${isSelected ? 'Pinned' : 'Pin'}
+              </button>
+            </div>`;
+          } else {
+            // Photo candidate: existing rendering
+            const imgUrl = `api/episodes/${selected.episode_id}/stock/candidate-image?chapter=${esc(chId)}&filename=pexels_${c.pexels_id}.jpg`;
+            html += `<div class="stock-thumb ${isPinned ? 'pinned' : ''} ${isSelected ? 'selected' : ''}">
+              ${rankLabel ? `<span class="stock-rank-badge">${rankLabel}${trapWarning}</span>` : ''}
+              <div class="stock-thumb-media">
+                <img src="${imgUrl}" alt="${esc(c.alt_text || '')}" loading="lazy"
+                     onclick="window.open('${imgUrl}','_blank')" title="${esc(reason)}">
+              </div>
+              <div class="stock-thumb-info">
+                <span class="stock-photographer">${esc(c.photographer || '')}</span>
+                ${isPinned ? '<span class="stock-locked">PINNED</span>' : ''}
+              </div>
+              <button class="btn btn-sm stock-pin-btn" onclick="pinStockImage('${esc(selected.episode_id)}','${esc(chId)}',${c.pexels_id})">
+                ${isSelected ? 'Pinned' : 'Pin'}
+              </button>
+            </div>`;
+          }
         });
 
         html += '</div></div>';
@@ -693,6 +727,26 @@
         </div>`;
     }
   }
+
+  // Phase 4: Toggle inline video preview for stock video candidates
+  function toggleVideoPreview(previewId, videoSrc) {
+    const container = document.getElementById(previewId);
+    if (!container) return;
+    if (container.style.display === 'none') {
+      container.style.display = 'block';
+      if (!container.querySelector('video')) {
+        container.innerHTML = `<video controls preload="metadata" style="width:100%;max-height:200px">
+          <source src="${videoSrc}" type="video/mp4">
+        </video>`;
+      }
+    } else {
+      container.style.display = 'none';
+      // Pause video when hiding
+      const vid = container.querySelector('video');
+      if (vid) vid.pause();
+    }
+  }
+  window.toggleVideoPreview = toggleVideoPreview;
 
   async function pinStockImage(episodeId, chapterId, pexelsId) {
     const result = await POST(`/episodes/${episodeId}/stock/pin`, {

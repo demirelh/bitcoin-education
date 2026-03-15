@@ -235,8 +235,8 @@ def test_chapterize_script_success(
                     "title": "Giriş",
                     "order": 1,
                     "narration": {
-                        "text": "Merhaba arkadaşlar.",
-                        "word_count": 2,
+                        "text": " ".join(["kelime"] * 150),
+                        "word_count": 150,
                         "estimated_duration_seconds": 60,
                     },
                     "visual": {
@@ -252,8 +252,8 @@ def test_chapterize_script_success(
                     "title": "İçerik",
                     "order": 2,
                     "narration": {
-                        "text": "Bitcoin nedir?",
-                        "word_count": 2,
+                        "text": " ".join(["kelime"] * 150),
+                        "word_count": 150,
                         "estimated_duration_seconds": 60,
                     },
                     "visual": {
@@ -410,8 +410,8 @@ def test_chapterize_script_force(
                     "title": "Test",
                     "order": 1,
                     "narration": {
-                        "text": "Test.",
-                        "word_count": 1,
+                        "text": " ".join(["kelime"] * 150),
+                        "word_count": 150,
                         "estimated_duration_seconds": 60,
                     },
                     "visual": {"type": "title_card", "description": "Title", "image_prompt": None},

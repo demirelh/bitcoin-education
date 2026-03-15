@@ -33,6 +33,7 @@ def _make_settings(tmp_path: Path) -> Settings:
         transcripts_dir=str(tmp_path / "transcripts"),
         chunks_dir=str(tmp_path / "chunks"),
         dry_run=True,  # Never call real APIs
+        pipeline_version=1,  # Tests expect v1 behaviour; avoid .env contamination
     )
 
 

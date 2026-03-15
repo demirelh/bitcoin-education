@@ -182,12 +182,144 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
     }
 
 
-def _episode_to_dict(ep: Episode, settings) -> dict:
+# Review gate labels: stage → (gate_name, human_readable_label)
+_REVIEW_GATE_LABELS = {
+    "correct": ("review_gate_1", "Transcript Correction Review"),
+    "adapt": ("review_gate_2", "Adaptation Review"),
+    "stock_images": ("review_gate_stock", "Stock Image Review"),
+    "render": ("review_gate_3", "Video Review"),
+}
+
+# Episode statuses that correspond to review gate pauses
+_REVIEW_GATE_STATUS_MAP = {
+    "corrected": "correct",
+    "adapted": "adapt",
+    "chapterized": "stock_images",
+    "rendered": "render",
+}
+
+
+def _get_review_context(session, episode_id: str, status: str,
+                        pending_cache: dict | None = None) -> dict | None:
+    """Build review context dict for an episode.
+
+    Args:
+        session: DB session
+        episode_id: Episode ID
+        status: Episode status value string
+        pending_cache: Optional pre-fetched dict of {episode_id: ReviewTask}
+            for batch queries. If None, queries the DB directly.
+
+    Returns:
+        Review context dict or None if no review context applies.
+    """
+    from btcedu.models.review import ReviewStatus, ReviewTask
+
+    # Check for pending/in_review task
+    pending_task = None
+    if pending_cache is not None:
+        pending_task = pending_cache.get(episode_id)
+    else:
+        pending_task = (
+            session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == episode_id,
+                ReviewTask.status.in_([
+                    ReviewStatus.PENDING.value,
+                    ReviewStatus.IN_REVIEW.value,
+                ]),
+            )
+            .order_by(ReviewTask.created_at.desc())
+            .first()
+        )
+
+    if pending_task:
+        stage = pending_task.stage
+        gate_name, label = _REVIEW_GATE_LABELS.get(
+            stage, (f"review_gate_{stage}", f"{stage.replace('_', ' ').title()} Review")
+        )
+        return {
+            "state": "paused_for_review",
+            "review_task_id": pending_task.id,
+            "review_stage": stage,
+            "review_stage_label": label,
+            "review_status": pending_task.status,
+            "review_gate": gate_name,
+            "created_at": (
+                pending_task.created_at.isoformat()
+                if pending_task.created_at else None
+            ),
+            "next_action_text": (
+                f"Pipeline paused \u2014 {gate_name.replace('_', ' ').title()}"
+                " requires approval"
+            ),
+            "action_url": f"/api/reviews/{pending_task.id}",
+        }
+
+    # No pending task — check if status implies a review gate
+    review_stage = _REVIEW_GATE_STATUS_MAP.get(status)
+    if review_stage:
+        # Check for approved review at this stage
+        approved_task = (
+            session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == episode_id,
+                ReviewTask.stage == review_stage,
+                ReviewTask.status == ReviewStatus.APPROVED.value,
+            )
+            .order_by(ReviewTask.created_at.desc())
+            .first()
+        )
+        if approved_task:
+            _, label = _REVIEW_GATE_LABELS.get(
+                review_stage,
+                (None, f"{review_stage.replace('_', ' ').title()} Review"),
+            )
+            return {
+                "state": "review_approved",
+                "review_task_id": approved_task.id,
+                "review_stage": review_stage,
+                "review_stage_label": label,
+                "review_status": approved_task.status,
+                "review_gate": _REVIEW_GATE_LABELS.get(review_stage, (None,))[0],
+                "created_at": (
+                    approved_task.created_at.isoformat()
+                    if approved_task.created_at else None
+                ),
+                "next_action_text": f"{label} approved \u2014 run pipeline to continue",
+                "action_url": f"/api/reviews/{approved_task.id}",
+            }
+
+    return None
+
+
+def _compute_pipeline_state(status: str, review_context: dict | None) -> str:
+    """Derive a high-level pipeline state string for UI consumption."""
+    if review_context and review_context.get("state") == "paused_for_review":
+        return "paused_for_review"
+    if status in ("failed", "cost_limit"):
+        return "failed"
+    if status == "published":
+        return "completed"
+    if status == "approved":
+        return "ready"
+    return "ready"
+
+
+def _episode_to_dict(ep: Episode, settings, session=None,
+                     pending_cache: dict | None = None) -> dict:
     """Serialize an Episode ORM object to a JSON-safe dict."""
+    status_val = ep.status.value
+    review_context = None
+    if session is not None:
+        review_context = _get_review_context(
+            session, ep.episode_id, status_val, pending_cache=pending_cache
+        )
+
     return {
         "episode_id": ep.episode_id,
         "title": ep.title,
-        "status": ep.status.value,
+        "status": status_val,
         "source": ep.source,
         "url": ep.url,
         "published_at": ep.published_at.isoformat() if ep.published_at else None,
@@ -195,6 +327,7 @@ def _episode_to_dict(ep: Episode, settings) -> dict:
         "completed_at": ep.completed_at.isoformat() if ep.completed_at else None,
         "error_message": ep.error_message,
         "retry_count": ep.retry_count,
+        "pipeline_version": getattr(ep, "pipeline_version", 1),
         "youtube_video_id": getattr(ep, "youtube_video_id", None),
         "published_at_youtube": (
             ep.published_at_youtube.isoformat()
@@ -202,6 +335,8 @@ def _episode_to_dict(ep: Episode, settings) -> dict:
             else None
         ),
         "files": _file_presence(ep.episode_id, settings),
+        "review_context": review_context,
+        "pipeline_state": _compute_pipeline_state(status_val, review_context),
     }
 
 
@@ -236,6 +371,8 @@ def list_episodes():
     session = _get_session()
     settings = _get_settings()
     try:
+        from btcedu.models.review import ReviewStatus, ReviewTask
+
         # Support optional channel filter
         channel_id = request.args.get("channel_id")
 
@@ -246,7 +383,28 @@ def list_episodes():
 
         episodes = query.order_by(Episode.published_at.desc().nullslast()).all()
 
-        return jsonify([_episode_to_dict(ep, settings) for ep in episodes])
+        # Batch query: fetch all pending/in_review tasks in one query (avoids N+1)
+        pending_tasks = (
+            session.query(ReviewTask)
+            .filter(
+                ReviewTask.status.in_([
+                    ReviewStatus.PENDING.value,
+                    ReviewStatus.IN_REVIEW.value,
+                ])
+            )
+            .order_by(ReviewTask.created_at.desc())
+            .all()
+        )
+        # First match per episode_id wins (most recent pending task)
+        pending_cache = {}
+        for task in pending_tasks:
+            if task.episode_id not in pending_cache:
+                pending_cache[task.episode_id] = task
+
+        return jsonify([
+            _episode_to_dict(ep, settings, session=session, pending_cache=pending_cache)
+            for ep in episodes
+        ])
     finally:
         session.close()
 
@@ -260,7 +418,7 @@ def get_episode(episode_id: str):
         if not ep:
             return jsonify({"error": f"Episode not found: {episode_id}"}), 404
 
-        data = _episode_to_dict(ep, settings)
+        data = _episode_to_dict(ep, settings, session=session)
 
         # Add cost info from pipeline runs
         runs = session.query(PipelineRun).filter(PipelineRun.episode_id == ep.id).all()

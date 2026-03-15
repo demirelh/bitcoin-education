@@ -191,6 +191,63 @@
     "Outline v2", "Script v2", "Publishing v2", "Chapters"
   ];
 
+  // ── Review UX helpers ────────────────────────────────────────
+  function renderStatusBadges(ep) {
+    let html = `<span class="badge badge-${ep.status}">${ep.status}</span>`;
+    if (ep.review_context && ep.review_context.state === "paused_for_review") {
+      html += ` <span class="badge badge-review-pending" title="${esc(ep.review_context.next_action_text)}">&#9208; review</span>`;
+    }
+    return html;
+  }
+
+  function renderNextAction(ep) {
+    const rc = ep.review_context;
+    // Failed / cost_limit episodes
+    if (ep.status === "failed" || ep.status === "cost_limit") {
+      return `
+        <div class="next-action next-action-failed">
+          <div class="next-action-icon">&#10007;</div>
+          <div class="next-action-body">
+            <strong>Pipeline failed</strong>
+            <p>${esc(trunc(ep.error_message || "Unknown error", 200))}</p>
+            <button class="btn btn-sm btn-danger" onclick="actions.retry()">Retry</button>
+          </div>
+        </div>`;
+    }
+    if (!rc) return "";
+    if (rc.state === "paused_for_review") {
+      return `
+        <div class="next-action next-action-review">
+          <div class="next-action-icon">&#9208;</div>
+          <div class="next-action-body">
+            <strong>${esc(rc.next_action_text)}</strong>
+            <p>${esc(rc.review_stage_label)} is ${esc(rc.review_status)} since ${timeAgo(rc.created_at)}.</p>
+            <button class="btn btn-primary btn-sm" onclick="jumpToReview(${rc.review_task_id})">Review now</button>
+            <button class="btn btn-sm" onclick="actions.run()">Resume pipeline</button>
+          </div>
+        </div>`;
+    }
+    if (rc.state === "review_approved") {
+      return `
+        <div class="next-action next-action-approved">
+          <div class="next-action-icon">&#10003;</div>
+          <div class="next-action-body">
+            <strong>${esc(rc.review_stage_label)} approved</strong>
+            <p>Run the pipeline to continue to the next stage.</p>
+            <button class="btn btn-primary btn-sm" onclick="actions.run()">Continue pipeline</button>
+          </div>
+        </div>`;
+    }
+    return "";
+  }
+
+  async function jumpToReview(reviewId) {
+    showReviews();
+    await loadReviewList();
+    await selectReview(reviewId);
+  }
+  window.jumpToReview = jumpToReview;
+
   function renderTable(eps) {
     const tbody = document.getElementById("ep-tbody");
     tbody.innerHTML = "";
@@ -206,7 +263,7 @@
       }).join("");
 
       tr.innerHTML =
-        `<td><span class="badge badge-${ep.status}">${ep.status}</span></td>` +
+        `<td>${renderStatusBadges(ep)}</td>` +
         `<td title="${esc(ep.title)}">${esc(trunc(ep.title, 45))}</td>` +
         `<td>${pub}</td>` +
         `<td><div class="files-row">${dots}</div></td>` +
@@ -252,7 +309,7 @@
 
       card.innerHTML = `
         <div class="ep-card-header">
-          <span class="badge badge-${ep.status}">${ep.status}</span>
+          ${renderStatusBadges(ep)}
           ${retryBadge}
         </div>
         <div class="ep-card-title">${esc(ep.title)}</div>
@@ -271,7 +328,11 @@
     const status = document.getElementById("filter-status").value;
     const search = document.getElementById("filter-search").value.toLowerCase();
     const filtered = episodes.filter((ep) => {
-      if (status && ep.status !== status) return false;
+      if (status === "review_pending") {
+        if (!ep.review_context || ep.review_context.state !== "paused_for_review") return false;
+      } else if (status && ep.status !== status) {
+        return false;
+      }
       if (search && !ep.title.toLowerCase().includes(search) && !ep.episode_id.toLowerCase().includes(search)) return false;
       return true;
     });
@@ -292,13 +353,14 @@
       <div class="detail-header">
         <h2>${esc(ep.title)}</h2>
         <div class="detail-meta">
-          <span class="badge badge-${ep.status}">${ep.status}</span>
+          ${renderStatusBadges(ep)}
           ${ep.episode_id} &middot; ${ep.published_at ? ep.published_at.slice(0, 10) : "\u2014"}
           &middot; <a href="${esc(ep.url)}" target="_blank" style="color:var(--accent)">source</a>
           ${ep.youtube_video_id ? `&middot; <a href="https://youtu.be/${esc(ep.youtube_video_id)}" target="_blank" style="color:#f90">▶ YouTube</a>` : ""}
           ${ep.error_message ? `<br><span style="color:var(--red)">Error: ${esc(trunc(ep.error_message, 120))}</span>` : ""}
           ${ep.retry_count > 0 ? ` &middot; retries: ${ep.retry_count}` : ""}
         </div>
+        ${renderNextAction(ep)}
         <div class="detail-actions">
           <button class="btn btn-sm" onclick="actions.download()" title="Download episode audio via yt-dlp">Download</button>
           <button class="btn btn-sm" onclick="actions.transcribe()" title="Transcribe audio via Whisper API">Transcribe</button>

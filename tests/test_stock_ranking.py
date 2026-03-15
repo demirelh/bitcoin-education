@@ -13,6 +13,21 @@ from btcedu.core.stock_images import (
 )
 
 
+@pytest.fixture(autouse=True)
+def mock_extract_intents(tmp_path):
+    """Phase 3: patch extract_chapter_intents so ranking tests stay isolated."""
+    from btcedu.core.stock_images import IntentResult
+
+    fake_result = IntentResult(
+        episode_id="ep001",
+        chapters_analyzed=0,
+        cost_usd=0.0,
+        intent_path=tmp_path / "ep001" / "images" / "candidates" / "intent_analysis.json",
+    )
+    with patch("btcedu.core.stock_images.extract_chapter_intents", return_value=fake_result):
+        yield
+
+
 @pytest.fixture
 def settings():
     s = MagicMock()
@@ -429,7 +444,7 @@ def test_rank_bumps_schema_version(
     rank_candidates(session, "ep001", settings)
 
     updated = json.loads(manifest_path.read_text())
-    assert updated["schema_version"] == "2.0"
+    assert updated["schema_version"] == "3.0"
 
 
 @patch("btcedu.core.stock_images._load_chapters")

@@ -90,6 +90,22 @@ _TR_TO_EN = {
     "gayrimenkul": "real estate",
     "konut": "housing",
     "ev": "house",
+    # Phase 3 additions — polysemous / frequently-missed terms
+    "makas": "gap divide",
+    "baskı": "pressure",
+    "köpük": "bubble",
+    "balon": "bubble",
+    "boşluk": "gap void",
+    "çukur": "pit downturn",
+    "dalga": "wave cycle",
+    "patlama": "boom explosion",
+    "daralma": "contraction",
+    "aşınma": "erosion decline",
+    "tavan": "ceiling cap",
+    "taban": "floor base",
+    "kaldıraç": "leverage",
+    "çıpa": "anchor peg",
+    "sürdürülebilir": "sustainable",
 }
 
 # Turkish stop words to filter out
@@ -155,6 +171,16 @@ class RankResult:
     chapters_ranked: int
     chapters_skipped: int  # locked or no candidates
     total_cost_usd: float
+
+
+@dataclass
+class IntentResult:
+    """Summary of chapter intent extraction for one episode."""
+
+    episode_id: str
+    chapters_analyzed: int
+    cost_usd: float
+    intent_path: Path
 
 
 @dataclass
@@ -388,6 +414,19 @@ def rank_candidates(
     chapters_skipped = 0
     total_cost = 0.0
 
+    # Extract intents for the full episode (cached if already done)
+    intent_result = extract_chapter_intents(session, episode_id, settings, force=force)
+    intent_map: dict = {}  # ch_id -> intent dict
+    if intent_result.intent_path.exists():
+        try:
+            intent_data_doc = json.loads(intent_result.intent_path.read_text(encoding="utf-8"))
+            intent_map = intent_data_doc.get("chapters", {})
+        except (json.JSONDecodeError, KeyError):
+            pass
+    total_cost += intent_result.cost_usd
+
+    selected_so_far: set[int] = set()  # track selected Pexels IDs across chapters
+
     for ch_id, ch_data in chapters_data.items():
         candidates = ch_data.get("candidates", [])
 
@@ -426,6 +465,25 @@ def rank_candidates(
             for c in candidates
         )
 
+        # Extract intent data for this chapter
+        ch_intents = intent_map.get(ch_id, {})
+        intents = ch_intents.get("intents", [])
+        allowed_motifs = ch_intents.get("allowed_motifs", [])
+        disallowed_motifs = ch_intents.get("disallowed_motifs", [])
+        literal_traps = ch_intents.get("literal_traps", [])
+
+        # Format literal traps for prompt
+        traps_text = ""
+        if literal_traps:
+            traps_text = "\n".join(
+                f'  - "{t.get("word","")}" means "{t.get("intended","")}"'
+                f' here, NOT "{t.get("trap","")}"'
+                for t in literal_traps
+            )
+
+        # Already selected IDs for dedup hint
+        already_selected = list(selected_so_far) if selected_so_far else []
+
         user_message = (
             f"## Chapter Context\n"
             f"- Title: {chapter.title}\n"
@@ -434,11 +492,30 @@ def rank_candidates(
             f"{chapter.visual.description if chapter.visual else ''}\n"
             f"- Narration excerpt: {narration_text[:200]}\n"
             f"- Search query: {ch_data.get('search_query', '')}\n\n"
-            f"## Candidates\n{candidate_list}\n\n"
+            f"## Semantic Intent\n"
+            f"- Intents: {', '.join(intents) if intents else 'not available'}\n"
+            f"- Allowed motifs: "
+            f"{', '.join(allowed_motifs) if allowed_motifs else 'not available'}\n"
+            f"- Disallowed motifs (DO NOT select): "
+            f"{', '.join(disallowed_motifs) if disallowed_motifs else 'none'}\n"
+        )
+        if traps_text:
+            user_message += f"- Literal traps to avoid:\n{traps_text}\n"
+        if already_selected:
+            already_str = ", ".join(str(x) for x in already_selected)
+            user_message += (
+                f"\n## Variety Preference\n"
+                f"Already selected in other chapters: {already_str}\n"
+            )
+        user_message += (
+            f"\n## Candidates\n{candidate_list}\n\n"
             f"## Task\n"
-            f"Rank ALL candidates from best (1) to worst. "
-            f"Return ONLY valid JSON.\n"
-            f'{{"rankings": [{{"pexels_id": ..., "rank": 1, "reason": "..."}}, ...]}}'
+            f"Rank ALL candidates. Check disallowed motifs first. "
+            f"Set trap_flag=true for any candidate "
+            f"matching a disallowed motif or literal trap. "
+            f"Return ONLY valid JSON with trap_flag field:\n"
+            '{{"rankings": [{{"pexels_id": ..., "rank": 1, '
+            '"reason": "...", "trap_flag": false}}, ...]}}'
         )
 
         if settings.dry_run:
@@ -446,9 +523,16 @@ def rank_candidates(
             for i, c in enumerate(candidates):
                 c["rank"] = i + 1
                 c["rank_reason"] = f"Dry-run rank {i + 1}"
+                c["trap_flag"] = False
                 c["selected"] = (i == 0)
             ch_data["pinned_by"] = "llm_rank"
+            ch_data["intents"] = intents
             chapters_ranked += 1
+            # Track selected for dedup
+            for c in candidates:
+                if c.get("selected"):
+                    selected_so_far.add(c["pexels_id"])
+                    break
             continue
 
         try:
@@ -464,7 +548,14 @@ def rank_candidates(
             # Parse LLM response
             rankings = _parse_ranking_response(response.text, candidates)
             _apply_rankings(candidates, rankings)
+            _validate_and_adjust_selection(candidates, ch_intents, selected_so_far)
             ch_data["pinned_by"] = "llm_rank"
+            ch_data["intents"] = intents
+            # Track selected Pexels ID for dedup
+            for c in candidates:
+                if c.get("selected"):
+                    selected_so_far.add(c["pexels_id"])
+                    break
             chapters_ranked += 1
 
         except Exception as e:
@@ -476,15 +567,23 @@ def rank_candidates(
             for i, c in enumerate(candidates):
                 c["rank"] = i + 1
                 c["rank_reason"] = f"Fallback rank {i + 1} (LLM error)"
+                c["trap_flag"] = False
                 c["selected"] = (i == 0)
             ch_data["pinned_by"] = "llm_rank"
+            ch_data["intents"] = intents
+            # Track selected for dedup
+            for c in candidates:
+                if c.get("selected"):
+                    selected_so_far.add(c["pexels_id"])
+                    break
             chapters_ranked += 1
 
     # Update manifest metadata
     manifest["ranked_at"] = _utcnow().isoformat()
     manifest["ranking_model"] = settings.claude_model
-    manifest["ranking_cost_usd"] = total_cost
-    manifest["schema_version"] = "2.0"
+    manifest["ranking_cost_usd"] = total_cost - intent_result.cost_usd  # ranking cost only
+    manifest["intent_analysis_cost_usd"] = intent_result.cost_usd
+    manifest["schema_version"] = "3.0"
 
     candidates_manifest_path.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -501,6 +600,287 @@ def rank_candidates(
         chapters_skipped=chapters_skipped,
         total_cost_usd=total_cost,
     )
+
+
+def extract_chapter_intents(
+    session: Session,
+    episode_id: str,
+    settings: Settings,
+    force: bool = False,
+) -> IntentResult:
+    """Extract semantic intents per chapter for better stock image ranking.
+
+    Makes a single LLM call for the entire episode. Produces intent_analysis.json
+    with per-chapter intents, allowed/disallowed motifs, literal traps, and search hints.
+    """
+    from btcedu.services.claude_service import call_claude
+
+    chapters_doc = _load_chapters(episode_id, settings)
+    chapters_hash = _compute_chapters_hash(chapters_doc)
+
+    output_base = Path(settings.outputs_dir) / episode_id
+    intent_path = output_base / "images" / "candidates" / "intent_analysis.json"
+
+    # Idempotency check
+    if not force and intent_path.exists():
+        try:
+            cached = json.loads(intent_path.read_text(encoding="utf-8"))
+            if cached.get("chapters_hash") == chapters_hash:
+                logger.info("Intent analysis is current for %s", episode_id)
+                return IntentResult(
+                    episode_id=episode_id,
+                    chapters_analyzed=len(cached.get("chapters", {})),
+                    cost_usd=cached.get("cost_usd", 0.0),
+                    intent_path=intent_path,
+                )
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    if settings.dry_run:
+        # Dry-run: return empty intents structure
+        intent_data = {
+            "episode_id": episode_id,
+            "schema_version": "1.0",
+            "analyzed_at": _utcnow().isoformat(),
+            "model": "dry_run",
+            "cost_usd": 0.0,
+            "chapters_hash": chapters_hash,
+            "chapters": {
+                ch.chapter_id: {
+                    "intents": [],
+                    "allowed_motifs": [],
+                    "disallowed_motifs": [],
+                    "literal_traps": [],
+                    "search_hints": [],
+                }
+                for ch in chapters_doc.chapters
+                if ch.visual and ch.visual.type in VISUAL_TYPES_NEEDING_IMAGES
+            },
+        }
+        intent_path.parent.mkdir(parents=True, exist_ok=True)
+        intent_path.write_text(
+            json.dumps(intent_data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        return IntentResult(
+            episode_id=episode_id,
+            chapters_analyzed=len(intent_data["chapters"]),
+            cost_usd=0.0,
+            intent_path=intent_path,
+        )
+
+    # Build chapters data for prompt
+    chapters_for_prompt = []
+    for ch in chapters_doc.chapters:
+        if not ch.visual or ch.visual.type not in VISUAL_TYPES_NEEDING_IMAGES:
+            continue
+        narration_text = ""
+        if hasattr(ch, "narration") and ch.narration:
+            narration_text = getattr(ch.narration, "text", "") or ""
+        chapters_for_prompt.append({
+            "chapter_id": ch.chapter_id,
+            "title": ch.title,
+            "visual_type": ch.visual.type if ch.visual else "unknown",
+            "visual_description": ch.visual.description if ch.visual else "",
+            "narration_excerpt": narration_text[:200],
+        })
+
+    system_prompt = (
+        "You are a visual editor for an educational YouTube channel about Bitcoin and "
+        "cryptocurrency, targeting a Turkish audience. Your task is to analyze video chapters "
+        "and extract semantic intents for stock photo selection."
+    )
+
+    # Build user message with all chapters
+    chapters_text = ""
+    for ch in chapters_for_prompt:
+        chapters_text += (
+            f"### {ch['chapter_id']}: {ch['title']}\n"
+            f"- Visual type: {ch['visual_type']}\n"
+            f"- Visual description: {ch['visual_description']}\n"
+            f"- Narration excerpt: {ch['narration_excerpt']}\n\n"
+        )
+
+    user_message = (
+        "For each chapter below, extract:\n"
+        "1. `intents` (1-3): Core concepts/themes\n"
+        "2. `allowed_motifs` (3-6): Appropriate visual motifs\n"
+        "3. `disallowed_motifs` (2-4): Motifs a naive search might return but would be WRONG\n"
+        "4. `literal_traps`: Words with alternate meanings that could mislead image search. "
+        'Format: [{"word": "...", "intended": "...", "trap": "..."}]\n'
+        "5. `search_hints` (2-4): English Pexels search terms for the RIGHT photo\n\n"
+        f"## Chapters\n{chapters_text}\n"
+        'Return ONLY valid JSON: {"chapters": {"ch01": {...}, ...}}'
+    )
+
+    try:
+        response = call_claude(
+            system_prompt=system_prompt,
+            user_message=user_message,
+            settings=settings,
+            json_mode=True,
+            max_tokens=4096,
+        )
+        cost = response.cost_usd
+
+        # Parse response
+        parsed = _parse_intent_response(response.text, chapters_for_prompt)
+
+        intent_data = {
+            "episode_id": episode_id,
+            "schema_version": "1.0",
+            "analyzed_at": _utcnow().isoformat(),
+            "model": settings.claude_model,
+            "cost_usd": cost,
+            "chapters_hash": chapters_hash,
+            "chapters": parsed,
+        }
+
+    except Exception as e:
+        logger.warning("Intent extraction failed for %s: %s — using empty intents", episode_id, e)
+        cost = 0.0
+        intent_data = {
+            "episode_id": episode_id,
+            "schema_version": "1.0",
+            "analyzed_at": _utcnow().isoformat(),
+            "model": settings.claude_model,
+            "cost_usd": 0.0,
+            "chapters_hash": chapters_hash,
+            "chapters": {
+                ch["chapter_id"]: {
+                    "intents": [],
+                    "allowed_motifs": [],
+                    "disallowed_motifs": [],
+                    "literal_traps": [],
+                    "search_hints": [],
+                }
+                for ch in chapters_for_prompt
+            },
+        }
+
+    intent_path.parent.mkdir(parents=True, exist_ok=True)
+    intent_path.write_text(json.dumps(intent_data, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    logger.info(
+        "Intent extraction for %s: %d chapters, $%.4f",
+        episode_id, len(intent_data["chapters"]), cost,
+    )
+
+    return IntentResult(
+        episode_id=episode_id,
+        chapters_analyzed=len(intent_data["chapters"]),
+        cost_usd=cost,
+        intent_path=intent_path,
+    )
+
+
+def _parse_intent_response(response_text: str, chapters: list[dict]) -> dict:
+    """Parse LLM intent extraction response."""
+    text = response_text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        lines = [line for line in lines if not line.strip().startswith("```")]
+        text = "\n".join(lines)
+
+    _EMPTY_CHAPTER_INTENTS = {
+        "intents": [],
+        "allowed_motifs": [],
+        "disallowed_motifs": [],
+        "literal_traps": [],
+        "search_hints": [],
+    }
+
+    try:
+        data = json.loads(text)
+        chapters_data = data.get("chapters", {})
+        result = {}
+        for ch in chapters:
+            ch_id = ch["chapter_id"]
+            ch_intents = chapters_data.get(ch_id, {})
+            result[ch_id] = {
+                "intents": ch_intents.get("intents", []),
+                "allowed_motifs": ch_intents.get("allowed_motifs", []),
+                "disallowed_motifs": ch_intents.get("disallowed_motifs", []),
+                "literal_traps": ch_intents.get("literal_traps", []),
+                "search_hints": ch_intents.get("search_hints", []),
+            }
+        return result
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return {ch["chapter_id"]: dict(_EMPTY_CHAPTER_INTENTS) for ch in chapters}
+
+
+def _validate_and_adjust_selection(
+    candidates: list[dict],
+    intent_data: dict,
+    selected_so_far: set,
+) -> None:
+    """Post-rank validation: catch trap-flagged winners and cross-chapter duplicates.
+
+    Mutates candidates in-place. May swap the selected candidate.
+    """
+    if not candidates:
+        return
+
+    disallowed_motifs = [m.lower() for m in intent_data.get("disallowed_motifs", [])]
+
+    def _is_trap(candidate: dict) -> bool:
+        """Check if candidate triggers a literal trap or disallowed motif."""
+        if candidate.get("trap_flag"):
+            return True
+        alt_text = candidate.get("alt_text", "").lower()
+        return any(motif in alt_text for motif in disallowed_motifs if motif)
+
+    # Find current selection
+    selected = [c for c in candidates if c.get("selected")]
+    if not selected:
+        return
+    current = selected[0]
+
+    # Check trap
+    if _is_trap(current):
+        # Find first non-trap alternative
+        alternatives = [
+            c for c in candidates
+            if not c.get("selected") and not _is_trap(c)
+        ]
+        if alternatives:
+            alt = alternatives[0]
+            current["selected"] = False
+            alt["selected"] = True
+            logger.warning(
+                "Trap detected in selected candidate %s (alt: %s...) — "
+                "replaced with %s",
+                current.get("pexels_id"),
+                current.get("alt_text", "")[:60],
+                alt.get("pexels_id"),
+            )
+            current = alt
+        else:
+            logger.warning(
+                "Trap detected in selected candidate %s but no clean alternative available",
+                current.get("pexels_id"),
+            )
+
+    # Check duplicate
+    if current.get("pexels_id") in selected_so_far:
+        # Find best non-duplicate, non-trap candidate within rank ≤ 3
+        alternatives = [
+            c for c in candidates
+            if not c.get("selected")
+            and c.get("pexels_id") not in selected_so_far
+            and not _is_trap(c)
+            and c.get("rank", 999) <= 3
+        ]
+        if alternatives:
+            alt = alternatives[0]
+            current["selected"] = False
+            alt["selected"] = True
+            alt["dedup_adjusted"] = True
+            logger.info(
+                "Duplicate avoided: chapter would repeat Pexels %s — "
+                "switched to %s",
+                current.get("pexels_id"),
+                alt.get("pexels_id"),
+            )
 
 
 def _parse_ranking_response(
@@ -560,10 +940,12 @@ def _apply_rankings(candidates: list[dict], rankings: list[dict]) -> None:
             r = rank_map[c["pexels_id"]]
             c["rank"] = r["rank"]
             c["rank_reason"] = r.get("reason", "")
+            c["trap_flag"] = r.get("trap_flag", False)
         else:
             # Candidate not in LLM response — assign tail rank
             c["rank"] = next_fallback_rank
             c["rank_reason"] = "Not ranked by LLM"
+            c["trap_flag"] = False
             next_fallback_rank += 1
         c["selected"] = False
 
@@ -847,18 +1229,28 @@ def finalize_selections(
     )
 
 
-def _derive_search_query(chapter) -> str:
+def _derive_search_query(chapter, search_hints: list[str] | None = None) -> str:
     """Extract search keywords from chapter metadata and translate to English.
 
     Strategy:
-    1. Start with visual.description
-    2. Add chapter title keywords
-    3. Filter Turkish stop-words
-    4. Translate key terms to English
-    5. Add visual-type modifiers
-    6. Append "finance" domain tag
-    7. Deduplicate and cap at 8 keywords
+    1. If search_hints provided, use them as primary terms (Phase 3)
+    2. Otherwise start with visual.description
+    3. Add chapter title keywords
+    4. Filter Turkish stop-words
+    5. Translate key terms to English
+    6. Add visual-type modifiers
+    7. Append "finance" domain tag
+    8. Deduplicate and cap at 8 keywords
     """
+    # If LLM-generated search hints are available, use them as primary terms
+    if search_hints:
+        hints_query = " ".join(search_hints[:4])
+        # Still add visual type modifier
+        visual = chapter.visual
+        if visual and visual.type in _VISUAL_TYPE_MODIFIERS:
+            hints_query += " " + _VISUAL_TYPE_MODIFIERS[visual.type]
+        return hints_query
+
     visual = chapter.visual
     words = []
 

@@ -1582,6 +1582,29 @@ body {
 }
 .stock-photographer { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Phase 3: Intent tags and trap warnings */
+.stock-intents {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 4px 0 8px;
+}
+
+.stock-intent-tag {
+    font-size: 0.75em;
+    padding: 2px 6px;
+    background: var(--accent, #58a6ff);
+    color: #fff;
+    border-radius: 10px;
+    white-space: nowrap;
+}
+
+.stock-trap-warning {
+    color: var(--yellow, #d29922);
+    font-size: 0.9em;
+    cursor: help;
+}
+
 /* ── Next Action Block (Phase 1 Review UX) ──────────── */
 .next-action {
     display: flex;

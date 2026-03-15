@@ -636,13 +636,25 @@
         const query = ch.search_query || '';
         const pinnedBy = ch.pinned_by || '';
 
+        const chIntents = ch.intents || [];
+
         html += `<div class="stock-chapter">
           <div class="stock-chapter-header">
             <strong>${esc(chId)}</strong>
             <span class="stock-query">${esc(query)}</span>
             ${pinnedBy ? `<span class="badge">${esc(pinnedBy)}</span>` : ''}
-          </div>
-          <div class="stock-grid">`;
+          </div>`;
+
+        // Intent tags
+        if (chIntents.length > 0) {
+          html += '<div class="stock-intents">';
+          chIntents.forEach(intent => {
+            html += `<span class="stock-intent-tag">${esc(intent)}</span>`;
+          });
+          html += '</div>';
+        }
+
+        html += `<div class="stock-grid">`;
 
         candidates.sort((a, b) => (a.rank || 999) - (b.rank || 999));
 
@@ -652,9 +664,10 @@
           const isSelected = c.selected;
           const rankLabel = c.rank ? `#${c.rank}` : '';
           const reason = c.rank_reason || '';
+          const trapWarning = c.trap_flag ? ' <span class="stock-trap-warning" title="Possible literal-trap mismatch — check carefully">⚠</span>' : '';
 
           html += `<div class="stock-thumb ${isPinned ? 'pinned' : ''} ${isSelected ? 'selected' : ''}">
-            ${rankLabel ? `<span class="stock-rank-badge">${rankLabel}</span>` : ''}
+            ${rankLabel ? `<span class="stock-rank-badge">${rankLabel}${trapWarning}</span>` : ''}
             <img src="${imgUrl}" alt="${esc(c.alt_text || '')}" loading="lazy"
                  onclick="window.open('${imgUrl}','_blank')" title="${esc(reason)}">
             <div class="stock-thumb-info">

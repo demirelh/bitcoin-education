@@ -121,6 +121,7 @@ def detect_episodes(
             published_at=ep_info.published_at,
             status=EpisodeStatus.NEW,
             content_profile=settings.default_content_profile,
+            pipeline_version=settings.pipeline_version,
         )
         session.add(episode)
         result.new += 1

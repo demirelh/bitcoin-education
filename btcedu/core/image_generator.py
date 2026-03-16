@@ -347,6 +347,7 @@ def generate_images(
 
         # Update episode status
         episode.status = EpisodeStatus.IMAGES_GENERATED
+        episode.error_message = None
         session.commit()
 
         # Update PipelineRun

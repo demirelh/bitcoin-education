@@ -277,6 +277,7 @@ def generate_tts(
 
         # Update episode status
         episode.status = EpisodeStatus.TTS_DONE
+        episode.error_message = None
         session.commit()
 
         # Update PipelineRun

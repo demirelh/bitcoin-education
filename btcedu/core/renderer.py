@@ -374,6 +374,7 @@ def render_video(
 
         # Update episode status
         episode.status = EpisodeStatus.RENDERED
+        episode.error_message = None
         session.commit()
 
         # Update PipelineRun

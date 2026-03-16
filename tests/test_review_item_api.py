@@ -286,6 +286,132 @@ class TestApplyReviewItems:
         assert data["item_decisions"]["corr-0000"]["action"] == "accepted"
 
 
+@pytest.fixture
+def review_setup_adaptation(db_engine, tmp_path):
+    """Create an ADAPTED episode + PENDING ReviewTask with adaptation diff."""
+    from sqlalchemy.orm import sessionmaker
+
+    factory = sessionmaker(bind=db_engine)
+    session = factory()
+
+    # Adapted script: "A XXX B YYY C"
+    # adap-0000 spans chars [2:5] = "XXX", original = "OOO"
+    # adap-0001 spans chars [8:11] = "YYY", original = "PPP"
+    adapted_text = "A XXX B YYY C"
+
+    outputs_dir = tmp_path / "outputs"
+    ep_dir = outputs_dir / "ep002"
+    review_dir = ep_dir / "review"
+    review_dir.mkdir(parents=True)
+
+    adapted_file = ep_dir / "script.adapted.tr.md"
+    adapted_file.write_text(adapted_text, encoding="utf-8")
+
+    diff_file = review_dir / "adaptation_diff.json"
+    diff_data = {
+        "episode_id": "ep002",
+        "adaptations": [
+            {
+                "item_id": "adap-0000",
+                "position": {"start": 2, "end": 5},
+                "original": "OOO",
+                "adapted": "XXX",
+                "tier": "T1",
+                "category": "cultural_reference",
+            },
+            {
+                "item_id": "adap-0001",
+                "position": {"start": 8, "end": 11},
+                "original": "PPP",
+                "adapted": "YYY",
+                "tier": "T2",
+                "category": "idiom",
+            },
+        ],
+        "summary": {"total_changes": 2},
+    }
+    diff_file.write_text(json.dumps(diff_data), encoding="utf-8")
+
+    episode = Episode(
+        episode_id="ep002",
+        source="youtube_rss",
+        title="Adaptation Test Episode",
+        url="https://youtube.com/watch?v=ep002",
+        status=EpisodeStatus.ADAPTED,
+    )
+    session.add(episode)
+    session.commit()
+
+    task = ReviewTask(
+        episode_id="ep002",
+        stage="adapt",
+        status=ReviewStatus.PENDING.value,
+        artifact_paths=json.dumps([str(adapted_file)]),
+        diff_path=str(diff_file),
+    )
+    session.add(task)
+    session.commit()
+    task_id = task.id
+    session.close()
+
+    return {"task_id": task_id, "adapted_text": adapted_text, "tmp_path": tmp_path}
+
+
+class TestApplyAdaptationAPI:
+    def test_apply_adaptation_creates_sidecar(self, client, review_setup_adaptation):
+        """Accept one adaptation, reject the other — sidecar content reflects decisions."""
+        task_id = review_setup_adaptation["task_id"]
+
+        # Reject adap-0000 (XXX → revert to OOO), accept adap-0001 (keep YYY)
+        client.post(f"/api/reviews/{task_id}/items/adap-0000/reject")
+        client.post(f"/api/reviews/{task_id}/items/adap-0001/accept")
+
+        resp = client.post(f"/api/reviews/{task_id}/apply")
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["success"] is True
+        assert "reviewed_file" in data
+        assert data["total_items"] == 2
+        assert data["pending_count"] == 0
+
+        # Verify sidecar content: rejected item reverted to original, accepted item kept
+        sidecar_path = data["reviewed_file"]
+        import os
+        assert os.path.exists(sidecar_path)
+        content = open(sidecar_path, encoding="utf-8").read()
+        # adap-0000 rejected → "OOO" replaces "XXX"; adap-0001 accepted → "YYY" kept
+        assert content == "A OOO B YYY C"
+
+    def test_apply_adaptation_sidecar_path(self, client, review_setup_adaptation):
+        """Sidecar is written to the expected review/ subdirectory."""
+        task_id = review_setup_adaptation["task_id"]
+        tmp_path = review_setup_adaptation["tmp_path"]
+
+        client.post(f"/api/reviews/{task_id}/items/adap-0000/accept")
+        resp = client.post(f"/api/reviews/{task_id}/apply")
+        assert resp.status_code == 200
+
+        expected_sidecar = (
+            tmp_path / "outputs" / "ep002" / "review" / "script.adapted.reviewed.tr.md"
+        )
+        assert expected_sidecar.exists()
+
+    def test_apply_on_non_actionable_review_returns_400(self, client, db_engine, review_setup_adaptation):
+        """Apply on an approved review returns 400 (non-actionable guard)."""
+        from sqlalchemy.orm import sessionmaker
+        from btcedu.models.review import ReviewTask as RT
+
+        task_id = review_setup_adaptation["task_id"]
+        session = sessionmaker(bind=db_engine)()
+        task = session.query(RT).filter(RT.id == task_id).first()
+        task.status = "approved"
+        session.commit()
+        session.close()
+
+        resp = client.post(f"/api/reviews/{task_id}/apply")
+        assert resp.status_code == 400
+
+
 class TestBackwardCompatibility:
     def test_old_diff_without_item_id(self, client, db_engine, review_setup):
         """Old-format diffs (no item_id) return empty item_decisions without crashing."""

@@ -1402,6 +1402,151 @@ def stock_auto_select(ctx: click.Context, episode_id: str) -> None:
         session.close()
 
 
+@cli.command(name="smoke-test-video")
+@click.option(
+    "--resolution",
+    default=None,
+    help="Override render resolution (default: from settings, e.g. 1920x1080).",
+)
+@click.option(
+    "--keep",
+    is_flag=True,
+    default=False,
+    help="Keep temporary files after the test (default: delete on success).",
+)
+@click.pass_context
+def smoke_test_video(ctx: click.Context, resolution: str | None, keep: bool) -> None:
+    """Smoke-test the video pipeline (normalize + segment) against the local ffmpeg build.
+
+    Generates a synthetic test video and audio via ffmpeg lavfi filters,
+    runs normalize_video_clip() and create_video_segment(), then validates
+    the output. No external files or API keys required.
+
+    Run this on the Raspberry Pi to confirm the ARM64 ffmpeg build supports
+    the required filters (testsrc2, libx264, yuv420p, stream_loop).
+
+    Exit code 0 = all steps passed. Exit code 1 = any step failed.
+    """
+    import shutil
+    import sys
+    import tempfile
+
+    from btcedu.services.ffmpeg_service import (
+        create_video_segment,
+        generate_silent_audio,
+        generate_test_video,
+        get_ffmpeg_version,
+        normalize_video_clip,
+        probe_media,
+    )
+
+    settings = ctx.obj["settings"]
+    target_resolution = resolution or getattr(settings, "render_resolution", "1920x1080")
+    fps = getattr(settings, "render_fps", 30)
+    crf = getattr(settings, "render_crf", 23)
+    preset = getattr(settings, "render_preset", "medium")
+    timeout = getattr(settings, "render_timeout_segment", 300)
+
+    ffmpeg_ver = get_ffmpeg_version()
+    click.echo(f"ffmpeg: {ffmpeg_ver}")
+    click.echo(f"Target resolution: {target_resolution}, fps={fps}, crf={crf}")
+
+    work_dir = tempfile.mkdtemp(prefix="btcedu_smoke_")
+    click.echo(f"Working directory: {work_dir}")
+
+    failed = False
+
+    try:
+        # Step 1: generate synthetic test video (testsrc2 → libx264/yuv420p)
+        raw_video = str(Path(work_dir) / "raw_test.mp4")
+        click.echo("\n[1/4] Generating synthetic test video via testsrc2...")
+        try:
+            generate_test_video(raw_video, duration=2.0, resolution=target_resolution, fps=fps)
+            size = Path(raw_video).stat().st_size
+            click.echo(f"  PASS  raw_test.mp4  ({size} bytes)")
+        except Exception as e:
+            click.echo(f"  FAIL  generate_test_video: {e}", err=True)
+            failed = True
+
+        if not failed:
+            # Step 2: normalize_video_clip (scale/pad/yuv420p/fps normalization)
+            norm_video = str(Path(work_dir) / "normalized.mp4")
+            click.echo("[2/4] Running normalize_video_clip()...")
+            try:
+                normalize_video_clip(
+                    input_path=raw_video,
+                    output_path=norm_video,
+                    resolution=target_resolution,
+                    fps=fps,
+                    crf=crf,
+                    preset=preset,
+                    timeout_seconds=timeout,
+                )
+                size = Path(norm_video).stat().st_size
+                click.echo(f"  PASS  normalized.mp4  ({size} bytes)")
+            except Exception as e:
+                click.echo(f"  FAIL  normalize_video_clip: {e}", err=True)
+                failed = True
+
+        # Step 3: generate silent audio (anullsrc → aac)
+        silent_audio = str(Path(work_dir) / "silent.m4a")
+        click.echo("[3/4] Generating silent audio via anullsrc...")
+        try:
+            generate_silent_audio(silent_audio, duration=2.0)
+            size = Path(silent_audio).stat().st_size
+            click.echo(f"  PASS  silent.m4a  ({size} bytes)")
+        except Exception as e:
+            click.echo(f"  FAIL  generate_silent_audio: {e}", err=True)
+            failed = True
+
+        if not failed:
+            # Step 4: create_video_segment (stream_loop + TTS audio + overlay pipeline)
+            segment_out = str(Path(work_dir) / "segment.mp4")
+            click.echo("[4/4] Running create_video_segment() with stream_loop...")
+            try:
+                create_video_segment(
+                    video_path=norm_video,
+                    audio_path=silent_audio,
+                    output_path=segment_out,
+                    duration=2.0,
+                    overlays=[],
+                    resolution=target_resolution,
+                    fps=fps,
+                    crf=crf,
+                    preset=preset,
+                    timeout_seconds=timeout,
+                )
+                # Validate output with ffprobe
+                info = probe_media(segment_out)
+                size = Path(segment_out).stat().st_size
+                duration_ok = abs(info.duration_seconds - 2.0) < 0.5
+                codec_ok = info.codec_video == "h264"
+                click.echo(
+                    f"  {'PASS' if (duration_ok and codec_ok) else 'WARN'}  segment.mp4  "
+                    f"({size} bytes, duration={info.duration_seconds:.2f}s, "
+                    f"codec={info.codec_video}, audio={info.codec_audio})"
+                )
+                if not duration_ok:
+                    click.echo("  WARN  Output duration outside ±0.5s of target 2.0s", err=True)
+                if not codec_ok:
+                    click.echo(f"  WARN  Expected h264, got {info.codec_video}", err=True)
+            except Exception as e:
+                click.echo(f"  FAIL  create_video_segment: {e}", err=True)
+                failed = True
+
+    finally:
+        if keep:
+            click.echo(f"\nFiles retained at: {work_dir}")
+        else:
+            shutil.rmtree(work_dir, ignore_errors=True)
+
+    if failed:
+        click.echo("\n[FAIL] Smoke test failed — see errors above.", err=True)
+        sys.exit(1)
+    else:
+        click.echo("\n[PASS] All smoke-test steps passed.")
+
+
 @cli.command(context_settings={"allow_interspersed_args": False, "ignore_unknown_options": True})
 @click.option("--json-only", is_flag=True, help="Output only the JSON summary.")
 @click.option("--output", "-o", type=click.Path(), help="Write output to file instead of stdout.")

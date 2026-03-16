@@ -791,6 +791,144 @@ def probe_media(file_path: str) -> MediaInfo:
     )
 
 
+def generate_test_video(
+    output_path: str,
+    duration: float = 2.0,
+    resolution: str = "1920x1080",
+    fps: int = 30,
+    dry_run: bool = False,
+) -> SegmentResult:
+    """Generate a synthetic test video using ffmpeg's testsrc2 filter.
+
+    No external input files needed — uses lavfi source. Intended for
+    hardware smoke-testing the video pipeline on the target device.
+
+    Args:
+        output_path: Destination path for the generated MP4.
+        duration: Duration in seconds (default 2s).
+        resolution: Output resolution as WxH (default 1920x1080).
+        fps: Frame rate (default 30).
+        dry_run: If True, build command but don't execute.
+
+    Returns:
+        SegmentResult with command and metadata.
+
+    Raises:
+        RuntimeError: If ffmpeg fails.
+    """
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"testsrc2=duration={duration}:size={resolution}:rate={fps}",
+        "-c:v",
+        "libx264",
+        "-pix_fmt",
+        "yuv420p",
+        "-crf",
+        "23",
+        output_path,
+    ]
+
+    if dry_run:
+        logger.info("Dry-run: would generate test video (not executing)")
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).touch()
+        return SegmentResult(
+            segment_path=output_path,
+            duration_seconds=duration,
+            size_bytes=0,
+            ffmpeg_command=cmd,
+            returncode=0,
+            stderr="[dry-run]",
+        )
+
+    returncode, stderr = _run_ffmpeg(cmd, 60)
+    size_bytes = Path(output_path).stat().st_size if Path(output_path).exists() else 0
+
+    if returncode != 0:
+        raise RuntimeError(f"Test video generation failed (exit {returncode}): {stderr}")
+
+    return SegmentResult(
+        segment_path=output_path,
+        duration_seconds=duration,
+        size_bytes=size_bytes,
+        ffmpeg_command=cmd,
+        returncode=returncode,
+        stderr=stderr,
+    )
+
+
+def generate_silent_audio(
+    output_path: str,
+    duration: float = 2.0,
+    sample_rate: int = 44100,
+    dry_run: bool = False,
+) -> SegmentResult:
+    """Generate a silent AAC audio file using ffmpeg's anullsrc filter.
+
+    No external input files needed. Intended for hardware smoke-testing
+    the TTS audio path on the target device alongside generate_test_video().
+
+    Args:
+        output_path: Destination path for the generated M4A/AAC file.
+        duration: Duration in seconds (default 2s).
+        sample_rate: Sample rate in Hz (default 44100).
+        dry_run: If True, build command but don't execute.
+
+    Returns:
+        SegmentResult with command and metadata.
+
+    Raises:
+        RuntimeError: If ffmpeg fails.
+    """
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"anullsrc=r={sample_rate}:cl=stereo",
+        "-t",
+        str(duration),
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        output_path,
+    ]
+
+    if dry_run:
+        logger.info("Dry-run: would generate silent audio (not executing)")
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).touch()
+        return SegmentResult(
+            segment_path=output_path,
+            duration_seconds=duration,
+            size_bytes=0,
+            ffmpeg_command=cmd,
+            returncode=0,
+            stderr="[dry-run]",
+        )
+
+    returncode, stderr = _run_ffmpeg(cmd, 60)
+    size_bytes = Path(output_path).stat().st_size if Path(output_path).exists() else 0
+
+    if returncode != 0:
+        raise RuntimeError(f"Silent audio generation failed (exit {returncode}): {stderr}")
+
+    return SegmentResult(
+        segment_path=output_path,
+        duration_seconds=duration,
+        size_bytes=size_bytes,
+        ffmpeg_command=cmd,
+        returncode=returncode,
+        stderr=stderr,
+    )
+
+
 def _run_ffmpeg(cmd: list[str], timeout: int) -> tuple[int, str]:
     """Run ffmpeg command with timeout.
 

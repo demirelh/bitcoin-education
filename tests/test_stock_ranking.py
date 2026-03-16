@@ -651,3 +651,7 @@ def test_apply_rankings_empty_fallback():
     assert candidates[0]["rank"] == 1
     assert candidates[0]["selected"] is True
     assert candidates[1]["rank"] == 2
+
+
+# H-2 PromptRegistry tests are in tests/test_intent_extract_registry.py
+# (separated to avoid the autouse mock_extract_intents fixture in this file)

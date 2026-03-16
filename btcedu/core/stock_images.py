@@ -12,6 +12,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
+from btcedu.core.prompt_registry import TEMPLATES_DIR, PromptRegistry
 from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
@@ -767,6 +768,15 @@ def extract_chapter_intents(
                 )
         except (json.JSONDecodeError, KeyError):
             pass
+
+    # Register prompt template via PromptRegistry for cost/version tracking
+    try:
+        registry = PromptRegistry(session)
+        template_file = TEMPLATES_DIR / "intent_extract.md"
+        if template_file.exists():
+            registry.register_version("intent_extract", template_file, set_default=True)
+    except Exception as _reg_err:
+        logger.debug("PromptRegistry registration skipped for intent_extract: %s", _reg_err)
 
     if settings.dry_run:
         # Dry-run: return empty intents structure

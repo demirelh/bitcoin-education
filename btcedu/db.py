@@ -10,7 +10,16 @@ class Base(DeclarativeBase):
 
 def get_engine(database_url: str | None = None):
     url = database_url or get_settings().database_url
-    return create_engine(url, echo=False)
+    kwargs: dict = {"echo": False}
+    if url and url.startswith("sqlite"):
+        kwargs["connect_args"] = {"timeout": 30}
+    engine = create_engine(url, **kwargs)
+    # Enable WAL mode for SQLite so readers don't block writers
+    if url and url.startswith("sqlite") and ":memory:" not in url:
+        with engine.connect() as conn:
+            conn.execute(text("PRAGMA journal_mode=WAL"))
+            conn.commit()
+    return engine
 
 
 def get_session_factory(database_url: str | None = None) -> sessionmaker[Session]:

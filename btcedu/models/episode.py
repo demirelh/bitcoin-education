@@ -19,6 +19,7 @@ class EpisodeStatus(str, enum.Enum):
     FAILED = "failed"
     # New (v2 pipeline)
     CORRECTED = "corrected"
+    SEGMENTED = "segmented"  # After story segmentation (news profiles)
     TRANSLATED = "translated"
     ADAPTED = "adapted"
     CHAPTERIZED = "chapterized"
@@ -41,6 +42,7 @@ class PipelineStage(str, enum.Enum):
     COMPLETE = "complete"
     # New (v2)
     CORRECT = "correct"
+    SEGMENT = "segment"  # Story segmentation (news profiles)
     TRANSLATE = "translate"
     ADAPT = "adapt"
     CHAPTERIZE = "chapterize"
@@ -87,6 +89,9 @@ class Episode(Base):
 
     # v2 pipeline fields
     pipeline_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    content_profile: Mapped[str] = mapped_column(
+        String(64), default="bitcoin_podcast", nullable=False
+    )
     review_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
     youtube_video_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     published_at_youtube: Mapped[datetime | None] = mapped_column(

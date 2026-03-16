@@ -107,6 +107,43 @@ _TR_TO_EN = {
     "kaldıraç": "leverage",
     "çıpa": "anchor peg",
     "sürdürülebilir": "sustainable",
+    # Phase 4 additions — news/political domain terms
+    # Politics & Government
+    "meclis": "parliament",
+    "başbakan": "prime minister",
+    "cumhurbaşkanı": "president",
+    "bakan": "minister",
+    "seçim": "election",
+    "oy": "vote",
+    "parti": "political party",
+    "koalisyon": "coalition",
+    "muhalefet": "opposition",
+    "yasa": "law",
+    "anayasa": "constitution",
+    # International
+    "savaş": "war",
+    "barış": "peace",
+    "mülteci": "refugee",
+    "göç": "migration",
+    "diplomatik": "diplomatic",
+    # Society & Infrastructure
+    "hastane": "hospital",
+    "okul": "school",
+    "eğitim": "education",
+    "ulaşım": "transportation",
+    "trafik": "traffic",
+    "çevre": "environment",
+    "iklim": "climate",
+    "deprem": "earthquake",
+    "sel": "flood",
+    # Weather
+    "hava": "weather",
+    "yağmur": "rain",
+    "fırtına": "storm",
+    "sıcaklık": "temperature",
+    "kar": "snow",
+    "güneş": "sunshine",
+    "bulut": "cloud",
 }
 
 # Turkish stop words to filter out
@@ -215,6 +252,10 @@ def search_stock_images(
     chapters_doc = _load_chapters(episode_id, settings)
     chapters_hash = _compute_chapters_hash(chapters_doc)
 
+    # Load profile for domain tag (falls back to "finance" for bitcoin_podcast)
+    _profile = _load_episode_profile(session, episode_id, settings)
+    _domain_tag = getattr(_profile, "domain", None) or "finance"
+
     output_base = Path(settings.outputs_dir) / episode_id
     candidates_dir = output_base / "images" / "candidates"
     manifest_path = candidates_dir / "candidates_manifest.json"
@@ -276,8 +317,8 @@ def search_stock_images(
                 skipped += 1
                 continue
 
-            # Derive search query
-            query = _derive_search_query(chapter)
+            # Derive search query (domain tag from profile)
+            query = _derive_search_query(chapter, domain_tag=_domain_tag)
 
             # Search Pexels
             per_page = settings.pexels_results_per_chapter
@@ -508,12 +549,27 @@ def rank_candidates(
     # Build chapter lookup for context
     chapter_lookup = {ch.chapter_id: ch for ch in chapters_doc.chapters}
 
-    # Load system prompt from template
-    system_prompt = (
-        "You are an editorial assistant selecting the best stock photo "
-        "for a YouTube video chapter. The video covers Bitcoin and "
-        "cryptocurrency education, targeting a Turkish audience."
-    )
+    # Load profile-aware system prompt
+    _profile = _load_episode_profile(session, episode_id, settings)
+    _prompt_ns = getattr(_profile, "prompt_namespace", None) if _profile else None
+    try:
+        registry = PromptRegistry(session)
+        _tmpl_path = registry.resolve_template_path("stock_rank.md", profile=_prompt_ns)
+        if _tmpl_path.exists():
+            _meta, _body = registry.load_template(_tmpl_path)
+            system_prompt = _body.strip()
+        else:
+            system_prompt = (
+                "You are an editorial assistant selecting the best stock photo "
+                "for a YouTube video chapter. The video covers Bitcoin and "
+                "cryptocurrency education, targeting a Turkish audience."
+            )
+    except Exception:
+        system_prompt = (
+            "You are an editorial assistant selecting the best stock photo "
+            "for a YouTube video chapter. The video covers Bitcoin and "
+            "cryptocurrency education, targeting a Turkish audience."
+        )
 
     chapters_ranked = 0
     chapters_skipped = 0
@@ -769,10 +825,16 @@ def extract_chapter_intents(
         except (json.JSONDecodeError, KeyError):
             pass
 
+    # Load profile for profile-aware system prompt
+    _profile = _load_episode_profile(session, episode_id, settings)
+    _prompt_ns = getattr(_profile, "prompt_namespace", None) if _profile else None
+
     # Register prompt template via PromptRegistry for cost/version tracking
     try:
         registry = PromptRegistry(session)
-        template_file = TEMPLATES_DIR / "intent_extract.md"
+        template_file = registry.resolve_template_path("intent_extract.md", profile=_prompt_ns)
+        if not template_file.exists():
+            template_file = TEMPLATES_DIR / "intent_extract.md"
         if template_file.exists():
             registry.register_version("intent_extract", template_file, set_default=True)
     except Exception as _reg_err:
@@ -826,11 +888,25 @@ def extract_chapter_intents(
             "narration_excerpt": narration_text[:200],
         })
 
-    system_prompt = (
-        "You are a visual editor for an educational YouTube channel about Bitcoin and "
-        "cryptocurrency, targeting a Turkish audience. Your task is to analyze video chapters "
-        "and extract semantic intents for stock photo selection."
-    )
+    # Load profile-namespaced system prompt if available
+    try:
+        registry = PromptRegistry(session)
+        _tmpl_path = registry.resolve_template_path("intent_extract.md", profile=_prompt_ns)
+        if _tmpl_path.exists():
+            _meta, _body = registry.load_template(_tmpl_path)
+            system_prompt = _body.strip()
+        else:
+            system_prompt = (
+                "You are a visual editor for an educational YouTube channel about Bitcoin and "
+                "cryptocurrency, targeting a Turkish audience. Your task is to analyze video "
+                "chapters and extract semantic intents for stock photo selection."
+            )
+    except Exception:
+        system_prompt = (
+            "You are a visual editor for an educational YouTube channel about Bitcoin and "
+            "cryptocurrency, targeting a Turkish audience. Your task is to analyze video "
+            "chapters and extract semantic intents for stock photo selection."
+        )
 
     # Build user message with all chapters
     chapters_text = ""
@@ -1450,7 +1526,9 @@ def finalize_selections(
     )
 
 
-def _derive_search_query(chapter, search_hints: list[str] | None = None) -> str:
+def _derive_search_query(
+    chapter, search_hints: list[str] | None = None, domain_tag: str = "finance"
+) -> str:
     """Extract search keywords from chapter metadata and translate to English.
 
     Strategy:
@@ -1460,7 +1538,7 @@ def _derive_search_query(chapter, search_hints: list[str] | None = None) -> str:
     4. Filter Turkish stop-words
     5. Translate key terms to English
     6. Add visual-type modifiers
-    7. Append "finance" domain tag
+    7. Append domain tag (profile-derived: "finance", "news", etc.)
     8. Deduplicate and cap at 8 keywords
     """
     # If LLM-generated search hints are available, use them as primary terms
@@ -1499,8 +1577,8 @@ def _derive_search_query(chapter, search_hints: list[str] | None = None) -> str:
     if visual and visual.type in _VISUAL_TYPE_MODIFIERS:
         translated.extend(_VISUAL_TYPE_MODIFIERS[visual.type].split())
 
-    # Always append domain tag
-    translated.append("finance")
+    # Append domain tag from profile (default "finance" for backward compat)
+    translated.append(domain_tag)
 
     # Deduplicate preserving order
     seen = set()
@@ -1525,6 +1603,21 @@ def _get_episode(session: Session, episode_id: str) -> Episode:
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
     return episode
+
+
+def _load_episode_profile(session: Session, episode_id: str, settings: Settings):
+    """Load the ContentProfile for an episode. Returns None on any error."""
+    try:
+        from btcedu.profiles import get_registry
+
+        episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if not episode:
+            return None
+        profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+        registry = get_registry(settings)
+        return registry.get(profile_name)
+    except Exception:
+        return None
 
 
 def _load_chapters(episode_id: str, settings: Settings) -> ChapterDocument:

@@ -153,14 +153,33 @@ class PromptRegistry:
         body = self._strip_frontmatter(content)
         return hashlib.sha256(body.encode("utf-8")).hexdigest()
 
-    def load_template(self, template_path: str | Path) -> tuple[dict, str]:
+    def resolve_template_path(self, name: str, profile: str | None = None) -> Path:
+        """Resolve template path with profile-namespaced fallback.
+
+        If profile is given, checks ``templates_dir / profile / name`` first,
+        then falls back to ``templates_dir / name``.
+        """
+        if profile:
+            profile_path = self._templates_dir / profile / name
+            if profile_path.exists():
+                return profile_path
+        return self._templates_dir / name
+
+    def load_template(
+        self, template_path: str | Path, profile: str | None = None
+    ) -> tuple[dict, str]:
         """Load a template file and parse its YAML frontmatter.
 
         Returns (metadata_dict, body_content). The metadata dict contains
         fields from the YAML frontmatter (name, model, temperature, etc.).
         The body is the template content after the frontmatter.
+
+        If *profile* is given and *template_path* is a relative name,
+        tries ``templates_dir / profile / name`` first then falls back.
         """
         template_path = Path(template_path)
+        if not template_path.is_absolute():
+            template_path = self.resolve_template_path(str(template_path), profile)
         content = template_path.read_text(encoding="utf-8")
 
         metadata = {}

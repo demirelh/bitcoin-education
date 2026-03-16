@@ -80,15 +80,24 @@ def chapterize_script(
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
-    # Allow both ADAPTED and CHAPTERIZED status
-    if episode.status not in (EpisodeStatus.ADAPTED, EpisodeStatus.CHAPTERIZED) and not force:
+    # Determine if this is a story-mode episode (tagesschau news profiles)
+    # Story mode: stories_translated.json exists and profile skips adapt
+    stories_translated_path = Path(settings.outputs_dir) / episode_id / "stories_translated.json"
+    use_story_mode = stories_translated_path.exists()
+
+    # Allow both ADAPTED, TRANSLATED (story mode), and CHAPTERIZED status
+    allowed_statuses = {EpisodeStatus.ADAPTED, EpisodeStatus.CHAPTERIZED}
+    if use_story_mode:
+        allowed_statuses.add(EpisodeStatus.TRANSLATED)
+    if episode.status not in allowed_statuses and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
-            "expected 'adapted' or 'chapterized'. Use --force to override."
+            "expected 'adapted', 'translated' (story mode), or 'chapterized'. "
+            "Use --force to override."
         )
 
-    # Check Review Gate 2 approval (adaptation must be approved)
-    if episode.status == EpisodeStatus.ADAPTED and not force:
+    # Check Review Gate 2 approval (adaptation must be approved) — only for adapted path
+    if episode.status == EpisodeStatus.ADAPTED and not force and not use_story_mode:
         from btcedu.core.reviewer import has_pending_review
 
         # Check if there's a pending review for adaptation
@@ -115,30 +124,59 @@ def chapterize_script(
                 "Chapterization cannot proceed until Review Gate 2 is approved."
             )
 
-    # Resolve paths
-    adapted_path = Path(settings.outputs_dir) / episode_id / "script.adapted.tr.md"
-    if not adapted_path.exists():
-        raise FileNotFoundError(
-            f"Adapted script not found for episode {episode_id}: {adapted_path}"
+    # Resolve input path: stories mode vs adapted script mode
+    if use_story_mode:
+        # Story mode: check for reviewed translation sidecar first
+        stories_reviewed_path = (
+            Path(settings.outputs_dir) / episode_id / "review"
+            / "stories_translated.reviewed.json"
         )
+        if stories_reviewed_path.exists():
+            adapted_path = stories_reviewed_path
+            logger.info("Using reviewed translation sidecar for episode %s", episode_id)
+        else:
+            adapted_path = stories_translated_path
+            logger.info(
+                "Using stories_translated.json (story mode) for chapterization of %s", episode_id
+            )
+    else:
+        adapted_path = Path(settings.outputs_dir) / episode_id / "script.adapted.tr.md"
+        if not adapted_path.exists():
+            raise FileNotFoundError(
+                f"Adapted script not found for episode {episode_id}: {adapted_path}"
+            )
 
-    # Check for reviewed sidecar (Phase 5 granular review output)
-    reviewed_path = (
-        Path(settings.outputs_dir) / episode_id / "review" / "script.adapted.reviewed.tr.md"
-    )
-    if reviewed_path.exists():
-        adapted_path = reviewed_path
-        logger.info("Using reviewed adaptation sidecar for episode %s", episode_id)
+        # Check for reviewed sidecar (Phase 5 granular review output)
+        reviewed_path = (
+            Path(settings.outputs_dir) / episode_id / "review" / "script.adapted.reviewed.tr.md"
+        )
+        if reviewed_path.exists():
+            adapted_path = reviewed_path
+            logger.info("Using reviewed adaptation sidecar for episode %s", episode_id)
 
     chapters_path = Path(settings.outputs_dir) / episode_id / "chapters.json"
     provenance_path = (
         Path(settings.outputs_dir) / episode_id / "provenance" / "chapterize_provenance.json"
     )
 
-    # Load and register prompt via PromptRegistry
+    # Resolve profile namespace for prompt namespacing
+    content_profile = getattr(episode, "content_profile", None)
+    try:
+        from btcedu.profiles import get_registry as get_profile_registry
+
+        pr = get_profile_registry(settings)
+        profile_obj = pr.get(content_profile) if content_profile else None
+        profile_namespace = getattr(profile_obj, "prompt_namespace", None) if profile_obj else None
+    except Exception:
+        profile_namespace = None
+
+    # Load and register prompt via PromptRegistry (with profile-namespaced fallback)
     registry = PromptRegistry(session)
-    template_file = TEMPLATES_DIR / "chapterize.md"
-    prompt_version = registry.register_version("chapterize", template_file, set_default=True)
+    template_file = registry.resolve_template_path("chapterize.md", profile=profile_namespace)
+    prompt_name = "chapterize"
+    if profile_namespace and (TEMPLATES_DIR / profile_namespace / "chapterize.md").exists():
+        prompt_name = f"{profile_namespace}/chapterize"
+    prompt_version = registry.register_version(prompt_name, template_file, set_default=True)
     _, template_body = registry.load_template(template_file)
     prompt_content_hash = registry.compute_hash(template_body)
 
@@ -568,8 +606,6 @@ def _parse_json_response(
     Raises:
         json.JSONDecodeError: If JSON is malformed after cleanup
     """
-    import re as _re
-
     # Strip markdown code fences
     text = response_text.strip()
     if text.startswith("```json"):

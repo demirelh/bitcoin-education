@@ -75,19 +75,22 @@ def translate_transcript(
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
-    # Allow both CORRECTED and TRANSLATED status:
+    # Allow CORRECTED, SEGMENTED (news profile), and TRANSLATED status:
     # - CORRECTED: Normal first-time translation (after Review Gate 1 approval)
+    # - SEGMENTED: News profile path — segment stage ran, ready for translation
     # - TRANSLATED: Allow idempotent re-runs (useful for testing, manual re-translation)
     # The _is_translation_current() check will skip if output is already current.
-    if episode.status not in (EpisodeStatus.CORRECTED, EpisodeStatus.TRANSLATED) and not force:
+    if episode.status not in (
+        EpisodeStatus.CORRECTED, EpisodeStatus.SEGMENTED, EpisodeStatus.TRANSLATED
+    ) and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
-            "expected 'corrected' or 'translated'. Use --force to override."
+            "expected 'corrected', 'segmented', or 'translated'. Use --force to override."
         )
 
-    # Check Review Gate 1 approval (unless episode already translated or force flag)
+    # Check Review Gate 1 approval (unless episode already segmented/translated or force flag)
     # Per MASTERPLAN §3.1, translation must not proceed until Review Gate 1 is approved.
-    if episode.status == EpisodeStatus.CORRECTED and not force:
+    if episode.status in (EpisodeStatus.CORRECTED, EpisodeStatus.SEGMENTED) and not force:
         from btcedu.core.reviewer import has_pending_review
 
         # First check if there's a pending review (not yet approved/rejected)
@@ -136,12 +139,35 @@ def translate_transcript(
         Path(settings.outputs_dir) / episode_id / "provenance" / "translate_provenance.json"
     )
 
-    # Load and register prompt via PromptRegistry
+    # Resolve profile namespace for prompt namespacing
+    content_profile = getattr(episode, "content_profile", None)
+    try:
+        from btcedu.profiles import get_registry as get_profile_registry
+
+        pr = get_profile_registry(settings)
+        profile_obj = pr.get(content_profile) if content_profile else None
+        profile_namespace = getattr(profile_obj, "prompt_namespace", None) if profile_obj else None
+        per_story_mode = (
+            profile_obj is not None
+            and profile_obj.stage_config.get("translate", {}).get("mode") == "per_story"
+        )
+    except Exception:
+        profile_namespace = None
+        per_story_mode = False
+
+    # Load and register prompt via PromptRegistry (with profile-namespaced fallback)
     registry = PromptRegistry(session)
-    template_file = TEMPLATES_DIR / "translate.md"
-    prompt_version = registry.register_version("translate", template_file, set_default=True)
+    template_file = registry.resolve_template_path("translate.md", profile=profile_namespace)
+    prompt_name = "translate"
+    if profile_namespace and (TEMPLATES_DIR / profile_namespace / "translate.md").exists():
+        prompt_name = f"{profile_namespace}/translate"
+    prompt_version = registry.register_version(prompt_name, template_file, set_default=True)
     _, template_body = registry.load_template(template_file)
     prompt_content_hash = registry.compute_hash(template_body)
+
+    # Check if per-story mode: stories.json exists for this episode
+    stories_path = Path(settings.outputs_dir) / episode_id / "stories.json"
+    use_per_story = per_story_mode and stories_path.exists()
 
     # Compute input content hash for idempotency
     corrected_text = corrected_path.read_text(encoding="utf-8")
@@ -197,43 +223,59 @@ def translate_transcript(
         # Split prompt template into system and user parts
         system_prompt, user_template = _split_prompt(template_body)
 
-        # Segment transcript if needed
-        segments = _segment_text(corrected_text)
-
-        # Process each segment
         total_input_tokens = 0
         total_output_tokens = 0
         total_cost = 0.0
-        translated_segments: list[str] = []
 
-        for i, segment in enumerate(segments):
-            user_message = user_template.replace("{{ transcript }}", segment)
-
-            # Dry-run path
-            dry_run_path = (
-                Path(settings.outputs_dir) / episode_id / f"dry_run_translate_{i}.json"
-                if settings.dry_run
-                else None
-            )
-
-            response: ClaudeResponse = call_claude(
+        if use_per_story:
+            # Per-story mode: translate each story individually
+            (
+                translated_text,
+                segments_processed,
+                total_input_tokens,
+                total_output_tokens,
+                total_cost,
+            ) = _translate_per_story(
+                stories_path=stories_path,
+                translated_path=translated_path,
+                episode_id=episode_id,
                 system_prompt=system_prompt,
-                user_message=user_message,
+                user_template=user_template,
                 settings=settings,
-                dry_run_path=dry_run_path,
             )
+        else:
+            # Standard full-transcript translation
+            segments = _segment_text(corrected_text)
+            segments_processed = len(segments)
+            translated_segments: list[str] = []
 
-            translated_segments.append(response.text)
-            total_input_tokens += response.input_tokens
-            total_output_tokens += response.output_tokens
-            total_cost += response.cost_usd
+            for i, segment in enumerate(segments):
+                user_message = user_template.replace("{{ transcript }}", segment)
 
-        # Reassemble translated text
-        translated_text = "\n\n".join(translated_segments)
+                # Dry-run path
+                dry_run_path = (
+                    Path(settings.outputs_dir) / episode_id / f"dry_run_translate_{i}.json"
+                    if settings.dry_run
+                    else None
+                )
 
-        # Write output files
-        translated_path.parent.mkdir(parents=True, exist_ok=True)
-        translated_path.write_text(translated_text, encoding="utf-8")
+                response: ClaudeResponse = call_claude(
+                    system_prompt=system_prompt,
+                    user_message=user_message,
+                    settings=settings,
+                    dry_run_path=dry_run_path,
+                )
+
+                translated_segments.append(response.text)
+                total_input_tokens += response.input_tokens
+                total_output_tokens += response.output_tokens
+                total_cost += response.cost_usd
+
+            translated_text = "\n\n".join(translated_segments)
+
+            # Write translated transcript file
+            translated_path.parent.mkdir(parents=True, exist_ok=True)
+            translated_path.write_text(translated_text, encoding="utf-8")
 
         # Mark downstream adaptation as stale if it exists (cascade invalidation)
         adapted_path = Path(settings.outputs_dir) / episode_id / "script.adapted.tr.md"
@@ -254,7 +296,7 @@ def translate_transcript(
             "stage": "translate",
             "episode_id": episode_id,
             "timestamp": _utcnow().isoformat(),
-            "prompt_name": "translate",
+            "prompt_name": prompt_version.name,
             "prompt_version": prompt_version.version,
             "prompt_hash": prompt_content_hash,
             "model": settings.claude_model,
@@ -269,7 +311,8 @@ def translate_transcript(
             "output_tokens": total_output_tokens,
             "cost_usd": total_cost,
             "duration_seconds": round(elapsed, 2),
-            "segments_processed": len(segments),
+            "segments_processed": segments_processed,
+            "per_story_mode": use_per_story,
         }
 
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
@@ -317,7 +360,7 @@ def translate_transcript(
             cost_usd=total_cost,
             input_char_count=len(corrected_text),
             output_char_count=len(translated_text),
-            segments_processed=len(segments),
+            segments_processed=segments_processed,
             skipped=False,
         )
 
@@ -471,3 +514,116 @@ def _segment_text(text: str, limit: int = SEGMENT_CHAR_LIMIT) -> list[str]:
         segments.append("\n\n".join(current_segment))
 
     return segments if segments else [text]  # Fallback: return original as single segment
+
+
+def _translate_per_story(
+    stories_path: "Path",
+    translated_path: "Path",
+    episode_id: str,
+    system_prompt: str,
+    user_template: str,
+    settings: "Settings",
+) -> tuple[str, int, int, int, float]:
+    """Translate each story in a StoryDocument individually.
+
+    Translates story.text_de -> story.text_tr and story.headline_de -> story.headline_tr
+    for each story in the StoryDocument. Writes stories_translated.json and the concatenated
+    transcript.tr.txt.
+
+    Returns:
+        Tuple of (translated_text, segments_processed, input_tokens, output_tokens, cost_usd)
+    """
+    from btcedu.models.story_schema import StoryDocument
+
+    stories_data = json.loads(stories_path.read_text(encoding="utf-8"))
+    story_doc = StoryDocument.model_validate(stories_data)
+
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_cost = 0.0
+    segments_processed = 0
+
+    translated_stories = []
+
+    for i, story in enumerate(story_doc.stories):
+        # Translate headline
+        headline_user = user_template.replace("{{ transcript }}", story.headline_de)
+        dry_run_path = (
+            Path(settings.outputs_dir) / episode_id / f"dry_run_translate_s{i:02d}_head.json"
+            if settings.dry_run
+            else None
+        )
+        headline_response: ClaudeResponse = call_claude(
+            system_prompt=system_prompt,
+            user_message=headline_user,
+            settings=settings,
+            dry_run_path=dry_run_path,
+        )
+        total_input_tokens += headline_response.input_tokens
+        total_output_tokens += headline_response.output_tokens
+        total_cost += headline_response.cost_usd
+        segments_processed += 1
+
+        # Translate story body
+        body_user = user_template.replace("{{ transcript }}", story.text_de)
+        dry_run_path = (
+            Path(settings.outputs_dir) / episode_id / f"dry_run_translate_s{i:02d}_body.json"
+            if settings.dry_run
+            else None
+        )
+        body_response: ClaudeResponse = call_claude(
+            system_prompt=system_prompt,
+            user_message=body_user,
+            settings=settings,
+            dry_run_path=dry_run_path,
+        )
+        total_input_tokens += body_response.input_tokens
+        total_output_tokens += body_response.output_tokens
+        total_cost += body_response.cost_usd
+        segments_processed += 1
+
+        # Build translated story dict
+        story_dict = story.model_dump(mode="json")
+        story_dict["headline_tr"] = headline_response.text.strip()
+        story_dict["text_tr"] = body_response.text.strip()
+        translated_stories.append(story_dict)
+
+        logger.info(
+            "Translated story %s/%s: '%s' ($%.4f)",
+            i + 1,
+            len(story_doc.stories),
+            story.story_id,
+            body_response.cost_usd,
+        )
+
+    # Build translated StoryDocument
+    translated_doc_data = story_doc.model_dump(mode="json")
+    translated_doc_data["stories"] = translated_stories
+
+    # Write stories_translated.json
+    stories_translated_path = stories_path.parent / "stories_translated.json"
+    stories_translated_path.write_text(
+        json.dumps(translated_doc_data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    logger.info(
+        "Wrote stories_translated.json for %s (%d stories)", episode_id, len(translated_stories)
+    )
+
+    # Build concatenated Turkish transcript (for compatibility)
+    translated_parts = []
+    for s in translated_stories:
+        if s.get("text_tr"):
+            translated_parts.append(s["text_tr"])
+    translated_text = "\n\n".join(translated_parts)
+
+    # Write transcript.tr.txt
+    translated_path.parent.mkdir(parents=True, exist_ok=True)
+    translated_path.write_text(translated_text, encoding="utf-8")
+
+    return (
+        translated_text,
+        segments_processed,
+        total_input_tokens,
+        total_output_tokens,
+        total_cost,
+    )

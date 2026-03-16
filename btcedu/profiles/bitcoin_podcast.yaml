@@ -1,0 +1,21 @@
+name: bitcoin_podcast
+display_name: "Bitcoin Podcast (DE→TR)"
+source_language: de
+target_language: tr
+domain: cryptocurrency
+pipeline_version: 2
+stages_enabled: all
+stage_config:
+  adapt:
+    skip: false
+    tiers: [cultural, technical]
+  render:
+    accent_color: "#F7931A"
+youtube:
+  category_id: "27"
+  default_language: tr
+  default_privacy: unlisted
+  tags: [bitcoin, kripto, blockchain, türkçe, eğitim, cryptocurrency]
+review_gates:
+  review_gate_1:
+    auto_approve_threshold: 5

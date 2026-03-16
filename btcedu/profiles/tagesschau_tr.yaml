@@ -1,0 +1,28 @@
+name: tagesschau_tr
+display_name: "Tagesschau News (DE→TR)"
+source_language: de
+target_language: tr
+domain: news
+pipeline_version: 2
+stages_enabled: all
+stage_config:
+  segment:
+    enabled: true
+  adapt:
+    skip: true
+  translate:
+    mode: per_story
+    register: formal_news
+  tts:
+    voice_id: ""
+    stability: 0.6
+    style: 0.0
+  render:
+    accent_color: "#004B87"
+youtube:
+  category_id: "25"
+  default_language: tr
+  default_privacy: unlisted
+  tags: [haberler, almanya, türkçe, tagesschau]
+review_gates: {}
+prompt_namespace: tagesschau_tr

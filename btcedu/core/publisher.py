@@ -251,6 +251,7 @@ def _load_tts_durations(episode_id: str, settings: Settings) -> dict[str, float]
 def _build_youtube_metadata(
     episode: Episode,
     settings: Settings,
+    session=None,
 ) -> tuple[str, str, list[str]]:
     """Build YouTube title, description, and tags from chapters.json.
 
@@ -258,6 +259,22 @@ def _build_youtube_metadata(
         (title, description, tags)
     """
     chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
+
+    # Load profile for profile-specific YouTube metadata
+    _yt_config: dict = {}
+    _profile_domain = "cryptocurrency"
+    if session is not None:
+        try:
+            from btcedu.profiles import get_registry as _get_profile_registry
+
+            _profile_name = (
+                getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+            )
+            _profile = _get_profile_registry(settings).get(_profile_name)
+            _yt_config = _profile.youtube if _profile else {}
+            _profile_domain = getattr(_profile, "domain", "cryptocurrency") or "cryptocurrency"
+        except Exception:
+            pass
 
     title = episode.title
     chapters_list = []
@@ -314,11 +331,30 @@ def _build_youtube_metadata(
         description_parts.extend(timestamp_lines)
         description_parts.append("")
 
-    description_parts.append("#Bitcoin #Kripto #Türkçe #Eğitim #Blockchain")
+    # Profile-specific hashtags / attribution
+    profile_tags_list = _yt_config.get("tags", [])
+    if profile_tags_list:
+        hashtags_str = " ".join(f"#{t.replace(' ', '')}" for t in profile_tags_list[:5])
+    else:
+        hashtags_str = "#Bitcoin #Kripto #Türkçe #Eğitim #Blockchain"
+
+    # For news domain, prepend source attribution
+    if _profile_domain == "news":
+        attribution = (
+            "Kaynak: ARD tagesschau — Türkçe çeviri btcedu tarafından hazırlanmıştır.\n"
+            "Source: ARD tagesschau — Turkish translation by btcedu.\n\n"
+        )
+        if description_parts:
+            description_parts.insert(0, attribution)
+        else:
+            description_parts.append(attribution)
+
+    description_parts.append(hashtags_str)
     description = "\n".join(description_parts)
 
-    # Tags: base tags + chapter titles as additional tags
-    tags = list(_BASE_TAGS)
+    # Tags: profile tags or base tags, plus chapter titles
+    base_tags = profile_tags_list if profile_tags_list else list(_BASE_TAGS)
+    tags = list(base_tags)
     for ch in chapters_list[:5]:  # Limit extra tags from first 5 chapters
         ch_title = ch.get("title", "")
         if ch_title and len(ch_title) <= 30:
@@ -405,11 +441,26 @@ def publish_video(
             skipped=True,
         )
 
-    # Effective privacy setting
-    effective_privacy = privacy or getattr(settings, "youtube_default_privacy", "unlisted")
+    # Load profile for YouTube metadata overrides
+    _yt_config: dict = {}
+    try:
+        from btcedu.profiles import get_registry as _get_pub_profile_registry
 
-    # Build metadata
-    title, description, tags = _build_youtube_metadata(episode, settings)
+        _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+        _pub_profile = _get_pub_profile_registry(settings).get(_profile_name)
+        _yt_config = _pub_profile.youtube if _pub_profile else {}
+    except Exception:
+        pass
+
+    # Effective privacy setting (profile override > explicit arg > settings)
+    effective_privacy = (
+        privacy
+        or _yt_config.get("default_privacy")
+        or getattr(settings, "youtube_default_privacy", "unlisted")
+    )
+
+    # Build metadata (pass session for profile-aware tags/category)
+    title, description, tags = _build_youtube_metadata(episode, settings, session=session)
 
     # Run all 4 safety checks
     checks = _run_all_safety_checks(session, episode, settings, title, description, tags)
@@ -461,8 +512,8 @@ def publish_video(
         title=title,
         description=description,
         tags=tags,
-        category_id=getattr(settings, "youtube_category_id", "27"),
-        default_language=getattr(settings, "youtube_default_language", "tr"),
+        category_id=_yt_config.get("category_id") or getattr(settings, "youtube_category_id", "27"),
+        default_language=_yt_config.get("default_language") or getattr(settings, "youtube_default_language", "tr"),
         privacy_status=effective_privacy,
         thumbnail_path=thumbnail_path,
     )

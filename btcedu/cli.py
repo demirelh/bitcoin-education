@@ -73,12 +73,20 @@ def _check_pending_migrations(session_factory):
 
 
 @cli.command()
+@click.option(
+    "--profile",
+    default=None,
+    help="Content profile to assign to newly detected episodes.",
+)
 @click.pass_context
-def detect(ctx: click.Context) -> None:
+def detect(ctx: click.Context, profile: str | None) -> None:
     """Check feed for new episodes and insert into DB."""
     from btcedu.core.detector import detect_episodes
 
     settings = ctx.obj["settings"]
+    # If --profile specified, temporarily override default_content_profile
+    if profile:
+        settings = settings.model_copy(update={"default_content_profile": profile})
     session = ctx.obj["session_factory"]()
     try:
         result = detect_episodes(session, settings)
@@ -229,8 +237,13 @@ def chunk(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None
     help="Episode ID(s) to process (repeatable). If omitted, processes all pending episodes.",
 )
 @click.option("--force", is_flag=True, default=False, help="Force re-run of completed stages.")
+@click.option(
+    "--profile",
+    default=None,
+    help="Only process episodes with this content profile (when no --episode-id given).",
+)
 @click.pass_context
-def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
+def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: str | None) -> None:
     """Run the full pipeline for specific or all pending episodes."""
     from btcedu.core.pipeline import run_episode_pipeline, write_report
 
@@ -240,7 +253,7 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
         if episode_ids:
             episodes = session.query(Episode).filter(Episode.episode_id.in_(episode_ids)).all()
         else:
-            episodes = (
+            q = (
                 session.query(Episode)
                 .filter(
                     Episode.status.in_(
@@ -254,8 +267,10 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
                     )
                 )
                 .order_by(Episode.published_at.asc())
-                .all()
             )
+            if profile:
+                q = q.filter(Episode.content_profile == profile)
+            episodes = q.all()
 
         if not episodes:
             click.echo("No episodes to process.")
@@ -286,15 +301,20 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
 
 
 @cli.command(name="run-latest")
+@click.option(
+    "--profile",
+    default=None,
+    help="Only process episodes with this content profile.",
+)
 @click.pass_context
-def run_latest_cmd(ctx: click.Context) -> None:
+def run_latest_cmd(ctx: click.Context, profile: str | None) -> None:
     """Detect new episodes, then process the newest pending one."""
     from btcedu.core.pipeline import run_latest, write_report
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
     try:
-        report = run_latest(session, settings)
+        report = run_latest(session, settings, profile=profile)
 
         if report is None:
             click.echo("No pending episodes to process.")
@@ -326,8 +346,18 @@ def run_latest_cmd(ctx: click.Context) -> None:
     default=None,
     help="Only episodes published after this date (YYYY-MM-DD).",
 )
+@click.option(
+    "--profile",
+    default=None,
+    help="Only process episodes with this content profile.",
+)
 @click.pass_context
-def run_pending_cmd(ctx: click.Context, max_episodes: int | None, since: datetime | None) -> None:
+def run_pending_cmd(
+    ctx: click.Context,
+    max_episodes: int | None,
+    since: datetime | None,
+    profile: str | None,
+) -> None:
     """Process all pending episodes through the pipeline."""
     from btcedu.core.pipeline import run_pending, write_report
 
@@ -338,7 +368,9 @@ def run_pending_cmd(ctx: click.Context, max_episodes: int | None, since: datetim
         if since is not None and since.tzinfo is None:
             since = since.replace(tzinfo=UTC)
 
-        reports = run_pending(session, settings, max_episodes=max_episodes, since=since)
+        reports = run_pending(
+            session, settings, max_episodes=max_episodes, since=since, profile=profile
+        )
 
         if not reports:
             click.echo("No pending episodes to process.")
@@ -563,6 +595,49 @@ def correct(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> No
                     f"[OK] {eid} -> {result.corrected_path} "
                     f"({result.change_count} changes, ${result.cost_usd:.4f})"
                 )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to segment into stories (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-segment even if output exists.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Write request JSON instead of calling Claude API.",
+)
+@click.pass_context
+def segment(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run: bool) -> None:
+    """Segment corrected broadcast transcript into discrete news stories (v2 news pipeline)."""
+    from btcedu.core.segmenter import segment_broadcast
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = segment_broadcast(session, eid, settings, force=force)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> segment not enabled or already up-to-date")
+                else:
+                    click.echo(
+                        f"[OK] {eid} -> {result.story_count} stories, "
+                        f"~{result.total_duration_seconds}s total, "
+                        f"${result.cost_usd:.4f}"
+                    )
             except Exception as e:
                 click.echo(f"[FAIL] {eid}: {e}", err=True)
     finally:
@@ -1400,6 +1475,186 @@ def stock_auto_select(ctx: click.Context, episode_id: str) -> None:
         click.echo(f"[FAIL] {e}", err=True)
     finally:
         session.close()
+
+
+@cli.group()
+@click.pass_context
+def profile(ctx: click.Context) -> None:
+    """Content profile management."""
+    pass
+
+
+@profile.command(name="list")
+@click.pass_context
+def profile_list(ctx: click.Context) -> None:
+    """List all available content profiles."""
+    from btcedu.profiles import get_registry, reset_registry
+
+    settings = ctx.obj["settings"]
+    reset_registry()
+    registry = get_registry(settings)
+    profiles = registry.list_profiles()
+
+    if not profiles:
+        click.echo("No profiles found.")
+        return
+
+    for p in profiles:
+        click.echo(f"  {p.name:24s} {p.display_name} ({p.source_language}→{p.target_language})")
+
+
+@profile.command(name="show")
+@click.argument("name")
+@click.pass_context
+def profile_show(ctx: click.Context, name: str) -> None:
+    """Show details for a specific content profile."""
+    from btcedu.profiles import ProfileNotFoundError, get_registry, reset_registry
+
+    settings = ctx.obj["settings"]
+    reset_registry()
+    registry = get_registry(settings)
+
+    try:
+        p = registry.get(name)
+    except ProfileNotFoundError as e:
+        click.echo(f"Error: {e}", err=True)
+        raise SystemExit(1)
+
+    click.echo(f"Profile: {p.name}")
+    click.echo(f"  Display Name:     {p.display_name}")
+    click.echo(f"  Source Language:   {p.source_language}")
+    click.echo(f"  Target Language:   {p.target_language}")
+    click.echo(f"  Domain:           {p.domain}")
+    click.echo(f"  Pipeline Version: {p.pipeline_version}")
+    click.echo(f"  Stages Enabled:   {p.stages_enabled}")
+    if p.stage_config:
+        click.echo(f"  Stage Config:     {json.dumps(p.stage_config, indent=4)}")
+    if p.youtube:
+        click.echo(f"  YouTube:          {json.dumps(p.youtube, indent=4)}")
+    if p.review_gates:
+        click.echo(f"  Review Gates:     {json.dumps(p.review_gates, indent=4)}")
+    if p.prompt_namespace:
+        click.echo(f"  Prompt Namespace: {p.prompt_namespace}")
+
+
+@cli.command(name="smoke-test-pipeline")
+@click.option(
+    "--profile",
+    default=None,
+    help="Profile to validate (default: all profiles).",
+)
+@click.pass_context
+def smoke_test_pipeline(ctx: click.Context, profile: str | None) -> None:
+    """Validate a content profile's pipeline configuration (no DB, no API calls).
+
+    Checks: profile YAML parse, stage list, prompt templates, YouTube metadata,
+    TTS config, stock image vocabulary. PASS/FAIL output.
+    """
+    from pathlib import Path as _Path
+
+    from btcedu.core.pipeline import _get_stages
+    from btcedu.core.prompt_registry import TEMPLATES_DIR
+    from btcedu.profiles import ProfileNotFoundError, get_registry, reset_registry
+
+    settings = ctx.obj["settings"]
+    reset_registry()
+    registry = get_registry(settings)
+
+    all_profiles = registry.list_profiles()
+    if not all_profiles:
+        click.echo("[FAIL] No profiles found.", err=True)
+        raise SystemExit(1)
+
+    profiles_to_check = (
+        [registry.get(profile)]
+        if profile
+        else all_profiles
+    )
+
+    all_pass = True
+
+    for p in profiles_to_check:
+        click.echo(f"\n=== Profile: {p.name} ({p.display_name}) ===")
+        fails = []
+
+        # 1. Stage list
+        try:
+            from btcedu.models.episode import Episode as _Ep
+
+            dummy_ep = _Ep.__new__(_Ep)
+            dummy_ep.pipeline_version = 2
+            dummy_ep.content_profile = p.name
+            stages = _get_stages(settings, dummy_ep)
+            stage_names = [s[0] for s in stages]
+            click.echo(f"  Stages ({len(stages)}): {' → '.join(stage_names)}")
+        except Exception as e:
+            fails.append(f"Stage list: {e}")
+
+        # 2. Prompt templates
+        prompt_ns = p.prompt_namespace
+        templates_to_check = ["system.md", "correct_transcript.md", "translate.md"]
+        if p.stage_config.get("segment", {}).get("enabled"):
+            templates_to_check.append("segment_broadcast.md")
+        templates_dir = _Path(TEMPLATES_DIR)
+        for tmpl_name in templates_to_check:
+            if prompt_ns:
+                ns_path = templates_dir / prompt_ns / tmpl_name
+                base_path = templates_dir / tmpl_name
+                if ns_path.exists():
+                    click.echo(f"  Template {tmpl_name}: OK (namespace override)")
+                elif base_path.exists():
+                    click.echo(f"  Template {tmpl_name}: OK (base fallback)")
+                else:
+                    fails.append(f"Template {tmpl_name}: not found in {prompt_ns}/ or base")
+            else:
+                base_path = templates_dir / tmpl_name
+                if base_path.exists():
+                    click.echo(f"  Template {tmpl_name}: OK")
+                else:
+                    click.echo(f"  Template {tmpl_name}: missing (non-critical)")
+
+        # 3. YouTube metadata preview
+        yt = p.youtube
+        if yt:
+            click.echo(f"  YouTube category: {yt.get('category_id', 'default')}")
+            click.echo(f"  YouTube tags: {yt.get('tags', [])}")
+            click.echo(f"  YouTube language: {yt.get('default_language', 'tr')}")
+        else:
+            click.echo("  YouTube: (no profile override — using settings defaults)")
+
+        # 4. TTS config
+        tts_cfg = p.stage_config.get("tts", {})
+        if tts_cfg:
+            voice = tts_cfg.get("voice_id") or "(settings default)"
+            click.echo(
+                f"  TTS: voice_id={voice}, stability={tts_cfg.get('stability', 'default')}"
+            )
+        else:
+            click.echo("  TTS: (no profile override — using settings defaults)")
+
+        # 5. Render accent color
+        render_cfg = p.stage_config.get("render", {})
+        accent = render_cfg.get("accent_color", "#F7931A (default)")
+        click.echo(f"  Render accent color: {accent}")
+
+        # 6. Domain tag for stock images
+        click.echo(f"  Stock image domain tag: {p.domain or 'finance (default)'}")
+
+        # Result
+        if fails:
+            all_pass = False
+            click.echo(f"  [FAIL] Issues:")
+            for f in fails:
+                click.echo(f"    - {f}", err=True)
+        else:
+            click.echo(f"  [PASS]")
+
+    click.echo("")
+    if all_pass:
+        click.echo("[PASS] All profile smoke tests passed.")
+    else:
+        click.echo("[FAIL] Some profile smoke tests failed.", err=True)
+        raise SystemExit(1)
 
 
 @cli.command(name="smoke-test-video")

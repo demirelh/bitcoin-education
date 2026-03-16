@@ -407,6 +407,7 @@ class TestStageLabelConstants:
         expected_keys = {
             "download", "transcribe", "chunk", "generate", "refine",
             "correct", "review_gate_1", "translate", "adapt", "review_gate_2",
+            "review_gate_translate",
             "chapterize", "imagegen", "review_gate_stock", "tts", "render",
             "review_gate_3", "publish",
         }

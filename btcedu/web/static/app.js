@@ -6,6 +6,7 @@
   let selected = null;
   let channels = [];
   let selectedChannelId = null;
+  let selectedProfile = null;
   let isMobileView = false;
 
   // ── Mobile navigation state ──────────────────────────────────
@@ -304,9 +305,12 @@
         return `<span class="file-dot ${present ? "present" : ""}" title="${FILE_LABELS[i]}"></span>`;
       }).join("");
 
+      const profileBadge = ep.content_profile && ep.content_profile !== "bitcoin_podcast"
+        ? `<span class="badge badge-profile" title="${esc(ep.content_profile)}">${esc(ep.content_profile)}</span> `
+        : "";
       tr.innerHTML =
         `<td>${renderStatusBadges(ep)}</td>` +
-        `<td title="${esc(ep.title)}">${esc(trunc(ep.title, 45))}</td>` +
+        `<td title="${esc(ep.title)}">${profileBadge}${esc(trunc(ep.title, 45))}</td>` +
         `<td>${pub}</td>` +
         `<td><div class="files-row">${dots}</div></td>` +
         `<td>${ep.retry_count > 0 ? ep.retry_count : ""}</td>`;
@@ -1034,10 +1038,17 @@
   // ── Refresh ──────────────────────────────────────────────────
   async function refresh() {
     try {
-      // Build query with optional channel filter
+      // Build query with optional channel and profile filters
       let url = "/episodes";
+      const params = [];
       if (selectedChannelId) {
-        url += `?channel_id=${encodeURIComponent(selectedChannelId)}`;
+        params.push(`channel_id=${encodeURIComponent(selectedChannelId)}`);
+      }
+      if (selectedProfile) {
+        params.push(`profile=${encodeURIComponent(selectedProfile)}`);
+      }
+      if (params.length > 0) {
+        url += "?" + params.join("&");
       }
 
       const data = await GET(url);
@@ -1101,6 +1112,9 @@
       const body = {};
       if (selectedChannelId) {
         body.channel_id = selectedChannelId;
+      }
+      if (selectedProfile) {
+        body.profile = selectedProfile;
       }
       const r = await POST("/batch/start", body);
       if (r.error) {
@@ -1265,6 +1279,15 @@
     selectedChannelId = select.value || null;
     refresh();
   }
+
+  async function onProfileChange() {
+    const select = document.getElementById("profile-select");
+    if (select) {
+      selectedProfile = select.value || null;
+      refresh();
+    }
+  }
+  window.onProfileChange = onProfileChange;
 
   function showChannelManager() {
     document.getElementById("channel-modal").style.display = "flex";

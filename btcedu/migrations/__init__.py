@@ -453,6 +453,39 @@ class CreatePublishJobsTableMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class AddContentProfileMigration(Migration):
+    """Migration 008: Add content_profile column to episodes table."""
+
+    @property
+    def version(self) -> str:
+        return "008_add_content_profile"
+
+    @property
+    def description(self) -> str:
+        return "Add content_profile column to episodes table"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("PRAGMA table_info(episodes)"))
+        columns = [row[1] for row in result.fetchall()]
+
+        if "content_profile" not in columns:
+            session.execute(
+                text(
+                    "ALTER TABLE episodes "
+                    "ADD COLUMN content_profile VARCHAR(64) DEFAULT 'bitcoin_podcast' NOT NULL"
+                )
+            )
+            session.commit()
+            logger.info("Added content_profile column to episodes")
+        else:
+            logger.info("content_profile column already exists (skipped)")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 class AddReviewItemDecisionsMigration(Migration):
     """Migration 007: Create review_item_decisions table for granular diff review (Phase 5)."""
 
@@ -520,6 +553,7 @@ MIGRATIONS = [
     CreateMediaAssetsTableMigration(),
     CreatePublishJobsTableMigration(),
     AddReviewItemDecisionsMigration(),
+    AddContentProfileMigration(),
 ]
 
 

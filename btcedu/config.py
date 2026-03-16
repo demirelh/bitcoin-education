@@ -68,6 +68,8 @@ class Settings(BaseSettings):
 
     # Pipeline Version Control
     pipeline_version: int = 1  # 1 = legacy (chunk->generate->refine), 2 = v2 pipeline
+    profiles_dir: str = "btcedu/profiles"
+    default_content_profile: str = "bitcoin_podcast"
     max_episode_cost_usd: float = 10.0  # per-episode cost safety cap
 
     # Image Generation (Sprint 7)

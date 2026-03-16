@@ -30,6 +30,7 @@ _STATUS_ORDER = {
     EpisodeStatus.FAILED: -1,
     # v2 pipeline statuses
     EpisodeStatus.CORRECTED: 10,
+    EpisodeStatus.SEGMENTED: 10.5,  # Between CORRECTED and TRANSLATED (news profiles)
     EpisodeStatus.TRANSLATED: 11,
     EpisodeStatus.ADAPTED: 12,
     EpisodeStatus.CHAPTERIZED: 13,
@@ -76,17 +77,68 @@ def _get_stages(
     settings: Settings,
     episode: Episode | None = None,
 ) -> list[tuple[str, EpisodeStatus]]:
-    """Return the appropriate stages list based on pipeline version.
+    """Return the appropriate stages list based on pipeline version and profile.
 
     Uses ``episode.pipeline_version`` when available (e.g. after a reset-v2),
     falling back to ``settings.pipeline_version``.
+
+    For v2 episodes, applies profile-aware modifications:
+    - Inserts 'segment' stage for news profiles with segment.enabled=True
+    - Removes 'adapt' and 'review_gate_2' for profiles with adapt.skip=True
+    - Adjusts required statuses accordingly
     """
     version = settings.pipeline_version
     if episode is not None and getattr(episode, "pipeline_version", None):
         version = max(version, episode.pipeline_version)
-    if version >= 2:
-        return _V2_STAGES
-    return _V1_STAGES
+    if version < 2:
+        return _V1_STAGES
+
+    stages = list(_V2_STAGES)
+
+    if episode is None:
+        return stages
+
+    # Load profile for profile-aware stage modifications
+    try:
+        from btcedu.profiles import get_registry
+
+        profile_registry = get_registry(settings)
+        content_profile = getattr(episode, "content_profile", "bitcoin_podcast")
+        profile = profile_registry.get(content_profile)
+        stage_config = profile.stage_config
+    except Exception:
+        # If profile lookup fails, return default v2 stages
+        return stages
+
+    # Insert 'segment' stage for news profiles
+    if stage_config.get("segment", {}).get("enabled"):
+        # Find position of 'translate' stage and insert segment before it
+        translate_idx = next(
+            (i for i, (name, _) in enumerate(stages) if name == "translate"), None
+        )
+        if translate_idx is not None:
+            stages.insert(translate_idx, ("segment", EpisodeStatus.CORRECTED))
+            # Adjust translate to require SEGMENTED instead of CORRECTED
+            stages[translate_idx + 1] = ("translate", EpisodeStatus.SEGMENTED)
+
+    # Skip 'adapt' for profiles with adapt.skip=True; replace review_gate_2 with
+    # review_gate_translate so news translations get a dedicated human review gate.
+    if stage_config.get("adapt", {}).get("skip"):
+        # Replace review_gate_2 with review_gate_translate (don't remove the gate)
+        stages = [
+            ("review_gate_translate", EpisodeStatus.TRANSLATED)
+            if n == "review_gate_2" else (n, s)
+            for n, s in stages
+        ]
+        # Remove adapt only (keep the renamed gate)
+        stages = [(n, s) for n, s in stages if n != "adapt"]
+        # Adjust chapterize to accept TRANSLATED instead of ADAPTED
+        stages = [
+            ("chapterize", EpisodeStatus.TRANSLATED) if n == "chapterize" else (n, s)
+            for n, s in stages
+        ]
+
+    return stages
 
 
 def _utcnow() -> datetime:
@@ -180,7 +232,8 @@ def _run_stage(
     t0 = time.monotonic()
 
     _V2_ONLY_STAGES = {
-        "correct", "review_gate_1", "translate", "adapt", "review_gate_2",
+        "correct", "review_gate_1", "segment", "translate", "adapt", "review_gate_2",
+        "review_gate_translate",
         "chapterize", "imagegen", "review_gate_stock", "tts", "render",
         "review_gate_3", "publish",
     }
@@ -294,6 +347,22 @@ def _run_stage(
                 detail="review task created",
             )
 
+        elif stage_name == "segment":
+            from btcedu.core.segmenter import segment_broadcast
+
+            result = segment_broadcast(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("segment", "skipped", elapsed, detail="not enabled or current")
+            else:
+                return StageResult(
+                    "segment",
+                    "success",
+                    elapsed,
+                    detail=f"{result.story_count} stories (${result.cost_usd:.4f})",
+                )
+
         elif stage_name == "translate":
             from btcedu.core.translator import translate_transcript
 
@@ -376,6 +445,57 @@ def _run_stage(
                 "review_pending",
                 elapsed,
                 detail="adaptation review task created",
+            )
+
+        elif stage_name == "review_gate_translate":
+            from btcedu.core.reviewer import (
+                create_review_task,
+                has_approved_review,
+                has_pending_review,
+            )
+            from btcedu.core.translation_diff import compute_translation_diff
+
+            if has_approved_review(session, episode.episode_id, "translate"):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_translate", "success", elapsed,
+                    detail="translation review approved",
+                )
+
+            if has_pending_review(session, episode.episode_id):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_translate", "review_pending", elapsed,
+                    detail="awaiting translation review",
+                )
+
+            # Generate bilingual diff and create review task
+            stories_path = (
+                Path(settings.outputs_dir) / episode.episode_id / "stories_translated.json"
+            )
+            diff_path = (
+                Path(settings.outputs_dir) / episode.episode_id
+                / "review" / "translation_diff.json"
+            )
+            if stories_path.exists():
+                diff_data = compute_translation_diff(stories_path)
+                diff_path.parent.mkdir(parents=True, exist_ok=True)
+                diff_path.write_text(
+                    json.dumps(diff_data, ensure_ascii=False, indent=2)
+                )
+
+            transcript_path = (
+                Path(settings.transcripts_dir) / episode.episode_id / "transcript.tr.txt"
+            )
+            create_review_task(
+                session, episode.episode_id, stage="translate",
+                artifact_paths=[str(stories_path), str(transcript_path)],
+                diff_path=str(diff_path) if diff_path.exists() else None,
+            )
+            elapsed = time.monotonic() - t0
+            return StageResult(
+                "review_gate_translate", "review_pending", elapsed,
+                detail="translation review task created",
             )
 
         elif stage_name == "chapterize":
@@ -633,7 +753,11 @@ def run_episode_pipeline(
         "\n".join(plan_lines),
     )
 
-    logger.info("Pipeline start: %s (%s)", episode.episode_id, episode.title)
+    content_profile = getattr(episode, "content_profile", "bitcoin_podcast")
+    logger.info(
+        "Pipeline start: %s (%s) [profile=%s]",
+        episode.episode_id, episode.title, content_profile,
+    )
 
     stages = _get_stages(settings, episode)
     for stage_name, required_status in stages:
@@ -694,6 +818,7 @@ def run_episode_pipeline(
             "generate",
             "refine",
             "correct",
+            "segment",
             "translate",
             "adapt",
             "chapterize",
@@ -722,6 +847,7 @@ def run_pending(
     settings: Settings,
     max_episodes: int | None = None,
     since: datetime | None = None,
+    profile: str | None = None,
 ) -> list[PipelineReport]:
     """Process all pending episodes through the pipeline.
 
@@ -734,6 +860,7 @@ def run_pending(
         settings: Application settings.
         max_episodes: Limit number of episodes to process.
         since: Only process episodes published after this date.
+        profile: If given, only process episodes with this content_profile.
 
     Returns:
         List of PipelineReports.
@@ -750,6 +877,7 @@ def run_pending(
                     EpisodeStatus.GENERATED,
                     # v2 pipeline statuses
                     EpisodeStatus.CORRECTED,
+                    EpisodeStatus.SEGMENTED,  # news profiles
                     EpisodeStatus.TRANSLATED,
                     EpisodeStatus.ADAPTED,
                     EpisodeStatus.CHAPTERIZED,
@@ -765,6 +893,9 @@ def run_pending(
 
     if since is not None:
         query = query.filter(Episode.published_at >= since)
+
+    if profile is not None:
+        query = query.filter(Episode.content_profile == profile)
 
     if max_episodes is not None:
         query = query.limit(max_episodes)
@@ -794,11 +925,15 @@ def run_pending(
 def run_latest(
     session: Session,
     settings: Settings,
+    profile: str | None = None,
 ) -> PipelineReport | None:
     """Detect new episodes and process the newest pending one.
 
     Calls detect_episodes first, then finds the newest episode
     with status < GENERATED and runs the pipeline.
+
+    Args:
+        profile: If given, only consider episodes with this content_profile.
 
     Returns:
         PipelineReport for the processed episode, or None if nothing to do.
@@ -814,7 +949,7 @@ def run_latest(
     )
 
     # Find newest pending episode
-    candidates = (
+    candidates_query = (
         session.query(Episode)
         .filter(
             Episode.status.in_(
@@ -826,6 +961,7 @@ def run_latest(
                     EpisodeStatus.GENERATED,
                     # v2 pipeline statuses
                     EpisodeStatus.CORRECTED,
+                    EpisodeStatus.SEGMENTED,  # news profiles
                     EpisodeStatus.TRANSLATED,
                     EpisodeStatus.ADAPTED,
                     EpisodeStatus.CHAPTERIZED,
@@ -837,8 +973,12 @@ def run_latest(
             )
         )
         .order_by(Episode.published_at.desc())
-        .all()
     )
+
+    if profile is not None:
+        candidates_query = candidates_query.filter(Episode.content_profile == profile)
+
+    candidates = candidates_query.all()
 
     # Filter out episodes with active review tasks
     from btcedu.core.reviewer import has_pending_review

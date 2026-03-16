@@ -203,6 +203,8 @@ body {
 .badge-rendered { background: #bc8cff33; color: var(--purple); }
 .badge-approved { background: #3fb95033; color: var(--green); }
 .badge-published { background: #f0a50033; color: #f0a500; }
+/* Profile badge (Phase 4) */
+.badge-profile { background: #004b8733; color: #5ba3d9; text-transform: none; font-size: 10px; }
 
 /* File indicators */
 .files-row {

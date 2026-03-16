@@ -140,12 +140,26 @@ def generate_tts(
     session.commit()
 
     try:
+        # Load profile-level TTS overrides
+        try:
+            from btcedu.profiles import get_registry as _get_profile_registry
+
+            _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+            _profile = _get_profile_registry(settings).get(_profile_name)
+            _tts_cfg = _profile.stage_config.get("tts", {}) if _profile else {}
+        except Exception:
+            _tts_cfg = {}
+
+        _voice_id = _tts_cfg.get("voice_id") or settings.elevenlabs_voice_id
+        _stability = _tts_cfg.get("stability", settings.elevenlabs_stability)
+        _style = _tts_cfg.get("style", settings.elevenlabs_style)
+
         # Create TTS service
         from btcedu.services.elevenlabs_service import ElevenLabsService
 
         tts_service = ElevenLabsService(
             api_key=settings.elevenlabs_api_key,
-            default_voice_id=settings.elevenlabs_voice_id,
+            default_voice_id=_voice_id,
             default_model=settings.elevenlabs_model,
         )
 
@@ -213,8 +227,11 @@ def generate_tts(
                     f"{settings.max_episode_cost_usd}. Stopping TTS generation."
                 )
 
-            # Generate audio
-            entry = _generate_single_audio(chapter, tts_service, tts_dir, settings)
+            # Generate audio (with profile-level voice/stability overrides)
+            entry = _generate_single_audio(
+                chapter, tts_service, tts_dir, settings,
+                voice_id=_voice_id, stability=_stability, style=_style,
+            )
             audio_entries.append(entry)
             total_cost += entry.cost_usd
             total_duration += entry.duration_seconds
@@ -386,6 +403,9 @@ def _generate_single_audio(
     tts_service,
     output_dir: Path,
     settings: Settings,
+    voice_id: str | None = None,
+    stability: float | None = None,
+    style: float | None = None,
 ) -> AudioEntry:
     """Generate audio for a single chapter.
 
@@ -397,6 +417,11 @@ def _generate_single_audio(
     text_hash = _compute_narration_hash(narration_text)
     mp3_filename = f"{chapter.chapter_id}.mp3"
     mp3_path = output_dir / mp3_filename
+
+    # Use provided overrides or fall back to settings
+    effective_voice_id = voice_id or settings.elevenlabs_voice_id
+    effective_stability = stability if stability is not None else settings.elevenlabs_stability
+    effective_style = style if style is not None else settings.elevenlabs_style
 
     if settings.dry_run:
         # Write a minimal silent MP3 placeholder
@@ -411,7 +436,7 @@ def _generate_single_audio(
             file_path=f"tts/{mp3_filename}",
             sample_rate=44100,
             model=settings.elevenlabs_model,
-            voice_id=settings.elevenlabs_voice_id,
+            voice_id=effective_voice_id,
             mime_type="audio/mpeg",
             size_bytes=len(silent_mp3),
             cost_usd=0.0,
@@ -421,11 +446,11 @@ def _generate_single_audio(
     # Call TTS service
     request = TTSRequest(
         text=narration_text,
-        voice_id=settings.elevenlabs_voice_id,
+        voice_id=effective_voice_id,
         model=settings.elevenlabs_model,
-        stability=settings.elevenlabs_stability,
+        stability=effective_stability,
         similarity_boost=settings.elevenlabs_similarity_boost,
-        style=settings.elevenlabs_style,
+        style=effective_style,
         use_speaker_boost=settings.elevenlabs_use_speaker_boost,
     )
 

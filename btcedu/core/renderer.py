@@ -102,6 +102,19 @@ def render_video(
             "expected 'tts_done' or 'rendered'. Use --force to override."
         )
 
+    # Load profile for profile-aware rendering (accent color etc.)
+    try:
+        from btcedu.profiles import get_registry as _get_profile_registry
+
+        _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+        _profile = _get_profile_registry(settings).get(_profile_name)
+        _accent_color = (
+            _profile.stage_config.get("render", {}).get("accent_color") or "#F7931A"
+            if _profile else "#F7931A"
+        )
+    except Exception:
+        _accent_color = "#F7931A"
+
     # Resolve paths
     chapters_path = Path(settings.outputs_dir) / episode_id / "chapters.json"
     image_manifest_path = Path(settings.outputs_dir) / episode_id / "images" / "manifest.json"
@@ -193,8 +206,10 @@ def render_video(
                 logger.warning("Skipping chapter %s: %s", chapter.chapter_id, e)
                 continue
 
-            # Convert overlays to OverlaySpec
-            overlay_specs = _chapter_to_overlay_specs(chapter, settings.render_font)
+            # Convert overlays to OverlaySpec (profile-aware accent color)
+            overlay_specs = _chapter_to_overlay_specs(
+                chapter, settings.render_font, accent_color=_accent_color
+            )
 
             # Compute fade durations based on transition types (Sprint 10)
             fade_in_dur = 0.0
@@ -521,12 +536,13 @@ def _is_render_current(
     return True
 
 
-def _chapter_to_overlay_specs(chapter, font: str) -> list:
+def _chapter_to_overlay_specs(chapter, font: str, accent_color: str = "#F7931A") -> list:
     """Convert chapter overlays to OverlaySpec list.
 
     Args:
         chapter: Chapter object
         font: Font name
+        accent_color: Hex color for statistic overlays (profile-specific)
 
     Returns:
         List of OverlaySpec objects
@@ -536,7 +552,12 @@ def _chapter_to_overlay_specs(chapter, font: str) -> list:
     overlay_specs = []
     for overlay in chapter.overlays:
         # Get style defaults
-        style = OVERLAY_STYLES.get(overlay.type.value, OVERLAY_STYLES["lower_third"])
+        style = dict(OVERLAY_STYLES.get(overlay.type.value, OVERLAY_STYLES["lower_third"]))
+
+        # Apply profile-specific accent color to statistic overlays
+        if overlay.type.value == "statistic":
+            style = dict(style)
+            style["fontcolor"] = accent_color
 
         spec = OverlaySpec(
             text=overlay.text,

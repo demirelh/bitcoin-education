@@ -14,6 +14,16 @@ from btcedu.models.review import ReviewDecision, ReviewStatus, ReviewTask
 
 logger = logging.getLogger(__name__)
 
+# News editorial review checklist for tagesschau_tr profile
+_NEWS_REVIEW_CHECKLIST = [
+    {"id": "factual_accuracy", "label": "Factual accuracy verified"},
+    {"id": "political_neutrality", "label": "No editorialization or political spin"},
+    {"id": "attribution_present", "label": "Source attribution included"},
+    {"id": "proper_nouns_correct", "label": "Names, places, institutions correct"},
+    {"id": "no_hallucination", "label": "No invented facts or figures"},
+    {"id": "register_correct", "label": "Formal news register (not conversational)"},
+]
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -49,11 +59,12 @@ def _revert_episode(session: Session, episode_id: str) -> None:
         logger.warning("Cannot revert episode %s: not found", episode_id)
         return
 
-    # Reversion mapping for review gates 1 and 2 only.
+    # Reversion mapping for review gates 1, 2, and translate only.
     # Review Gate 3 rejections keep the episode at RENDERED.
     _REVERT_MAP = {
         EpisodeStatus.CORRECTED: EpisodeStatus.TRANSCRIBED,  # RG1
         EpisodeStatus.ADAPTED: EpisodeStatus.TRANSLATED,  # RG2
+        EpisodeStatus.TRANSLATED: EpisodeStatus.SEGMENTED,  # RG_translate (news profiles)
     }
 
     target_status = _REVERT_MAP.get(episode.status)
@@ -527,9 +538,9 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
             except (json.JSONDecodeError, OSError, TypeError):
                 chapter_script = None
 
-    # Load per-item decisions (Phase 5)
+    # Load per-item decisions (Phase 5; also for translation review)
     item_decisions_map: dict = {}
-    if task.stage in ("correct", "adapt"):
+    if task.stage in ("correct", "adapt", "translate"):
         from btcedu.models.review_item import ReviewItemDecision
 
         records = (
@@ -545,6 +556,23 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
             }
             for r in records
         }
+
+    # Profile-aware review checklist (tagesschau news content)
+    content_profile = getattr(episode, "content_profile", "bitcoin_podcast") if episode else None
+    review_checklist = None
+    if content_profile == "tagesschau_tr":
+        review_checklist = _NEWS_REVIEW_CHECKLIST
+
+    # Translation-specific bilingual review data
+    review_mode = None
+    bilingual_stories = None
+    compression_ratio = None
+    translation_warnings = None
+    if task.stage == "translate" and diff_data and diff_data.get("diff_type") == "translation":
+        review_mode = "bilingual"
+        bilingual_stories = diff_data.get("stories", [])
+        compression_ratio = diff_data.get("summary", {}).get("compression_ratio")
+        translation_warnings = diff_data.get("warnings", [])
 
     return {
         "id": task.id,
@@ -564,6 +592,11 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         "video_url": video_url,  # Sprint 10: for render review
         "render_manifest": render_manifest,  # Sprint 10: for render review
         "chapter_script": chapter_script,  # Sprint 10: for render review
+        "review_checklist": review_checklist,  # Phase 3: news editorial checklist
+        "review_mode": review_mode,  # Phase 3: "bilingual" for translation reviews
+        "stories": bilingual_stories,  # Phase 3: bilingual story pairs
+        "compression_ratio": compression_ratio,  # Phase 3: TR/DE word ratio
+        "translation_warnings": translation_warnings,  # Phase 3: anomaly warnings
     }
 
 
@@ -776,6 +809,35 @@ def apply_item_decisions(
         reviewed = _assemble_adaptation_review(adapted_text, adaptations, item_decisions)
         out_path = _sidecar_path(task.episode_id, "adapt", settings)
 
+    elif task.stage == "translate":
+        # Find stories_translated.json in artifact_paths
+        stories_path = None
+        if task.artifact_paths:
+            try:
+                paths = json.loads(task.artifact_paths)
+                for p in paths:
+                    if p.endswith("stories_translated.json"):
+                        stories_path = p
+                        break
+            except (json.JSONDecodeError, TypeError):
+                pass
+        if not stories_path or not Path(stories_path).exists():
+            raise ValueError(
+                f"stories_translated.json not found in artifact_paths for task {task.id}"
+            )
+        stories_data = json.loads(Path(stories_path).read_text(encoding="utf-8"))
+        reviewed_dict = _assemble_translation_review(stories_data, diff_data, item_decisions)
+        out_path = (
+            Path(settings.outputs_dir) / task.episode_id
+            / "review" / "stories_translated.reviewed.json"
+        )
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            json.dumps(reviewed_dict, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        logger.info("Wrote reviewed translation sidecar to %s", out_path)
+        return str(out_path.resolve())
+
     else:
         raise ValueError(f"apply_item_decisions not supported for stage '{task.stage}'")
 
@@ -831,8 +893,55 @@ def _load_item_texts_from_diff(
         for a in adaptations:
             if a.get("item_id") == item_id:
                 return (a.get("original", ""), a.get("adapted", ""), a.get("tier", "T1"))
+    elif diff_data.get("diff_type") == "translation":
+        # Translation diff: look in "stories" list
+        for story in diff_data.get("stories", []):
+            if story.get("item_id") == item_id:
+                return (
+                    story.get("text_de"),
+                    story.get("text_tr"),
+                    story.get("category", "story"),
+                )
 
     return (None, None, "unknown")
+
+
+def _assemble_translation_review(
+    stories_data: dict,
+    diff_data: dict,
+    item_decisions: "dict[str, ReviewItemDecision]",
+) -> dict:
+    """Reconstruct stories_translated.json from per-story review decisions.
+
+    - ACCEPTED / PENDING: keep text_tr and headline_tr as-is
+    - EDITED: replace text_tr with decision.edited_text
+    - REJECTED / UNCHANGED: prepend rejection marker to text_tr
+    """
+    from btcedu.models.review_item import ReviewItemAction
+
+    result = dict(stories_data)
+    result["stories"] = []
+
+    for story in stories_data.get("stories", []):
+        story_copy = dict(story)
+        item_id = f"trans-{story['story_id']}"
+        decision = item_decisions.get(item_id)
+
+        if decision is not None and decision.action == ReviewItemAction.EDITED.value:
+            story_copy["text_tr"] = decision.edited_text or story_copy.get("text_tr", "")
+        elif decision is not None and decision.action in (
+            ReviewItemAction.REJECTED.value,
+            ReviewItemAction.UNCHANGED.value,
+        ):
+            story_copy["text_tr"] = (
+                "[ÇEVİRİ REDDEDİLDİ \u2014 yeniden çeviri gerekli] "
+                + (story_copy.get("text_tr") or "")
+            )
+        # ACCEPTED / PENDING: keep text_tr as-is
+
+        result["stories"].append(story_copy)
+
+    return result
 
 
 def _ensure_item_ids_correction(changes: list[dict]) -> None:

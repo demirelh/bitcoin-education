@@ -96,11 +96,27 @@ def correct_transcript(
         Path(settings.outputs_dir) / episode_id / "provenance" / "correct_provenance.json"
     )
 
-    # Load and register prompt via PromptRegistry
+    # Load and register prompt via PromptRegistry (with profile-namespaced fallback)
     registry = PromptRegistry(session)
-    template_file = TEMPLATES_DIR / "correct_transcript.md"
+    profile = getattr(episode, "content_profile", None)
+    # Resolve profile namespace from profile object if available
+    try:
+        from btcedu.profiles import get_registry as get_profile_registry
+
+        pr = get_profile_registry(settings)
+        profile_obj = pr.get(profile) if profile else None
+        profile_namespace = getattr(profile_obj, "prompt_namespace", None) if profile_obj else None
+    except Exception:
+        profile_namespace = None
+
+    template_file = registry.resolve_template_path(
+        "correct_transcript.md", profile=profile_namespace
+    )
+    prompt_name = "correct_transcript"
+    if profile_namespace and (TEMPLATES_DIR / profile_namespace / "correct_transcript.md").exists():
+        prompt_name = f"{profile_namespace}/correct_transcript"
     prompt_version = registry.register_version(
-        "correct_transcript", template_file, set_default=True
+        prompt_name, template_file, set_default=True
     )
     _, template_body = registry.load_template(template_file)
     prompt_content_hash = registry.compute_hash(template_body)

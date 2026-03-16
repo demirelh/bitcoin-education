@@ -182,9 +182,22 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
     }
 
 
+def _get_story_count(episode_id: str, settings) -> int | None:
+    """Return total_stories from stories.json if it exists, else None."""
+    stories_path = Path(settings.outputs_dir) / episode_id / "stories.json"
+    if not stories_path.exists():
+        return None
+    try:
+        data = json.loads(stories_path.read_text(encoding="utf-8"))
+        return data.get("total_stories")
+    except Exception:
+        return None
+
+
 # Review gate labels: stage → (gate_name, human_readable_label)
 _REVIEW_GATE_LABELS = {
     "correct": ("review_gate_1", "Transcript Correction Review"),
+    "translate": ("review_gate_translate", "Translation Review"),
     "adapt": ("review_gate_2", "Adaptation Review"),
     "stock_images": ("review_gate_stock", "Stock Image Review"),
     "render": ("review_gate_3", "Video Review"),
@@ -322,6 +335,7 @@ _STAGE_LABELS = {
     "review_gate_1": "Review 1",
     "translate": "Translate",
     "adapt": "Adapt",
+    "review_gate_translate": "Review Translate",
     "review_gate_2": "Review 2",
     "chapterize": "Chapterize",
     "imagegen": "Images",
@@ -518,6 +532,7 @@ def _episode_to_dict(ep: Episode, settings, session=None,
         "completed_at": ep.completed_at.isoformat() if ep.completed_at else None,
         "error_message": ep.error_message,
         "retry_count": ep.retry_count,
+        "content_profile": getattr(ep, "content_profile", "bitcoin_podcast"),
         "pipeline_version": getattr(ep, "pipeline_version", 1),
         "youtube_video_id": getattr(ep, "youtube_video_id", None),
         "published_at_youtube": (
@@ -526,6 +541,7 @@ def _episode_to_dict(ep: Episode, settings, session=None,
             else None
         ),
         "files": _file_presence(ep.episode_id, settings),
+        "story_count": _get_story_count(ep.episode_id, settings),
         "review_context": review_context,
         "pipeline_state": _compute_pipeline_state(status_val, review_context),
         "stage_progress": stage_progress,
@@ -554,6 +570,38 @@ def _submit_job(action, episode_id, **kwargs):
 
 
 # ---------------------------------------------------------------------------
+# Profiles
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/profiles")
+def list_profiles():
+    """Return all content profiles."""
+    try:
+        from btcedu.profiles import get_registry, reset_registry
+
+        settings = _get_settings()
+        reset_registry()
+        registry = get_registry(settings)
+        profiles = registry.list_profiles()
+        return jsonify([
+            {
+                "name": p.name,
+                "display_name": p.display_name,
+                "source_language": p.source_language,
+                "target_language": p.target_language,
+                "domain": p.domain,
+                "pipeline_version": p.pipeline_version,
+                "stages_enabled": p.stages_enabled,
+            }
+            for p in profiles
+        ])
+    except Exception as e:
+        logger.exception("Failed to list profiles")
+        return jsonify({"error": str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
 # Episode list + detail
 # ---------------------------------------------------------------------------
 
@@ -565,13 +613,16 @@ def list_episodes():
     try:
         from btcedu.models.review import ReviewStatus, ReviewTask
 
-        # Support optional channel filter
+        # Support optional channel and profile filters
         channel_id = request.args.get("channel_id")
+        profile_filter = request.args.get("profile")
 
         query = session.query(Episode)
 
         if channel_id:
             query = query.filter(Episode.channel_id == channel_id)
+        if profile_filter:
+            query = query.filter(Episode.content_profile == profile_filter)
 
         episodes = query.order_by(Episode.published_at.desc().nullslast()).all()
 
@@ -1093,9 +1144,13 @@ def batch_start():
     data = request.get_json() or {}
     force = data.get("force", False)
     channel_id = data.get("channel_id")
+    profile_filter = data.get("profile")
 
     batch_job = job_manager.submit_batch(
-        current_app._get_current_object(), force=force, channel_id=channel_id
+        current_app._get_current_object(),
+        force=force,
+        channel_id=channel_id,
+        profile=profile_filter,
     )
 
     return jsonify(

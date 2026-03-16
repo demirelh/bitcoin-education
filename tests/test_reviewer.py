@@ -63,6 +63,7 @@ def corrected_episode(db_session, tmp_path):
         url="https://youtube.com/watch?v=ep001",
         status=EpisodeStatus.CORRECTED,
         transcript_path=str(transcript_file),
+        pipeline_version=2,
     )
     db_session.add(episode)
     db_session.commit()
@@ -374,6 +375,7 @@ class TestReviewGate3Pipeline:
             title="RG3 Gate",
             url="https://youtube.com/watch?v=rg3",
             status=EpisodeStatus.RENDERED,
+            pipeline_version=2,
         )
         db_session.add(episode)
         db_session.commit()
@@ -403,6 +405,7 @@ class TestReviewGate3Pipeline:
             title="RG3 Approved",
             url="https://youtube.com/watch?v=rg3a",
             status=EpisodeStatus.RENDERED,
+            pipeline_version=2,
         )
         db_session.add(episode)
         db_session.commit()

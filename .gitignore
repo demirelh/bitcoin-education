@@ -27,6 +27,10 @@ output/
 *.swp
 *.swo
 
+# Claude Code (local settings are machine-specific)
+.claude/settings.local.json
+.claude/projects/
+
 # OS
 .DS_Store
 Thumbs.db

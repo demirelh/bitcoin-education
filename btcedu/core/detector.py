@@ -64,7 +64,11 @@ class DetectResult:
 
 
 def detect_episodes(
-    session: Session, settings: Settings, *, channel_id: str | None = None
+    session: Session,
+    settings: Settings,
+    *,
+    channel_id: str | None = None,
+    feed_url: str | None = None,
 ) -> DetectResult:
     """Fetch feed, parse episodes, insert new ones into DB.
 
@@ -75,11 +79,12 @@ def detect_episodes(
         settings: Application settings.
         channel_id: Optional channel_id to assign. If not given, auto-resolved
                     from Channel table via settings.
+        feed_url: Override the feed URL (bypasses settings.rss_url).
 
     Returns:
         DetectResult with counts.
     """
-    feed_url = settings.rss_url
+    feed_url = feed_url or settings.rss_url
     if not feed_url:
         raise ValueError(
             "No feed URL configured. Set PODCAST_YOUTUBE_CHANNEL_ID or PODCAST_RSS_URL."
@@ -115,6 +120,7 @@ def detect_episodes(
             url=ep_info.url,
             published_at=ep_info.published_at,
             status=EpisodeStatus.NEW,
+            content_profile=settings.default_content_profile,
         )
         session.add(episode)
         result.new += 1

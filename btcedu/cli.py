@@ -78,10 +78,17 @@ def _check_pending_migrations(session_factory):
     default=None,
     help="Content profile to assign to newly detected episodes.",
 )
+@click.option(
+    "--channel",
+    "channel_name",
+    default=None,
+    help="Channel name from DB to detect from (uses that channel's RSS URL).",
+)
 @click.pass_context
-def detect(ctx: click.Context, profile: str | None) -> None:
+def detect(ctx: click.Context, profile: str | None, channel_name: str | None) -> None:
     """Check feed for new episodes and insert into DB."""
     from btcedu.core.detector import detect_episodes
+    from btcedu.models.channel import Channel
 
     settings = ctx.obj["settings"]
     # If --profile specified, temporarily override default_content_profile
@@ -89,7 +96,15 @@ def detect(ctx: click.Context, profile: str | None) -> None:
         settings = settings.model_copy(update={"default_content_profile": profile})
     session = ctx.obj["session_factory"]()
     try:
-        result = detect_episodes(session, settings)
+        feed_url_override = None
+        if channel_name:
+            ch = session.query(Channel).filter(Channel.name == channel_name).first()
+            if not ch:
+                raise click.ClickException(f"Channel '{channel_name}' not found in DB.")
+            if not ch.rss_url:
+                raise click.ClickException(f"Channel '{channel_name}' has no RSS URL configured.")
+            feed_url_override = ch.rss_url
+        result = detect_episodes(session, settings, feed_url=feed_url_override)
         click.echo(f"Found: {result.found}  New: {result.new}  Total in DB: {result.total}")
     finally:
         session.close()

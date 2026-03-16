@@ -179,6 +179,18 @@ def _run_stage(
     """Run a single pipeline stage. Returns StageResult."""
     t0 = time.monotonic()
 
+    _V2_ONLY_STAGES = {
+        "correct", "review_gate_1", "translate", "adapt", "review_gate_2",
+        "chapterize", "imagegen", "review_gate_stock", "tts", "render",
+        "review_gate_3", "publish",
+    }
+    if stage_name in _V2_ONLY_STAGES and episode.pipeline_version != 2:
+        raise ValueError(
+            f"Stage '{stage_name}' requires v2 pipeline but episode "
+            f"{episode.episode_id} has pipeline_version={episode.pipeline_version}. "
+            f"Set pipeline_version=2 to proceed."
+        )
+
     try:
         if stage_name == "download":
             from btcedu.core.detector import download_episode

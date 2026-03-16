@@ -15,9 +15,9 @@
 | Root CLAUDE.md | 1 | `CLAUDE.md` (rewritten from 459 -> ~90 lines) |
 | Scoped CLAUDE.md | 6 | `btcedu/core/`, `btcedu/models/`, `btcedu/services/`, `btcedu/web/`, `btcedu/prompts/`, `tests/` |
 | Project settings | 1 | `.claude/settings.json` |
-| Agents | 3 | `pipeline-debug`, `review-workflow`, `stock-assets` |
+| Agents | 3 | `pipeline-debug`, `review-workflow`, `visual-assets` |
 | Skills | 6 | `deploy`, `test`, `smoke-test-video`, `pipeline-status`, `investigate-failure`, `validate-phase` |
-| Architecture docs | 5 | `pipeline-overview`, `review-gate-flow`, `stock-asset-flow`, `render-flow`, `claude-code-structure-plan` |
+| Architecture docs | 5 | `pipeline-overview`, `review-gate-flow`, `visual-asset-flow`, `render-flow`, `claude-code-structure-plan` |
 | Decision records | 4 | `001-stock-images-over-ai`, `002-video-clips-opt-in`, `003-granular-review-model`, `004-sidecar-not-overwrite` |
 | Runbooks | 5 | `run-pipeline`, `handle-review-gates`, `debug-failed-episode`, `smoke-test-video`, `safe-recovery` |
 | This report | 1 | `claude-code-structure-implementation-report.md` |
@@ -31,7 +31,7 @@
 ├── agents/
 │   ├── pipeline-debug/pipeline-debug.md
 │   ├── review-workflow/review-workflow.md
-│   └── stock-assets/stock-assets.md
+│   └── visual-assets/visual-assets.md
 └── skills/
     ├── deploy/SKILL.md
     ├── test/SKILL.md
@@ -46,7 +46,7 @@ docs/
 │   ├── claude-code-structure-implementation-report.md
 │   ├── pipeline-overview.md
 │   ├── review-gate-flow.md
-│   ├── stock-asset-flow.md
+│   ├── visual-asset-flow.md
 │   └── render-flow.md
 ├── decisions/
 │   ├── 001-stock-images-over-ai.md
@@ -100,7 +100,7 @@ Scoped CLAUDE.md files:
 
 | Decision | Rationale |
 |----------|-----------|
-| 3 agents (pipeline-debug, review-workflow, stock-assets) | These are the 3 most complex multi-step workflows that benefit from specialized context |
+| 3 agents (pipeline-debug, review-workflow, visual-assets) | These are the 3 most complex multi-step workflows that benefit from specialized context |
 | 6 skills (deploy, test, smoke-test-video, pipeline-status, investigate-failure, validate-phase) | These are the 6 most frequent operations in daily project work |
 | 6 scoped CLAUDE.md files | One per major source subdirectory + tests, where lazy-loading provides targeted context |
 | 4 ADRs | The 4 most impactful architectural decisions not obvious from code |
@@ -131,7 +131,7 @@ Scoped CLAUDE.md files:
 |-------|---------|-------|-------|
 | `pipeline-debug` | Diagnose failed pipeline episodes | Read, Glob, Grep, Bash, Agent | sonnet |
 | `review-workflow` | Manage review gates (list, inspect, approve/reject) | Read, Glob, Grep, Bash | sonnet |
-| `stock-assets` | Stock image/video search, ranking, normalization | Read, Glob, Grep, Bash | sonnet |
+| `visual-assets` | Stock image/video search, ranking, normalization | Read, Glob, Grep, Bash | sonnet |
 
 ---
 
@@ -166,7 +166,7 @@ Scoped CLAUDE.md files:
 ### Architecture (docs/architecture/)
 - `pipeline-overview.md` — v1/v2 stages, orchestration, guards, automation
 - `review-gate-flow.md` — gate lifecycle, auto-approve, granular review
-- `stock-asset-flow.md` — search, rank, finalize, asset types, normalization
+- `visual-asset-flow.md` — search, rank, finalize, asset types, normalization
 - `render-flow.md` — ffmpeg operations, Pi considerations, error handling
 
 ### Decision Records (docs/decisions/)

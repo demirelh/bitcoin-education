@@ -78,7 +78,7 @@ Key settings: `anthropic_api_key`, `openai_api_key`, `elevenlabs_api_key`, `data
 ## Reference Documents
 
 - `MASTERPLAN.md` — full architecture, schemas, phase roadmap (66KB)
-- `docs/architecture/` — pipeline, review gate, stock asset, render flow docs
+- `docs/architecture/` — pipeline, review gate, visual asset, render flow docs
 - `docs/decisions/` — ADRs for key design choices
 - `docs/runbooks/` — operator guides for common tasks
 - `docs/sprints/` — per-sprint plan/implement/validate docs (all 11 sprints)

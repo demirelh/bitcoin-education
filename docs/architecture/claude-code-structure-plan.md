@@ -148,7 +148,7 @@ project-level (shared) vs local-only (personal) settings.
 ├── agents/
 │   ├── pipeline-debug/pipeline-debug.md
 │   ├── review-workflow/review-workflow.md
-│   └── stock-assets/stock-assets.md
+│   └── visual-assets/visual-assets.md
 └── skills/
     ├── deploy/SKILL.md
     ├── test/SKILL.md
@@ -173,7 +173,7 @@ docs/
 │   ├── claude-code-structure-plan.md    # THIS FILE
 │   ├── pipeline-overview.md            # NEW
 │   ├── review-gate-flow.md             # NEW
-│   ├── stock-asset-flow.md             # NEW
+│   ├── visual-asset-flow.md             # NEW
 │   └── render-flow.md                  # NEW
 ├── decisions/
 │   ├── 001-stock-images-over-ai.md     # NEW
@@ -213,7 +213,7 @@ docs/
 | `.claude/settings.json` | Shared project settings (model, common permissions) |
 | `.claude/agents/pipeline-debug/pipeline-debug.md` | Debug failed pipeline episodes |
 | `.claude/agents/review-workflow/review-workflow.md` | Manage review gates |
-| `.claude/agents/stock-assets/stock-assets.md` | Stock image/video selection |
+| `.claude/agents/visual-assets/visual-assets.md` | Stock image/video selection |
 | `.claude/skills/deploy/SKILL.md` | Run deployment (`run.sh`) |
 | `.claude/skills/test/SKILL.md` | Run test suite |
 | `.claude/skills/smoke-test-video/SKILL.md` | Run video smoke test |
@@ -228,7 +228,7 @@ docs/
 | `tests/CLAUDE.md` | Test patterns and fixtures |
 | `docs/architecture/pipeline-overview.md` | Pipeline architecture |
 | `docs/architecture/review-gate-flow.md` | Review gate flow |
-| `docs/architecture/stock-asset-flow.md` | Stock asset flow |
+| `docs/architecture/visual-asset-flow.md` | Stock asset flow |
 | `docs/architecture/render-flow.md` | Render flow |
 | `docs/decisions/001-stock-images-over-ai.md` | ADR: stock vs AI images |
 | `docs/decisions/002-video-clips-opt-in.md` | ADR: video opt-in |
@@ -271,7 +271,7 @@ docs/
 |-------|---------------|
 | `pipeline-debug` | When a pipeline stage fails, this agent knows to check episode status, pipeline_run records, error_message, journal, and log output. Saves rediscovery time. |
 | `review-workflow` | Manages review gates: creating tasks, checking approval status, understanding diff files, applying review decisions. Complex multi-table flow. |
-| `stock-assets` | Handles stock image/video search, ranking, candidate selection, and finalization. Involves Pexels API, intent extraction, manifest files — a distinct subdomain. |
+| `visual-assets` | Handles per-chapter visual asset search, ranking, selection, and finalization. Involves image/video providers, intent extraction, manifest files — a distinct subdomain. |
 
 ### Agents intentionally NOT created
 
@@ -314,7 +314,7 @@ and auto-invocation. All workflows will be implemented as skills.
 |-----|---------|
 | `pipeline-overview.md` | v1/v2 pipeline stages, status transitions, _V2_STAGES reference |
 | `review-gate-flow.md` | How review gates work: create → pending → approve/reject → resume |
-| `stock-asset-flow.md` | Search → rank → review → finalize → normalize video → manifest |
+| `visual-asset-flow.md` | Search → rank → review → finalize → normalize video → manifest |
 | `render-flow.md` | TTS + images → segments → concat → draft.mp4 |
 
 ### Decision records (docs/decisions/)

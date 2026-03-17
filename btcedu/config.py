@@ -82,6 +82,17 @@ class Settings(BaseSettings):
         "Clean, modern, minimalist design. "
     )
 
+    # Frame Extraction
+    frame_extraction_enabled: bool = False
+    frame_extract_video_height: int = 720
+    frame_extract_scene_threshold: float = 0.3
+    frame_extract_min_interval: float = 2.0
+    frame_extract_max_frames: int = 100
+    frame_extract_style_preset: str = "news_recolor"
+    frame_extract_style_provider: str = "ffmpeg"  # "ffmpeg" or "dalle_edit"
+    frame_extract_anchor_detection: bool = True
+    frame_extract_crop_anchor: bool = True
+
     # Stock Images / Pexels
     pexels_api_key: str = ""
     pexels_results_per_chapter: int = 5  # Candidates to fetch per chapter (3-8)

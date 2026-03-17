@@ -67,3 +67,65 @@ def download_audio(
 
     logger.info("Downloaded: %s", audio_file)
     return str(audio_file)
+
+
+def download_video(
+    url: str,
+    output_dir: str,
+    max_height: int = 720,
+) -> str:
+    """Download video from a URL using yt-dlp.
+
+    Downloads the best video+audio stream up to *max_height* resolution
+    and merges into an MP4 container.
+
+    Args:
+        url: Video URL to download from.
+        output_dir: Directory to save the video file into.
+        max_height: Maximum video height in pixels (default: 720).
+
+    Returns:
+        Path to the downloaded video file.
+
+    Raises:
+        RuntimeError: If yt-dlp fails.
+    """
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    output_template = str(out_path / "video.%(ext)s")
+
+    ytdlp = shutil.which("yt-dlp") or str(Path(sys.executable).parent / "yt-dlp")
+
+    cmd = [
+        ytdlp,
+        "--format",
+        f"bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]",
+        "--merge-output-format",
+        "mp4",
+        "--output",
+        output_template,
+        "--no-playlist",
+        "--quiet",
+        "--no-warnings",
+        url,
+    ]
+
+    logger.info("Downloading video: %s -> %s", url, output_dir)
+
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+
+    if result.returncode != 0:
+        raise RuntimeError(f"yt-dlp failed (exit {result.returncode}): {result.stderr.strip()}")
+
+    # Find the actual output file
+    video_file = out_path / "video.mp4"
+    if not video_file.exists():
+        candidates = list(out_path.glob("video.*"))
+        if candidates:
+            video_file = candidates[0]
+        else:
+            raise RuntimeError(f"No video file found in {output_dir} after download")
+
+    logger.info("Downloaded video: %s", video_file)
+    return str(video_file)

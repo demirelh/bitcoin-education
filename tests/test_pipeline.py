@@ -703,6 +703,7 @@ class TestV2PipelineE2E:
             "translate": EpisodeStatus.TRANSLATED,
             "adapt": EpisodeStatus.ADAPTED,
             "chapterize": EpisodeStatus.CHAPTERIZED,
+            "frameextract": EpisodeStatus.FRAMES_EXTRACTED,
             "imagegen": EpisodeStatus.IMAGES_GENERATED,
             "tts": EpisodeStatus.TTS_DONE,
             "render": EpisodeStatus.RENDERED,
@@ -849,10 +850,10 @@ class TestV2PipelineE2E:
         assert stage_statuses.get("publish") == "success"
 
     @patch("btcedu.core.pipeline._run_stage")
-    def test_v2_plan_shows_all_14_stages(self, mock_stage, db_session, v2_episode, v2_settings):
-        """resolve_pipeline_plan returns all 14 v2 stages."""
+    def test_v2_plan_shows_all_15_stages(self, mock_stage, db_session, v2_episode, v2_settings):
+        """resolve_pipeline_plan returns all 15 v2 stages."""
         plan = resolve_pipeline_plan(db_session, v2_episode, settings=v2_settings)
-        assert len(plan) == 14
+        assert len(plan) == 15
         stage_names = [p.stage for p in plan]
         assert stage_names == [
             "download",
@@ -863,6 +864,7 @@ class TestV2PipelineE2E:
             "adapt",
             "review_gate_2",
             "chapterize",
+            "frameextract",
             "imagegen",
             "review_gate_stock",
             "tts",

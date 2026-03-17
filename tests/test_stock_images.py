@@ -1,7 +1,6 @@
 """Tests for stock image search and selection (Pexels integration)."""
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -19,7 +18,7 @@ from btcedu.core.stock_images import (
     search_stock_images,
     select_stock_image,
 )
-from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun
+from btcedu.models.episode import EpisodeStatus
 
 
 @pytest.fixture
@@ -264,7 +263,8 @@ class TestSelectStockImage:
         select_stock_image(session, "TEST_EP", "ch01", 12345, settings)
 
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images" / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest / "TEST_EP" / "images"
+            / "candidates" / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         ch01 = manifest["chapters"]["ch01"]["candidates"]
@@ -280,7 +280,8 @@ class TestSelectStockImage:
         select_stock_image(session, "TEST_EP", "ch01", 12346, settings, lock=True)
 
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images" / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest / "TEST_EP" / "images"
+            / "candidates" / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         ch01 = manifest["chapters"]["ch01"]["candidates"]
@@ -328,7 +329,8 @@ class TestAutoSelectBest:
 
         # Verify first candidate is selected
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images" / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest / "TEST_EP" / "images"
+            / "candidates" / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
 
@@ -353,7 +355,8 @@ class TestAutoSelectBest:
 
         # Pre-lock ch01 to second candidate
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images" / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest / "TEST_EP" / "images"
+            / "candidates" / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         manifest["chapters"]["ch01"]["candidates"][1]["selected"] = True
@@ -532,7 +535,8 @@ class TestFinalizeSelections:
 
         # Pre-select candidates
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images" / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest / "TEST_EP" / "images"
+            / "candidates" / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         manifest["chapters"]["ch01"]["candidates"][0]["selected"] = True
@@ -597,7 +601,8 @@ class TestFinalizeSelections:
 
         # Pre-select
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images" / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest / "TEST_EP" / "images"
+            / "candidates" / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         manifest["chapters"]["ch01"]["candidates"][0]["selected"] = True
@@ -609,7 +614,10 @@ class TestFinalizeSelections:
 
         finalize_selections(session, "TEST_EP", settings)
 
-        provenance_path = sample_candidates_manifest / "TEST_EP" / "provenance" / "imagegen_provenance.json"
+        provenance_path = (
+            sample_candidates_manifest / "TEST_EP"
+            / "provenance" / "imagegen_provenance.json"
+        )
         assert provenance_path.exists()
         prov = json.loads(provenance_path.read_text())
         assert prov["stage"] == "imagegen"

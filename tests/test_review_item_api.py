@@ -115,7 +115,12 @@ def review_setup(db_engine, tmp_path):
     task_id = task.id
     session.close()
 
-    return {"task_id": task_id, "transcript_path": str(transcript_file), "diff_path": str(diff_file), "tmp_path": tmp_path}
+    return {
+        "task_id": task_id,
+        "transcript_path": str(transcript_file),
+        "diff_path": str(diff_file),
+        "tmp_path": tmp_path,
+    }
 
 
 # ── item action endpoint tests ─────────────────────────────────────────────
@@ -133,6 +138,7 @@ class TestAcceptItem:
 
     def test_accept_creates_db_record(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review_item import ReviewItemDecision
 
         task_id = review_setup["task_id"]
@@ -161,6 +167,7 @@ class TestRejectItem:
 class TestEditItem:
     def test_edit_item_valid(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review_item import ReviewItemDecision
 
         task_id = review_setup["task_id"]
@@ -202,6 +209,7 @@ class TestEditItem:
 class TestResetItem:
     def test_reset_item(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review_item import ReviewItemDecision
 
         task_id = review_setup["task_id"]
@@ -225,6 +233,7 @@ class TestResetItem:
 class TestItemActionGuards:
     def test_item_action_on_approved_review(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review import ReviewTask
 
         task_id = review_setup["task_id"]
@@ -270,6 +279,7 @@ class TestApplyReviewItems:
 
     def test_review_detail_includes_item_decisions(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.core.reviewer import upsert_item_decision
 
         task_id = review_setup["task_id"]
@@ -396,9 +406,12 @@ class TestApplyAdaptationAPI:
         )
         assert expected_sidecar.exists()
 
-    def test_apply_on_non_actionable_review_returns_400(self, client, db_engine, review_setup_adaptation):
+    def test_apply_on_non_actionable_review_returns_400(
+        self, client, db_engine, review_setup_adaptation
+    ):
         """Apply on an approved review returns 400 (non-actionable guard)."""
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review import ReviewTask as RT
 
         task_id = review_setup_adaptation["task_id"]
@@ -416,7 +429,9 @@ class TestBackwardCompatibility:
     def test_old_diff_without_item_id(self, client, db_engine, review_setup):
         """Old-format diffs (no item_id) return empty item_decisions without crashing."""
         import json
+
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review import ReviewTask
 
         tmp_path = review_setup["tmp_path"]

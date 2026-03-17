@@ -1,5 +1,6 @@
 """Cross-profile isolation and metadata tests (Phase 4)."""
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -11,7 +12,6 @@ from btcedu.config import Settings
 from btcedu.core.pipeline import _get_stages, run_pending
 from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.profiles import get_registry, reset_registry
-
 
 # ---------------------------------------------------------------------------
 # Fixtures

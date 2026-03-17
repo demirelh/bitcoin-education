@@ -36,21 +36,23 @@ def _make_story_doc(episode_id: str, n_stories: int = 3) -> dict:
     """Build a valid StoryDocument dict."""
     stories = []
     for i in range(1, n_stories + 1):
-        stories.append({
-            "story_id": f"s{i:02d}",
-            "order": i,
-            "headline_de": f"Schlagzeile {i}",
-            "category": "politik",
-            "story_type": "meldung",
-            "text_de": f"Dies ist der Text der Geschichte Nummer {i}. Mehr Details folgen.",
-            "word_count": 10,
-            "estimated_duration_seconds": 5,
-            "reporter": None,
-            "location": None,
-            "is_lead_story": i == 1,
-            "headline_tr": None,
-            "text_tr": None,
-        })
+        stories.append(
+            {
+                "story_id": f"s{i:02d}",
+                "order": i,
+                "headline_de": f"Schlagzeile {i}",
+                "category": "politik",
+                "story_type": "meldung",
+                "text_de": f"Dies ist der Text der Geschichte Nummer {i}. Mehr Details folgen.",
+                "word_count": 10,
+                "estimated_duration_seconds": 5,
+                "reporter": None,
+                "location": None,
+                "is_lead_story": i == 1,
+                "headline_tr": None,
+                "text_tr": None,
+            }
+        )
     return {
         "schema_version": "1.0",
         "episode_id": episode_id,
@@ -225,17 +227,19 @@ class TestSegmentBroadcast:
         assert provenance["story_count"] == 3
 
         # PipelineRun created
-        run = db_session.query(PipelineRun).filter(
-            PipelineRun.episode_id == corrected_episode.id,
-            PipelineRun.stage == PipelineStage.SEGMENT,
-        ).first()
+        run = (
+            db_session.query(PipelineRun)
+            .filter(
+                PipelineRun.episode_id == corrected_episode.id,
+                PipelineRun.stage == PipelineStage.SEGMENT,
+            )
+            .first()
+        )
         assert run is not None
         assert run.status == RunStatus.SUCCESS
 
         # Stale marker written for translation
-        stale_path = (
-            Path(mock_settings.transcripts_dir) / "ep_news" / "transcript.tr.txt.stale"
-        )
+        stale_path = Path(mock_settings.transcripts_dir) / "ep_news" / "transcript.tr.txt.stale"
         assert stale_path.exists()
 
     def test_segment_broadcast_idempotent(self, db_session, corrected_episode, mock_settings):

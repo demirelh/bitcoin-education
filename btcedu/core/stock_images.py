@@ -148,11 +148,50 @@ _TR_TO_EN = {
 
 # Turkish stop words to filter out
 _TR_STOP_WORDS = {
-    "ve", "ile", "bir", "bu", "da", "de", "den", "dan", "için", "olan",
-    "gibi", "çok", "daha", "hem", "ama", "fakat", "veya", "ya", "ki",
-    "ne", "nasıl", "neden", "mi", "mu", "mı", "mü", "dir", "dır",
-    "dür", "dur", "tır", "tir", "lar", "ler", "nin", "nın", "nün",
-    "nun", "giriş", "sonuç", "arasındaki", "arasında", "olan", "olarak",
+    "ve",
+    "ile",
+    "bir",
+    "bu",
+    "da",
+    "de",
+    "den",
+    "dan",
+    "için",
+    "olan",
+    "gibi",
+    "çok",
+    "daha",
+    "hem",
+    "ama",
+    "fakat",
+    "veya",
+    "ya",
+    "ki",
+    "ne",
+    "nasıl",
+    "neden",
+    "mi",
+    "mu",
+    "mı",
+    "mü",
+    "dir",
+    "dır",
+    "dür",
+    "dur",
+    "tır",
+    "tir",
+    "lar",
+    "ler",
+    "nin",
+    "nın",
+    "nün",
+    "nun",
+    "giriş",
+    "sonuç",
+    "arasındaki",
+    "arasında",
+    "olan",
+    "olarak",
 }
 
 # Visual-type modifiers for better search results
@@ -265,8 +304,7 @@ def search_stock_images(
         logger.info("Stock image search is current for %s (use --force to re-search)", episode_id)
         existing = json.loads(manifest_path.read_text(encoding="utf-8"))
         total = sum(
-            len(ch_data.get("candidates", []))
-            for ch_data in existing.get("chapters", {}).values()
+            len(ch_data.get("candidates", [])) for ch_data in existing.get("chapters", {}).values()
         )
         return StockSearchResult(
             episode_id=episode_id,
@@ -339,30 +377,30 @@ def search_stock_images(
                 rel_path = f"images/candidates/{chapter.chapter_id}/{filename}"
 
                 try:
-                    service.download_photo(
-                        photo, local_path, size=settings.pexels_download_size
-                    )
+                    service.download_photo(photo, local_path, size=settings.pexels_download_size)
                     file_size = local_path.stat().st_size
                 except Exception as e:
                     logger.warning(f"Failed to download Pexels photo {photo.id}: {e}")
                     continue
 
-                ch_candidates.append({
-                    "pexels_id": photo.id,
-                    "asset_type": "photo",
-                    "photographer": photo.photographer,
-                    "photographer_url": photo.photographer_url,
-                    "source_url": photo.url,
-                    "download_url": photo.src_large2x,
-                    "local_path": rel_path,
-                    "alt_text": photo.alt,
-                    "width": photo.width,
-                    "height": photo.height,
-                    "size_bytes": file_size,
-                    "downloaded_at": _utcnow().isoformat(),
-                    "selected": False,
-                    "locked": False,
-                })
+                ch_candidates.append(
+                    {
+                        "pexels_id": photo.id,
+                        "asset_type": "photo",
+                        "photographer": photo.photographer,
+                        "photographer_url": photo.photographer_url,
+                        "source_url": photo.url,
+                        "download_url": photo.src_large2x,
+                        "local_path": rel_path,
+                        "alt_text": photo.alt,
+                        "width": photo.width,
+                        "height": photo.height,
+                        "size_bytes": file_size,
+                        "downloaded_at": _utcnow().isoformat(),
+                        "selected": False,
+                        "locked": False,
+                    }
+                )
 
             # Phase 4: Search for video candidates (b_roll only, when enabled)
             has_video_candidates = False
@@ -380,16 +418,16 @@ def search_stock_images(
                         orientation=settings.pexels_orientation,
                     )
                     max_duration = getattr(settings, "pexels_video_max_duration", 30)
-                    preferred_quality = getattr(
-                        settings, "pexels_video_preferred_quality", "hd"
-                    )
+                    preferred_quality = getattr(settings, "pexels_video_preferred_quality", "hd")
 
                     for video in video_result.videos:
                         # Skip videos longer than max duration
                         if video.duration > max_duration:
                             logger.debug(
                                 "Skipping Pexels video %d: duration %ds > max %ds",
-                                video.id, video.duration, max_duration,
+                                video.id,
+                                video.duration,
+                                max_duration,
                             )
                             continue
 
@@ -401,9 +439,7 @@ def search_stock_images(
                         # Download video file
                         vid_filename = f"pexels_v_{video.id}.mp4"
                         vid_local_path = ch_dir / vid_filename
-                        vid_rel_path = (
-                            f"images/candidates/{chapter.chapter_id}/{vid_filename}"
-                        )
+                        vid_rel_path = f"images/candidates/{chapter.chapter_id}/{vid_filename}"
 
                         # Download preview thumbnail
                         preview_filename = f"pexels_v_{video.id}_preview.jpg"
@@ -416,9 +452,7 @@ def search_stock_images(
                             service.download_video(video, vid_local_path, preferred_quality)
                             vid_size = vid_local_path.stat().st_size
                         except Exception as e:
-                            logger.warning(
-                                "Failed to download Pexels video %d: %s", video.id, e
-                            )
+                            logger.warning("Failed to download Pexels video %d: %s", video.id, e)
                             continue
 
                         try:
@@ -426,37 +460,38 @@ def search_stock_images(
                         except Exception as e:
                             logger.warning(
                                 "Failed to download Pexels video preview %d: %s",
-                                video.id, e,
+                                video.id,
+                                e,
                             )
                             # Preview is optional — continue with empty path
                             preview_rel_path = ""
 
-                        ch_candidates.append({
-                            "pexels_id": video.id,
-                            "asset_type": "video",
-                            "photographer": video.user_name,
-                            "photographer_url": video.user_url,
-                            "source_url": video.url,
-                            "download_url": selected_file.link,
-                            "local_path": vid_rel_path,
-                            "preview_url": video.image,
-                            "preview_path": preview_rel_path,
-                            "alt_text": "",
-                            "width": selected_file.width,
-                            "height": selected_file.height,
-                            "duration_seconds": float(video.duration),
-                            "fps": selected_file.fps,
-                            "size_bytes": vid_size,
-                            "downloaded_at": _utcnow().isoformat(),
-                            "selected": False,
-                            "locked": False,
-                        })
+                        ch_candidates.append(
+                            {
+                                "pexels_id": video.id,
+                                "asset_type": "video",
+                                "photographer": video.user_name,
+                                "photographer_url": video.user_url,
+                                "source_url": video.url,
+                                "download_url": selected_file.link,
+                                "local_path": vid_rel_path,
+                                "preview_url": video.image,
+                                "preview_path": preview_rel_path,
+                                "alt_text": "",
+                                "width": selected_file.width,
+                                "height": selected_file.height,
+                                "duration_seconds": float(video.duration),
+                                "fps": selected_file.fps,
+                                "size_bytes": vid_size,
+                                "downloaded_at": _utcnow().isoformat(),
+                                "selected": False,
+                                "locked": False,
+                            }
+                        )
                         has_video_candidates = True
 
                 except Exception as e:
-                    logger.warning(
-                        "Video search failed for chapter %s: %s", chapter.chapter_id, e
-                    )
+                    logger.warning("Video search failed for chapter %s: %s", chapter.chapter_id, e)
 
             chapters_data[chapter.chapter_id] = {
                 "search_query": query,
@@ -534,9 +569,7 @@ def rank_candidates(
     chapters_doc = _load_chapters(episode_id, settings)
 
     output_base = Path(settings.outputs_dir) / episode_id
-    candidates_manifest_path = (
-        output_base / "images" / "candidates" / "candidates_manifest.json"
-    )
+    candidates_manifest_path = output_base / "images" / "candidates" / "candidates_manifest.json"
 
     if not candidates_manifest_path.exists():
         raise FileNotFoundError(
@@ -621,9 +654,7 @@ def rank_candidates(
 
         def _fmt_candidate(c: dict) -> str:
             asset_type = c.get("asset_type", "photo")
-            base = (
-                f"- Pexels ID: {c['pexels_id']}, Asset type: {asset_type}"
-            )
+            base = f"- Pexels ID: {c['pexels_id']}, Asset type: {asset_type}"
             if asset_type == "video":
                 dur = c.get("duration_seconds", "")
                 base += f" ({dur}s clip)"
@@ -649,8 +680,8 @@ def rank_candidates(
         traps_text = ""
         if literal_traps:
             traps_text = "\n".join(
-                f'  - "{t.get("word","")}" means "{t.get("intended","")}"'
-                f' here, NOT "{t.get("trap","")}"'
+                f'  - "{t.get("word", "")}" means "{t.get("intended", "")}"'
+                f' here, NOT "{t.get("trap", "")}"'
                 for t in literal_traps
             )
 
@@ -678,8 +709,7 @@ def rank_candidates(
         if already_selected:
             already_str = ", ".join(str(x) for x in already_selected)
             user_message += (
-                f"\n## Variety Preference\n"
-                f"Already selected in other chapters: {already_str}\n"
+                f"\n## Variety Preference\nAlready selected in other chapters: {already_str}\n"
             )
         # Phase 4: Motion preference hint based on visual type
         if visual_type_str == "b_roll":
@@ -713,7 +743,7 @@ def rank_candidates(
                 c["rank"] = i + 1
                 c["rank_reason"] = f"Dry-run rank {i + 1}"
                 c["trap_flag"] = False
-                c["selected"] = (i == 0)
+                c["selected"] = i == 0
             ch_data["pinned_by"] = "llm_rank"
             ch_data["intents"] = intents
             chapters_ranked += 1
@@ -750,14 +780,16 @@ def rank_candidates(
         except Exception as e:
             logger.warning(
                 "LLM ranking failed for %s/%s: %s — falling back to order",
-                episode_id, ch_id, e,
+                episode_id,
+                ch_id,
+                e,
             )
             # Fallback: rank by candidate order
             for i, c in enumerate(candidates):
                 c["rank"] = i + 1
                 c["rank_reason"] = f"Fallback rank {i + 1} (LLM error)"
                 c["trap_flag"] = False
-                c["selected"] = (i == 0)
+                c["selected"] = i == 0
             ch_data["pinned_by"] = "llm_rank"
             ch_data["intents"] = intents
             # Track selected for dedup
@@ -780,7 +812,10 @@ def rank_candidates(
 
     logger.info(
         "Ranked candidates for %s: %d chapters ranked, %d skipped, $%.4f",
-        episode_id, chapters_ranked, chapters_skipped, total_cost,
+        episode_id,
+        chapters_ranked,
+        chapters_skipped,
+        total_cost,
     )
 
     return RankResult(
@@ -880,13 +915,15 @@ def extract_chapter_intents(
         narration_text = ""
         if hasattr(ch, "narration") and ch.narration:
             narration_text = getattr(ch.narration, "text", "") or ""
-        chapters_for_prompt.append({
-            "chapter_id": ch.chapter_id,
-            "title": ch.title,
-            "visual_type": ch.visual.type if ch.visual else "unknown",
-            "visual_description": ch.visual.description if ch.visual else "",
-            "narration_excerpt": narration_text[:200],
-        })
+        chapters_for_prompt.append(
+            {
+                "chapter_id": ch.chapter_id,
+                "title": ch.title,
+                "visual_type": ch.visual.type if ch.visual else "unknown",
+                "visual_description": ch.visual.description if ch.visual else "",
+                "narration_excerpt": narration_text[:200],
+            }
+        )
 
     # Load profile-namespaced system prompt if available
     try:
@@ -980,7 +1017,9 @@ def extract_chapter_intents(
 
     logger.info(
         "Intent extraction for %s: %d chapters, $%.4f",
-        episode_id, len(intent_data["chapters"]), cost,
+        episode_id,
+        len(intent_data["chapters"]),
+        cost,
     )
 
     return IntentResult(
@@ -1056,17 +1095,13 @@ def _validate_and_adjust_selection(
     # Check trap
     if _is_trap(current):
         # Find first non-trap alternative
-        alternatives = [
-            c for c in candidates
-            if not c.get("selected") and not _is_trap(c)
-        ]
+        alternatives = [c for c in candidates if not c.get("selected") and not _is_trap(c)]
         if alternatives:
             alt = alternatives[0]
             current["selected"] = False
             alt["selected"] = True
             logger.warning(
-                "Trap detected in selected candidate %s (alt: %s...) — "
-                "replaced with %s",
+                "Trap detected in selected candidate %s (alt: %s...) — replaced with %s",
                 current.get("pexels_id"),
                 current.get("alt_text", "")[:60],
                 alt.get("pexels_id"),
@@ -1082,7 +1117,8 @@ def _validate_and_adjust_selection(
     if current.get("pexels_id") in selected_so_far:
         # Find best non-duplicate, non-trap candidate within rank ≤ 3
         alternatives = [
-            c for c in candidates
+            c
+            for c in candidates
             if not c.get("selected")
             and c.get("pexels_id") not in selected_so_far
             and not _is_trap(c)
@@ -1094,16 +1130,13 @@ def _validate_and_adjust_selection(
             alt["selected"] = True
             alt["dedup_adjusted"] = True
             logger.info(
-                "Duplicate avoided: chapter would repeat Pexels %s — "
-                "switched to %s",
+                "Duplicate avoided: chapter would repeat Pexels %s — switched to %s",
                 current.get("pexels_id"),
                 alt.get("pexels_id"),
             )
 
 
-def _parse_ranking_response(
-    response_text: str, candidates: list[dict]
-) -> list[dict]:
+def _parse_ranking_response(response_text: str, candidates: list[dict]) -> list[dict]:
     """Parse LLM JSON response into ranking list.
 
     Returns list of {"pexels_id": int, "rank": int, "reason": str}.
@@ -1136,8 +1169,7 @@ def _apply_rankings(candidates: list[dict], rankings: list[dict]) -> None:
 
     # Filter to only valid rankings
     valid_rankings = [
-        r for r in rankings
-        if r.get("pexels_id") in valid_ids and isinstance(r.get("rank"), int)
+        r for r in rankings if r.get("pexels_id") in valid_ids and isinstance(r.get("rank"), int)
     ]
 
     if not valid_rankings:
@@ -1145,7 +1177,7 @@ def _apply_rankings(candidates: list[dict], rankings: list[dict]) -> None:
         for i, c in enumerate(candidates):
             c["rank"] = i + 1
             c["rank_reason"] = f"Fallback rank {i + 1} (invalid LLM response)"
-            c["selected"] = (i == 0)
+            c["selected"] = i == 0
         return
 
     # Apply valid rankings
@@ -1368,7 +1400,9 @@ def finalize_selections(
                 except Exception as e:
                     logger.warning(
                         "Video normalization failed for %s/%s: %s — using placeholder",
-                        episode_id, chapter.chapter_id, e,
+                        episode_id,
+                        chapter.chapter_id,
+                        e,
                     )
                     entry = _create_placeholder_entry(chapter, images_dir)
                     image_entries.append(entry)
@@ -1412,7 +1446,10 @@ def finalize_selections(
 
             # Create MediaAsset record with VIDEO type
             _create_media_asset(
-                session, episode_id, chapter.chapter_id, entry,
+                session,
+                episode_id,
+                chapter.chapter_id,
+                entry,
                 asset_type_override=MediaAssetType.VIDEO,
             )
 
@@ -1480,9 +1517,7 @@ def finalize_selections(
         "timestamp": _utcnow().isoformat(),
         "generation_method": "pexels",
         "input_content_hash": chapters_hash,
-        "input_files": [
-            str(Path(settings.outputs_dir) / episode_id / "chapters.json")
-        ],
+        "input_files": [str(Path(settings.outputs_dir) / episode_id / "chapters.json")],
         "output_files": [str(manifest_path)],
         "image_count": len(image_entries),
         "selected_count": selected_count,
@@ -1685,17 +1720,13 @@ def _create_placeholder_entry(chapter, images_dir: Path) -> dict:
     from PIL import Image, ImageDraw, ImageFont
 
     width, height = 1920, 1080
-    bg_color = (
-        (247, 147, 26) if chapter.visual.type == "title_card" else (200, 200, 200)
-    )
+    bg_color = (247, 147, 26) if chapter.visual.type == "title_card" else (200, 200, 200)
 
     img = Image.new("RGB", (width, height), color=bg_color)
     draw = ImageDraw.Draw(img)
 
     try:
-        font = ImageFont.truetype(
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 80
-        )
+        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 80)
     except OSError:
         font = ImageDraw.getfont()
 

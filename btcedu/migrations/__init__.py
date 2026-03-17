@@ -441,9 +441,7 @@ class CreatePublishJobsTableMigration(Migration):
             session.execute(
                 text("CREATE INDEX idx_publish_jobs_episode ON publish_jobs(episode_id)")
             )
-            session.execute(
-                text("CREATE INDEX idx_publish_jobs_status ON publish_jobs(status)")
-            )
+            session.execute(text("CREATE INDEX idx_publish_jobs_status ON publish_jobs(status)"))
             session.commit()
             logger.info("Created publish_jobs table with indexes")
         else:
@@ -502,8 +500,7 @@ class AddReviewItemDecisionsMigration(Migration):
 
         result = session.execute(
             text(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table' AND name='review_item_decisions'"
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='review_item_decisions'"
             )
         )
         if not result.fetchone():

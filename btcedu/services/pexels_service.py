@@ -49,8 +49,8 @@ class PexelsVideoFile:
     """A single video file variant from Pexels."""
 
     id: int
-    quality: str      # "hd", "sd", "uhd"
-    file_type: str    # "video/mp4"
+    quality: str  # "hd", "sd", "uhd"
+    file_type: str  # "video/mp4"
     width: int
     height: int
     fps: float
@@ -64,9 +64,9 @@ class PexelsVideo:
     id: int
     width: int
     height: int
-    url: str           # Pexels page URL
-    duration: int      # seconds
-    image: str         # preview thumbnail URL
+    url: str  # Pexels page URL
+    duration: int  # seconds
+    image: str  # preview thumbnail URL
     user_name: str
     user_url: str
     video_files: list[PexelsVideoFile]
@@ -86,9 +86,7 @@ class PexelsVideoSearchResult:
 class StockPhotoService(Protocol):
     """Protocol for stock photo services (future: Unsplash, Pixabay)."""
 
-    def search(
-        self, query: str, per_page: int, orientation: str
-    ) -> PexelsSearchResult: ...
+    def search(self, query: str, per_page: int, orientation: str) -> PexelsSearchResult: ...
 
     def download_photo(self, photo: PexelsPhoto, target_path: Path) -> Path: ...
 
@@ -199,8 +197,7 @@ class PexelsService:
         target_path.write_bytes(response.content)
 
         logger.info(
-            f"Downloaded Pexels photo {photo.id} to {target_path} "
-            f"({len(response.content)} bytes)"
+            f"Downloaded Pexels photo {photo.id} to {target_path} ({len(response.content)} bytes)"
         )
         return target_path
 
@@ -310,7 +307,10 @@ class PexelsService:
 
         logger.info(
             "Downloaded Pexels video %d to %s (%d bytes, quality=%s)",
-            video.id, target_path, len(response.content), video_file.quality,
+            video.id,
+            target_path,
+            len(response.content),
+            video_file.quality,
         )
         return target_path
 
@@ -339,7 +339,9 @@ class PexelsService:
 
         logger.info(
             "Downloaded Pexels video preview %d to %s (%d bytes)",
-            video.id, target_path, len(response.content),
+            video.id,
+            target_path,
+            len(response.content),
         )
         return target_path
 
@@ -366,8 +368,7 @@ class PexelsService:
 
         # Try to find preferred quality at minimum resolution
         preferred = [
-            vf for vf in video.video_files
-            if vf.quality == preferred_quality and vf.width >= 1280
+            vf for vf in video.video_files if vf.quality == preferred_quality and vf.width >= 1280
         ]
         if preferred:
             # Pick highest resolution among preferred quality
@@ -413,9 +414,7 @@ class PexelsService:
         window = 3600  # 1 hour in seconds
 
         # Remove timestamps older than 1 hour
-        self._request_timestamps = [
-            t for t in self._request_timestamps if now - t < window
-        ]
+        self._request_timestamps = [t for t in self._request_timestamps if now - t < window]
 
         if len(self._request_timestamps) >= self.requests_per_hour:
             oldest = self._request_timestamps[0]

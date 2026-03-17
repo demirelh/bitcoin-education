@@ -77,8 +77,7 @@ class ProfileRegistry:
             return self._profiles[name]
         except KeyError:
             raise ProfileNotFoundError(
-                f"Profile {name!r} not found. "
-                f"Available: {list(self._profiles.keys())}"
+                f"Profile {name!r} not found. Available: {list(self._profiles.keys())}"
             )
 
     def list_profiles(self) -> list[ContentProfile]:

@@ -142,8 +142,7 @@ class TestTranslatePerStoryIntroOutro:
             _mock_claude_response("Veda"),
             # s03 outro body
             _mock_claude_response(
-                "tagesschau sona erdi. İyi akşamlar. "
-                "Yarın Susanne Daubner ile görüşmek üzere."
+                "tagesschau sona erdi. İyi akşamlar. Yarın Susanne Daubner ile görüşmek üzere."
             ),
         ]
         mock_claude.side_effect = responses

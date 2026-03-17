@@ -145,10 +145,14 @@ class TestAcceptItem:
         client.post(f"/api/reviews/{task_id}/items/corr-0000/accept")
 
         session = sessionmaker(bind=db_engine)()
-        record = session.query(ReviewItemDecision).filter(
-            ReviewItemDecision.review_task_id == task_id,
-            ReviewItemDecision.item_id == "corr-0000",
-        ).first()
+        record = (
+            session.query(ReviewItemDecision)
+            .filter(
+                ReviewItemDecision.review_task_id == task_id,
+                ReviewItemDecision.item_id == "corr-0000",
+            )
+            .first()
+        )
         session.close()
         assert record is not None
         assert record.action == "accepted"
@@ -182,10 +186,14 @@ class TestEditItem:
         assert data["edited_text"] == "corrected text"
 
         session = sessionmaker(bind=db_engine)()
-        record = session.query(ReviewItemDecision).filter(
-            ReviewItemDecision.review_task_id == task_id,
-            ReviewItemDecision.item_id == "corr-0002",
-        ).first()
+        record = (
+            session.query(ReviewItemDecision)
+            .filter(
+                ReviewItemDecision.review_task_id == task_id,
+                ReviewItemDecision.item_id == "corr-0002",
+            )
+            .first()
+        )
         session.close()
         assert record.edited_text == "corrected text"
 
@@ -222,10 +230,14 @@ class TestResetItem:
         assert data["action"] == "pending"
 
         session = sessionmaker(bind=db_engine)()
-        record = session.query(ReviewItemDecision).filter(
-            ReviewItemDecision.review_task_id == task_id,
-            ReviewItemDecision.item_id == "corr-0000",
-        ).first()
+        record = (
+            session.query(ReviewItemDecision)
+            .filter(
+                ReviewItemDecision.review_task_id == task_id,
+                ReviewItemDecision.item_id == "corr-0000",
+            )
+            .first()
+        )
         session.close()
         assert record.action == "pending"
 
@@ -268,6 +280,7 @@ class TestApplyReviewItems:
         assert data["pending_count"] >= 1
         # Verify file was created
         import os
+
         assert os.path.exists(data["reviewed_file"])
 
     def test_apply_no_decisions_yet(self, client, review_setup):
@@ -387,6 +400,7 @@ class TestApplyAdaptationAPI:
         # Verify sidecar content: rejected item reverted to original, accepted item kept
         sidecar_path = data["reviewed_file"]
         import os
+
         assert os.path.exists(sidecar_path)
         content = open(sidecar_path, encoding="utf-8").read()
         # adap-0000 rejected → "OOO" replaces "XXX"; adap-0001 accepted → "YYY" kept

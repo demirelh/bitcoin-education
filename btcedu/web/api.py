@@ -212,8 +212,9 @@ _REVIEW_GATE_STATUS_MAP = {
 }
 
 
-def _get_review_context(session, episode_id: str, status: str,
-                        pending_cache: dict | None = None) -> dict | None:
+def _get_review_context(
+    session, episode_id: str, status: str, pending_cache: dict | None = None
+) -> dict | None:
     """Build review context dict for an episode.
 
     Args:
@@ -237,10 +238,12 @@ def _get_review_context(session, episode_id: str, status: str,
             session.query(ReviewTask)
             .filter(
                 ReviewTask.episode_id == episode_id,
-                ReviewTask.status.in_([
-                    ReviewStatus.PENDING.value,
-                    ReviewStatus.IN_REVIEW.value,
-                ]),
+                ReviewTask.status.in_(
+                    [
+                        ReviewStatus.PENDING.value,
+                        ReviewStatus.IN_REVIEW.value,
+                    ]
+                ),
             )
             .order_by(ReviewTask.created_at.desc())
             .first()
@@ -259,12 +262,10 @@ def _get_review_context(session, episode_id: str, status: str,
             "review_status": pending_task.status,
             "review_gate": gate_name,
             "created_at": (
-                pending_task.created_at.isoformat()
-                if pending_task.created_at else None
+                pending_task.created_at.isoformat() if pending_task.created_at else None
             ),
             "next_action_text": (
-                f"Pipeline paused \u2014 {gate_name.replace('_', ' ').title()}"
-                " requires approval"
+                f"Pipeline paused \u2014 {gate_name.replace('_', ' ').title()} requires approval"
             ),
             "action_url": f"/api/reviews/{pending_task.id}",
         }
@@ -296,8 +297,7 @@ def _get_review_context(session, episode_id: str, status: str,
                 "review_status": approved_task.status,
                 "review_gate": _REVIEW_GATE_LABELS.get(review_stage, (None,))[0],
                 "created_at": (
-                    approved_task.created_at.isoformat()
-                    if approved_task.created_at else None
+                    approved_task.created_at.isoformat() if approved_task.created_at else None
                 ),
                 "next_action_text": f"{label} approved \u2014 run pipeline to continue",
                 "action_url": f"/api/reviews/{approved_task.id}",
@@ -398,14 +398,16 @@ def _build_stage_progress(
             # "skip" with other reason, or "pending"
             state = "pending"
 
-        stages.append({
-            "name": sp.stage,
-            "label": _STAGE_LABELS.get(sp.stage, sp.stage),
-            "state": state,
-            "is_gate": is_gate,
-            "duration_seconds": None,
-            "cost_usd": None,
-        })
+        stages.append(
+            {
+                "name": sp.stage,
+                "label": _STAGE_LABELS.get(sp.stage, sp.stage),
+                "state": state,
+                "is_gate": is_gate,
+                "duration_seconds": None,
+                "cost_usd": None,
+            }
+        )
 
     # Override with review context
     if review_context:
@@ -501,9 +503,13 @@ def _build_stage_progress(
     }
 
 
-def _episode_to_dict(ep: Episode, settings, session=None,
-                     pending_cache: dict | None = None,
-                     duration_cache: dict | None = None) -> dict:
+def _episode_to_dict(
+    ep: Episode,
+    settings,
+    session=None,
+    pending_cache: dict | None = None,
+    duration_cache: dict | None = None,
+) -> dict:
     """Serialize an Episode ORM object to a JSON-safe dict."""
     status_val = ep.status.value
     review_context = None
@@ -584,18 +590,20 @@ def list_profiles():
         reset_registry()
         registry = get_registry(settings)
         profiles = registry.list_profiles()
-        return jsonify([
-            {
-                "name": p.name,
-                "display_name": p.display_name,
-                "source_language": p.source_language,
-                "target_language": p.target_language,
-                "domain": p.domain,
-                "pipeline_version": p.pipeline_version,
-                "stages_enabled": p.stages_enabled,
-            }
-            for p in profiles
-        ])
+        return jsonify(
+            [
+                {
+                    "name": p.name,
+                    "display_name": p.display_name,
+                    "source_language": p.source_language,
+                    "target_language": p.target_language,
+                    "domain": p.domain,
+                    "pipeline_version": p.pipeline_version,
+                    "stages_enabled": p.stages_enabled,
+                }
+                for p in profiles
+            ]
+        )
     except Exception as e:
         logger.exception("Failed to list profiles")
         return jsonify({"error": str(e)}), 500
@@ -630,10 +638,12 @@ def list_episodes():
         pending_tasks = (
             session.query(ReviewTask)
             .filter(
-                ReviewTask.status.in_([
-                    ReviewStatus.PENDING.value,
-                    ReviewStatus.IN_REVIEW.value,
-                ])
+                ReviewTask.status.in_(
+                    [
+                        ReviewStatus.PENDING.value,
+                        ReviewStatus.IN_REVIEW.value,
+                    ]
+                )
             )
             .order_by(ReviewTask.created_at.desc())
             .all()
@@ -667,13 +677,18 @@ def list_episodes():
                     duration_cache[run.episode_id] = {}
                 duration_cache[run.episode_id][run.stage] = (dur, run.estimated_cost_usd)
 
-        return jsonify([
-            _episode_to_dict(
-                ep, settings, session=session,
-                pending_cache=pending_cache, duration_cache=duration_cache,
-            )
-            for ep in episodes
-        ])
+        return jsonify(
+            [
+                _episode_to_dict(
+                    ep,
+                    settings,
+                    session=session,
+                    pending_cache=pending_cache,
+                    duration_cache=duration_cache,
+                )
+                for ep in episodes
+            ]
+        )
     finally:
         session.close()
 
@@ -811,8 +826,10 @@ def reset_episode_v2(episode_id: str):
         }
         if ep.status not in resettable:
             return jsonify(
-                {"error": f"Cannot reset: episode is {ep.status.value}. "
-                 "Must be at least TRANSCRIBED."}
+                {
+                    "error": f"Cannot reset: episode is {ep.status.value}. "
+                    "Must be at least TRANSCRIBED."
+                }
             ), 400
 
         old_status = ep.status.value
@@ -823,15 +840,18 @@ def reset_episode_v2(episode_id: str):
 
         logger.info(
             "Reset episode %s from %s to TRANSCRIBED (v2)",
-            episode_id, old_status,
+            episode_id,
+            old_status,
         )
-        return jsonify({
-            "success": True,
-            "episode_id": episode_id,
-            "old_status": old_status,
-            "new_status": "TRANSCRIBED",
-            "pipeline_version": 2,
-        })
+        return jsonify(
+            {
+                "success": True,
+                "episode_id": episode_id,
+                "old_status": old_status,
+                "new_status": "TRANSCRIBED",
+                "pipeline_version": 2,
+            }
+        )
     except Exception as e:
         logger.exception("Reset-v2 failed for %s", episode_id)
         return jsonify({"error": str(e)}), 500
@@ -1877,14 +1897,14 @@ def pin_stock_image(episode_id: str):
     try:
         from btcedu.core.stock_images import select_stock_image
 
-        select_stock_image(
-            session, episode_id, chapter_id, pexels_id, settings, lock=lock
+        select_stock_image(session, episode_id, chapter_id, pexels_id, settings, lock=lock)
+        return jsonify(
+            {
+                "status": "pinned",
+                "chapter_id": chapter_id,
+                "pexels_id": pexels_id,
+            }
         )
-        return jsonify({
-            "status": "pinned",
-            "chapter_id": chapter_id,
-            "pexels_id": pexels_id,
-        })
     except (ValueError, FileNotFoundError) as e:
         return jsonify({"error": str(e)}), 400
     finally:
@@ -1906,12 +1926,14 @@ def rank_stock_images(episode_id: str):
         data = request.get_json(silent=True) or {}
         force = data.get("force", False)
         result = rank_candidates(session, episode_id, settings, force=force)
-        return jsonify({
-            "status": "ranked",
-            "chapters_ranked": result.chapters_ranked,
-            "chapters_skipped": result.chapters_skipped,
-            "cost_usd": result.total_cost_usd,
-        })
+        return jsonify(
+            {
+                "status": "ranked",
+                "chapters_ranked": result.chapters_ranked,
+                "chapters_skipped": result.chapters_skipped,
+                "cost_usd": result.total_cost_usd,
+            }
+        )
     except (ValueError, FileNotFoundError) as e:
         return jsonify({"error": str(e)}), 400
     finally:
@@ -2037,9 +2059,7 @@ def get_image_file(episode_id: str, filename: str):
         return jsonify({"error": "Only PNG files are served"}), 400
 
     settings = _get_settings()
-    img_path = _validate_episode_path(
-        episode_id, Path(settings.outputs_dir), "images", filename
-    )
+    img_path = _validate_episode_path(episode_id, Path(settings.outputs_dir), "images", filename)
 
     if not img_path:
         return jsonify({"error": "Episode not found"}), 404
@@ -2127,13 +2147,15 @@ def get_publish_status(episode_id: str):
         job = get_latest_publish_job(session, episode_id)
         if not job:
             return jsonify({"status": "not_started", "youtube_video_id": None, "youtube_url": None})
-        return jsonify({
-            "status": job.status,
-            "youtube_video_id": job.youtube_video_id,
-            "youtube_url": job.youtube_url,
-            "published_at": job.published_at.isoformat() if job.published_at else None,
-            "error_message": job.error_message,
-        })
+        return jsonify(
+            {
+                "status": job.status,
+                "youtube_video_id": job.youtube_video_id,
+                "youtube_url": job.youtube_url,
+                "published_at": job.published_at.isoformat() if job.published_at else None,
+                "error_message": job.error_message,
+            }
+        )
     finally:
         session.close()
 

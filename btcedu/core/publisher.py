@@ -147,9 +147,7 @@ def _check_artifact_integrity(
     )
 
 
-def _check_metadata_completeness(
-    title: str, description: str, tags: list[str]
-) -> SafetyCheck:
+def _check_metadata_completeness(title: str, description: str, tags: list[str]) -> SafetyCheck:
     """Check 3: Title, description, and tags are non-empty."""
     missing = []
     if not title or not title.strip():
@@ -513,8 +511,7 @@ def publish_video(
         description=description,
         tags=tags,
         category_id=(
-            _yt_config.get("category_id")
-            or getattr(settings, "youtube_category_id", "27")
+            _yt_config.get("category_id") or getattr(settings, "youtube_category_id", "27")
         ),
         default_language=(
             _yt_config.get("default_language")
@@ -530,7 +527,8 @@ def publish_video(
         youtube_svc = DryRunYouTubeService()
     else:
         credentials_path = getattr(
-            settings, "youtube_credentials_path",
+            settings,
+            "youtube_credentials_path",
             "data/.youtube_credentials.json",
         )
         youtube_svc = YouTubeDataAPIService(

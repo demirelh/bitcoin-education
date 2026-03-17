@@ -94,8 +94,8 @@ class TestSmokeTestIntegrationDryRun:
         assert r3.returncode == 0
 
         # Step 4: create video segment (dry_run — inputs must exist)
-        Path(norm_video).touch()   # created by normalize dry_run
-        Path(silent_audio).touch() # created by generate_silent_audio dry_run
+        Path(norm_video).touch()  # created by normalize dry_run
+        Path(silent_audio).touch()  # created by generate_silent_audio dry_run
         r4 = create_video_segment(
             video_path=norm_video,
             audio_path=silent_audio,

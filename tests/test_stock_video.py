@@ -117,15 +117,17 @@ class TestPexelsVideoService:
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
-            "total_results": 0, "page": 1, "per_page": 5, "videos": []
+            "total_results": 0,
+            "page": 1,
+            "per_page": 5,
+            "videos": [],
         }
 
         captured_url = []
         with patch.object(
-            service, "_request_with_retry",
-            side_effect=lambda method, url, **kwargs: (
-                captured_url.append(url) or mock_response
-            ),
+            service,
+            "_request_with_retry",
+            side_effect=lambda method, url, **kwargs: captured_url.append(url) or mock_response,
         ):
             service.search_videos("test query")
 
@@ -137,18 +139,32 @@ class TestPexelsVideoService:
         service = _make_pexels_service()
 
         hd_file = PexelsVideoFile(
-            id=1, quality="hd", file_type="video/mp4",
-            width=1920, height=1080, fps=30.0,
+            id=1,
+            quality="hd",
+            file_type="video/mp4",
+            width=1920,
+            height=1080,
+            fps=30.0,
             link="https://videos.pexels.com/hd.mp4",
         )
         sd_file = PexelsVideoFile(
-            id=2, quality="sd", file_type="video/mp4",
-            width=960, height=540, fps=30.0,
+            id=2,
+            quality="sd",
+            file_type="video/mp4",
+            width=960,
+            height=540,
+            fps=30.0,
             link="https://videos.pexels.com/sd.mp4",
         )
         video = PexelsVideo(
-            id=1, width=1920, height=1080, url="", duration=10,
-            image="", user_name="", user_url="",
+            id=1,
+            width=1920,
+            height=1080,
+            url="",
+            duration=10,
+            image="",
+            user_name="",
+            user_url="",
             video_files=[sd_file, hd_file],
         )
 
@@ -160,18 +176,32 @@ class TestPexelsVideoService:
         service = _make_pexels_service()
 
         sd_low = PexelsVideoFile(
-            id=1, quality="sd", file_type="video/mp4",
-            width=640, height=360, fps=25.0,
+            id=1,
+            quality="sd",
+            file_type="video/mp4",
+            width=640,
+            height=360,
+            fps=25.0,
             link="https://videos.pexels.com/low.mp4",
         )
         sd_high = PexelsVideoFile(
-            id=2, quality="sd", file_type="video/mp4",
-            width=1280, height=720, fps=25.0,
+            id=2,
+            quality="sd",
+            file_type="video/mp4",
+            width=1280,
+            height=720,
+            fps=25.0,
             link="https://videos.pexels.com/high_sd.mp4",
         )
         video = PexelsVideo(
-            id=1, width=1280, height=720, url="", duration=10,
-            image="", user_name="", user_url="",
+            id=1,
+            width=1280,
+            height=720,
+            url="",
+            duration=10,
+            image="",
+            user_name="",
+            user_url="",
             video_files=[sd_low, sd_high],
         )
 
@@ -282,9 +312,7 @@ class TestStockSearchWithVideos:
             search_stock_images(mock_session, "ep001", settings)
 
         # Read the written manifest
-        manifest_path = (
-            tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
-        )
+        manifest_path = tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
         manifest = json.loads(manifest_path.read_text())
         ch01_cands = manifest["chapters"]["ch01"]["candidates"]
         assert len(ch01_cands) > 0
@@ -334,9 +362,7 @@ class TestStockSearchWithVideos:
 
             search_stock_images(mock_session, "ep001", settings)
 
-        manifest_path = (
-            tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
-        )
+        manifest_path = tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
         manifest = json.loads(manifest_path.read_text())
         ch01_cands = manifest["chapters"]["ch01"]["candidates"]
         # No video candidates
@@ -395,9 +421,7 @@ class TestStockSearchWithVideos:
 
             search_stock_images(mock_session, "ep001", settings)
 
-        manifest_path = (
-            tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
-        )
+        manifest_path = tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
         manifest = json.loads(manifest_path.read_text())
         ch01_cands = manifest["chapters"]["ch01"]["candidates"]
         video_cands = [c for c in ch01_cands if c.get("asset_type") == "video"]
@@ -467,9 +491,7 @@ class TestStockSearchWithVideos:
 
             search_stock_images(mock_session, "ep001", settings)
 
-        manifest_path = (
-            tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
-        )
+        manifest_path = tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
         manifest = json.loads(manifest_path.read_text())
         ch01_cands = manifest["chapters"]["ch01"]["candidates"]
         video_cands = [c for c in ch01_cands if c.get("asset_type") == "video"]
@@ -533,9 +555,7 @@ class TestStockSearchWithVideos:
 
             search_stock_images(mock_session, "ep001", settings)
 
-        manifest_path = (
-            tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
-        )
+        manifest_path = tmp_path / "ep001" / "images" / "candidates" / "candidates_manifest.json"
         manifest = json.loads(manifest_path.read_text())
         ch01_cands = manifest["chapters"]["ch01"]["candidates"]
         video_cands = [c for c in ch01_cands if c.get("asset_type") == "video"]
@@ -1060,11 +1080,11 @@ class TestNormalizeVideoClip:
             )
 
         cmd = result.ffmpeg_command
-        assert "-an" in cmd          # Strip audio
+        assert "-an" in cmd  # Strip audio
         assert "libx264" in cmd
         assert "medium" in cmd
         assert "fps=30" in " ".join(cmd)
-        assert "-t" not in cmd       # No target_duration specified
+        assert "-t" not in cmd  # No target_duration specified
 
     def test_normalize_video_clip_with_target_duration(self, tmp_path):
         """normalize_video_clip() adds -t flag when target_duration is set."""
@@ -1264,9 +1284,7 @@ class TestRendererWithVideos:
             ]
         }
 
-        _, _, _, asset_type = _resolve_chapter_media(
-            "ch01", image_manifest, tts_manifest, tmp_path
-        )
+        _, _, _, asset_type = _resolve_chapter_media("ch01", image_manifest, tts_manifest, tmp_path)
         assert asset_type == "photo"
 
     def test_resolve_chapter_media_returns_video_asset_type(self, tmp_path):
@@ -1501,8 +1519,7 @@ class TestStockVideoAPI:
 
         with app.test_client() as client:
             resp = client.get(
-                "/api/episodes/ep001/stock/candidate-video"
-                "?chapter=ch01&filename=pexels_v_100.mp4"
+                "/api/episodes/ep001/stock/candidate-video?chapter=ch01&filename=pexels_v_100.mp4"
             )
 
         assert resp.status_code == 200
@@ -1513,8 +1530,7 @@ class TestStockVideoAPI:
         """GET /stock/candidate-video rejects files without .mp4 extension."""
         with app.test_client() as client:
             resp = client.get(
-                "/api/episodes/ep001/stock/candidate-video"
-                "?chapter=ch01&filename=pexels_v_100.jpg"
+                "/api/episodes/ep001/stock/candidate-video?chapter=ch01&filename=pexels_v_100.jpg"
             )
 
         assert resp.status_code == 400
@@ -1525,8 +1541,7 @@ class TestStockVideoAPI:
         """GET /stock/candidate-video returns 404 if video doesn't exist."""
         with app.test_client() as client:
             resp = client.get(
-                "/api/episodes/ep001/stock/candidate-video"
-                "?chapter=ch01&filename=pexels_v_999.mp4"
+                "/api/episodes/ep001/stock/candidate-video?chapter=ch01&filename=pexels_v_999.mp4"
             )
 
         assert resp.status_code == 404

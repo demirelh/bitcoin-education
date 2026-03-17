@@ -4,7 +4,6 @@ Tests the review_context and pipeline_state fields added to episode API response
 the batch query optimization, and the filter behavior.
 """
 
-
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -225,9 +224,7 @@ class TestGetReviewContext:
         mock_task.created_at = None
 
         cache = {"ep_corrected": mock_task}
-        ctx = _get_review_context(
-            session, "ep_corrected", "corrected", pending_cache=cache
-        )
+        ctx = _get_review_context(session, "ep_corrected", "corrected", pending_cache=cache)
         session.close()
 
         assert ctx is not None
@@ -238,9 +235,7 @@ class TestGetReviewContext:
         """Empty pending_cache for an episode falls through to approved check."""
         _, factory = seeded_db
         session = factory()
-        ctx = _get_review_context(
-            session, "ep_adapted", "adapted", pending_cache={}
-        )
+        ctx = _get_review_context(session, "ep_adapted", "adapted", pending_cache={})
         session.close()
 
         assert ctx is not None
@@ -314,9 +309,7 @@ class TestEpisodeListReviewContext:
         assert r.status_code == 200
         data = r.get_json()
 
-        ep_corrected = next(
-            e for e in data if e["episode_id"] == "ep_corrected"
-        )
+        ep_corrected = next(e for e in data if e["episode_id"] == "ep_corrected")
         assert ep_corrected["review_context"] is not None
         assert ep_corrected["review_context"]["state"] == "paused_for_review"
         assert ep_corrected["pipeline_state"] == "paused_for_review"
@@ -393,14 +386,16 @@ class TestBatchQueryEfficiency:
             # Add more episodes to make N+1 visible
             session = factory()
             for i in range(10):
-                session.add(Episode(
-                    episode_id=f"ep_extra_{i}",
-                    source="youtube_rss",
-                    title=f"Extra Episode {i}",
-                    url=f"https://youtube.com/watch?v=ep_extra_{i}",
-                    status=EpisodeStatus.CORRECTED,
-                    pipeline_version=2,
-                ))
+                session.add(
+                    Episode(
+                        episode_id=f"ep_extra_{i}",
+                        source="youtube_rss",
+                        title=f"Extra Episode {i}",
+                        url=f"https://youtube.com/watch?v=ep_extra_{i}",
+                        status=EpisodeStatus.CORRECTED,
+                        pipeline_version=2,
+                    )
+                )
             session.commit()
             session.close()
 

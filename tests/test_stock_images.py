@@ -263,8 +263,11 @@ class TestSelectStockImage:
         select_stock_image(session, "TEST_EP", "ch01", 12345, settings)
 
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images"
-            / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest
+            / "TEST_EP"
+            / "images"
+            / "candidates"
+            / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         ch01 = manifest["chapters"]["ch01"]["candidates"]
@@ -280,8 +283,11 @@ class TestSelectStockImage:
         select_stock_image(session, "TEST_EP", "ch01", 12346, settings, lock=True)
 
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images"
-            / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest
+            / "TEST_EP"
+            / "images"
+            / "candidates"
+            / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         ch01 = manifest["chapters"]["ch01"]["candidates"]
@@ -329,8 +335,11 @@ class TestAutoSelectBest:
 
         # Verify first candidate is selected
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images"
-            / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest
+            / "TEST_EP"
+            / "images"
+            / "candidates"
+            / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
 
@@ -355,8 +364,11 @@ class TestAutoSelectBest:
 
         # Pre-lock ch01 to second candidate
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images"
-            / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest
+            / "TEST_EP"
+            / "images"
+            / "candidates"
+            / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         manifest["chapters"]["ch01"]["candidates"][1]["selected"] = True
@@ -384,8 +396,13 @@ class TestSearchStockImages:
     @patch("btcedu.core.stock_images._get_episode")
     @patch("btcedu.services.pexels_service.PexelsService")
     def test_search_creates_candidates(
-        self, MockPexelsService, mock_get_episode, mock_load_chapters,
-        tmp_path, settings, mock_chapter
+        self,
+        MockPexelsService,
+        mock_get_episode,
+        mock_load_chapters,
+        tmp_path,
+        settings,
+        mock_chapter,
     ):
         settings.outputs_dir = str(tmp_path)
 
@@ -438,8 +455,7 @@ class TestSearchStockImages:
     @patch("btcedu.core.stock_images._load_chapters")
     @patch("btcedu.core.stock_images._get_episode")
     def test_search_skips_title_card(
-        self, mock_get_episode, mock_load_chapters,
-        tmp_path, settings, mock_chapter_title_card
+        self, mock_get_episode, mock_load_chapters, tmp_path, settings, mock_chapter_title_card
     ):
         settings.outputs_dir = str(tmp_path)
 
@@ -462,10 +478,7 @@ class TestSearchStockImages:
 
     @patch("btcedu.core.stock_images._load_chapters")
     @patch("btcedu.core.stock_images._get_episode")
-    def test_search_idempotent(
-        self, mock_get_episode, mock_load_chapters,
-        tmp_path, settings
-    ):
+    def test_search_idempotent(self, mock_get_episode, mock_load_chapters, tmp_path, settings):
         settings.outputs_dir = str(tmp_path)
 
         mock_ep = MagicMock()
@@ -503,8 +516,12 @@ class TestFinalizeSelections:
     @patch("btcedu.core.stock_images._load_chapters")
     @patch("btcedu.core.stock_images._get_episode")
     def test_produces_dalle_compatible_manifest(
-        self, mock_get_episode, mock_load_chapters, mock_placeholder,
-        sample_candidates_manifest, settings
+        self,
+        mock_get_episode,
+        mock_load_chapters,
+        mock_placeholder,
+        sample_candidates_manifest,
+        settings,
     ):
         settings.outputs_dir = str(sample_candidates_manifest)
 
@@ -535,8 +552,11 @@ class TestFinalizeSelections:
 
         # Pre-select candidates
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images"
-            / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest
+            / "TEST_EP"
+            / "images"
+            / "candidates"
+            / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         manifest["chapters"]["ch01"]["candidates"][0]["selected"] = True
@@ -579,8 +599,7 @@ class TestFinalizeSelections:
     @patch("btcedu.core.stock_images._load_chapters")
     @patch("btcedu.core.stock_images._get_episode")
     def test_creates_provenance(
-        self, mock_get_episode, mock_load_chapters,
-        sample_candidates_manifest, settings
+        self, mock_get_episode, mock_load_chapters, sample_candidates_manifest, settings
     ):
         settings.outputs_dir = str(sample_candidates_manifest)
 
@@ -601,8 +620,11 @@ class TestFinalizeSelections:
 
         # Pre-select
         manifest_path = (
-            sample_candidates_manifest / "TEST_EP" / "images"
-            / "candidates" / "candidates_manifest.json"
+            sample_candidates_manifest
+            / "TEST_EP"
+            / "images"
+            / "candidates"
+            / "candidates_manifest.json"
         )
         manifest = json.loads(manifest_path.read_text())
         manifest["chapters"]["ch01"]["candidates"][0]["selected"] = True
@@ -615,8 +637,7 @@ class TestFinalizeSelections:
         finalize_selections(session, "TEST_EP", settings)
 
         provenance_path = (
-            sample_candidates_manifest / "TEST_EP"
-            / "provenance" / "imagegen_provenance.json"
+            sample_candidates_manifest / "TEST_EP" / "provenance" / "imagegen_provenance.json"
         )
         assert provenance_path.exists()
         prov = json.loads(provenance_path.read_text())
@@ -627,8 +648,7 @@ class TestFinalizeSelections:
     @patch("btcedu.core.stock_images._load_chapters")
     @patch("btcedu.core.stock_images._get_episode")
     def test_updates_episode_status(
-        self, mock_get_episode, mock_load_chapters,
-        sample_candidates_manifest, settings
+        self, mock_get_episode, mock_load_chapters, sample_candidates_manifest, settings
     ):
         settings.outputs_dir = str(sample_candidates_manifest)
 

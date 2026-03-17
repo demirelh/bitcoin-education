@@ -104,8 +104,11 @@ def call_claude(
 
     if provider == "openai":
         return _call_openai(
-            system_prompt, user_message, settings,
-            max_tokens=max_tokens, json_mode=json_mode,
+            system_prompt,
+            user_message,
+            settings,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
         )
     return _call_anthropic(system_prompt, user_message, settings, max_tokens=max_tokens)
 

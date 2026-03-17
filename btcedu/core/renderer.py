@@ -110,7 +110,8 @@ def render_video(
         _profile = _get_profile_registry(settings).get(_profile_name)
         _accent_color = (
             _profile.stage_config.get("render", {}).get("accent_color") or "#F7931A"
-            if _profile else "#F7931A"
+            if _profile
+            else "#F7931A"
         )
     except Exception:
         _accent_color = "#F7931A"

@@ -180,8 +180,7 @@ class YouTubeDataAPIService:
             from googleapiclient.discovery import build
         except ImportError as exc:
             raise YouTubeAuthError(
-                "google-api-python-client not installed. Run: "
-                "pip install google-api-python-client"
+                "google-api-python-client not installed. Run: pip install google-api-python-client"
             ) from exc
 
         creds = self._load_credentials()
@@ -213,9 +212,7 @@ class YouTubeDataAPIService:
         try:
             from googleapiclient.http import MediaFileUpload
         except ImportError as exc:
-            raise YouTubeUploadError(
-                "google-api-python-client not installed."
-            ) from exc
+            raise YouTubeUploadError("google-api-python-client not installed.") from exc
 
         if not req.video_path.exists():
             raise YouTubeUploadError(f"Video file not found: {req.video_path}")
@@ -300,9 +297,7 @@ class YouTubeDataAPIService:
 
                     if isinstance(exc, HttpError):
                         if exc.status_code == 403:
-                            raise YouTubeQuotaError(
-                                f"YouTube API quota exceeded: {exc}"
-                            ) from exc
+                            raise YouTubeQuotaError(f"YouTube API quota exceeded: {exc}") from exc
                         if exc.status_code in (400, 401):
                             raise YouTubeUploadError(
                                 f"YouTube API error {exc.status_code}: {exc}"
@@ -418,8 +413,13 @@ def check_token_status(credentials_path: str) -> dict:
     """
     creds_path = Path(credentials_path)
     if not creds_path.exists():
-        return {"valid": False, "expired": None, "expiry": None, "can_refresh": False,
-                "error": "No credentials file found"}
+        return {
+            "valid": False,
+            "expired": None,
+            "expiry": None,
+            "can_refresh": False,
+            "error": "No credentials file found",
+        }
 
     try:
         from google.oauth2.credentials import Credentials
@@ -432,5 +432,10 @@ def check_token_status(credentials_path: str) -> dict:
             "can_refresh": bool(creds.refresh_token),
         }
     except Exception as exc:
-        return {"valid": False, "expired": None, "expiry": None, "can_refresh": False,
-                "error": str(exc)}
+        return {
+            "valid": False,
+            "expired": None,
+            "expiry": None,
+            "can_refresh": False,
+            "error": str(exc),
+        }

@@ -195,9 +195,7 @@ def _write_review_history(task: ReviewTask, decision: ReviewDecision) -> None:
     reviewer notes, and timestamps for file-level audit trail.
     """
     settings = _get_runtime_settings()
-    history_path = (
-        Path(settings.outputs_dir) / task.episode_id / "review" / "review_history.json"
-    )
+    history_path = Path(settings.outputs_dir) / task.episode_id / "review" / "review_history.json"
 
     # Load existing history or start fresh
     history: list[dict] = []
@@ -221,9 +219,7 @@ def _write_review_history(task: ReviewTask, decision: ReviewDecision) -> None:
 
     try:
         history_path.parent.mkdir(parents=True, exist_ok=True)
-        history_path.write_text(
-            json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        history_path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError as e:
         logger.warning("Could not write review history to %s: %s", history_path, e)
 
@@ -834,8 +830,10 @@ def apply_item_decisions(
         stories_data = json.loads(Path(stories_path).read_text(encoding="utf-8"))
         reviewed_dict = _assemble_translation_review(stories_data, diff_data, item_decisions)
         out_path = (
-            Path(settings.outputs_dir) / task.episode_id
-            / "review" / "stories_translated.reviewed.json"
+            Path(settings.outputs_dir)
+            / task.episode_id
+            / "review"
+            / "stories_translated.reviewed.json"
         )
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(
@@ -939,9 +937,8 @@ def _assemble_translation_review(
             ReviewItemAction.REJECTED.value,
             ReviewItemAction.UNCHANGED.value,
         ):
-            story_copy["text_tr"] = (
-                "[ÇEVİRİ REDDEDİLDİ \u2014 yeniden çeviri gerekli] "
-                + (story_copy.get("text_tr") or "")
+            story_copy["text_tr"] = "[ÇEVİRİ REDDEDİLDİ \u2014 yeniden çeviri gerekli] " + (
+                story_copy.get("text_tr") or ""
             )
         # ACCEPTED / PENDING: keep text_tr as-is
 

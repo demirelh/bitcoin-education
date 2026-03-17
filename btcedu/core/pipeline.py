@@ -113,9 +113,7 @@ def _get_stages(
     # Insert 'segment' stage for news profiles
     if stage_config.get("segment", {}).get("enabled"):
         # Find position of 'translate' stage and insert segment before it
-        translate_idx = next(
-            (i for i, (name, _) in enumerate(stages) if name == "translate"), None
-        )
+        translate_idx = next((i for i, (name, _) in enumerate(stages) if name == "translate"), None)
         if translate_idx is not None:
             stages.insert(translate_idx, ("segment", EpisodeStatus.CORRECTED))
             # Adjust translate to require SEGMENTED instead of CORRECTED
@@ -126,8 +124,7 @@ def _get_stages(
     if stage_config.get("adapt", {}).get("skip"):
         # Replace review_gate_2 with review_gate_translate (don't remove the gate)
         stages = [
-            ("review_gate_translate", EpisodeStatus.TRANSLATED)
-            if n == "review_gate_2" else (n, s)
+            ("review_gate_translate", EpisodeStatus.TRANSLATED) if n == "review_gate_2" else (n, s)
             for n, s in stages
         ]
         # Remove adapt only (keep the renamed gate)
@@ -232,10 +229,20 @@ def _run_stage(
     t0 = time.monotonic()
 
     _V2_ONLY_STAGES = {
-        "correct", "review_gate_1", "segment", "translate", "adapt", "review_gate_2",
+        "correct",
+        "review_gate_1",
+        "segment",
+        "translate",
+        "adapt",
+        "review_gate_2",
         "review_gate_translate",
-        "chapterize", "imagegen", "review_gate_stock", "tts", "render",
-        "review_gate_3", "publish",
+        "chapterize",
+        "imagegen",
+        "review_gate_stock",
+        "tts",
+        "render",
+        "review_gate_3",
+        "publish",
     }
     if stage_name in _V2_ONLY_STAGES and episode.pipeline_version != 2:
         raise ValueError(
@@ -458,14 +465,18 @@ def _run_stage(
             if has_approved_review(session, episode.episode_id, "translate"):
                 elapsed = time.monotonic() - t0
                 return StageResult(
-                    "review_gate_translate", "success", elapsed,
+                    "review_gate_translate",
+                    "success",
+                    elapsed,
                     detail="translation review approved",
                 )
 
             if has_pending_review(session, episode.episode_id):
                 elapsed = time.monotonic() - t0
                 return StageResult(
-                    "review_gate_translate", "review_pending", elapsed,
+                    "review_gate_translate",
+                    "review_pending",
+                    elapsed,
                     detail="awaiting translation review",
                 )
 
@@ -474,27 +485,28 @@ def _run_stage(
                 Path(settings.outputs_dir) / episode.episode_id / "stories_translated.json"
             )
             diff_path = (
-                Path(settings.outputs_dir) / episode.episode_id
-                / "review" / "translation_diff.json"
+                Path(settings.outputs_dir) / episode.episode_id / "review" / "translation_diff.json"
             )
             if stories_path.exists():
                 diff_data = compute_translation_diff(stories_path)
                 diff_path.parent.mkdir(parents=True, exist_ok=True)
-                diff_path.write_text(
-                    json.dumps(diff_data, ensure_ascii=False, indent=2)
-                )
+                diff_path.write_text(json.dumps(diff_data, ensure_ascii=False, indent=2))
 
             transcript_path = (
                 Path(settings.transcripts_dir) / episode.episode_id / "transcript.tr.txt"
             )
             create_review_task(
-                session, episode.episode_id, stage="translate",
+                session,
+                episode.episode_id,
+                stage="translate",
                 artifact_paths=[str(stories_path), str(transcript_path)],
                 diff_path=str(diff_path) if diff_path.exists() else None,
             )
             elapsed = time.monotonic() - t0
             return StageResult(
-                "review_gate_translate", "review_pending", elapsed,
+                "review_gate_translate",
+                "review_pending",
+                elapsed,
                 detail="translation review task created",
             )
 
@@ -522,12 +534,8 @@ def _run_stage(
             # v2 pipeline: stock images only (no AI image generation)
             from btcedu.core.stock_images import rank_candidates, search_stock_images
 
-            search_stock_images(
-                session, episode.episode_id, settings, force=force
-            )
-            rank_result = rank_candidates(
-                session, episode.episode_id, settings, force=force
-            )
+            search_stock_images(session, episode.episode_id, settings, force=force)
+            rank_result = rank_candidates(session, episode.episode_id, settings, force=force)
             elapsed = time.monotonic() - t0
 
             return StageResult(
@@ -551,9 +559,7 @@ def _run_stage(
 
             # Check if already approved
             if has_approved_review(session, episode.episode_id, "stock_images"):
-                select_result = finalize_selections(
-                    session, episode.episode_id, settings
-                )
+                select_result = finalize_selections(session, episode.episode_id, settings)
                 elapsed = time.monotonic() - t0
                 return StageResult(
                     "review_gate_stock",
@@ -584,11 +590,7 @@ def _run_stage(
                 / "candidates"
                 / "candidates_manifest.json"
             )
-            chapters_path = (
-                Path(settings.outputs_dir)
-                / episode.episode_id
-                / "chapters.json"
-            )
+            chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
 
             create_review_task(
                 session,
@@ -756,7 +758,9 @@ def run_episode_pipeline(
     content_profile = getattr(episode, "content_profile", "bitcoin_podcast")
     logger.info(
         "Pipeline start: %s (%s) [profile=%s]",
-        episode.episode_id, episode.title, content_profile,
+        episode.episode_id,
+        episode.title,
+        content_profile,
     )
 
     stages = _get_stages(settings, episode)

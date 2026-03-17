@@ -79,9 +79,7 @@ def test_v2_stages_includes_review_gate_stock():
     assert stage_names[idx + 1] == "tts"
 
 
-def test_review_gate_stock_creates_task(
-    db_session, settings, chapterized_episode, tmp_path
-):
+def test_review_gate_stock_creates_task(db_session, settings, chapterized_episode, tmp_path):
     """ReviewTask created with stage='stock_images'."""
     # Create required files
     ep_dir = tmp_path / "ep_stock"
@@ -90,24 +88,24 @@ def test_review_gate_stock_creates_task(
     (candidates_dir / "candidates_manifest.json").write_text("{}")
     (ep_dir / "chapters.json").write_text("{}")
 
-    result = _run_stage(
-        db_session, chapterized_episode, settings, "review_gate_stock"
-    )
+    result = _run_stage(db_session, chapterized_episode, settings, "review_gate_stock")
 
     assert result.status == "review_pending"
     assert "review task created" in result.detail
 
-    tasks = db_session.query(ReviewTask).filter(
-        ReviewTask.episode_id == "ep_stock",
-        ReviewTask.stage == "stock_images",
-    ).all()
+    tasks = (
+        db_session.query(ReviewTask)
+        .filter(
+            ReviewTask.episode_id == "ep_stock",
+            ReviewTask.stage == "stock_images",
+        )
+        .all()
+    )
     assert len(tasks) == 1
     assert tasks[0].status == ReviewStatus.PENDING.value
 
 
-def test_review_gate_stock_pending(
-    db_session, settings, chapterized_episode, tmp_path
-):
+def test_review_gate_stock_pending(db_session, settings, chapterized_episode, tmp_path):
     """Returns 'review_pending' when task exists."""
     # Create existing review task
     task = ReviewTask(
@@ -119,9 +117,7 @@ def test_review_gate_stock_pending(
     db_session.add(task)
     db_session.commit()
 
-    result = _run_stage(
-        db_session, chapterized_episode, settings, "review_gate_stock"
-    )
+    result = _run_stage(db_session, chapterized_episode, settings, "review_gate_stock")
 
     assert result.status == "review_pending"
     assert "awaiting stock image review" in result.detail
@@ -152,18 +148,14 @@ def test_review_gate_stock_approved_finalizes(
         placeholder_count=2,
     )
 
-    result = _run_stage(
-        db_session, chapterized_episode, settings, "review_gate_stock"
-    )
+    result = _run_stage(db_session, chapterized_episode, settings, "review_gate_stock")
 
     assert result.status == "success"
     assert "approved" in result.detail
     mock_finalize.assert_called_once()
 
 
-def test_review_gate_stock_artifact_paths(
-    db_session, settings, chapterized_episode, tmp_path
-):
+def test_review_gate_stock_artifact_paths(db_session, settings, chapterized_episode, tmp_path):
     """ReviewTask has candidates_manifest + chapters.json paths."""
     ep_dir = tmp_path / "ep_stock"
     candidates_dir = ep_dir / "images" / "candidates"
@@ -171,14 +163,16 @@ def test_review_gate_stock_artifact_paths(
     (candidates_dir / "candidates_manifest.json").write_text("{}")
     (ep_dir / "chapters.json").write_text("{}")
 
-    _run_stage(
-        db_session, chapterized_episode, settings, "review_gate_stock"
-    )
+    _run_stage(db_session, chapterized_episode, settings, "review_gate_stock")
 
-    task = db_session.query(ReviewTask).filter(
-        ReviewTask.episode_id == "ep_stock",
-        ReviewTask.stage == "stock_images",
-    ).first()
+    task = (
+        db_session.query(ReviewTask)
+        .filter(
+            ReviewTask.episode_id == "ep_stock",
+            ReviewTask.stage == "stock_images",
+        )
+        .first()
+    )
     assert task is not None
 
     paths = json.loads(task.artifact_paths)
@@ -206,15 +200,11 @@ def test_rejection_keeps_chapterized_status(db_session, settings, chapterized_ep
     assert chapterized_episode.status == EpisodeStatus.CHAPTERIZED
 
 
-def test_pexels_key_required_for_v2_imagegen(
-    db_session, settings, chapterized_episode
-):
+def test_pexels_key_required_for_v2_imagegen(db_session, settings, chapterized_episode):
     """ValueError if pexels_api_key empty for imagegen."""
     settings.pexels_api_key = ""
 
-    result = _run_stage(
-        db_session, chapterized_episode, settings, "imagegen"
-    )
+    result = _run_stage(db_session, chapterized_episode, settings, "imagegen")
 
     # Should fail because PexelsService raises on empty key
     assert result.status == "failed"
@@ -244,8 +234,6 @@ def test_pipeline_resumes_after_stock_approval(
         placeholder_count=4,
     )
 
-    result = _run_stage(
-        db_session, chapterized_episode, settings, "review_gate_stock"
-    )
+    result = _run_stage(db_session, chapterized_episode, settings, "review_gate_stock")
     assert result.status == "success"
     assert "8 finalized" in result.detail

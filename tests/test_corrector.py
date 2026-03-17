@@ -460,11 +460,7 @@ class TestReviewerFeedbackInjection:
         """If no translation exists yet, no stale marker is created."""
         correct_transcript(db_session, "ep_test", mock_settings)
 
-        tr_stale = (
-            Path(mock_settings.transcripts_dir)
-            / "ep_test"
-            / "transcript.tr.txt.stale"
-        )
+        tr_stale = Path(mock_settings.transcripts_dir) / "ep_test" / "transcript.tr.txt.stale"
         assert not tr_stale.exists()
 
 
@@ -502,4 +498,3 @@ def test_compute_correction_diff_has_item_id():
     for c in changes:
         assert "item_id" in c
         assert c["item_id"].startswith("corr-")
-

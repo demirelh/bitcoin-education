@@ -89,9 +89,9 @@ class Settings(BaseSettings):
     pexels_download_size: str = "large2x"  # "original" | "large2x" | "landscape"
 
     # Stock Video / Phase 4
-    pexels_video_enabled: bool = False          # Enable video candidate search for b_roll chapters
-    pexels_video_per_chapter: int = 2           # Video candidates per b_roll chapter
-    pexels_video_max_duration: int = 30         # Max clip duration to download (seconds)
+    pexels_video_enabled: bool = False  # Enable video candidate search for b_roll chapters
+    pexels_video_per_chapter: int = 2  # Video candidates per b_roll chapter
+    pexels_video_max_duration: int = 30  # Max clip duration to download (seconds)
     pexels_video_preferred_quality: str = "hd"  # "hd" or "sd"
 
     # TTS / ElevenLabs (Sprint 8)

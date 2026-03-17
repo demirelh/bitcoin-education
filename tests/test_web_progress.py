@@ -196,10 +196,20 @@ class TestBuildStageProgressV2:
         assert sp is not None
         stage_names = [s["name"] for s in sp["stages"]]
         expected_order = [
-            "download", "transcribe", "correct", "review_gate_1",
-            "translate", "adapt", "review_gate_2", "chapterize",
-            "imagegen", "review_gate_stock", "tts", "render",
-            "review_gate_3", "publish",
+            "download",
+            "transcribe",
+            "correct",
+            "review_gate_1",
+            "translate",
+            "adapt",
+            "review_gate_2",
+            "chapterize",
+            "imagegen",
+            "review_gate_stock",
+            "tts",
+            "render",
+            "review_gate_3",
+            "publish",
         ]
         assert stage_names == expected_order
         assert sp["total_count"] == 14
@@ -289,9 +299,7 @@ class TestBuildStageProgressV2:
         assert sp["current_stage"] == failed_stages[0]
 
         # All stages after the failed one should be pending
-        failed_idx = next(
-            i for i, s in enumerate(sp["stages"]) if s["state"] == "failed"
-        )
+        failed_idx = next(i for i, s in enumerate(sp["stages"]) if s["state"] == "failed")
         for s in sp["stages"][failed_idx + 1 :]:
             assert s["state"] == "pending", (
                 f"Expected pending after failed stage, got {s['state']} for {s['name']}"
@@ -347,12 +355,8 @@ class TestBuildStageProgressV2:
 
         for s in sp["stages"]:
             if s["is_gate"]:
-                assert s["duration_seconds"] is None, (
-                    f"Gate {s['name']} should have no duration"
-                )
-                assert s["cost_usd"] is None, (
-                    f"Gate {s['name']} should have no cost"
-                )
+                assert s["duration_seconds"] is None, f"Gate {s['name']} should have no duration"
+                assert s["cost_usd"] is None, f"Gate {s['name']} should have no cost"
 
     def test_stage_labels_correct(self, seeded_db, test_settings):
         """Every stage has a non-empty label."""
@@ -376,9 +380,7 @@ class TestBuildStageProgressV2:
         sp = _build_stage_progress(session, ep, test_settings, review_context=None)
         session.close()
 
-        manual_done = sum(
-            1 for s in sp["stages"] if s["state"] in ("done", "skipped")
-        )
+        manual_done = sum(1 for s in sp["stages"] if s["state"] in ("done", "skipped"))
         assert sp["completed_count"] == manual_done
         assert sp["total_count"] == len(sp["stages"])
 
@@ -405,11 +407,24 @@ class TestStageLabelConstants:
     def test_stage_labels_dict_complete(self):
         """_STAGE_LABELS covers all expected stages."""
         expected_keys = {
-            "download", "transcribe", "chunk", "generate", "refine",
-            "correct", "review_gate_1", "translate", "adapt", "review_gate_2",
+            "download",
+            "transcribe",
+            "chunk",
+            "generate",
+            "refine",
+            "correct",
+            "review_gate_1",
+            "translate",
+            "adapt",
+            "review_gate_2",
             "review_gate_translate",
-            "chapterize", "imagegen", "review_gate_stock", "tts", "render",
-            "review_gate_3", "publish",
+            "chapterize",
+            "imagegen",
+            "review_gate_stock",
+            "tts",
+            "render",
+            "review_gate_3",
+            "publish",
         }
         assert set(_STAGE_LABELS.keys()) == expected_keys
 
@@ -475,9 +490,7 @@ class TestEpisodeListIncludesStageProgress:
 
         assert len(data) > 0
         for ep in data:
-            assert "stage_progress" in ep, (
-                f"Episode {ep['episode_id']} missing stage_progress"
-            )
+            assert "stage_progress" in ep, f"Episode {ep['episode_id']} missing stage_progress"
             assert ep["stage_progress"] is not None
 
     def test_stage_progress_pipeline_version_respected(self, client, seeded_db, test_settings_v1):
@@ -529,14 +542,16 @@ class TestBatchDurationQueryEfficiency:
             # Add 10 more episodes
             session = factory()
             for i in range(10):
-                session.add(Episode(
-                    episode_id=f"ep_batch_{i}",
-                    source="youtube_rss",
-                    title=f"Batch Episode {i}",
-                    url=f"https://youtube.com/watch?v=ep_batch_{i}",
-                    status=EpisodeStatus.NEW,
-                    pipeline_version=2,
-                ))
+                session.add(
+                    Episode(
+                        episode_id=f"ep_batch_{i}",
+                        source="youtube_rss",
+                        title=f"Batch Episode {i}",
+                        url=f"https://youtube.com/watch?v=ep_batch_{i}",
+                        status=EpisodeStatus.NEW,
+                        pipeline_version=2,
+                    )
+                )
             session.commit()
             session.close()
 

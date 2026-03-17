@@ -111,9 +111,7 @@ class TestHasModeratorContent:
         assert not has_moderator_content("Der Bundeskanzler hat heute erklärt")
 
     def test_no_false_positive_on_report(self):
-        assert not has_moderator_content(
-            "In Berlin haben heute tausende Menschen demonstriert."
-        )
+        assert not has_moderator_content("In Berlin haben heute tausende Menschen demonstriert.")
 
     def test_detects_damen_und_herren(self):
         assert has_moderator_content("Meine Damen und Herren, hier die Nachrichten")

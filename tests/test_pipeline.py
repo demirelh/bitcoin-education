@@ -680,19 +680,19 @@ class TestV2PipelineE2E:
 
         # Diff with a real word change — should NOT auto-approve
         (review_dir / "correction_diff.json").write_text(
-            json.dumps({
-                "changes": [
-                    {"type": "replace", "original": "Bitcon", "corrected": "Bitcoin"},
-                ],
-                "summary": {"total_changes": 1},
-            }),
+            json.dumps(
+                {
+                    "changes": [
+                        {"type": "replace", "original": "Bitcon", "corrected": "Bitcoin"},
+                    ],
+                    "summary": {"total_changes": 1},
+                }
+            ),
             encoding="utf-8",
         )
         (o_dir / "script.adapted.tr.md").write_text("adapted", encoding="utf-8")
         (render_dir / "draft.mp4").write_bytes(b"video")
-        (o_dir / "chapters.json").write_text(
-            json.dumps({"chapters": []}), encoding="utf-8"
-        )
+        (o_dir / "chapters.json").write_text(json.dumps({"chapters": []}), encoding="utf-8")
 
     def _make_stage_side_effect(self, db_session):
         """Return a mock side effect that advances episode status like real stages."""
@@ -800,9 +800,11 @@ class TestV2PipelineE2E:
         assert v2_episode.status == EpisodeStatus.CORRECTED
 
         # Approve gate 1
-        task1 = db_session.query(ReviewTask).filter(
-            ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "correct"
-        ).first()
+        task1 = (
+            db_session.query(ReviewTask)
+            .filter(ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "correct")
+            .first()
+        )
         approve_review(db_session, task1.id)
 
         # Run 2: pauses at gate 2
@@ -812,9 +814,11 @@ class TestV2PipelineE2E:
         assert v2_episode.status == EpisodeStatus.ADAPTED
 
         # Approve gate 2
-        task2 = db_session.query(ReviewTask).filter(
-            ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "adapt"
-        ).first()
+        task2 = (
+            db_session.query(ReviewTask)
+            .filter(ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "adapt")
+            .first()
+        )
         approve_review(db_session, task2.id)
 
         # Run 3: pauses at gate 3
@@ -824,9 +828,11 @@ class TestV2PipelineE2E:
         assert v2_episode.status == EpisodeStatus.RENDERED
 
         # Approve gate 3
-        task3 = db_session.query(ReviewTask).filter(
-            ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "render"
-        ).first()
+        task3 = (
+            db_session.query(ReviewTask)
+            .filter(ReviewTask.episode_id == "ep_v2_e2e", ReviewTask.stage == "render")
+            .first()
+        )
         approve_review(db_session, task3.id)
 
         # Run 4: publishes
@@ -849,17 +855,24 @@ class TestV2PipelineE2E:
         assert len(plan) == 14
         stage_names = [p.stage for p in plan]
         assert stage_names == [
-            "download", "transcribe", "correct",
-            "review_gate_1", "translate", "adapt",
-            "review_gate_2", "chapterize", "imagegen",
-            "review_gate_stock", "tts", "render",
-            "review_gate_3", "publish",
+            "download",
+            "transcribe",
+            "correct",
+            "review_gate_1",
+            "translate",
+            "adapt",
+            "review_gate_2",
+            "chapterize",
+            "imagegen",
+            "review_gate_stock",
+            "tts",
+            "render",
+            "review_gate_3",
+            "publish",
         ]
 
     @patch("btcedu.core.pipeline._run_stage")
-    def test_v2_cost_accumulation(
-        self, mock_stage, db_session, v2_settings, tmp_path
-    ):
+    def test_v2_cost_accumulation(self, mock_stage, db_session, v2_settings, tmp_path):
         """Costs from v2 stages are accumulated in PipelineReport."""
         ep = Episode(
             episode_id="ep_cost",

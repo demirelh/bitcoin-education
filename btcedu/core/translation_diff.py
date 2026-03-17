@@ -61,18 +61,20 @@ def compute_translation_diff(stories_translated_path: str | Path) -> dict:
                     f"{'summarization' if ratio < 0.5 else 'hallucination'}"
                 )
 
-        stories_diff.append({
-            "item_id": f"trans-{story['story_id']}",
-            "story_id": story["story_id"],
-            "headline_de": story.get("headline_de", ""),
-            "headline_tr": story.get("headline_tr", ""),
-            "text_de": story.get("text_de", ""),
-            "text_tr": story.get("text_tr", ""),
-            "word_count_de": words_de,
-            "word_count_tr": words_tr,
-            "category": story.get("category", ""),
-            "story_type": story.get("story_type", ""),
-        })
+        stories_diff.append(
+            {
+                "item_id": f"trans-{story['story_id']}",
+                "story_id": story["story_id"],
+                "headline_de": story.get("headline_de", ""),
+                "headline_tr": story.get("headline_tr", ""),
+                "text_de": story.get("text_de", ""),
+                "text_tr": story.get("text_tr", ""),
+                "word_count_de": words_de,
+                "word_count_tr": words_tr,
+                "category": story.get("category", ""),
+                "story_type": story.get("story_type", ""),
+            }
+        )
 
     compression = total_words_tr / total_words_de if total_words_de > 0 else 1.0
 

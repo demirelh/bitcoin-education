@@ -590,9 +590,7 @@ def test_tts_skipped_advances_status(db_session, tmp_path):
     chapters_hash = _compute_chapters_narration_hash(doc)
 
     manifest_path.write_text(json.dumps({"segments": []}), encoding="utf-8")
-    prov_file.write_text(
-        json.dumps({"input_content_hash": chapters_hash}), encoding="utf-8"
-    )
+    prov_file.write_text(json.dumps({"input_content_hash": chapters_hash}), encoding="utf-8")
 
     settings = MagicMock()
     settings.outputs_dir = str(tmp_path)

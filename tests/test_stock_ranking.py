@@ -124,10 +124,12 @@ def test_rank_calls_llm_per_chapter(
     mock_load_ch.return_value = mock_chapters_doc
 
     # Create manifest with 2 chapters
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin mining", "candidates": _make_candidates(3, 100)},
-        "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin mining", "candidates": _make_candidates(3, 100)},
+            "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "candidates_manifest.json").write_text(json.dumps(manifest))
@@ -159,10 +161,12 @@ def test_rank_skips_locked(
     candidates[0]["locked"] = True
     candidates[0]["selected"] = True
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": candidates},
-        "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": candidates},
+            "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "candidates_manifest.json").write_text(json.dumps(manifest))
@@ -194,10 +198,12 @@ def test_rank_force_overrides_locked(
     candidates = _make_candidates(2, 100)
     candidates[0]["locked"] = True
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": candidates},
-        "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": candidates},
+            "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "candidates_manifest.json").write_text(json.dumps(manifest))
@@ -224,10 +230,12 @@ def test_rank_single_candidate_no_llm(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(1, 100)},
-        "ch02": {"search_query": "blockchain", "candidates": _make_candidates(1, 200)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(1, 100)},
+            "ch02": {"search_query": "blockchain", "candidates": _make_candidates(1, 200)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "candidates_manifest.json").write_text(json.dumps(manifest))
@@ -252,10 +260,12 @@ def test_rank_no_candidates_skipped(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": []},
-        "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": []},
+            "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "candidates_manifest.json").write_text(json.dumps(manifest))
@@ -283,21 +293,25 @@ def test_rank_writes_rank_fields(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     manifest_path = manifest_dir / "candidates_manifest.json"
     manifest_path.write_text(json.dumps(manifest))
 
     mock_claude.return_value = MagicMock(
-        text=json.dumps({
-            "rankings": [
-                {"pexels_id": 100, "rank": 1, "reason": "Best match"},
-                {"pexels_id": 101, "rank": 2, "reason": "Second best"},
-            ]
-        }),
+        text=json.dumps(
+            {
+                "rankings": [
+                    {"pexels_id": 100, "rank": 1, "reason": "Best match"},
+                    {"pexels_id": 101, "rank": 2, "reason": "Second best"},
+                ]
+            }
+        ),
         cost_usd=0.005,
     )
 
@@ -322,22 +336,26 @@ def test_rank_selects_top_ranked(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(3, 100)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(3, 100)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     manifest_path = manifest_dir / "candidates_manifest.json"
     manifest_path.write_text(json.dumps(manifest))
 
     mock_claude.return_value = MagicMock(
-        text=json.dumps({
-            "rankings": [
-                {"pexels_id": 102, "rank": 1, "reason": "Best"},
-                {"pexels_id": 100, "rank": 2, "reason": "OK"},
-                {"pexels_id": 101, "rank": 3, "reason": "Worst"},
-            ]
-        }),
+        text=json.dumps(
+            {
+                "rankings": [
+                    {"pexels_id": 102, "rank": 1, "reason": "Best"},
+                    {"pexels_id": 100, "rank": 2, "reason": "OK"},
+                    {"pexels_id": 101, "rank": 3, "reason": "Worst"},
+                ]
+            }
+        ),
         cost_usd=0.005,
     )
 
@@ -363,9 +381,11 @@ def test_rank_sets_pinned_by_llm(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     manifest_path = manifest_dir / "candidates_manifest.json"
@@ -394,9 +414,11 @@ def test_rank_updates_manifest_metadata(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     manifest_path = manifest_dir / "candidates_manifest.json"
@@ -427,9 +449,11 @@ def test_rank_bumps_schema_version(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     manifest_path = manifest_dir / "candidates_manifest.json"
@@ -458,9 +482,11 @@ def test_rank_invalid_llm_response_fallback(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(3, 100)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(3, 100)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     manifest_path = manifest_dir / "candidates_manifest.json"
@@ -495,21 +521,25 @@ def test_rank_unknown_pexels_id_ignored(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     manifest_path = manifest_dir / "candidates_manifest.json"
     manifest_path.write_text(json.dumps(manifest))
 
     mock_claude.return_value = MagicMock(
-        text=json.dumps({
-            "rankings": [
-                {"pexels_id": 999, "rank": 1, "reason": "Unknown"},
-                {"pexels_id": 100, "rank": 2, "reason": "Known"},
-            ]
-        }),
+        text=json.dumps(
+            {
+                "rankings": [
+                    {"pexels_id": 999, "rank": 1, "reason": "Unknown"},
+                    {"pexels_id": 100, "rank": 2, "reason": "Known"},
+                ]
+            }
+        ),
         cost_usd=0.005,
     )
 
@@ -534,10 +564,12 @@ def test_rank_cost_accumulated(
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
-        "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
+            "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     (manifest_dir / "candidates_manifest.json").write_text(json.dumps(manifest))
@@ -555,18 +587,18 @@ def test_rank_cost_accumulated(
 
 @patch("btcedu.core.stock_images._load_chapters")
 @patch("btcedu.core.stock_images._get_episode")
-def test_rank_dry_run_no_llm(
-    mock_get_ep, mock_load_ch, tmp_path, settings, mock_chapters_doc
-):
+def test_rank_dry_run_no_llm(mock_get_ep, mock_load_ch, tmp_path, settings, mock_chapters_doc):
     """dry_run=True → no LLM call, ranks by order."""
     settings.outputs_dir = str(tmp_path)
     settings.dry_run = True
     mock_get_ep.return_value = MagicMock()
     mock_load_ch.return_value = mock_chapters_doc
 
-    manifest = _make_manifest({
-        "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(3, 100)},
-    })
+    manifest = _make_manifest(
+        {
+            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(3, 100)},
+        }
+    )
     manifest_dir = tmp_path / "ep001" / "images" / "candidates"
     manifest_dir.mkdir(parents=True)
     manifest_path = manifest_dir / "candidates_manifest.json"

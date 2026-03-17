@@ -80,9 +80,11 @@ def translate_transcript(
     # - SEGMENTED: News profile path — segment stage ran, ready for translation
     # - TRANSLATED: Allow idempotent re-runs (useful for testing, manual re-translation)
     # The _is_translation_current() check will skip if output is already current.
-    if episode.status not in (
-        EpisodeStatus.CORRECTED, EpisodeStatus.SEGMENTED, EpisodeStatus.TRANSLATED
-    ) and not force:
+    if (
+        episode.status
+        not in (EpisodeStatus.CORRECTED, EpisodeStatus.SEGMENTED, EpisodeStatus.TRANSLATED)
+        and not force
+    ):
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'corrected', 'segmented', or 'translated'. Use --force to override."
@@ -228,10 +230,9 @@ def translate_transcript(
         total_cost = 0.0
 
         # Check if moderator cleaning is enabled for this profile
-        clean_moderator = (
-            profile_obj is not None
-            and profile_obj.stage_config.get("translate", {}).get("clean_moderator", False)
-        )
+        clean_moderator = profile_obj is not None and profile_obj.stage_config.get(
+            "translate", {}
+        ).get("clean_moderator", False)
 
         if use_per_story:
             # Per-story mode: translate each story individually
@@ -574,9 +575,7 @@ def _translate_per_story(
         # Select prompt: specialized for intro/outro, standard for everything else
         if is_intro_outro and intro_outro_prompt:
             active_system, active_user_tpl = intro_outro_prompt
-            logger.info(
-                "Story %s (%s): using intro/outro prompt", story.story_id, story.story_type
-            )
+            logger.info("Story %s (%s): using intro/outro prompt", story.story_id, story.story_type)
         else:
             active_system, active_user_tpl = system_prompt, user_template
 

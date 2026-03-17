@@ -145,8 +145,7 @@ def generate_tts(
             from btcedu.profiles import get_registry as _get_profile_registry
 
             _profile_name = (
-                getattr(episode, "content_profile", "bitcoin_podcast")
-                or "bitcoin_podcast"
+                getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
             )
             _profile = _get_profile_registry(settings).get(_profile_name)
             _tts_cfg = _profile.stage_config.get("tts", {}) if _profile else {}
@@ -232,8 +231,13 @@ def generate_tts(
 
             # Generate audio (with profile-level voice/stability overrides)
             entry = _generate_single_audio(
-                chapter, tts_service, tts_dir, settings,
-                voice_id=_voice_id, stability=_stability, style=_style,
+                chapter,
+                tts_service,
+                tts_dir,
+                settings,
+                voice_id=_voice_id,
+                stability=_stability,
+                style=_style,
             )
             audio_entries.append(entry)
             total_cost += entry.cost_usd

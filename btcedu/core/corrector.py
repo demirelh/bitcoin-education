@@ -115,9 +115,7 @@ def correct_transcript(
     prompt_name = "correct_transcript"
     if profile_namespace and (TEMPLATES_DIR / profile_namespace / "correct_transcript.md").exists():
         prompt_name = f"{profile_namespace}/correct_transcript"
-    prompt_version = registry.register_version(
-        prompt_name, template_file, set_default=True
-    )
+    prompt_version = registry.register_version(prompt_name, template_file, set_default=True)
     _, template_body = registry.load_template(template_file)
     prompt_content_hash = registry.compute_hash(template_body)
 
@@ -216,9 +214,7 @@ def correct_transcript(
         diff_path.write_text(json.dumps(diff_data, ensure_ascii=False, indent=2), encoding="utf-8")
 
         # Mark downstream translation as stale if it exists (cascade invalidation)
-        translated_path = (
-            Path(settings.transcripts_dir) / episode_id / "transcript.tr.txt"
-        )
+        translated_path = Path(settings.transcripts_dir) / episode_id / "transcript.tr.txt"
         if translated_path.exists():
             stale_marker = translated_path.parent / (translated_path.name + ".stale")
             stale_data = {
@@ -228,9 +224,7 @@ def correct_transcript(
             }
             stale_marker.parent.mkdir(parents=True, exist_ok=True)
             stale_marker.write_text(json.dumps(stale_data, indent=2), encoding="utf-8")
-            logger.info(
-                "Marked downstream translation as stale: %s", translated_path.name
-            )
+            logger.info("Marked downstream translation as stale: %s", translated_path.name)
 
         # Write provenance
         elapsed = time.monotonic() - t0

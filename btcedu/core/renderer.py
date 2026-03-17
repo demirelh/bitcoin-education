@@ -177,10 +177,12 @@ def render_video(
     try:
         # Import ffmpeg service (lazy to avoid issues if ffmpeg not installed)
         from btcedu.services.ffmpeg_service import (
+            SegmentResult,
             concatenate_segments,
             create_segment,
             create_video_segment,
             get_ffmpeg_version,
+            probe_media,
         )
 
         ffmpeg_version = get_ffmpeg_version()
@@ -223,6 +225,45 @@ def render_video(
             segment_filename = f"{chapter.chapter_id}.mp4"
             segment_path = segments_dir / segment_filename
             segment_rel_path = f"render/segments/{segment_filename}"
+
+            # Skip segment if it already exists and is valid (idempotency guard)
+            if segment_path.exists() and segment_path.stat().st_size > 0:
+                try:
+                    probe_media(str(segment_path))
+                    logger.info(
+                        "Segment %s already exists and is valid, skipping re-render",
+                        chapter.chapter_id,
+                    )
+                    segment_result = SegmentResult(
+                        segment_path=str(segment_path),
+                        duration_seconds=duration,
+                        size_bytes=segment_path.stat().st_size,
+                        ffmpeg_command=[],
+                        returncode=0,
+                        stderr="[skipped-existing]",
+                    )
+                    segment_rel_path = f"render/segments/{segment_filename}"
+                    entry = RenderSegmentEntry(
+                        chapter_id=chapter.chapter_id,
+                        image=_find_image_rel_path(chapter.chapter_id, image_manifest),
+                        audio=_find_audio_rel_path(chapter.chapter_id, tts_manifest),
+                        segment_path=segment_rel_path,
+                        duration_seconds=duration,
+                        overlays=[],
+                        transition_in=chapter.transitions.in_transition.value,
+                        transition_out=chapter.transitions.out_transition.value,
+                        size_bytes=segment_result.size_bytes,
+                        asset_type=asset_type,
+                    )
+                    segment_entries.append(entry)
+                    total_duration += duration
+                    total_size += segment_result.size_bytes
+                    continue
+                except Exception:
+                    logger.warning(
+                        "Segment %s exists but is invalid, re-rendering", chapter.chapter_id
+                    )
+                    segment_path.unlink(missing_ok=True)
 
             logger.info(
                 "Rendering segment %s (%d/%d): %.1fs, %d overlays, "

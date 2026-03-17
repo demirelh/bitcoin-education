@@ -3,7 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -11,23 +11,19 @@ from sqlalchemy.orm import sessionmaker
 
 from btcedu.config import Settings
 from btcedu.core.publisher import (
-    PublishResult,
-    SafetyCheck,
     _build_youtube_metadata,
     _check_approval_gate,
     _check_artifact_integrity,
     _check_cost_sanity,
     _check_metadata_completeness,
     _format_timestamp,
-    _run_all_safety_checks,
     get_latest_publish_job,
     publish_video,
 )
 from btcedu.db import Base
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
-from btcedu.models.publish_job import PublishJob, PublishJobStatus
+from btcedu.models.publish_job import PublishJob
 from btcedu.models.review import ReviewStatus, ReviewTask
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -176,7 +172,9 @@ class TestFormatTimestamp:
 
 
 class TestCheckApprovalGate:
-    def test_passes_when_approved_with_review(self, db_session, approved_episode, approved_review_task):
+    def test_passes_when_approved_with_review(
+        self, db_session, approved_episode, approved_review_task
+    ):
         result = _check_approval_gate(db_session, approved_episode)
         assert result.passed is True
         assert result.name == "approval_gate"
@@ -203,11 +201,15 @@ class TestCheckApprovalGate:
 
 
 class TestCheckArtifactIntegrity:
-    def test_passes_when_hash_matches(self, db_session, approved_episode, approved_review_task, settings):
+    def test_passes_when_hash_matches(
+        self, db_session, approved_episode, approved_review_task, settings
+    ):
         result = _check_artifact_integrity(db_session, approved_episode, settings)
         assert result.passed is True
 
-    def test_fails_when_hash_mismatch(self, db_session, approved_episode, approved_review_task, tmp_path, settings):
+    def test_fails_when_hash_mismatch(
+        self, db_session, approved_episode, approved_review_task, tmp_path, settings
+    ):
         # Modify video file after hash was computed
         video_path = tmp_path / "outputs" / approved_episode.episode_id / "render" / "draft.mp4"
         video_path.write_bytes(b"tampered content!")
@@ -299,7 +301,9 @@ class TestBuildYouTubeMetadata:
         assert len(title) <= 100
         assert len(description) <= 5000
 
-    def test_chapter_timestamps_start_with_zero(self, db_session, approved_episode, settings, tmp_path):
+    def test_chapter_timestamps_start_with_zero(
+        self, db_session, approved_episode, settings, tmp_path
+    ):
         _make_chapters_json(tmp_path, approved_episode.episode_id)
         settings.outputs_dir = str(tmp_path / "outputs")
 
@@ -402,7 +406,7 @@ class TestPublishVideo:
             except Exception:
                 pass
 
-        job = get_latest_publish_job(db_session, approved_episode.episode_id)
+        _job = get_latest_publish_job(db_session, approved_episode.episode_id)  # noqa: F841
         # We may not have a job if it failed at safety checks rather than upload
         # This is an optional assertion — main point is no uncaught exceptions
 

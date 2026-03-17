@@ -1,7 +1,6 @@
 """Tests for Sprint 7: IMAGE_GEN stage implementation."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -24,7 +23,6 @@ from btcedu.services.image_gen_service import (
     ImageGenRequest,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -40,17 +38,17 @@ def _make_chapters_json(
     chapters = []
     for i in range(num_chapters):
         ch = {
-            "chapter_id": f"ch{i+1:02d}",
-            "title": f"Chapter {i+1}",
+            "chapter_id": f"ch{i + 1:02d}",
+            "title": f"Chapter {i + 1}",
             "order": i + 1,
             "narration": {
-                "text": f"Narration for chapter {i+1}",
+                "text": f"Narration for chapter {i + 1}",
                 "word_count": 4,
                 "estimated_duration_seconds": 30,
             },
             "visual": {
                 "type": visual_type,
-                "description": f"Visual description for chapter {i+1}",
+                "description": f"Visual description for chapter {i + 1}",
                 "image_prompt": image_prompt if visual_type in ("diagram", "b_roll") else None,
             },
             "overlays": [],
@@ -177,14 +175,22 @@ class TestIsImageGenCurrent:
         manifest_path = tmp_path / "manifest.json"
         provenance_path = tmp_path / "provenance.json"
 
-        manifest_path.write_text(json.dumps({
-            "episode_id": "test_ep",
-            "images": [],
-        }))
-        provenance_path.write_text(json.dumps({
-            "input_content_hash": chapters_hash,
-            "prompt_hash": prompt_hash,
-        }))
+        manifest_path.write_text(
+            json.dumps(
+                {
+                    "episode_id": "test_ep",
+                    "images": [],
+                }
+            )
+        )
+        provenance_path.write_text(
+            json.dumps(
+                {
+                    "input_content_hash": chapters_hash,
+                    "prompt_hash": prompt_hash,
+                }
+            )
+        )
         return manifest_path, provenance_path
 
     def test_returns_true_when_current(self, tmp_path):
@@ -220,22 +226,32 @@ class TestIsImageGenCurrent:
     def test_returns_false_when_image_missing(self, tmp_path):
         """Manifest references an image that doesn't exist on disk."""
         provenance = tmp_path / "provenance.json"
-        provenance.write_text(json.dumps({
-            "input_content_hash": "h",
-            "prompt_hash": "h",
-        }))
+        provenance.write_text(
+            json.dumps(
+                {
+                    "input_content_hash": "h",
+                    "prompt_hash": "h",
+                }
+            )
+        )
 
         # Create manifest that references a missing image
         ep_dir = tmp_path / "images"
         ep_dir.mkdir(parents=True)
         manifest = tmp_path / "images" / "manifest.json"
-        manifest.write_text(json.dumps({
-            "images": [{
-                "chapter_id": "ch01",
-                "file_path": "images/ch01_nonexistent.png",
-                "generation_method": "dalle3",
-            }],
-        }))
+        manifest.write_text(
+            json.dumps(
+                {
+                    "images": [
+                        {
+                            "chapter_id": "ch01",
+                            "file_path": "images/ch01_nonexistent.png",
+                            "generation_method": "dalle3",
+                        }
+                    ],
+                }
+            )
+        )
 
         assert _is_image_gen_current(manifest, provenance, "h", "h") is False
 

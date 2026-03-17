@@ -55,10 +55,10 @@ class ReviewTask(Base):
     reviewer_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     artifact_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    decisions: Mapped[list["ReviewDecision"]] = relationship(
+    decisions: Mapped[list["ReviewDecision"]] = relationship(  # noqa: UP037
         back_populates="review_task", cascade="all, delete-orphan"
     )
-    item_decisions: Mapped[list["ReviewItemDecision"]] = relationship(
+    item_decisions: Mapped[list["ReviewItemDecision"]] = relationship(  # noqa: UP037
         "ReviewItemDecision",
         back_populates="review_task",
         cascade="all, delete-orphan",
@@ -86,7 +86,9 @@ class ReviewDecision(Base):
         DateTime(timezone=True), nullable=False, default=_utcnow
     )
 
-    review_task: Mapped["ReviewTask"] = relationship(back_populates="decisions")
+    review_task: Mapped["ReviewTask"] = relationship(  # noqa: UP037
+        back_populates="decisions"
+    )
 
     def __repr__(self) -> str:
         return (

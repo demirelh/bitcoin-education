@@ -1099,7 +1099,8 @@ def prompt_list(ctx: click.Context, name: str | None) -> None:
             return
 
         click.echo(
-            f"{'ID':<5} {'Name':<25} {'Ver':<5} {'Default':<9} {'Hash':<14} {'Model':<30} {'Created'}"
+            f"{'ID':<5} {'Name':<25} {'Ver':<5} {'Default':<9} "
+            f"{'Hash':<14} {'Model':<30} {'Created'}"
         )
         click.echo("-" * 110)
         for pv in versions:
@@ -1396,29 +1397,37 @@ def stock_list(ctx: click.Context, episode_id: str) -> None:
             detail = "no candidates"
             rank = "-"
 
-        click.echo(
-            f"{ch_id:<8} {rank:<6} {status:<12} {detail:<35} {query[:35]}"
-        )
+        click.echo(f"{ch_id:<8} {rank:<6} {status:<12} {detail:<35} {query[:35]}")
 
 
 @stock.command(name="select")
 @click.option("--episode-id", required=True)
 @click.option(
-    "--chapter", "chapter_id", required=True,
+    "--chapter",
+    "chapter_id",
+    required=True,
     help="Chapter to select image for (e.g. ch03).",
 )
 @click.option(
-    "--photo-id", "pexels_id", required=True, type=int,
+    "--photo-id",
+    "pexels_id",
+    required=True,
+    type=int,
     help="Pexels photo ID to select.",
 )
 @click.option(
-    "--lock", is_flag=True, default=False,
+    "--lock",
+    is_flag=True,
+    default=False,
     help="Lock selection (won't change on re-search).",
 )
 @click.pass_context
 def stock_select(
-    ctx: click.Context, episode_id: str, chapter_id: str,
-    pexels_id: int, lock: bool,
+    ctx: click.Context,
+    episode_id: str,
+    chapter_id: str,
+    pexels_id: int,
+    lock: bool,
 ) -> None:
     """Select a specific Pexels photo for a chapter."""
     from btcedu.core.stock_images import select_stock_image
@@ -1426,14 +1435,9 @@ def stock_select(
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
     try:
-        select_stock_image(
-            session, episode_id, chapter_id, pexels_id, settings, lock=lock
-        )
+        select_stock_image(session, episode_id, chapter_id, pexels_id, settings, lock=lock)
         locked_msg = " (locked)" if lock else ""
-        click.echo(
-            f"[OK] Selected pexels:{pexels_id} for "
-            f"{episode_id}/{chapter_id}{locked_msg}"
-        )
+        click.echo(f"[OK] Selected pexels:{pexels_id} for {episode_id}/{chapter_id}{locked_msg}")
     except Exception as e:
         click.echo(f"[FAIL] {e}", err=True)
     finally:
@@ -1442,15 +1446,14 @@ def stock_select(
 
 @stock.command(name="rank")
 @click.option(
-    "--episode-id", required=True,
+    "--episode-id",
+    required=True,
     help="Episode ID to rank candidates for.",
 )
 @click.option("--force", is_flag=True, default=False, help="Re-rank even locked chapters.")
 @click.option("--dry-run", "dry_run", is_flag=True, default=False, help="Skip LLM calls.")
 @click.pass_context
-def stock_rank(
-    ctx: click.Context, episode_id: str, force: bool, dry_run: bool
-) -> None:
+def stock_rank(ctx: click.Context, episode_id: str, force: bool, dry_run: bool) -> None:
     """Rank stock image candidates using LLM."""
     from btcedu.core.stock_images import rank_candidates
 
@@ -1569,7 +1572,7 @@ def smoke_test_pipeline(ctx: click.Context, profile: str | None) -> None:
 
     from btcedu.core.pipeline import _get_stages
     from btcedu.core.prompt_registry import TEMPLATES_DIR
-    from btcedu.profiles import ProfileNotFoundError, get_registry, reset_registry
+    from btcedu.profiles import get_registry, reset_registry
 
     settings = ctx.obj["settings"]
     reset_registry()
@@ -1580,11 +1583,7 @@ def smoke_test_pipeline(ctx: click.Context, profile: str | None) -> None:
         click.echo("[FAIL] No profiles found.", err=True)
         raise SystemExit(1)
 
-    profiles_to_check = (
-        [registry.get(profile)]
-        if profile
-        else all_profiles
-    )
+    profiles_to_check = [registry.get(profile)] if profile else all_profiles
 
     all_pass = True
 
@@ -1641,9 +1640,7 @@ def smoke_test_pipeline(ctx: click.Context, profile: str | None) -> None:
         tts_cfg = p.stage_config.get("tts", {})
         if tts_cfg:
             voice = tts_cfg.get("voice_id") or "(settings default)"
-            click.echo(
-                f"  TTS: voice_id={voice}, stability={tts_cfg.get('stability', 'default')}"
-            )
+            click.echo(f"  TTS: voice_id={voice}, stability={tts_cfg.get('stability', 'default')}")
         else:
             click.echo("  TTS: (no profile override — using settings defaults)")
 
@@ -1658,11 +1655,11 @@ def smoke_test_pipeline(ctx: click.Context, profile: str | None) -> None:
         # Result
         if fails:
             all_pass = False
-            click.echo(f"  [FAIL] Issues:")
+            click.echo("  [FAIL] Issues:")
             for f in fails:
                 click.echo(f"    - {f}", err=True)
         else:
-            click.echo(f"  [PASS]")
+            click.echo("  [PASS]")
 
     click.echo("")
     if all_pass:
@@ -1889,7 +1886,9 @@ def publish(
                 if result.skipped:
                     click.echo(f"[SKIP] {eid} -> already published at {result.youtube_url}")
                 elif result.dry_run:
-                    click.echo(f"[DRY-RUN] {eid} -> would publish (video_id={result.youtube_video_id})")
+                    click.echo(
+                        f"[DRY-RUN] {eid} -> would publish (video_id={result.youtube_video_id})"
+                    )
                 else:
                     click.echo(f"[OK] {eid} -> {result.youtube_url}")
             except Exception as e:
@@ -1910,7 +1909,9 @@ def youtube_auth(ctx: click.Context) -> None:
 
     settings = ctx.obj["settings"]
     client_secrets = getattr(settings, "youtube_client_secrets_path", "data/client_secret.json")
-    credentials_out = getattr(settings, "youtube_credentials_path", "data/.youtube_credentials.json")
+    credentials_out = getattr(
+        settings, "youtube_credentials_path", "data/.youtube_credentials.json"
+    )
 
     click.echo(f"Starting OAuth2 flow using: {client_secrets}")
     click.echo("A browser window will open to authorize this app...")
@@ -1928,7 +1929,9 @@ def youtube_status(ctx: click.Context) -> None:
     from btcedu.services.youtube_service import check_token_status
 
     settings = ctx.obj["settings"]
-    credentials_path = getattr(settings, "youtube_credentials_path", "data/.youtube_credentials.json")
+    credentials_path = getattr(
+        settings, "youtube_credentials_path", "data/.youtube_credentials.json"
+    )
 
     try:
         status = check_token_status(credentials_path=credentials_path)
@@ -1944,4 +1947,3 @@ def youtube_status(ctx: click.Context) -> None:
             click.echo(f"Error            : {status['error']}")
     except Exception as e:
         click.echo(f"[FAIL] Could not check status: {e}", err=True)
-

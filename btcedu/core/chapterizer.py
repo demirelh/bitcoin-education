@@ -128,8 +128,7 @@ def chapterize_script(
     if use_story_mode:
         # Story mode: check for reviewed translation sidecar first
         stories_reviewed_path = (
-            Path(settings.outputs_dir) / episode_id / "review"
-            / "stories_translated.reviewed.json"
+            Path(settings.outputs_dir) / episode_id / "review" / "stories_translated.reviewed.json"
         )
         if stories_reviewed_path.exists():
             adapted_path = stories_reviewed_path
@@ -625,7 +624,10 @@ def _parse_json_response(
             logger.warning(
                 "Response for %s starts with non-JSON text, extracting JSON object "
                 "(chars %d-%d of %d)",
-                episode_id, first_brace, last_brace, len(text),
+                episode_id,
+                first_brace,
+                last_brace,
+                len(text),
             )
             text = text[first_brace : last_brace + 1]
 
@@ -725,7 +727,9 @@ def _fix_chapter_data(data: dict, episode_id: str) -> dict:
                 mapped = _VISUAL_TYPE_MAP.get(vtype.lower(), "b_roll")
                 logger.info(
                     "Fixing visual type '%s' -> '%s' in chapter %s",
-                    vtype, mapped, ch.get("chapter_id", "?"),
+                    vtype,
+                    mapped,
+                    ch.get("chapter_id", "?"),
                 )
                 visual["type"] = mapped
 
@@ -814,7 +818,7 @@ Please correct the JSON and return a valid document matching this EXACT schema:
   ]
 }}
 
-CRITICAL: narration, visual, overlays, and transitions MUST be objects/arrays as shown above, NOT strings.
+CRITICAL: narration, visual, overlays, transitions MUST be objects/arrays, NOT strings.
 - narration must be an object with text, word_count, estimated_duration_seconds
 - visual must be an object with type, description, image_prompt
 - overlays must be an array of objects with type, text, start_offset_seconds, duration_seconds

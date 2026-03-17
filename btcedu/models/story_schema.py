@@ -47,9 +47,7 @@ class Story(BaseModel):
     headline_tr: str | None = Field(
         None, description="Turkish headline (filled during translation)"
     )
-    text_tr: str | None = Field(
-        None, description="Turkish translation (filled during translation)"
-    )
+    text_tr: str | None = Field(None, description="Turkish translation (filled during translation)")
 
 
 class StoryDocument(BaseModel):
@@ -86,8 +84,7 @@ class StoryDocument(BaseModel):
             expected_order = list(range(1, len(self.stories) + 1))
             if actual_order != expected_order:
                 raise ValueError(
-                    f"Story order must be sequential 1..{len(self.stories)}, "
-                    f"got {actual_order}"
+                    f"Story order must be sequential 1..{len(self.stories)}, got {actual_order}"
                 )
 
         return self

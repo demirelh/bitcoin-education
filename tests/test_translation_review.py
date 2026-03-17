@@ -336,9 +336,7 @@ class TestGetStagesTagesschau:
         from btcedu.core.pipeline import _get_stages
 
         stages = _get_stages(settings_with_profiles, tagesschau_episode)
-        rgt_stage = next(
-            ((n, s) for n, s in stages if n == "review_gate_translate"), None
-        )
+        rgt_stage = next(((n, s) for n, s in stages if n == "review_gate_translate"), None)
 
         assert rgt_stage is not None
         assert rgt_stage[1] == EpisodeStatus.TRANSLATED
@@ -355,9 +353,7 @@ class TestGetStagesTagesschau:
         assert chap_stage is not None
         assert chap_stage[1] == EpisodeStatus.TRANSLATED
 
-    def test_bitcoin_podcast_unchanged(
-        self, db_session, bitcoin_episode, settings_with_profiles
-    ):
+    def test_bitcoin_podcast_unchanged(self, db_session, bitcoin_episode, settings_with_profiles):
         """bitcoin_podcast still has review_gate_2, adapt, not review_gate_translate."""
         from btcedu.core.pipeline import _get_stages
 
@@ -390,8 +386,11 @@ class TestReviewGateTranslateRunStage:
         )
 
         result = _run_stage(
-            db_session, tagesschau_episode, settings_with_profiles,
-            "review_gate_translate", force=False,
+            db_session,
+            tagesschau_episode,
+            settings_with_profiles,
+            "review_gate_translate",
+            force=False,
         )
 
         assert result.status == "review_pending"
@@ -432,8 +431,11 @@ class TestReviewGateTranslateRunStage:
         db_session.commit()
 
         result = _run_stage(
-            db_session, tagesschau_episode, settings_with_profiles,
-            "review_gate_translate", force=False,
+            db_session,
+            tagesschau_episode,
+            settings_with_profiles,
+            "review_gate_translate",
+            force=False,
         )
 
         assert result.status == "success"
@@ -456,8 +458,11 @@ class TestReviewGateTranslateRunStage:
         db_session.commit()
 
         result = _run_stage(
-            db_session, tagesschau_episode, settings_with_profiles,
-            "review_gate_translate", force=False,
+            db_session,
+            tagesschau_episode,
+            settings_with_profiles,
+            "review_gate_translate",
+            force=False,
         )
 
         assert result.status == "review_pending"
@@ -481,8 +486,11 @@ class TestReviewGateTranslateRunStage:
 
         with pytest.raises(ValueError, match="requires v2 pipeline"):
             _run_stage(
-                db_session, v1_episode, settings_with_profiles,
-                "review_gate_translate", force=False,
+                db_session,
+                v1_episode,
+                settings_with_profiles,
+                "review_gate_translate",
+                force=False,
             )
 
 
@@ -522,8 +530,12 @@ class TestAssembleTranslationReview:
         db_session.add(task)
         db_session.commit()
 
-        d_s01 = self._make_item_decision(task.id, "trans-s01", ReviewItemAction.EDITED.value,
-                                          edited_text="Düzeltilmiş Türkçe metin.")
+        d_s01 = self._make_item_decision(
+            task.id,
+            "trans-s01",
+            ReviewItemAction.EDITED.value,
+            edited_text="Düzeltilmiş Türkçe metin.",
+        )
         db_session.add(d_s01)
         db_session.commit()
 
@@ -553,9 +565,7 @@ class TestAssembleTranslationReview:
         db_session.add(task)
         db_session.commit()
 
-        d_s01 = self._make_item_decision(
-            task.id, "trans-s01", ReviewItemAction.REJECTED.value
-        )
+        d_s01 = self._make_item_decision(task.id, "trans-s01", ReviewItemAction.REJECTED.value)
         db_session.add(d_s01)
         db_session.commit()
 
@@ -581,9 +591,7 @@ class TestAssembleTranslationReview:
         db_session.add(task)
         db_session.commit()
 
-        d_s01 = self._make_item_decision(
-            task.id, "trans-s01", ReviewItemAction.UNCHANGED.value
-        )
+        d_s01 = self._make_item_decision(task.id, "trans-s01", ReviewItemAction.UNCHANGED.value)
         db_session.add(d_s01)
         db_session.commit()
 
@@ -622,9 +630,7 @@ class TestAssembleTranslationReview:
         db_session.add(task)
         db_session.commit()
 
-        d_s01 = self._make_item_decision(
-            task.id, "trans-s01", ReviewItemAction.ACCEPTED.value
-        )
+        d_s01 = self._make_item_decision(task.id, "trans-s01", ReviewItemAction.ACCEPTED.value)
         db_session.add(d_s01)
         db_session.commit()
 
@@ -704,6 +710,7 @@ class TestApplyItemDecisionsTranslate:
 
         # Patch _get_runtime_settings to return settings with our tmp_path
         from btcedu.config import Settings
+
         mock_settings = Settings(
             outputs_dir=str(tmp_path / "outputs"),
             transcripts_dir=str(tmp_path / "transcripts"),
@@ -727,33 +734,35 @@ class TestApplyItemDecisionsTranslate:
 
 class TestChapterizerUsesSidecar:
     def _make_chapter_response(self, episode_id: str) -> str:
-        return json.dumps({
-            "schema_version": "1.0",
-            "episode_id": episode_id,
-            "title": "tagesschau 20:00 Uhr",
-            "total_chapters": 1,
-            "estimated_duration_seconds": 4,
-            "chapters": [
-                {
-                    "chapter_id": "ch01",
-                    "title": "Test",
-                    "order": 1,
-                    "narration": {
-                        "text": "Reviewed Turkish text.",
-                        "word_count": 3,
-                        "estimated_duration_seconds": 4,
-                    },
-                    "visual": {
-                        "type": "b_roll",
-                        "description": "Test",
-                        "image_prompt": "Test image",
-                    },
-                    "overlays": [],
-                    "transitions": {"in": "fade", "out": "cut"},
-                    "notes": None,
-                }
-            ],
-        })
+        return json.dumps(
+            {
+                "schema_version": "1.0",
+                "episode_id": episode_id,
+                "title": "tagesschau 20:00 Uhr",
+                "total_chapters": 1,
+                "estimated_duration_seconds": 4,
+                "chapters": [
+                    {
+                        "chapter_id": "ch01",
+                        "title": "Test",
+                        "order": 1,
+                        "narration": {
+                            "text": "Reviewed Turkish text.",
+                            "word_count": 3,
+                            "estimated_duration_seconds": 4,
+                        },
+                        "visual": {
+                            "type": "b_roll",
+                            "description": "Test",
+                            "image_prompt": "Test image",
+                        },
+                        "overlays": [],
+                        "transitions": {"in": "fade", "out": "cut"},
+                        "notes": None,
+                    }
+                ],
+            }
+        )
 
     def test_chapterizer_prefers_reviewed_sidecar(
         self, db_session, settings_with_profiles, tmp_path

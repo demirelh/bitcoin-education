@@ -115,7 +115,12 @@ def review_setup(db_engine, tmp_path):
     task_id = task.id
     session.close()
 
-    return {"task_id": task_id, "transcript_path": str(transcript_file), "diff_path": str(diff_file), "tmp_path": tmp_path}
+    return {
+        "task_id": task_id,
+        "transcript_path": str(transcript_file),
+        "diff_path": str(diff_file),
+        "tmp_path": tmp_path,
+    }
 
 
 # ── item action endpoint tests ─────────────────────────────────────────────
@@ -133,16 +138,21 @@ class TestAcceptItem:
 
     def test_accept_creates_db_record(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review_item import ReviewItemDecision
 
         task_id = review_setup["task_id"]
         client.post(f"/api/reviews/{task_id}/items/corr-0000/accept")
 
         session = sessionmaker(bind=db_engine)()
-        record = session.query(ReviewItemDecision).filter(
-            ReviewItemDecision.review_task_id == task_id,
-            ReviewItemDecision.item_id == "corr-0000",
-        ).first()
+        record = (
+            session.query(ReviewItemDecision)
+            .filter(
+                ReviewItemDecision.review_task_id == task_id,
+                ReviewItemDecision.item_id == "corr-0000",
+            )
+            .first()
+        )
         session.close()
         assert record is not None
         assert record.action == "accepted"
@@ -161,6 +171,7 @@ class TestRejectItem:
 class TestEditItem:
     def test_edit_item_valid(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review_item import ReviewItemDecision
 
         task_id = review_setup["task_id"]
@@ -175,10 +186,14 @@ class TestEditItem:
         assert data["edited_text"] == "corrected text"
 
         session = sessionmaker(bind=db_engine)()
-        record = session.query(ReviewItemDecision).filter(
-            ReviewItemDecision.review_task_id == task_id,
-            ReviewItemDecision.item_id == "corr-0002",
-        ).first()
+        record = (
+            session.query(ReviewItemDecision)
+            .filter(
+                ReviewItemDecision.review_task_id == task_id,
+                ReviewItemDecision.item_id == "corr-0002",
+            )
+            .first()
+        )
         session.close()
         assert record.edited_text == "corrected text"
 
@@ -202,6 +217,7 @@ class TestEditItem:
 class TestResetItem:
     def test_reset_item(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review_item import ReviewItemDecision
 
         task_id = review_setup["task_id"]
@@ -214,10 +230,14 @@ class TestResetItem:
         assert data["action"] == "pending"
 
         session = sessionmaker(bind=db_engine)()
-        record = session.query(ReviewItemDecision).filter(
-            ReviewItemDecision.review_task_id == task_id,
-            ReviewItemDecision.item_id == "corr-0000",
-        ).first()
+        record = (
+            session.query(ReviewItemDecision)
+            .filter(
+                ReviewItemDecision.review_task_id == task_id,
+                ReviewItemDecision.item_id == "corr-0000",
+            )
+            .first()
+        )
         session.close()
         assert record.action == "pending"
 
@@ -225,6 +245,7 @@ class TestResetItem:
 class TestItemActionGuards:
     def test_item_action_on_approved_review(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review import ReviewTask
 
         task_id = review_setup["task_id"]
@@ -259,6 +280,7 @@ class TestApplyReviewItems:
         assert data["pending_count"] >= 1
         # Verify file was created
         import os
+
         assert os.path.exists(data["reviewed_file"])
 
     def test_apply_no_decisions_yet(self, client, review_setup):
@@ -270,6 +292,7 @@ class TestApplyReviewItems:
 
     def test_review_detail_includes_item_decisions(self, client, db_engine, review_setup):
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.core.reviewer import upsert_item_decision
 
         task_id = review_setup["task_id"]
@@ -377,6 +400,7 @@ class TestApplyAdaptationAPI:
         # Verify sidecar content: rejected item reverted to original, accepted item kept
         sidecar_path = data["reviewed_file"]
         import os
+
         assert os.path.exists(sidecar_path)
         content = open(sidecar_path, encoding="utf-8").read()
         # adap-0000 rejected → "OOO" replaces "XXX"; adap-0001 accepted → "YYY" kept
@@ -396,9 +420,12 @@ class TestApplyAdaptationAPI:
         )
         assert expected_sidecar.exists()
 
-    def test_apply_on_non_actionable_review_returns_400(self, client, db_engine, review_setup_adaptation):
+    def test_apply_on_non_actionable_review_returns_400(
+        self, client, db_engine, review_setup_adaptation
+    ):
         """Apply on an approved review returns 400 (non-actionable guard)."""
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review import ReviewTask as RT
 
         task_id = review_setup_adaptation["task_id"]
@@ -416,7 +443,9 @@ class TestBackwardCompatibility:
     def test_old_diff_without_item_id(self, client, db_engine, review_setup):
         """Old-format diffs (no item_id) return empty item_decisions without crashing."""
         import json
+
         from sqlalchemy.orm import sessionmaker
+
         from btcedu.models.review import ReviewTask
 
         tmp_path = review_setup["tmp_path"]

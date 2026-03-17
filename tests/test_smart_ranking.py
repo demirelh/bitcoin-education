@@ -118,9 +118,21 @@ class TestTrToEnExpansion:
     def test_new_terms_count(self):
         """At least 15 new terms were added in Phase 3."""
         new_terms = [
-            "makas", "baskı", "köpük", "balon", "boşluk", "çukur",
-            "dalga", "patlama", "daralma", "aşınma", "tavan", "taban",
-            "kaldıraç", "çıpa", "sürdürülebilir",
+            "makas",
+            "baskı",
+            "köpük",
+            "balon",
+            "boşluk",
+            "çukur",
+            "dalga",
+            "patlama",
+            "daralma",
+            "aşınma",
+            "tavan",
+            "taban",
+            "kaldıraç",
+            "çıpa",
+            "sürdürülebilir",
         ]
         for term in new_terms:
             assert term in _TR_TO_EN, f"Expected '{term}' in _TR_TO_EN"
@@ -192,17 +204,19 @@ class TestParseIntentResponse:
 
     def test_valid_response_parsed(self):
         chapters = self._make_chapters_list(["ch01"])
-        response = json.dumps({
-            "chapters": {
-                "ch01": {
-                    "intents": ["wealth inequality"],
-                    "allowed_motifs": ["city skyline"],
-                    "disallowed_motifs": ["scissors"],
-                    "literal_traps": [{"word": "makas", "intended": "gap", "trap": "scissors"}],
-                    "search_hints": ["wealth gap"],
+        response = json.dumps(
+            {
+                "chapters": {
+                    "ch01": {
+                        "intents": ["wealth inequality"],
+                        "allowed_motifs": ["city skyline"],
+                        "disallowed_motifs": ["scissors"],
+                        "literal_traps": [{"word": "makas", "intended": "gap", "trap": "scissors"}],
+                        "search_hints": ["wealth gap"],
+                    }
                 }
             }
-        })
+        )
         result = _parse_intent_response(response, chapters)
         assert "ch01" in result
         assert result["ch01"]["intents"] == ["wealth inequality"]
@@ -220,17 +234,19 @@ class TestParseIntentResponse:
     def test_partial_response_handles_missing_chapters(self):
         """Only ch01 in response; ch02 should get empty intents."""
         chapters = self._make_chapters_list(["ch01", "ch02"])
-        response = json.dumps({
-            "chapters": {
-                "ch01": {
-                    "intents": ["bitcoin mining"],
-                    "allowed_motifs": ["hardware"],
-                    "disallowed_motifs": [],
-                    "literal_traps": [],
-                    "search_hints": ["bitcoin mining hardware"],
+        response = json.dumps(
+            {
+                "chapters": {
+                    "ch01": {
+                        "intents": ["bitcoin mining"],
+                        "allowed_motifs": ["hardware"],
+                        "disallowed_motifs": [],
+                        "literal_traps": [],
+                        "search_hints": ["bitcoin mining hardware"],
+                    }
                 }
             }
-        })
+        )
         result = _parse_intent_response(response, chapters)
         assert result["ch01"]["intents"] == ["bitcoin mining"]
         assert result["ch02"]["intents"] == []
@@ -238,17 +254,19 @@ class TestParseIntentResponse:
     def test_markdown_fence_stripped(self):
         """Markdown code fences should be stripped before parsing."""
         chapters = self._make_chapters_list(["ch01"])
-        inner = json.dumps({
-            "chapters": {
-                "ch01": {
-                    "intents": ["test"],
-                    "allowed_motifs": [],
-                    "disallowed_motifs": [],
-                    "literal_traps": [],
-                    "search_hints": [],
+        inner = json.dumps(
+            {
+                "chapters": {
+                    "ch01": {
+                        "intents": ["test"],
+                        "allowed_motifs": [],
+                        "disallowed_motifs": [],
+                        "literal_traps": [],
+                        "search_hints": [],
+                    }
                 }
             }
-        })
+        )
         fenced = f"```json\n{inner}\n```"
         result = _parse_intent_response(fenced, chapters)
         assert result["ch01"]["intents"] == ["test"]
@@ -269,10 +287,20 @@ class TestValidateAndAdjustSelection:
             "literal_traps": [],
         }
         candidates = [
-            {"pexels_id": 111, "alt_text": "Wealth photo", "rank": 1,
-             "selected": True, "trap_flag": True},
-            {"pexels_id": 222, "alt_text": "Financial chart", "rank": 2,
-             "selected": False, "trap_flag": False},
+            {
+                "pexels_id": 111,
+                "alt_text": "Wealth photo",
+                "rank": 1,
+                "selected": True,
+                "trap_flag": True,
+            },
+            {
+                "pexels_id": 222,
+                "alt_text": "Financial chart",
+                "rank": 2,
+                "selected": False,
+                "trap_flag": False,
+            },
         ]
         _validate_and_adjust_selection(candidates, intent_data, set())
         assert not candidates[0]["selected"]
@@ -292,12 +320,16 @@ class TestValidateAndAdjustSelection:
             {
                 "pexels_id": 6152046,
                 "alt_text": "Glass wall of modern barbershop with reflection",
-                "rank": 1, "selected": True, "trap_flag": False,
+                "rank": 1,
+                "selected": True,
+                "trap_flag": False,
             },
             {
                 "pexels_id": 19260324,
                 "alt_text": "Luxury hotel facade in city center",
-                "rank": 2, "selected": False, "trap_flag": False,
+                "rank": 2,
+                "selected": False,
+                "trap_flag": False,
             },
         ]
         _validate_and_adjust_selection(candidates, intent_data, set())
@@ -317,12 +349,16 @@ class TestValidateAndAdjustSelection:
             {
                 "pexels_id": 9876,
                 "alt_text": "Stainless steel pressure cooker on kitchen counter",
-                "rank": 1, "selected": True, "trap_flag": False,
+                "rank": 1,
+                "selected": True,
+                "trap_flag": False,
             },
             {
                 "pexels_id": 5432,
                 "alt_text": "Central bank facade in European city",
-                "rank": 2, "selected": False, "trap_flag": False,
+                "rank": 2,
+                "selected": False,
+                "trap_flag": False,
             },
         ]
         _validate_and_adjust_selection(candidates, intent_data, set())
@@ -343,12 +379,16 @@ class TestValidateAndAdjustSelection:
             {
                 "pexels_id": 1111,
                 "alt_text": "Child playing with colorful soap bubbles in garden",
-                "rank": 1, "selected": True, "trap_flag": False,
+                "rank": 1,
+                "selected": True,
+                "trap_flag": False,
             },
             {
                 "pexels_id": 2222,
                 "alt_text": "Stock market graph showing sharp decline",
-                "rank": 2, "selected": False, "trap_flag": False,
+                "rank": 2,
+                "selected": False,
+                "trap_flag": False,
             },
         ]
         _validate_and_adjust_selection(candidates, intent_data, set())
@@ -364,10 +404,20 @@ class TestValidateAndAdjustSelection:
             "literal_traps": [],
         }
         candidates = [
-            {"pexels_id": 999, "alt_text": "Bitcoin coin photo", "rank": 1,
-             "selected": True, "trap_flag": False},
-            {"pexels_id": 888, "alt_text": "Blockchain network diagram", "rank": 2,
-             "selected": False, "trap_flag": False},
+            {
+                "pexels_id": 999,
+                "alt_text": "Bitcoin coin photo",
+                "rank": 1,
+                "selected": True,
+                "trap_flag": False,
+            },
+            {
+                "pexels_id": 888,
+                "alt_text": "Blockchain network diagram",
+                "rank": 2,
+                "selected": False,
+                "trap_flag": False,
+            },
         ]
         already_selected = {999}  # 999 already used in ch01
         _validate_and_adjust_selection(candidates, intent_data, already_selected)
@@ -384,10 +434,20 @@ class TestValidateAndAdjustSelection:
             "literal_traps": [],
         }
         candidates = [
-            {"pexels_id": 999, "alt_text": "Bitcoin coin", "rank": 1,
-             "selected": True, "trap_flag": False},
-            {"pexels_id": 888, "alt_text": "Another bitcoin coin", "rank": 2,
-             "selected": False, "trap_flag": False},
+            {
+                "pexels_id": 999,
+                "alt_text": "Bitcoin coin",
+                "rank": 1,
+                "selected": True,
+                "trap_flag": False,
+            },
+            {
+                "pexels_id": 888,
+                "alt_text": "Another bitcoin coin",
+                "rank": 2,
+                "selected": False,
+                "trap_flag": False,
+            },
         ]
         already_selected = {999, 888}  # Both already used
         _validate_and_adjust_selection(candidates, intent_data, already_selected)
@@ -403,10 +463,20 @@ class TestValidateAndAdjustSelection:
             "literal_traps": [],
         }
         candidates = [
-            {"pexels_id": 500, "alt_text": "Bitcoin mining hardware server room",
-             "rank": 1, "selected": True, "trap_flag": False},
-            {"pexels_id": 501, "alt_text": "Computer chip close-up",
-             "rank": 2, "selected": False, "trap_flag": False},
+            {
+                "pexels_id": 500,
+                "alt_text": "Bitcoin mining hardware server room",
+                "rank": 1,
+                "selected": True,
+                "trap_flag": False,
+            },
+            {
+                "pexels_id": 501,
+                "alt_text": "Computer chip close-up",
+                "rank": 2,
+                "selected": False,
+                "trap_flag": False,
+            },
         ]
         _validate_and_adjust_selection(candidates, intent_data, set())
         assert candidates[0]["selected"]
@@ -430,10 +500,11 @@ class TestExtractChapterIntents:
 
         session = MagicMock()
 
-        with patch("btcedu.core.stock_images._load_chapters", return_value=chapters_doc), \
-             patch("btcedu.core.stock_images._compute_chapters_hash", return_value="hash123"), \
-             patch("btcedu.services.claude_service.call_claude") as mock_claude:
-
+        with (
+            patch("btcedu.core.stock_images._load_chapters", return_value=chapters_doc),
+            patch("btcedu.core.stock_images._compute_chapters_hash", return_value="hash123"),
+            patch("btcedu.services.claude_service.call_claude") as mock_claude,
+        ):
             result = extract_chapter_intents(session, "ep001", settings)
 
             mock_claude.assert_not_called()
@@ -477,10 +548,11 @@ class TestExtractChapterIntents:
 
         session = MagicMock()
 
-        with patch("btcedu.core.stock_images._load_chapters", return_value=chapters_doc), \
-             patch("btcedu.core.stock_images._compute_chapters_hash", return_value="fixed_hash"), \
-             patch("btcedu.services.claude_service.call_claude") as mock_claude:
-
+        with (
+            patch("btcedu.core.stock_images._load_chapters", return_value=chapters_doc),
+            patch("btcedu.core.stock_images._compute_chapters_hash", return_value="fixed_hash"),
+            patch("btcedu.services.claude_service.call_claude") as mock_claude,
+        ):
             result = extract_chapter_intents(session, "ep001", settings, force=False)
 
             mock_claude.assert_not_called()
@@ -502,10 +574,12 @@ class TestIntegration:
         ch2 = _make_chapter("ch02", "Blockchain", visual_type="diagram")
         chapters_doc = _make_chapters_doc([ch1, ch2])
 
-        manifest = _make_manifest({
-            "ch01": {"search_query": "bitcoin mining", "candidates": _make_candidates(2, 100)},
-            "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
-        })
+        manifest = _make_manifest(
+            {
+                "ch01": {"search_query": "bitcoin mining", "candidates": _make_candidates(2, 100)},
+                "ch02": {"search_query": "blockchain", "candidates": _make_candidates(2, 200)},
+            }
+        )
         manifest_dir = tmp_path / "ep001" / "images" / "candidates"
         manifest_dir.mkdir(parents=True)
         (manifest_dir / "candidates_manifest.json").write_text(json.dumps(manifest))
@@ -538,11 +612,12 @@ class TestIntegration:
             },
         }
 
-        with patch("btcedu.core.stock_images._load_chapters", return_value=chapters_doc), \
-             patch("btcedu.core.stock_images._get_episode", return_value=MagicMock()), \
-             patch("btcedu.core.stock_images.extract_chapter_intents") as mock_extract, \
-             patch("btcedu.services.claude_service.call_claude") as mock_claude:
-
+        with (
+            patch("btcedu.core.stock_images._load_chapters", return_value=chapters_doc),
+            patch("btcedu.core.stock_images._get_episode", return_value=MagicMock()),
+            patch("btcedu.core.stock_images.extract_chapter_intents") as mock_extract,
+            patch("btcedu.services.claude_service.call_claude") as mock_claude,
+        ):
             mock_extract.return_value = MagicMock(
                 cost_usd=0.01,
                 intent_path=manifest_dir / "intent_analysis.json",
@@ -550,12 +625,14 @@ class TestIntegration:
             )
             (manifest_dir / "intent_analysis.json").write_text(json.dumps(intent_data))
 
-            rankings_json = json.dumps({
-                "rankings": [
-                    {"pexels_id": 100, "rank": 1, "reason": "Best", "trap_flag": False},
-                    {"pexels_id": 101, "rank": 2, "reason": "Good", "trap_flag": False},
-                ]
-            })
+            rankings_json = json.dumps(
+                {
+                    "rankings": [
+                        {"pexels_id": 100, "rank": 1, "reason": "Best", "trap_flag": False},
+                        {"pexels_id": 101, "rank": 2, "reason": "Good", "trap_flag": False},
+                    ]
+                }
+            )
             mock_claude.return_value = MagicMock(text=rankings_json, cost_usd=0.005)
 
             result = rank_candidates(session, "ep001", settings)
@@ -570,9 +647,11 @@ class TestIntegration:
         ch1 = _make_chapter("ch01", "Bitcoin", visual_type="b_roll")
         chapters_doc = _make_chapters_doc([ch1])
 
-        manifest = _make_manifest({
-            "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
-        })
+        manifest = _make_manifest(
+            {
+                "ch01": {"search_query": "bitcoin", "candidates": _make_candidates(2, 100)},
+            }
+        )
         manifest_dir = tmp_path / "ep001" / "images" / "candidates"
         manifest_dir.mkdir(parents=True)
         manifest_path = manifest_dir / "candidates_manifest.json"
@@ -598,11 +677,12 @@ class TestIntegration:
 
         session = MagicMock()
 
-        with patch("btcedu.core.stock_images._load_chapters", return_value=chapters_doc), \
-             patch("btcedu.core.stock_images._get_episode", return_value=MagicMock()), \
-             patch("btcedu.core.stock_images.extract_chapter_intents") as mock_extract, \
-             patch("btcedu.services.claude_service.call_claude") as mock_claude:
-
+        with (
+            patch("btcedu.core.stock_images._load_chapters", return_value=chapters_doc),
+            patch("btcedu.core.stock_images._get_episode", return_value=MagicMock()),
+            patch("btcedu.core.stock_images.extract_chapter_intents") as mock_extract,
+            patch("btcedu.services.claude_service.call_claude") as mock_claude,
+        ):
             mock_extract.return_value = MagicMock(
                 cost_usd=0.0,
                 intent_path=manifest_dir / "intent_analysis.json",
@@ -610,12 +690,14 @@ class TestIntegration:
             )
             (manifest_dir / "intent_analysis.json").write_text(json.dumps(intent_data))
 
-            rankings_json = json.dumps({
-                "rankings": [
-                    {"pexels_id": 100, "rank": 1, "reason": "Best", "trap_flag": False},
-                    {"pexels_id": 101, "rank": 2, "reason": "OK", "trap_flag": False},
-                ]
-            })
+            rankings_json = json.dumps(
+                {
+                    "rankings": [
+                        {"pexels_id": 100, "rank": 1, "reason": "Best", "trap_flag": False},
+                        {"pexels_id": 101, "rank": 2, "reason": "OK", "trap_flag": False},
+                    ]
+                }
+            )
             mock_claude.return_value = MagicMock(text=rankings_json, cost_usd=0.003)
 
             rank_candidates(session, "ep001", settings)

@@ -2,9 +2,6 @@
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
-
-import pytest
 
 from btcedu.services.youtube_service import (
     DryRunYouTubeService,
@@ -12,7 +9,6 @@ from btcedu.services.youtube_service import (
     YouTubeUploadResponse,
     check_token_status,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper

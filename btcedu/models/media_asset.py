@@ -37,7 +37,8 @@ class MediaAsset(Base):
     size_bytes = Column(Integer, nullable=False)
     duration_seconds = Column(Float, nullable=True)  # For audio/video assets
     meta = Column(JSON, nullable=True)  # JSON with generation params, cost, etc.
-    prompt_version_id = Column(Integer, nullable=True)  # FK to prompt_versions.id (DB-level constraint via migration)
+    # FK to prompt_versions.id (DB-level constraint via migration)
+    prompt_version_id = Column(Integer, nullable=True)
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(UTC))
 
     def __repr__(self) -> str:

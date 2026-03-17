@@ -43,11 +43,7 @@ def _resolve_channel_id(
             return ch.channel_id
 
     if settings.podcast_rss_url:
-        ch = (
-            session.query(Channel)
-            .filter(Channel.rss_url == settings.podcast_rss_url)
-            .first()
-        )
+        ch = session.query(Channel).filter(Channel.rss_url == settings.podcast_rss_url).first()
         if ch:
             return ch.channel_id
 

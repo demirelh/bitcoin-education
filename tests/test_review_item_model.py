@@ -181,7 +181,16 @@ def test_get_item_decisions(item_session, tmp_path):
     diff_dir2 = tmp_path / "review2"
     diff_dir2.mkdir(parents=True)
     diff_file2 = diff_dir2 / "correction_diff.json"
-    diff_file2.write_text(json.dumps({"episode_id": "ep002", "changes": [], "summary": {"total_changes": 0, "by_type": {}}}), encoding="utf-8")
+    diff_file2.write_text(
+        json.dumps(
+            {
+                "episode_id": "ep002",
+                "changes": [],
+                "summary": {"total_changes": 0, "by_type": {}},
+            }
+        ),
+        encoding="utf-8",
+    )
 
     episode2 = Episode(
         episode_id="ep002",
@@ -197,7 +206,7 @@ def test_get_item_decisions(item_session, tmp_path):
         episode_id="ep002",
         stage="correct",
         status=ReviewStatus.PENDING.value,
-        artifact_paths='[]',
+        artifact_paths="[]",
         diff_path=str(diff_file2),
     )
     item_session.add(task2)
@@ -210,9 +219,33 @@ def test_get_item_decisions(item_session, tmp_path):
     diff_data = {
         "episode_id": "ep001b",
         "changes": [
-            {"item_id": "corr-0000", "type": "replace", "original": "a", "corrected": "b", "context": "...", "position": {"start_word": 0, "end_word": 1}, "category": "auto"},
-            {"item_id": "corr-0001", "type": "replace", "original": "c", "corrected": "d", "context": "...", "position": {"start_word": 2, "end_word": 3}, "category": "auto"},
-            {"item_id": "corr-0002", "type": "replace", "original": "e", "corrected": "f", "context": "...", "position": {"start_word": 4, "end_word": 5}, "category": "auto"},
+            {
+                "item_id": "corr-0000",
+                "type": "replace",
+                "original": "a",
+                "corrected": "b",
+                "context": "...",
+                "position": {"start_word": 0, "end_word": 1},
+                "category": "auto",
+            },
+            {
+                "item_id": "corr-0001",
+                "type": "replace",
+                "original": "c",
+                "corrected": "d",
+                "context": "...",
+                "position": {"start_word": 2, "end_word": 3},
+                "category": "auto",
+            },
+            {
+                "item_id": "corr-0002",
+                "type": "replace",
+                "original": "e",
+                "corrected": "f",
+                "context": "...",
+                "position": {"start_word": 4, "end_word": 5},
+                "category": "auto",
+            },
         ],
         "summary": {"total_changes": 3, "by_type": {"replace": 3}},
     }
@@ -232,7 +265,7 @@ def test_get_item_decisions(item_session, tmp_path):
         episode_id="ep001b",
         stage="correct",
         status=ReviewStatus.PENDING.value,
-        artifact_paths='[]',
+        artifact_paths="[]",
         diff_path=str(diff_file1),
     )
     item_session.add(task1b)

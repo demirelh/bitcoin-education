@@ -90,22 +90,26 @@ class TestProfileRegistry:
     def test_load_all_from_directory(self, tmp_path):
         # Write two profile YAMLs
         (tmp_path / "a.yaml").write_text(
-            yaml.dump({
-                "name": "profile_a",
-                "display_name": "A",
-                "source_language": "de",
-                "target_language": "tr",
-                "domain": "test",
-            })
+            yaml.dump(
+                {
+                    "name": "profile_a",
+                    "display_name": "A",
+                    "source_language": "de",
+                    "target_language": "tr",
+                    "domain": "test",
+                }
+            )
         )
         (tmp_path / "b.yaml").write_text(
-            yaml.dump({
-                "name": "profile_b",
-                "display_name": "B",
-                "source_language": "en",
-                "target_language": "fr",
-                "domain": "news",
-            })
+            yaml.dump(
+                {
+                    "name": "profile_b",
+                    "display_name": "B",
+                    "source_language": "en",
+                    "target_language": "fr",
+                    "domain": "news",
+                }
+            )
         )
 
         registry = ProfileRegistry()
@@ -116,13 +120,15 @@ class TestProfileRegistry:
 
     def test_get(self, tmp_path):
         (tmp_path / "x.yaml").write_text(
-            yaml.dump({
-                "name": "x",
-                "display_name": "X",
-                "source_language": "de",
-                "target_language": "tr",
-                "domain": "test",
-            })
+            yaml.dump(
+                {
+                    "name": "x",
+                    "display_name": "X",
+                    "source_language": "de",
+                    "target_language": "tr",
+                    "domain": "test",
+                }
+            )
         )
         registry = ProfileRegistry()
         registry.load_all(tmp_path)
@@ -136,13 +142,15 @@ class TestProfileRegistry:
 
     def test_list_profiles(self, tmp_path):
         (tmp_path / "one.yaml").write_text(
-            yaml.dump({
-                "name": "one",
-                "display_name": "One",
-                "source_language": "de",
-                "target_language": "tr",
-                "domain": "test",
-            })
+            yaml.dump(
+                {
+                    "name": "one",
+                    "display_name": "One",
+                    "source_language": "de",
+                    "target_language": "tr",
+                    "domain": "test",
+                }
+            )
         )
         registry = ProfileRegistry()
         registry.load_all(tmp_path)
@@ -157,13 +165,15 @@ class TestProfileRegistry:
 
     def test_invalid_yaml_skipped(self, tmp_path):
         (tmp_path / "good.yaml").write_text(
-            yaml.dump({
-                "name": "good",
-                "display_name": "Good",
-                "source_language": "de",
-                "target_language": "tr",
-                "domain": "test",
-            })
+            yaml.dump(
+                {
+                    "name": "good",
+                    "display_name": "Good",
+                    "source_language": "de",
+                    "target_language": "tr",
+                    "domain": "test",
+                }
+            )
         )
         (tmp_path / "bad.yaml").write_text("not a dict: [1, 2, 3]")
 
@@ -330,6 +340,7 @@ class TestMigration008:
 
         # Ensure schema_migrations table exists
         from btcedu.models.migration import SchemaMigration
+
         SchemaMigration.__table__.create(db_engine, checkfirst=True)
 
         m = AddContentProfileMigration()

@@ -80,9 +80,11 @@ def translate_transcript(
     # - SEGMENTED: News profile path — segment stage ran, ready for translation
     # - TRANSLATED: Allow idempotent re-runs (useful for testing, manual re-translation)
     # The _is_translation_current() check will skip if output is already current.
-    if episode.status not in (
-        EpisodeStatus.CORRECTED, EpisodeStatus.SEGMENTED, EpisodeStatus.TRANSLATED
-    ) and not force:
+    if (
+        episode.status
+        not in (EpisodeStatus.CORRECTED, EpisodeStatus.SEGMENTED, EpisodeStatus.TRANSLATED)
+        and not force
+    ):
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'corrected', 'segmented', or 'translated'. Use --force to override."
@@ -227,6 +229,11 @@ def translate_transcript(
         total_output_tokens = 0
         total_cost = 0.0
 
+        # Check if moderator cleaning is enabled for this profile
+        clean_moderator = profile_obj is not None and profile_obj.stage_config.get(
+            "translate", {}
+        ).get("clean_moderator", False)
+
         if use_per_story:
             # Per-story mode: translate each story individually
             (
@@ -242,6 +249,9 @@ def translate_transcript(
                 system_prompt=system_prompt,
                 user_template=user_template,
                 settings=settings,
+                profile_namespace=profile_namespace,
+                clean_moderator=clean_moderator,
+                session=session,
             )
         else:
             # Standard full-transcript translation
@@ -523,12 +533,19 @@ def _translate_per_story(
     system_prompt: str,
     user_template: str,
     settings: "Settings",
+    profile_namespace: str | None = None,
+    clean_moderator: bool = False,
+    session: "Session | None" = None,
 ) -> tuple[str, int, int, int, float]:
     """Translate each story in a StoryDocument individually.
 
     Translates story.text_de -> story.text_tr and story.headline_de -> story.headline_tr
     for each story in the StoryDocument. Writes stories_translated.json and the concatenated
     transcript.tr.txt.
+
+    When clean_moderator is True and story_type is "intro" or "outro", uses a
+    specialized prompt that neutralizes moderator greetings and broadcast names,
+    followed by deterministic regex cleaning of moderator names.
 
     Returns:
         Tuple of (translated_text, segments_processed, input_tokens, output_tokens, cost_usd)
@@ -543,18 +560,34 @@ def _translate_per_story(
     total_cost = 0.0
     segments_processed = 0
 
+    # Load intro/outro prompt if moderator cleaning is enabled
+    intro_outro_prompt: tuple[str, str] | None = None
+    if clean_moderator and session is not None and profile_namespace:
+        intro_outro_prompt = _load_intro_outro_prompt(session, profile_namespace)
+        if intro_outro_prompt:
+            logger.info("Moderator cleaning enabled — using intro/outro prompt")
+
     translated_stories = []
 
     for i, story in enumerate(story_doc.stories):
+        is_intro_outro = story.story_type in ("intro", "outro")
+
+        # Select prompt: specialized for intro/outro, standard for everything else
+        if is_intro_outro and intro_outro_prompt:
+            active_system, active_user_tpl = intro_outro_prompt
+            logger.info("Story %s (%s): using intro/outro prompt", story.story_id, story.story_type)
+        else:
+            active_system, active_user_tpl = system_prompt, user_template
+
         # Translate headline
-        headline_user = user_template.replace("{{ transcript }}", story.headline_de)
+        headline_user = active_user_tpl.replace("{{ transcript }}", story.headline_de)
         dry_run_path = (
             Path(settings.outputs_dir) / episode_id / f"dry_run_translate_s{i:02d}_head.json"
             if settings.dry_run
             else None
         )
         headline_response: ClaudeResponse = call_claude(
-            system_prompt=system_prompt,
+            system_prompt=active_system,
             user_message=headline_user,
             settings=settings,
             dry_run_path=dry_run_path,
@@ -565,14 +598,14 @@ def _translate_per_story(
         segments_processed += 1
 
         # Translate story body
-        body_user = user_template.replace("{{ transcript }}", story.text_de)
+        body_user = active_user_tpl.replace("{{ transcript }}", story.text_de)
         dry_run_path = (
             Path(settings.outputs_dir) / episode_id / f"dry_run_translate_s{i:02d}_body.json"
             if settings.dry_run
             else None
         )
         body_response: ClaudeResponse = call_claude(
-            system_prompt=system_prompt,
+            system_prompt=active_system,
             user_message=body_user,
             settings=settings,
             dry_run_path=dry_run_path,
@@ -584,8 +617,23 @@ def _translate_per_story(
 
         # Build translated story dict
         story_dict = story.model_dump(mode="json")
-        story_dict["headline_tr"] = headline_response.text.strip()
-        story_dict["text_tr"] = body_response.text.strip()
+        headline_tr = headline_response.text.strip()
+        text_tr = body_response.text.strip()
+
+        # Apply deterministic regex cleaning for intro/outro stories
+        if is_intro_outro and clean_moderator:
+            from btcedu.core.moderator_patterns import clean_moderator_names
+
+            headline_tr = clean_moderator_names(headline_tr)
+            text_tr = clean_moderator_names(text_tr)
+            logger.info(
+                "Applied moderator name cleaning to story %s (%s)",
+                story.story_id,
+                story.story_type,
+            )
+
+        story_dict["headline_tr"] = headline_tr
+        story_dict["text_tr"] = text_tr
         translated_stories.append(story_dict)
 
         logger.info(
@@ -627,3 +675,27 @@ def _translate_per_story(
         total_output_tokens,
         total_cost,
     )
+
+
+def _load_intro_outro_prompt(
+    session: "Session",
+    profile_namespace: str,
+) -> tuple[str, str] | None:
+    """Load the specialized intro/outro translation prompt.
+
+    Returns (system_prompt, user_template) tuple, or None if the template
+    does not exist (falls back to standard translate prompt).
+    """
+    registry = PromptRegistry(session)
+    template_file = registry.resolve_template_path(
+        "translate_intro_outro.md", profile=profile_namespace
+    )
+    if not template_file.exists():
+        logger.info(
+            "No intro/outro prompt at %s — using standard translate prompt",
+            template_file,
+        )
+        return None
+
+    _, body = registry.load_template(template_file)
+    return _split_prompt(body)

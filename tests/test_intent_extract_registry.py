@@ -27,7 +27,6 @@ class TestIntentExtractPromptRegistry:
     ):
         """extract_chapter_intents() creates a PromptVersion record for 'intent_extract'."""
         from btcedu.core.stock_images import extract_chapter_intents
-        from btcedu.models.prompt_version import PromptVersion
 
         settings = MagicMock()
         settings.outputs_dir = str(tmp_path)
@@ -60,11 +59,7 @@ class TestIntentExtractPromptRegistry:
         extract_chapter_intents(db_session, "ep001", settings, force=True)
 
         # PromptVersion for 'intent_extract' must now exist in DB
-        pv = (
-            db_session.query(PromptVersion)
-            .filter(PromptVersion.name == "intent_extract")
-            .first()
-        )
+        pv = db_session.query(PromptVersion).filter(PromptVersion.name == "intent_extract").first()
         assert pv is not None
         assert pv.name == "intent_extract"
         assert pv.is_default is True

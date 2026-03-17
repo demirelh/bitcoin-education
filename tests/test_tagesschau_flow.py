@@ -138,21 +138,23 @@ class TestTranslatorPerStoryMode:
     def _make_story_doc(self, episode_id: str, n: int = 2) -> dict:
         stories = []
         for i in range(1, n + 1):
-            stories.append({
-                "story_id": f"s{i:02d}",
-                "order": i,
-                "headline_de": f"Schlagzeile {i}",
-                "category": "politik",
-                "story_type": "meldung",
-                "text_de": f"Der Bundestag hat Geschichte {i} beschlossen.",
-                "word_count": 8,
-                "estimated_duration_seconds": 4,
-                "reporter": None,
-                "location": None,
-                "is_lead_story": i == 1,
-                "headline_tr": None,
-                "text_tr": None,
-            })
+            stories.append(
+                {
+                    "story_id": f"s{i:02d}",
+                    "order": i,
+                    "headline_de": f"Schlagzeile {i}",
+                    "category": "politik",
+                    "story_type": "meldung",
+                    "text_de": f"Der Bundestag hat Geschichte {i} beschlossen.",
+                    "word_count": 8,
+                    "estimated_duration_seconds": 4,
+                    "reporter": None,
+                    "location": None,
+                    "is_lead_story": i == 1,
+                    "headline_tr": None,
+                    "text_tr": None,
+                }
+            )
         return {
             "schema_version": "1.0",
             "episode_id": episode_id,
@@ -204,9 +206,7 @@ class TestTranslatorPerStoryMode:
         from btcedu.core.translator import translate_transcript
 
         with patch("btcedu.core.translator.call_claude", return_value=mock_resp):
-            result = translate_transcript(
-                db_session, "ep_ts", settings_with_profiles, force=False
-            )
+            result = translate_transcript(db_session, "ep_ts", settings_with_profiles, force=False)
 
         assert result.skipped is False
 
@@ -214,9 +214,7 @@ class TestTranslatorPerStoryMode:
         stories_translated_path = outputs_dir / "stories_translated.json"
         assert stories_translated_path.exists(), "stories_translated.json should be created"
 
-        stories_translated = json.loads(
-            stories_translated_path.read_text(encoding="utf-8")
-        )
+        stories_translated = json.loads(stories_translated_path.read_text(encoding="utf-8"))
         doc = StoryDocument.model_validate(stories_translated)
         assert doc.total_stories == 2
         for story in doc.stories:
@@ -282,65 +280,67 @@ class TestChastorizerStoryMode:
         }
 
     def _make_chapter_response(self, episode_id: str) -> str:
-        return json.dumps({
-            "schema_version": "1.0",
-            "episode_id": episode_id,
-            "title": "tagesschau 20:00 Uhr",
-            "total_chapters": 2,
-            "estimated_duration_seconds": 60,
-            "chapters": [
-                {
-                    "chapter_id": "ch01",
-                    "title": "Bundestag oylama yaptı",
-                    "order": 1,
-                    "narration": {
-                        "text": "Bundestag (Almanya Federal Meclisi) bugün oylama yaptı.",
-                        "word_count": 8,
-                        "estimated_duration_seconds": 3,
+        return json.dumps(
+            {
+                "schema_version": "1.0",
+                "episode_id": episode_id,
+                "title": "tagesschau 20:00 Uhr",
+                "total_chapters": 2,
+                "estimated_duration_seconds": 60,
+                "chapters": [
+                    {
+                        "chapter_id": "ch01",
+                        "title": "Bundestag oylama yaptı",
+                        "order": 1,
+                        "narration": {
+                            "text": "Bundestag (Almanya Federal Meclisi) bugün oylama yaptı.",
+                            "word_count": 8,
+                            "estimated_duration_seconds": 3,
+                        },
+                        "visual": {
+                            "type": "b_roll",
+                            "description": "Bundestag building",
+                            "image_prompt": "German parliament building exterior",
+                        },
+                        "overlays": [
+                            {
+                                "type": "lower_third",
+                                "text": "Kaynak: ARD tagesschau — btcedu Türkçe",
+                                "start_offset_seconds": 1.0,
+                                "duration_seconds": 5.0,
+                            }
+                        ],
+                        "transitions": {"in": "fade", "out": "cut"},
+                        "notes": None,
                     },
-                    "visual": {
-                        "type": "b_roll",
-                        "description": "Bundestag building",
-                        "image_prompt": "German parliament building exterior",
+                    {
+                        "chapter_id": "ch02",
+                        "title": "Ekonomi haberleri",
+                        "order": 2,
+                        "narration": {
+                            "text": "Ekonomi yüzde iki büyüdü.",
+                            "word_count": 4,
+                            "estimated_duration_seconds": 2,
+                        },
+                        "visual": {
+                            "type": "b_roll",
+                            "description": "Economy chart",
+                            "image_prompt": "German economy growth chart",
+                        },
+                        "overlays": [
+                            {
+                                "type": "lower_third",
+                                "text": "Kaynak: ARD tagesschau — btcedu Türkçe",
+                                "start_offset_seconds": 1.0,
+                                "duration_seconds": 5.0,
+                            }
+                        ],
+                        "transitions": {"in": "fade", "out": "cut"},
+                        "notes": None,
                     },
-                    "overlays": [
-                        {
-                            "type": "lower_third",
-                            "text": "Kaynak: ARD tagesschau — btcedu Türkçe",
-                            "start_offset_seconds": 1.0,
-                            "duration_seconds": 5.0,
-                        }
-                    ],
-                    "transitions": {"in": "fade", "out": "cut"},
-                    "notes": None,
-                },
-                {
-                    "chapter_id": "ch02",
-                    "title": "Ekonomi haberleri",
-                    "order": 2,
-                    "narration": {
-                        "text": "Ekonomi yüzde iki büyüdü.",
-                        "word_count": 4,
-                        "estimated_duration_seconds": 2,
-                    },
-                    "visual": {
-                        "type": "b_roll",
-                        "description": "Economy chart",
-                        "image_prompt": "German economy growth chart",
-                    },
-                    "overlays": [
-                        {
-                            "type": "lower_third",
-                            "text": "Kaynak: ARD tagesschau — btcedu Türkçe",
-                            "start_offset_seconds": 1.0,
-                            "duration_seconds": 5.0,
-                        }
-                    ],
-                    "transitions": {"in": "fade", "out": "cut"},
-                    "notes": None,
-                },
-            ],
-        })
+                ],
+            }
+        )
 
     def test_chapterizer_story_mode(
         self, db_session, tagesschau_episode, settings_with_profiles, tmp_path
@@ -367,9 +367,7 @@ class TestChastorizerStoryMode:
         from btcedu.core.chapterizer import chapterize_script
 
         with patch("btcedu.core.chapterizer.call_claude", return_value=mock_resp):
-            result = chapterize_script(
-                db_session, "ep_ts", settings_with_profiles, force=False
-            )
+            result = chapterize_script(db_session, "ep_ts", settings_with_profiles, force=False)
 
         assert result.chapter_count == 2
         assert result.skipped is False
@@ -388,34 +386,24 @@ class TestChastorizerStoryMode:
 
 
 class TestCorrectorProfilePrompt:
-    def test_corrector_uses_profile_prompt(
-        self, db_session, settings_with_profiles, tmp_path
-    ):
+    def test_corrector_uses_profile_prompt(self, db_session, settings_with_profiles, tmp_path):
         """Corrector resolves profile-namespaced prompt for tagesschau_tr episodes."""
         from btcedu.core.prompt_registry import TEMPLATES_DIR, PromptRegistry
 
         # Verify the tagesschau_tr correct_transcript.md exists
         profile_template = TEMPLATES_DIR / "tagesschau_tr" / "correct_transcript.md"
-        assert profile_template.exists(), (
-            f"Expected {profile_template} to exist"
-        )
+        assert profile_template.exists(), f"Expected {profile_template} to exist"
 
         # Verify the registry resolves to the profile-namespaced template
         registry = PromptRegistry(db_session)
-        resolved = registry.resolve_template_path(
-            "correct_transcript.md", profile="tagesschau_tr"
-        )
+        resolved = registry.resolve_template_path("correct_transcript.md", profile="tagesschau_tr")
         assert resolved == profile_template
 
-    def test_corrector_fallback_to_base_for_bitcoin(
-        self, db_session, settings_with_profiles
-    ):
+    def test_corrector_fallback_to_base_for_bitcoin(self, db_session, settings_with_profiles):
         """Corrector falls back to base prompt for bitcoin_podcast (no profile template)."""
         from btcedu.core.prompt_registry import TEMPLATES_DIR, PromptRegistry
 
         # bitcoin_podcast has no namespace, so should use base
         registry = PromptRegistry(db_session)
-        resolved = registry.resolve_template_path(
-            "correct_transcript.md", profile=None
-        )
+        resolved = registry.resolve_template_path("correct_transcript.md", profile=None)
         assert resolved == TEMPLATES_DIR / "correct_transcript.md"

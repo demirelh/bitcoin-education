@@ -707,43 +707,58 @@ class TestIsMinorCorrection:
 
     def test_zero_changes(self, tmp_path):
         diff = tmp_path / "diff.json"
-        diff.write_text(json.dumps({
-            "changes": [],
-            "summary": {"total_changes": 0},
-        }))
+        diff.write_text(
+            json.dumps(
+                {
+                    "changes": [],
+                    "summary": {"total_changes": 0},
+                }
+            )
+        )
         assert _is_minor_correction(str(diff))
 
     def test_minor_punctuation_changes(self, tmp_path):
         diff = tmp_path / "diff.json"
-        diff.write_text(json.dumps({
-            "changes": [
-                {"type": "replace", "original": "Bitcoin", "corrected": "Bitcoin,"},
-                {"type": "replace", "original": "ist", "corrected": "ist."},
-            ],
-            "summary": {"total_changes": 2},
-        }))
+        diff.write_text(
+            json.dumps(
+                {
+                    "changes": [
+                        {"type": "replace", "original": "Bitcoin", "corrected": "Bitcoin,"},
+                        {"type": "replace", "original": "ist", "corrected": "ist."},
+                    ],
+                    "summary": {"total_changes": 2},
+                }
+            )
+        )
         assert _is_minor_correction(str(diff))
 
     def test_too_many_changes(self, tmp_path):
         diff = tmp_path / "diff.json"
         changes = [
-            {"type": "replace", "original": f"w{i}", "corrected": f"w{i},"}
-            for i in range(6)
+            {"type": "replace", "original": f"w{i}", "corrected": f"w{i},"} for i in range(6)
         ]
-        diff.write_text(json.dumps({
-            "changes": changes,
-            "summary": {"total_changes": 6},
-        }))
+        diff.write_text(
+            json.dumps(
+                {
+                    "changes": changes,
+                    "summary": {"total_changes": 6},
+                }
+            )
+        )
         assert not _is_minor_correction(str(diff))
 
     def test_word_change_disqualifies(self, tmp_path):
         diff = tmp_path / "diff.json"
-        diff.write_text(json.dumps({
-            "changes": [
-                {"type": "replace", "original": "Bitcon", "corrected": "Bitcoin"},
-            ],
-            "summary": {"total_changes": 1},
-        }))
+        diff.write_text(
+            json.dumps(
+                {
+                    "changes": [
+                        {"type": "replace", "original": "Bitcon", "corrected": "Bitcoin"},
+                    ],
+                    "summary": {"total_changes": 1},
+                }
+            )
+        )
         assert not _is_minor_correction(str(diff))
 
     def test_invalid_json(self, tmp_path):
@@ -757,12 +772,16 @@ class TestAutoApproveMinorCorrections:
         """Minor correction creates an auto-approved review task."""
         # Write a minor diff (punctuation only)
         diff_path = tmp_path / "minor_diff.json"
-        diff_path.write_text(json.dumps({
-            "changes": [
-                {"type": "replace", "original": "Bitcoin", "corrected": "Bitcoin,"},
-            ],
-            "summary": {"total_changes": 1},
-        }))
+        diff_path.write_text(
+            json.dumps(
+                {
+                    "changes": [
+                        {"type": "replace", "original": "Bitcoin", "corrected": "Bitcoin,"},
+                    ],
+                    "summary": {"total_changes": 1},
+                }
+            )
+        )
 
         task = create_review_task(
             db_session,
@@ -792,12 +811,16 @@ class TestAutoApproveMinorCorrections:
     def test_no_auto_approve_for_non_correct_stage(self, db_session, corrected_episode, tmp_path):
         """Auto-approve only applies to 'correct' stage."""
         diff_path = tmp_path / "minor_diff.json"
-        diff_path.write_text(json.dumps({
-            "changes": [
-                {"type": "replace", "original": "x", "corrected": "x,"},
-            ],
-            "summary": {"total_changes": 1},
-        }))
+        diff_path.write_text(
+            json.dumps(
+                {
+                    "changes": [
+                        {"type": "replace", "original": "x", "corrected": "x,"},
+                    ],
+                    "summary": {"total_changes": 1},
+                }
+            )
+        )
 
         task = create_review_task(
             db_session,

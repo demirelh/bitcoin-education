@@ -106,9 +106,7 @@ def setup_episode(app, tmp_path):
             }
         },
     }
-    (candidates_dir / "candidates_manifest.json").write_text(
-        json.dumps(manifest), encoding="utf-8"
-    )
+    (candidates_dir / "candidates_manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     # Create dummy image files
     ch_dir = candidates_dir / "ch01"
@@ -168,9 +166,7 @@ def test_pin_image_updates_manifest(client, setup_episode, tmp_path):
     assert data["pexels_id"] == 101
 
     # Verify manifest updated
-    manifest_path = (
-        tmp_path / "ep_test" / "images" / "candidates" / "candidates_manifest.json"
-    )
+    manifest_path = tmp_path / "ep_test" / "images" / "candidates" / "candidates_manifest.json"
     manifest = json.loads(manifest_path.read_text())
     ch01_cands = manifest["chapters"]["ch01"]["candidates"]
     selected = [c for c in ch01_cands if c["selected"]]
@@ -186,9 +182,7 @@ def test_pin_image_sets_pinned_by_human(client, setup_episode, tmp_path):
         json={"chapter_id": "ch01", "pexels_id": 100, "lock": True},
     )
 
-    manifest_path = (
-        tmp_path / "ep_test" / "images" / "candidates" / "candidates_manifest.json"
-    )
+    manifest_path = tmp_path / "ep_test" / "images" / "candidates" / "candidates_manifest.json"
     manifest = json.loads(manifest_path.read_text())
     assert manifest["chapters"]["ch01"]["pinned_by"] == "human"
 
@@ -233,8 +227,7 @@ def test_rank_endpoint_triggers_ranking(mock_rank, client, setup_episode):
 def test_serve_candidate_image(client, setup_episode):
     """GET /stock/candidate-image serves image file."""
     resp = client.get(
-        "/api/episodes/ep_test/stock/candidate-image"
-        "?chapter=ch01&filename=pexels_100.jpg"
+        "/api/episodes/ep_test/stock/candidate-image?chapter=ch01&filename=pexels_100.jpg"
     )
     assert resp.status_code == 200
     assert "image/" in resp.content_type
@@ -243,8 +236,7 @@ def test_serve_candidate_image(client, setup_episode):
 def test_serve_candidate_path_traversal(client, setup_episode):
     """Path traversal attempt → rejected."""
     resp = client.get(
-        "/api/episodes/ep_test/stock/candidate-image"
-        "?chapter=..&filename=../../etc/passwd"
+        "/api/episodes/ep_test/stock/candidate-image?chapter=..&filename=../../etc/passwd"
     )
     # secure_filename sanitizes, so either 400 or 404
     assert resp.status_code in (400, 404)

@@ -13,6 +13,7 @@ stage_config:
   translate:
     mode: per_story
     register: formal_news
+    clean_moderator: true
   tts:
     voice_id: ""
     stability: 0.6

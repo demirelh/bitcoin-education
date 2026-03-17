@@ -43,7 +43,9 @@ class ReviewItemDecision(Base):
     edited_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    review_task: Mapped["ReviewTask"] = relationship(back_populates="item_decisions")  # type: ignore[name-defined]
+    review_task: Mapped["ReviewTask"] = relationship(  # noqa: F821, UP037
+        back_populates="item_decisions"
+    )
 
     __table_args__ = (
         Index("idx_review_item_decisions_task", "review_task_id"),

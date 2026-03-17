@@ -27,7 +27,6 @@ class TestIntentExtractPromptRegistry:
     ):
         """extract_chapter_intents() creates a PromptVersion record for 'intent_extract'."""
         from btcedu.core.stock_images import extract_chapter_intents
-        from btcedu.models.prompt_version import PromptVersion
 
         settings = MagicMock()
         settings.outputs_dir = str(tmp_path)

@@ -1,16 +1,22 @@
 """Human review system: create, approve, reject, and track review tasks."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import re
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
 from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.models.review import ReviewDecision, ReviewStatus, ReviewTask
+
+if TYPE_CHECKING:
+    from btcedu.models.review_item import ReviewItemDecision
 
 logger = logging.getLogger(__name__)
 
@@ -681,7 +687,7 @@ def upsert_item_decision(
     item_id: str,
     action: str,
     edited_text: str | None = None,
-) -> "ReviewItemDecision":
+) -> ReviewItemDecision:
     """Create or update a per-item decision.
 
     On first call for a given (review_task_id, item_id): creates record,
@@ -743,7 +749,7 @@ def upsert_item_decision(
 def get_item_decisions(
     session: Session,
     review_task_id: int,
-) -> "dict[str, ReviewItemDecision]":
+) -> dict[str, ReviewItemDecision]:
     """Return all item decisions for a review task, keyed by item_id.
 
     Returns empty dict if no decisions exist yet.
@@ -909,7 +915,7 @@ def _load_item_texts_from_diff(
 def _assemble_translation_review(
     stories_data: dict,
     diff_data: dict,
-    item_decisions: "dict[str, ReviewItemDecision]",
+    item_decisions: dict[str, ReviewItemDecision],
 ) -> dict:
     """Reconstruct stories_translated.json from per-story review decisions.
 
@@ -961,7 +967,7 @@ def _ensure_item_ids_adaptation(adaptations: list[dict]) -> None:
 def _assemble_correction_review(
     original_text: str,
     diff_changes: list[dict],
-    item_decisions: "dict[str, ReviewItemDecision]",
+    item_decisions: dict[str, ReviewItemDecision],
 ) -> str:
     """Reconstruct reviewed transcript from original text + per-item decisions.
 
@@ -1026,7 +1032,7 @@ def _assemble_correction_review(
 def _assemble_adaptation_review(
     adapted_text: str,
     diff_adaptations: list[dict],
-    item_decisions: "dict[str, ReviewItemDecision]",
+    item_decisions: dict[str, ReviewItemDecision],
 ) -> str:
     """Reconstruct reviewed adaptation from adapted text + per-item decisions.
 

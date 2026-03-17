@@ -512,8 +512,14 @@ def publish_video(
         title=title,
         description=description,
         tags=tags,
-        category_id=_yt_config.get("category_id") or getattr(settings, "youtube_category_id", "27"),
-        default_language=_yt_config.get("default_language") or getattr(settings, "youtube_default_language", "tr"),
+        category_id=(
+            _yt_config.get("category_id")
+            or getattr(settings, "youtube_category_id", "27")
+        ),
+        default_language=(
+            _yt_config.get("default_language")
+            or getattr(settings, "youtube_default_language", "tr")
+        ),
         privacy_status=effective_privacy,
         thumbnail_path=thumbnail_path,
     )
@@ -523,7 +529,10 @@ def publish_video(
     if is_dry_run:
         youtube_svc = DryRunYouTubeService()
     else:
-        credentials_path = getattr(settings, "youtube_credentials_path", "data/.youtube_credentials.json")
+        credentials_path = getattr(
+            settings, "youtube_credentials_path",
+            "data/.youtube_credentials.json",
+        )
         youtube_svc = YouTubeDataAPIService(
             credentials_path=credentials_path,
             chunk_size_bytes=getattr(settings, "youtube_upload_chunk_size_mb", 10) * 1024 * 1024,

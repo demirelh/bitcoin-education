@@ -1099,7 +1099,8 @@ def prompt_list(ctx: click.Context, name: str | None) -> None:
             return
 
         click.echo(
-            f"{'ID':<5} {'Name':<25} {'Ver':<5} {'Default':<9} {'Hash':<14} {'Model':<30} {'Created'}"
+            f"{'ID':<5} {'Name':<25} {'Ver':<5} {'Default':<9} "
+            f"{'Hash':<14} {'Model':<30} {'Created'}"
         )
         click.echo("-" * 110)
         for pv in versions:
@@ -1569,7 +1570,7 @@ def smoke_test_pipeline(ctx: click.Context, profile: str | None) -> None:
 
     from btcedu.core.pipeline import _get_stages
     from btcedu.core.prompt_registry import TEMPLATES_DIR
-    from btcedu.profiles import ProfileNotFoundError, get_registry, reset_registry
+    from btcedu.profiles import get_registry, reset_registry
 
     settings = ctx.obj["settings"]
     reset_registry()
@@ -1658,11 +1659,11 @@ def smoke_test_pipeline(ctx: click.Context, profile: str | None) -> None:
         # Result
         if fails:
             all_pass = False
-            click.echo(f"  [FAIL] Issues:")
+            click.echo("  [FAIL] Issues:")
             for f in fails:
                 click.echo(f"    - {f}", err=True)
         else:
-            click.echo(f"  [PASS]")
+            click.echo("  [PASS]")
 
     click.echo("")
     if all_pass:
@@ -1889,7 +1890,10 @@ def publish(
                 if result.skipped:
                     click.echo(f"[SKIP] {eid} -> already published at {result.youtube_url}")
                 elif result.dry_run:
-                    click.echo(f"[DRY-RUN] {eid} -> would publish (video_id={result.youtube_video_id})")
+                    click.echo(
+                        f"[DRY-RUN] {eid} -> would publish"
+                        f" (video_id={result.youtube_video_id})"
+                    )
                 else:
                     click.echo(f"[OK] {eid} -> {result.youtube_url}")
             except Exception as e:
@@ -1910,7 +1914,9 @@ def youtube_auth(ctx: click.Context) -> None:
 
     settings = ctx.obj["settings"]
     client_secrets = getattr(settings, "youtube_client_secrets_path", "data/client_secret.json")
-    credentials_out = getattr(settings, "youtube_credentials_path", "data/.youtube_credentials.json")
+    credentials_out = getattr(
+        settings, "youtube_credentials_path", "data/.youtube_credentials.json"
+    )
 
     click.echo(f"Starting OAuth2 flow using: {client_secrets}")
     click.echo("A browser window will open to authorize this app...")
@@ -1928,7 +1934,9 @@ def youtube_status(ctx: click.Context) -> None:
     from btcedu.services.youtube_service import check_token_status
 
     settings = ctx.obj["settings"]
-    credentials_path = getattr(settings, "youtube_credentials_path", "data/.youtube_credentials.json")
+    credentials_path = getattr(
+        settings, "youtube_credentials_path", "data/.youtube_credentials.json"
+    )
 
     try:
         status = check_token_status(credentials_path=credentials_path)

@@ -3,7 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -11,21 +11,18 @@ from sqlalchemy.orm import sessionmaker
 
 from btcedu.config import Settings
 from btcedu.core.publisher import (
-    PublishResult,
-    SafetyCheck,
     _build_youtube_metadata,
     _check_approval_gate,
     _check_artifact_integrity,
     _check_cost_sanity,
     _check_metadata_completeness,
     _format_timestamp,
-    _run_all_safety_checks,
     get_latest_publish_job,
     publish_video,
 )
 from btcedu.db import Base
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
-from btcedu.models.publish_job import PublishJob, PublishJobStatus
+from btcedu.models.publish_job import PublishJob
 from btcedu.models.review import ReviewStatus, ReviewTask
 
 

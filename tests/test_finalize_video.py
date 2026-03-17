@@ -1,7 +1,6 @@
 """Tests for Phase 4 video normalization failure fallback in finalize_selections."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,7 +48,7 @@ def video_episode(db_session, tmp_path):
                         "photographer_url": "https://www.pexels.com/@test",
                         "source_url": "https://www.pexels.com/video/99999/",
                         "download_url": "https://videos.pexels.com/99999/hd.mp4",
-                        "local_path": f"images/candidates/ch01/pexels_v_99999.mp4",
+                        "local_path": "images/candidates/ch01/pexels_v_99999.mp4",
                         "alt_text": "",
                         "width": 1920,
                         "height": 1080,
@@ -96,7 +95,7 @@ class TestFinalizeVideoNormalizationFailure:
         settings_for_video,
         caplog,
     ):
-        """When normalize_video_clip() raises, finalize_selections uses placeholder instead of crashing."""
+        """normalize_video_clip() failure uses placeholder instead of crashing."""
         import logging
 
         episode_id = video_episode["episode_id"]

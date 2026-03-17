@@ -4,7 +4,8 @@ import logging
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Protocol
+from collections.abc import Callable
+from typing import Protocol
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +211,6 @@ class YouTubeDataAPIService:
             YouTubeUploadError: Other API errors.
         """
         try:
-            from googleapiclient.errors import HttpError
             from googleapiclient.http import MediaFileUpload
         except ImportError as exc:
             raise YouTubeUploadError(
@@ -274,9 +274,8 @@ class YouTubeDataAPIService:
         """Execute resumable upload, retrying on transient errors."""
         try:
             from googleapiclient.errors import HttpError
-            from googleapiclient.http import DEFAULT_CHUNK_SIZE
         except ImportError:
-            DEFAULT_CHUNK_SIZE = 100 * 1024 * 1024
+            HttpError = Exception  # noqa: N806
 
         response = None
         attempt = 0

@@ -719,7 +719,7 @@ class TestV2PipelineE2E:
             if new_status:
                 episode.status = new_status
                 session.commit()
-            return StageResult(stage_name, "success", 0.1, detail=f"mock ($0.0010)")
+            return StageResult(stage_name, "success", 0.1, detail="mock ($0.0010)")
 
         return side_effect
 

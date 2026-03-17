@@ -1,6 +1,5 @@
 """Cross-profile isolation and metadata tests (Phase 4)."""
 
-from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -140,7 +139,7 @@ def test_run_pending_profile_filter(db_session, settings):
     with patch("btcedu.core.pipeline.run_episode_pipeline") as mock_run:
         mock_run.return_value = MagicMock(success=True, stages=[], total_cost_usd=0.0)
 
-        reports = run_pending(db_session, settings, profile="tagesschau_tr")
+        run_pending(db_session, settings, profile="tagesschau_tr")
 
     # Only tagesschau episode should have been processed
     assert mock_run.call_count == 1
@@ -158,7 +157,7 @@ def test_run_pending_no_filter_processes_all(db_session, settings):
         mock_run.return_value = MagicMock(success=True, stages=[], total_cost_usd=0.0)
         # Patch has_pending_review at the reviewer module (lazy imported in pipeline)
         with patch("btcedu.core.reviewer.has_pending_review", return_value=False):
-            reports = run_pending(db_session, settings)
+            run_pending(db_session, settings)
 
     assert mock_run.call_count == 2
 
@@ -208,8 +207,8 @@ def test_stock_domain_tag_differs_by_profile(settings, db_session):
     from btcedu.core.stock_images import _load_episode_profile
 
     reset_registry()
-    btc = _make_episode(db_session, "btc-005", "bitcoin_podcast")
-    ts = _make_episode(db_session, "ts-005", "tagesschau_tr")
+    _make_episode(db_session, "btc-005", "bitcoin_podcast")
+    _make_episode(db_session, "ts-005", "tagesschau_tr")
 
     btc_profile = _load_episode_profile(db_session, "btc-005", settings)
     ts_profile = _load_episode_profile(db_session, "ts-005", settings)

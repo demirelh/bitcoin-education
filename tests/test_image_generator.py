@@ -1,7 +1,6 @@
 """Tests for Sprint 7: IMAGE_GEN stage implementation."""
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest

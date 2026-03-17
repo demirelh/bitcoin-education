@@ -814,7 +814,7 @@ Please correct the JSON and return a valid document matching this EXACT schema:
   ]
 }}
 
-CRITICAL: narration, visual, overlays, and transitions MUST be objects/arrays as shown above, NOT strings.
+CRITICAL: narration, visual, overlays, transitions MUST be objects/arrays, NOT strings.
 - narration must be an object with text, word_count, estimated_duration_seconds
 - visual must be an object with type, description, image_prompt
 - overlays must be an array of objects with type, text, start_offset_seconds, duration_seconds

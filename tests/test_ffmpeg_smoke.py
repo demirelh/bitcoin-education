@@ -7,8 +7,6 @@ Raspberry Pi.
 
 from pathlib import Path
 
-import pytest
-
 from btcedu.services.ffmpeg_service import generate_silent_audio, generate_test_video
 
 

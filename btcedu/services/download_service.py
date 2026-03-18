@@ -28,8 +28,7 @@ def _find_ytdlp() -> str:
     if venv_path.is_file():
         return str(venv_path)
     raise RuntimeError(
-        "yt-dlp is not installed or not on PATH. "
-        "Install it with: pip install yt-dlp"
+        "yt-dlp is not installed or not on PATH. Install it with: pip install yt-dlp"
     )
 
 

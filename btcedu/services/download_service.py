@@ -1,5 +1,6 @@
 import logging
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -65,18 +66,20 @@ def download_audio(
         ytdlp,
         "--extract-audio",
         "--audio-format",
-        audio_format,
+        shlex.quote(audio_format),
         "--output",
-        output_template,
+        shlex.quote(output_template),
         "--no-playlist",
         "--quiet",
         "--no-warnings",
-        url,
+        shlex.quote(url),
     ]
 
     logger.info("Downloading audio: %s -> %s", url, output_dir)
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    result = subprocess.run(  # noqa: S603 — inputs validated above
+        cmd, capture_output=True, text=True, timeout=1800
+    )
 
     if result.returncode != 0:
         raise RuntimeError(f"yt-dlp failed (exit {result.returncode}): {result.stderr.strip()}")
@@ -127,23 +130,26 @@ def download_video(
 
     ytdlp = _find_ytdlp()
 
+    format_spec = f"bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]"
     cmd = [
         ytdlp,
         "--format",
-        f"bestvideo[height<={max_height}]+bestaudio/best[height<={max_height}]",
+        shlex.quote(format_spec),
         "--merge-output-format",
         "mp4",
         "--output",
-        output_template,
+        shlex.quote(output_template),
         "--no-playlist",
         "--quiet",
         "--no-warnings",
-        url,
+        shlex.quote(url),
     ]
 
     logger.info("Downloading video: %s -> %s", url, output_dir)
 
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+    result = subprocess.run(  # noqa: S603 — inputs validated above
+        cmd, capture_output=True, text=True, timeout=1800
+    )
 
     if result.returncode != 0:
         raise RuntimeError(f"yt-dlp failed (exit {result.returncode}): {result.stderr.strip()}")

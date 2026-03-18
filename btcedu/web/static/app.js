@@ -451,7 +451,6 @@
           <label><input type="checkbox" id="chk-force"> force</label>
           <label><input type="checkbox" id="chk-dryrun"> dry-run</label>
         </div>
-        <div id="detail-video-preview"></div>
       </div>
       <div class="tabs" id="tabs">
         <div class="tab active" data-tab="transcript_clean">DE Transcript</div>
@@ -473,10 +472,12 @@
       <div class="viewer" id="viewer">Click a tab to load content.</div>
     `;
 
-    // Inline video preview — built via DOM API (not innerHTML) to avoid XSS lint
+    // Inline video preview — built entirely via DOM API (no innerHTML) to keep
+    // user-controlled data out of template literals assigned to innerHTML.
     if (["rendered", "approved", "published"].includes(ep.status)) {
-      const previewDiv = det.querySelector("#detail-video-preview");
-      if (previewDiv) {
+      const header = det.querySelector(".detail-header");
+      if (header) {
+        const previewDiv = document.createElement("div");
         previewDiv.className = "video-inline-preview";
         const video = document.createElement("video");
         video.controls = true;
@@ -486,6 +487,7 @@
         source.type = "video/mp4";
         video.appendChild(source);
         previewDiv.appendChild(video);
+        header.appendChild(previewDiv);
       }
     }
 

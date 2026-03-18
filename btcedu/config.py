@@ -125,6 +125,33 @@ class Settings(BaseSettings):
     render_timeout_concat: int = 600  # 10 minutes
     render_transition_duration: float = 0.5  # seconds for fade in/out (Sprint 10)
 
+    # Video quality enhancements (each individually toggleable)
+    render_ken_burns_enabled: bool = False
+    render_ken_burns_zoom_ratio: float = 0.04  # total zoom range (1.0 -> 1.04)
+
+    render_lower_thirds_animated: bool = False
+    render_lower_thirds_slide_duration: float = 0.4  # slide-in seconds
+    render_lower_thirds_gradient: bool = True  # gradient vs solid box
+
+    render_ticker_enabled: bool = False
+    render_ticker_speed: int = 80  # px/sec scroll speed
+    render_ticker_height: int = 50  # ticker bar height px
+    render_ticker_fontsize: int = 28
+
+    render_intro_enabled: bool = False
+    render_intro_duration: float = 4.0
+    render_intro_bg_color: str = "#004B87"
+    render_intro_show_name: str = "Bitcoin Haberleri"
+    render_outro_enabled: bool = False
+    render_outro_duration: float = 3.0
+    render_outro_bg_color: str = "#004B87"
+    render_outro_text: str = "Kaynak: Einundzwanzig Podcast"
+
+    render_color_correction_enabled: bool = False
+    render_color_saturation: float = 0.85  # <1.0 = desaturated
+    render_color_brightness: float = 0.02
+    render_color_blue_shift: float = 0.05  # cool tint
+
     # YouTube Publishing (Sprint 11)
     youtube_client_secrets_path: str = "data/client_secret.json"
     youtube_credentials_path: str = "data/.youtube_credentials.json"

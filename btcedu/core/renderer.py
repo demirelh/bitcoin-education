@@ -141,8 +141,23 @@ def render_video(
     image_manifest = _load_image_manifest(image_manifest_path)
     tts_manifest = _load_tts_manifest(tts_manifest_path)
 
-    # Compute content hash (for idempotency)
-    content_hash = _compute_render_content_hash(chapters_doc, image_manifest, tts_manifest)
+    # Compute content hash (for idempotency) — includes enhancement flags
+    _enh_hash_data = {}
+    try:
+        _enh_hash_data = {
+            "ken_burns": bool(settings.render_ken_burns_enabled),
+            "lower_thirds_animated": bool(settings.render_lower_thirds_animated),
+            "ticker": bool(settings.render_ticker_enabled),
+            "intro": bool(settings.render_intro_enabled),
+            "outro": bool(settings.render_outro_enabled),
+            "color_correction": bool(settings.render_color_correction_enabled),
+        }
+    except (AttributeError, TypeError):
+        pass  # settings may lack these attrs (backward compat / mocks)
+    content_hash = _compute_render_content_hash(
+        chapters_doc, image_manifest, tts_manifest,
+        _enh_hash_data if _enh_hash_data else None,
+    )
 
     # Idempotency check
     if not force:
@@ -178,8 +193,11 @@ def render_video(
     try:
         # Import ffmpeg service (lazy to avoid issues if ffmpeg not installed)
         from btcedu.services.ffmpeg_service import (
+            KEN_BURNS_PATTERNS,
             SegmentResult,
             concatenate_segments,
+            create_intro_segment,
+            create_outro_segment,
             create_segment,
             create_video_segment,
             get_ffmpeg_version,
@@ -198,6 +216,50 @@ def render_video(
         total_size = 0
 
         base_dir = Path(settings.outputs_dir) / episode_id
+
+        # Build ticker text if enabled
+        _ticker_text = None
+        if getattr(settings, "render_ticker_enabled", False) is True:
+            _ticker_items = [ch.title for ch in chapters_doc.chapters]
+            _ticker_text = "  |||  ".join(_ticker_items)
+
+        # Enhancement kwargs shared between photo and video segments
+        def _enhancement_kwargs(
+            asset_type: str, chapter_idx: int,
+        ) -> dict:
+            kwargs: dict = {}
+            # Color correction (both photo and video)
+            if getattr(settings, "render_color_correction_enabled", False) is True:
+                kwargs["color_correction"] = True
+                kwargs["color_saturation"] = settings.render_color_saturation
+                kwargs["color_brightness"] = settings.render_color_brightness
+                kwargs["color_blue_shift"] = settings.render_color_blue_shift
+            # Animated lower thirds (both)
+            if getattr(settings, "render_lower_thirds_animated", False) is True:
+                kwargs["animated_lower_thirds"] = True
+                kwargs["lower_third_slide_duration"] = (
+                    settings.render_lower_thirds_slide_duration
+                )
+                kwargs["lower_third_accent_color"] = _accent_color
+            # Ticker (both)
+            if _ticker_text:
+                kwargs["ticker_text"] = _ticker_text
+                kwargs["ticker_speed"] = settings.render_ticker_speed
+                kwargs["ticker_height"] = settings.render_ticker_height
+                kwargs["ticker_fontsize"] = settings.render_ticker_fontsize
+            # Ken Burns (photo only)
+            if (
+                getattr(settings, "render_ken_burns_enabled", False) is True
+                and asset_type == "photo"
+            ):
+                pattern = KEN_BURNS_PATTERNS[
+                    chapter_idx % len(KEN_BURNS_PATTERNS)
+                ]
+                kwargs["ken_burns_pattern"] = pattern
+                kwargs["ken_burns_zoom_ratio"] = (
+                    settings.render_ken_burns_zoom_ratio
+                )
+            return kwargs
 
         for chapter in chapters_doc.chapters:
             # Resolve media files for this chapter
@@ -279,6 +341,9 @@ def render_video(
                 asset_type,
             )
 
+            # Build enhancement kwargs for this chapter
+            enh_kwargs = _enhancement_kwargs(asset_type, chapter.order - 1)
+
             # Phase 4: Branch on asset_type for video vs image segments
             if asset_type == "video":
                 segment_result = create_video_segment(
@@ -297,6 +362,7 @@ def render_video(
                     fade_out_duration=fade_out_dur,
                     timeout_seconds=settings.render_timeout_segment,
                     dry_run=settings.dry_run,
+                    **enh_kwargs,
                 )
             else:
                 segment_result = create_segment(
@@ -311,10 +377,11 @@ def render_video(
                     preset=settings.render_preset,
                     audio_bitrate=settings.render_audio_bitrate,
                     font=settings.render_font,
-                    fade_in_duration=fade_in_dur,  # Sprint 10
-                    fade_out_duration=fade_out_dur,  # Sprint 10
+                    fade_in_duration=fade_in_dur,
+                    fade_out_duration=fade_out_dur,
                     timeout_seconds=settings.render_timeout_segment,
                     dry_run=settings.dry_run,
+                    **enh_kwargs,
                 )
 
             # Record segment entry
@@ -358,7 +425,55 @@ def render_video(
             str((base_dir / entry.segment_path).absolute()) for entry in segment_entries
         ]
 
-        logger.info("Concatenating %d segments into draft video", len(segment_entries))
+        # Prepend intro if enabled
+        if getattr(settings, "render_intro_enabled", False) is True:
+            intro_path = segments_dir / "intro.mp4"
+            _ep_date = ""
+            if hasattr(episode, "published_at") and episode.published_at:
+                _ep_date = episode.published_at.strftime("%d.%m.%Y")
+            _ep_title = getattr(episode, "title", "") or episode_id
+            create_intro_segment(
+                output_path=str(intro_path),
+                show_name=settings.render_intro_show_name,
+                episode_title=_ep_title,
+                episode_date=_ep_date,
+                duration=settings.render_intro_duration,
+                resolution=settings.render_resolution,
+                fps=settings.render_fps,
+                bg_color=settings.render_intro_bg_color,
+                accent_color=_accent_color,
+                font=settings.render_font,
+                crf=settings.render_crf,
+                preset=settings.render_preset,
+                timeout_seconds=settings.render_timeout_segment,
+                dry_run=settings.dry_run,
+            )
+            segment_abs_paths.insert(0, str(intro_path.absolute()))
+            total_duration += settings.render_intro_duration
+            logger.info("Intro segment created (%.1fs)", settings.render_intro_duration)
+
+        # Append outro if enabled
+        if getattr(settings, "render_outro_enabled", False) is True:
+            outro_path = segments_dir / "outro.mp4"
+            create_outro_segment(
+                output_path=str(outro_path),
+                source_text=settings.render_outro_text,
+                duration=settings.render_outro_duration,
+                resolution=settings.render_resolution,
+                fps=settings.render_fps,
+                bg_color=settings.render_outro_bg_color,
+                accent_color=_accent_color,
+                font=settings.render_font,
+                crf=settings.render_crf,
+                preset=settings.render_preset,
+                timeout_seconds=settings.render_timeout_segment,
+                dry_run=settings.dry_run,
+            )
+            segment_abs_paths.append(str(outro_path.absolute()))
+            total_duration += settings.render_outro_duration
+            logger.info("Outro segment created (%.1fs)", settings.render_outro_duration)
+
+        logger.info("Concatenating %d segments into draft video", len(segment_abs_paths))
 
         concat_result = concatenate_segments(
             segment_paths=segment_abs_paths,
@@ -499,6 +614,7 @@ def _compute_render_content_hash(
     chapters_doc: ChapterDocument,
     image_manifest: dict,
     tts_manifest: dict,
+    enhancement_settings: dict | None = None,
 ) -> str:
     """Compute SHA-256 hash of all render inputs.
 
@@ -506,6 +622,7 @@ def _compute_render_content_hash(
     - Chapter overlay text and timing
     - Image file paths and generation methods
     - TTS file paths and durations
+    - Video enhancement settings (if any enabled)
     """
     relevant_data = {
         "chapters": [
@@ -545,6 +662,8 @@ def _compute_render_content_hash(
             for seg in tts_manifest.get("segments", [])
         ],
     }
+    if enhancement_settings:
+        relevant_data["enhancements"] = enhancement_settings
     content_str = json.dumps(relevant_data, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(content_str.encode("utf-8")).hexdigest()
 

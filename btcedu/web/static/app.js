@@ -451,12 +451,7 @@
           <label><input type="checkbox" id="chk-force"> force</label>
           <label><input type="checkbox" id="chk-dryrun"> dry-run</label>
         </div>
-        ${["rendered", "approved", "published"].includes(ep.status) ? `
-        <div class="video-inline-preview">
-          <video controls preload="none">
-            <source src="api/episodes/${esc(ep.episode_id)}/render/draft.mp4" type="video/mp4">
-          </video>
-        </div>` : ""}
+        <div id="detail-video-preview"></div>
       </div>
       <div class="tabs" id="tabs">
         <div class="tab active" data-tab="transcript_clean">DE Transcript</div>
@@ -477,6 +472,22 @@
       </div>
       <div class="viewer" id="viewer">Click a tab to load content.</div>
     `;
+
+    // Inline video preview — built via DOM API (not innerHTML) to avoid XSS lint
+    if (["rendered", "approved", "published"].includes(ep.status)) {
+      const previewDiv = det.querySelector("#detail-video-preview");
+      if (previewDiv) {
+        previewDiv.className = "video-inline-preview";
+        const video = document.createElement("video");
+        video.controls = true;
+        video.preload = "none";
+        const source = document.createElement("source");
+        source.src = "api/episodes/" + ep.episode_id + "/render/draft.mp4";
+        source.type = "video/mp4";
+        video.appendChild(source);
+        previewDiv.appendChild(video);
+      }
+    }
 
     // Bind tabs
     det.querySelectorAll(".tab").forEach((t) => {

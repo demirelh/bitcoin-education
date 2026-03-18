@@ -17,6 +17,21 @@ def _validate_url(url: str) -> None:
         raise ValueError(f"Invalid URL: {url!r}")
 
 
+def _find_ytdlp() -> str:
+    """Locate the yt-dlp binary or raise a clear error."""
+    path = shutil.which("yt-dlp")
+    if path:
+        return path
+    # Fall back to the venv bin directory (useful under gunicorn/systemd).
+    venv_path = Path(sys.executable).parent / "yt-dlp"
+    if venv_path.is_file():
+        return str(venv_path)
+    raise RuntimeError(
+        "yt-dlp is not installed or not on PATH. "
+        "Install it with: pip install yt-dlp"
+    )
+
+
 def download_audio(
     url: str,
     output_dir: str,
@@ -44,10 +59,7 @@ def download_audio(
 
     output_template = str(out_path / "audio.%(ext)s")
 
-    # Prefer yt-dlp from the same venv as the running Python interpreter,
-    # so it works even when PATH doesn't include the venv bin directory
-    # (e.g. when running under gunicorn/systemd).
-    ytdlp = shutil.which("yt-dlp") or str(Path(sys.executable).parent / "yt-dlp")
+    ytdlp = _find_ytdlp()
 
     cmd = [
         ytdlp,
@@ -113,7 +125,7 @@ def download_video(
 
     output_template = str(out_path / "video.%(ext)s")
 
-    ytdlp = shutil.which("yt-dlp") or str(Path(sys.executable).parent / "yt-dlp")
+    ytdlp = _find_ytdlp()
 
     cmd = [
         ytdlp,

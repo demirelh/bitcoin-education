@@ -388,16 +388,25 @@
 
   function renderStatusSummary(eps) {
     const container = document.getElementById("status-summary");
-    if (!container || eps.length === 0) return;
+    if (!container || eps.length === 0) { container.innerHTML = ""; return; }
     const counts = {};
     eps.forEach(ep => { counts[ep.status] = (counts[ep.status] || 0) + 1; });
     // Sort by count desc, limit to 8 most common
     const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
-    container.innerHTML = sorted.map(([st, n]) =>
-      `<span class="status-summary-item badge badge-${st}" onclick="filterByStatus('${st}')" title="Filter: ${st}">
-        <span class="status-summary-count">${n}</span> ${st}
-       </span>`
-    ).join("");
+    container.innerHTML = "";
+    sorted.forEach(([st, n]) => {
+      const span = document.createElement("span");
+      span.className = `status-summary-item badge badge-${esc(st)}`;
+      span.title = `Filter: ${st}`;
+      span.dataset.status = st;
+      const countEl = document.createElement("span");
+      countEl.className = "status-summary-count";
+      countEl.textContent = n;
+      span.appendChild(countEl);
+      span.appendChild(document.createTextNode(` ${st}`));
+      span.addEventListener("click", () => filterByStatus(st));
+      container.appendChild(span);
+    });
   }
 
   function filterByStatus(status) {

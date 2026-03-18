@@ -383,7 +383,28 @@
       return true;
     });
     renderTable(filtered);
+    renderStatusSummary(episodes);
   }
+
+  function renderStatusSummary(eps) {
+    const container = document.getElementById("status-summary");
+    if (!container || eps.length === 0) return;
+    const counts = {};
+    eps.forEach(ep => { counts[ep.status] = (counts[ep.status] || 0) + 1; });
+    // Sort by count desc, limit to 8 most common
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    container.innerHTML = sorted.map(([st, n]) =>
+      `<span class="status-summary-item badge badge-${st}" onclick="filterByStatus('${st}')" title="Filter: ${st}">
+        <span class="status-summary-count">${n}</span> ${st}
+       </span>`
+    ).join("");
+  }
+
+  function filterByStatus(status) {
+    const sel = document.getElementById("filter-status");
+    if (sel) { sel.value = status; applyFilters(); }
+  }
+  window.filterByStatus = filterByStatus;
 
   // ── Detail panel ─────────────────────────────────────────────
   async function selectEpisode(ep) {
@@ -421,6 +442,12 @@
           <label><input type="checkbox" id="chk-force"> force</label>
           <label><input type="checkbox" id="chk-dryrun"> dry-run</label>
         </div>
+        ${["rendered", "approved", "published"].includes(ep.status) ? `
+        <div class="video-inline-preview">
+          <video controls preload="none">
+            <source src="api/episodes/${esc(ep.episode_id)}/render/draft.mp4" type="video/mp4">
+          </video>
+        </div>` : ""}
       </div>
       <div class="tabs" id="tabs">
         <div class="tab active" data-tab="transcript_clean">DE Transcript</div>
@@ -1001,15 +1028,64 @@
   window.showCost = async function () {
     const data = await GET("/cost");
     const modal = document.getElementById("cost-modal");
+    const stages = data.stages || [];
     let rows = "";
-    (data.stages || []).forEach((s) => {
+    stages.forEach((s) => {
       rows += `<tr><td>${s.stage}</td><td>${s.runs}</td><td>${s.input_tokens}</td><td>${s.output_tokens}</td><td>$${s.cost_usd.toFixed(4)}</td></tr>`;
     });
     document.getElementById("cost-body").innerHTML = rows;
     document.getElementById("cost-total").textContent =
       `Total: $${(data.total_usd || 0).toFixed(4)} | ${data.episodes_processed || 0} episodes | avg $${(data.avg_per_episode || 0).toFixed(4)}/ep`;
     modal.classList.add("open");
+    // Render canvas chart after modal is visible
+    setTimeout(() => renderCostChart(stages), 50);
   };
+
+  function renderCostChart(stages) {
+    const canvas = document.getElementById("cost-chart");
+    if (!canvas || stages.length === 0) return;
+    const container = canvas.parentElement;
+    const W = container.offsetWidth || 400;
+    const rowH = 28;
+    const labelW = 120;
+    const barAreaW = W - labelW - 60; // 60 = value label space
+    const H = stages.length * rowH + 16;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+
+    const maxCost = Math.max(...stages.map(s => s.cost_usd), 0.0001);
+    ctx.clearRect(0, 0, W, H);
+
+    stages.forEach((s, i) => {
+      const y = i * rowH + 8;
+      const barW = Math.max(2, (s.cost_usd / maxCost) * barAreaW);
+
+      // Label
+      ctx.fillStyle = "#8b949e";
+      ctx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(s.stage.length > 14 ? s.stage.slice(0, 13) + "…" : s.stage, labelW - 6, y + 14);
+
+      // Bar
+      const gradient = ctx.createLinearGradient(labelW, 0, labelW + barW, 0);
+      gradient.addColorStop(0, "#58a6ff");
+      gradient.addColorStop(1, "#388bfd");
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.roundRect(labelW, y + 2, barW, rowH - 8, 3);
+      ctx.fill();
+
+      // Value
+      ctx.fillStyle = "#e6edf3";
+      ctx.textAlign = "left";
+      ctx.fillText("$" + s.cost_usd.toFixed(4), labelW + barW + 6, y + 14);
+    });
+  }
 
   window.closeCost = function () {
     document.getElementById("cost-modal").classList.remove("open");
@@ -1553,6 +1629,30 @@
       }
     }
 
+    // TTS audio preview for tts-stage reviews
+    if (data.stage === "tts" || data.stage === "review_gate_tts") {
+      try {
+        const ttsData = await GET(`/episodes/${data.episode_id}/tts`);
+        if (!ttsData.error && ttsData.segments && ttsData.segments.length > 0) {
+          let audioRows = ttsData.segments.map(s => {
+            const dur = (s.duration_seconds || 0).toFixed(1);
+            const audioUrl = `api/episodes/${data.episode_id}/tts/${s.chapter_id}.mp3`;
+            return `<div class="review-tts-row">
+              <span class="review-tts-label">${esc(s.chapter_id)}</span>
+              <span style="font-size:11px;color:var(--text-dim)">${dur}s</span>
+              <audio class="review-tts-player" controls preload="none">
+                <source src="${audioUrl}" type="audio/mpeg">
+              </audio>
+            </div>`;
+          }).join("");
+          html += `<div class="review-tts-audio">
+            <h4>TTS Audio Preview (${ttsData.segments.length} chapters)</h4>
+            ${audioRows}
+          </div>`;
+        }
+      } catch (e) { /* non-critical */ }
+    }
+
     // Diff viewer (for correct/adapt stages)
     const isActionable = (data.status === "pending" || data.status === "in_review");
     if (data.diff) {
@@ -1710,6 +1810,27 @@
 
     return html;
   }
+
+  async function batchApproveAll() {
+    const pending = reviewTasks.filter(t => t.status === "pending" || t.status === "in_review");
+    if (pending.length === 0) {
+      toast("No pending reviews to approve", false);
+      return;
+    }
+    if (!confirm(`Approve all ${pending.length} pending review(s)?`)) return;
+    const ids = pending.map(t => t.id);
+    const r = await POST("/reviews/batch-approve", { review_ids: ids });
+    if (r.error) {
+      toast(r.error, false);
+    } else {
+      toast(`Approved ${r.approved.length} reviews${r.errors.length ? ", " + r.errors.length + " errors" : ""}`);
+      selectedReview = null;
+      loadReviewList();
+      updateReviewBadge();
+      document.getElementById("review-detail").innerHTML = '<div class="empty">Reviews approved.</div>';
+    }
+  }
+  window.batchApproveAll = batchApproveAll;
 
   async function approveReview(id) {
     const r = await POST("/reviews/" + id + "/approve");
@@ -1917,6 +2038,84 @@
     return days + "d ago";
   }
 
+  // ── SSE Live Updates ─────────────────────────────────────────
+  let _sseSource = null;
+  let _sseReconnectTimer = null;
+
+  function initSSE() {
+    if (!window.EventSource) return; // Fallback: keep existing polling
+    if (_sseSource) { _sseSource.close(); _sseSource = null; }
+
+    const indicator = document.getElementById("sse-indicator");
+    _sseSource = new EventSource("api/stream");
+
+    _sseSource.addEventListener("connected", () => {
+      if (indicator) { indicator.className = "sse-indicator sse-connected"; }
+      if (_sseReconnectTimer) { clearTimeout(_sseReconnectTimer); _sseReconnectTimer = null; }
+    });
+
+    _sseSource.addEventListener("job_update", (e) => {
+      const data = JSON.parse(e.data);
+      // If this matches our active job, stop polling and handle result
+      if (data.job_id && data.job_id === activeJobId) {
+        if (data.state === "success") {
+          clearInterval(pollTimer);
+          hideSpinner();
+          disableActions(false);
+          activeJobId = null;
+          const cost = data.result && data.result.cost_usd
+            ? ` ($${data.result.cost_usd.toFixed(4)})` : "";
+          toast(data.action + " complete" + cost);
+          refresh();
+        } else if (data.state === "error") {
+          clearInterval(pollTimer);
+          hideSpinner();
+          disableActions(false);
+          activeJobId = null;
+          toast(data.message || "Job failed", false);
+          refresh();
+        } else if (data.state === "running") {
+          updateSpinner(data.action + ": " + (data.stage || "running"));
+        }
+      }
+    });
+
+    _sseSource.addEventListener("batch_update", (e) => {
+      const data = JSON.parse(e.data);
+      if (activeBatchId && data.batch_id === activeBatchId) {
+        updateBatchUI({
+          state: data.state,
+          progress_pct: data.progress_pct || 0,
+          completed_episodes: data.completed_episodes || 0,
+          failed_episodes: data.failed_episodes || 0,
+          remaining_episodes: 0,
+          total_cost_usd: data.total_cost_usd || 0,
+          current_episode_id: data.current_episode_id || null,
+          current_episode_title: data.current_episode_id || "",
+          current_stage: data.current_stage || "",
+          message: data.message || "",
+        });
+        if (data.state === "success" || data.state === "stopped" || data.state === "error") {
+          clearInterval(batchPollTimer);
+          const msg = data.state === "success"
+            ? `Batch complete: ${data.completed_episodes || 0} done ($${(data.total_cost_usd || 0).toFixed(4)})`
+            : `Batch ${data.state}${data.message ? ": " + data.message : ""}`;
+          toast(msg, data.state === "success");
+          resetBatchUI();
+          refresh();
+        }
+      }
+    });
+
+    _sseSource.onerror = () => {
+      if (indicator) { indicator.className = "sse-indicator sse-error"; }
+      _sseSource.close();
+      _sseSource = null;
+      // Reconnect after 5s
+      _sseReconnectTimer = setTimeout(initSSE, 5000);
+    };
+  }
+
   // ── Init ─────────────────────────────────────────────────────
   document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("filter-status").onchange = applyFilters;
@@ -1940,5 +2139,6 @@
     loadChannels();
     refresh();
     checkActiveBatch();
+    initSSE();
   });
 })();

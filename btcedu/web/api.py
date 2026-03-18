@@ -2,11 +2,13 @@
 
 import json
 import logging
+import queue
 import re
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, request
 from sqlalchemy import func
 from werkzeug.utils import secure_filename
 
@@ -15,6 +17,82 @@ from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineS
 logger = logging.getLogger(__name__)
 
 api_bp = Blueprint("api", __name__)
+
+# ---------------------------------------------------------------------------
+# SSE (Server-Sent Events) infrastructure
+# ---------------------------------------------------------------------------
+
+_sse_clients: list[queue.Queue] = []
+_sse_lock = threading.Lock()
+_SSE_MAX_CLIENTS = 10  # Limit for Raspberry Pi
+
+
+def broadcast_sse(event_type: str, data: dict) -> None:
+    """Broadcast an SSE event to all connected clients.
+
+    Called from jobs.py on state changes. Thread-safe.
+    """
+    msg = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+    with _sse_lock:
+        dead = []
+        for q in _sse_clients:
+            try:
+                q.put_nowait(msg)
+            except queue.Full:
+                dead.append(q)
+        for q in dead:
+            try:
+                _sse_clients.remove(q)
+            except ValueError:
+                pass
+
+
+@api_bp.route("/stream")
+def sse_stream():
+    """Server-Sent Events endpoint for live dashboard updates.
+
+    Clients connect here and receive push notifications for job/batch/episode
+    state changes instead of polling. Heartbeat every 15 s keeps the connection
+    alive through Caddy and mobile proxies.
+    """
+    q: queue.Queue = queue.Queue(maxsize=30)
+
+    with _sse_lock:
+        if len(_sse_clients) >= _SSE_MAX_CLIENTS:
+            # Drop oldest client to make room
+            try:
+                _sse_clients.pop(0)
+            except IndexError:
+                pass
+        _sse_clients.append(q)
+
+    def generate():
+        try:
+            # Send initial connected event
+            yield f"event: connected\ndata: {json.dumps({'ts': datetime.now(UTC).isoformat()})}\n\n"
+            while True:
+                try:
+                    msg = q.get(timeout=15)
+                    yield msg
+                except queue.Empty:
+                    # Heartbeat to keep connection alive
+                    yield ": heartbeat\n\n"
+        finally:
+            with _sse_lock:
+                try:
+                    _sse_clients.remove(q)
+                except ValueError:
+                    pass
+
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # Disable Nginx/Caddy buffering
+            "Connection": "keep-alive",
+        },
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1476,6 +1554,32 @@ def get_review_detail(review_id: int):
             return jsonify({"error": f"Review not found: {review_id}"}), 404
 
         return jsonify(detail)
+    finally:
+        session.close()
+
+
+@api_bp.route("/reviews/batch-approve", methods=["POST"])
+def batch_approve_reviews():
+    """Approve multiple review tasks in one request."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import approve_review
+
+        body = request.get_json(silent=True) or {}
+        review_ids = body.get("review_ids", [])
+        if not isinstance(review_ids, list) or not review_ids:
+            return jsonify({"error": "review_ids must be a non-empty list"}), 400
+
+        approved = []
+        errors = []
+        for rid in review_ids:
+            try:
+                approve_review(session, int(rid), notes="Batch approved via dashboard")
+                approved.append(rid)
+            except Exception as exc:
+                errors.append({"id": rid, "error": str(exc)})
+
+        return jsonify({"success": True, "approved": approved, "errors": errors})
     finally:
         session.close()
 

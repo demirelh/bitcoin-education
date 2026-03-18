@@ -197,6 +197,15 @@ class JobManager:
                 setattr(batch_job, key, value)
             batch_job.updated_at = _utcnow()
 
+    def _broadcast(self, event_type: str, data: dict) -> None:
+        """Broadcast an SSE event. Silently ignores errors so pipeline never breaks."""
+        try:
+            from btcedu.web.api import broadcast_sse
+
+            broadcast_sse(event_type, data)
+        except Exception:
+            pass
+
     def _log(self, job: Job, msg: str) -> None:
         ts = _utcnow().strftime("%Y-%m-%d %H:%M:%S")
         line = f"{ts} [{job.action}] {msg}\n"
@@ -219,6 +228,16 @@ class JobManager:
 
             self._update(job, state="running", stage="starting")
             self._log(job, f"Starting {job.action} for {job.episode_id}")
+            self._broadcast(
+                "job_update",
+                {
+                    "job_id": job.job_id,
+                    "episode_id": job.episode_id,
+                    "state": "running",
+                    "stage": "starting",
+                    "action": job.action,
+                },
+            )
 
             try:
                 if job.action == "download":
@@ -246,11 +265,32 @@ class JobManager:
 
                 self._update(job, state="success", stage="done")
                 self._log(job, "Job completed successfully")
+                self._broadcast(
+                    "job_update",
+                    {
+                        "job_id": job.job_id,
+                        "episode_id": job.episode_id,
+                        "state": "success",
+                        "stage": "done",
+                        "action": job.action,
+                        "result": job.result,
+                    },
+                )
 
             except Exception as e:
                 logger.exception("Job %s failed", job.job_id)
                 self._update(job, state="error", message=str(e))
                 self._log(job, f"ERROR: {e}")
+                self._broadcast(
+                    "job_update",
+                    {
+                        "job_id": job.job_id,
+                        "episode_id": job.episode_id,
+                        "state": "error",
+                        "action": job.action,
+                        "message": str(e),
+                    },
+                )
             finally:
                 session.close()
 
@@ -767,6 +807,18 @@ class JobManager:
                                 completed_work=new_completed,
                                 progress_pct=progress,
                             )
+                            self._broadcast(
+                                "batch_update",
+                                {
+                                    "batch_id": batch_job.batch_id,
+                                    "state": "running",
+                                    "progress_pct": progress,
+                                    "current_episode_id": episode_id,
+                                    "completed_episodes": batch_job.completed_episodes + 1,
+                                    "total_cost_usd": batch_job.total_cost_usd
+                                    + report.total_cost_usd,
+                                },
+                            )
                             logger.info(
                                 "Batch job %s: completed episode %s (%d/%d) - progress: %d%%",
                                 batch_job.batch_id,
@@ -838,6 +890,17 @@ class JobManager:
                     batch_job.failed_episodes,
                     batch_job.total_cost_usd,
                 )
+                self._broadcast(
+                    "batch_update",
+                    {
+                        "batch_id": batch_job.batch_id,
+                        "state": "success",
+                        "progress_pct": 100,
+                        "completed_episodes": batch_job.completed_episodes,
+                        "failed_episodes": batch_job.failed_episodes,
+                        "total_cost_usd": batch_job.total_cost_usd,
+                    },
+                )
 
             except Exception as e:
                 logger.exception("Batch job %s failed", batch_job.batch_id)
@@ -845,6 +908,14 @@ class JobManager:
                     batch_job,
                     state="error",
                     message=str(e),
+                )
+                self._broadcast(
+                    "batch_update",
+                    {
+                        "batch_id": batch_job.batch_id,
+                        "state": "error",
+                        "message": str(e),
+                    },
                 )
             finally:
                 session.close()

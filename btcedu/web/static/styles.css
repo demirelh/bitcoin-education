@@ -1778,6 +1778,9 @@ body {
 @media (max-width: 768px) {
     .pipeline-stepper {
         padding-bottom: 12px;
+        /* Smooth momentum scrolling on iOS */
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
     }
     .ps-stage {
         min-width: 40px;
@@ -1927,3 +1930,119 @@ body {
 .diff-item-summary .dim-count.accepted { color: #3fb950; }
 .diff-item-summary .dim-count.rejected { color: #f85149; }
 .diff-item-summary .dim-count.edited   { color: #4f46e5; }
+
+/* ── Inline video preview (Phase 3a-3) ─────────────────── */
+.video-inline-preview {
+    margin: 10px 0 4px;
+}
+.video-inline-preview video {
+    width: 100%;
+    max-width: 640px;
+    border-radius: var(--radius);
+    background: #000;
+    display: block;
+}
+
+/* ── SSE live indicator (Phase 3d) ─────────────────────── */
+.sse-indicator {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--border);
+    opacity: 0.6;
+    z-index: 150;
+    transition: background 0.4s, opacity 0.4s;
+}
+.sse-indicator.sse-connected {
+    background: var(--green);
+    opacity: 1;
+    animation: ssePulse 3s ease-in-out infinite;
+}
+.sse-indicator.sse-error {
+    background: var(--red);
+    opacity: 1;
+}
+@keyframes ssePulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(63, 185, 80, 0.4); }
+    50%       { box-shadow: 0 0 0 5px rgba(63, 185, 80, 0); }
+}
+
+/* ── Status summary bar (Phase 3c-2) ───────────────────── */
+.status-summary {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 6px 0;
+    margin-bottom: 8px;
+    font-size: 11px;
+}
+.status-summary-item {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    transition: border-color 0.15s;
+}
+.status-summary-item:hover {
+    border-color: var(--accent);
+}
+.status-summary-count {
+    font-weight: 600;
+    color: var(--text);
+}
+
+/* ── Cost chart canvas (Phase 3c-1) ────────────────────── */
+#cost-chart-container {
+    margin-top: 16px;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+}
+#cost-chart {
+    border-radius: var(--radius);
+}
+
+/* ── TTS audio in review detail (Phase 3b-2) ───────────── */
+.review-tts-audio {
+    margin: 12px 0;
+    padding: 10px 12px;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+}
+.review-tts-audio h4 {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 8px;
+}
+.review-tts-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+}
+.review-tts-label {
+    font-size: 12px;
+    min-width: 100px;
+    color: var(--text);
+    font-weight: 500;
+}
+.review-tts-player {
+    flex: 1;
+    min-width: 200px;
+    height: 32px;
+}
+
+/* ── Badge missing statuses ─────────────────────────────── */
+.badge-segmented       { background: #58a6ff33; color: var(--accent); }
+.badge-frames_extracted { background: #bc8cff33; color: var(--purple); }
+.badge-cost_limit      { background: #f8514933; color: var(--red); }
+.badge-refined         { background: #58a6ff33; color: var(--accent); }

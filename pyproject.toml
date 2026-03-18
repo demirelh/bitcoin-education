@@ -33,6 +33,9 @@ youtube = [
     "google-auth-httplib2>=0.2.0",
     "google-auth-oauthlib>=1.0.0",
 ]
+frames = [
+    "opencv-python-headless>=4.8",
+]
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.6.0",

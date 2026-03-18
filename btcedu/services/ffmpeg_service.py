@@ -929,6 +929,288 @@ def generate_silent_audio(
     )
 
 
+# ---------------------------------------------------------------------------
+# Frame extraction & style filtering (frame-extraction pipeline)
+# ---------------------------------------------------------------------------
+
+_STYLE_FILTER_PRESETS: dict[str, str] = {
+    "news_recolor": "hue=h=15:s=1.1,curves=vintage,vignette=PI/4,eq=contrast=1.05",
+    "warm_tint": "colortemperature=temperature=6500,eq=saturation=1.1",
+    "cool_tint": "colortemperature=temperature=4500,eq=saturation=0.9:contrast=1.05",
+}
+
+
+@dataclass
+class ExtractedFrame:
+    """Metadata for a single extracted keyframe."""
+
+    frame_path: str
+    timestamp_seconds: float
+    scene_score: float
+    width: int
+    height: int
+    size_bytes: int
+
+
+def extract_keyframes(
+    video_path: str,
+    output_dir: str,
+    scene_threshold: float = 0.3,
+    min_interval_seconds: float = 2.0,
+    max_frames: int = 100,
+    timeout: int = 300,
+    dry_run: bool = False,
+) -> list[ExtractedFrame]:
+    """Extract keyframes from *video_path* using ffmpeg scene-change detection.
+
+    Writes PNG files into *output_dir* (``frame_0001.png``, …).
+
+    Args:
+        video_path: Input video file.
+        output_dir: Directory to write frame images.
+        scene_threshold: Scene-change threshold (0.0–1.0). Higher → fewer frames.
+        min_interval_seconds: Minimum gap between consecutive frames.
+        max_frames: Hard cap on frames extracted.
+        timeout: Subprocess timeout in seconds.
+        dry_run: If True, skip execution and return empty list.
+
+    Returns:
+        List of :class:`ExtractedFrame`, sorted by timestamp.
+    """
+    out = Path(output_dir)
+    out.mkdir(parents=True, exist_ok=True)
+
+    if dry_run:
+        logger.info("Dry-run: would extract keyframes from %s", video_path)
+        return []
+
+    # --- Pass 1: detect scene-change timestamps via showinfo ---------------
+    detect_cmd = [
+        "ffmpeg",
+        "-i",
+        video_path,
+        "-filter:v",
+        f"select='gt(scene,{scene_threshold})',showinfo",
+        "-vsync",
+        "vfr",
+        "-f",
+        "null",
+        "-",
+    ]
+    returncode, stderr = _run_ffmpeg(detect_cmd, timeout)
+    if returncode != 0:
+        logger.warning("Scene detection failed (exit %d), falling back to interval", returncode)
+        return _extract_uniform_frames(video_path, output_dir, max_frames, timeout)
+
+    # Parse timestamps from showinfo lines:  pts_time:12.345
+    import re
+
+    timestamps: list[float] = []
+    for m in re.finditer(r"pts_time:\s*([\d.]+)", stderr):
+        ts = float(m.group(1))
+        if not timestamps or (ts - timestamps[-1]) >= min_interval_seconds:
+            timestamps.append(ts)
+            if len(timestamps) >= max_frames:
+                break
+
+    if not timestamps:
+        logger.warning("No scene changes detected, falling back to interval extraction")
+        return _extract_uniform_frames(video_path, output_dir, max_frames, timeout)
+
+    # --- Pass 2: extract frames at those timestamps ------------------------
+    frames: list[ExtractedFrame] = []
+    for idx, ts in enumerate(timestamps, 1):
+        frame_file = str(out / f"frame_{idx:04d}.png")
+        cmd = [
+            "ffmpeg",
+            "-ss",
+            f"{ts:.3f}",
+            "-i",
+            video_path,
+            "-frames:v",
+            "1",
+            "-y",
+            frame_file,
+        ]
+        rc, err = _run_ffmpeg(cmd, 30)
+        if rc != 0:
+            logger.warning("Failed to extract frame at %.1fs: %s", ts, err)
+            continue
+        fp = Path(frame_file)
+        if not fp.exists():
+            continue
+        info = _probe_image_dimensions(frame_file)
+        frames.append(
+            ExtractedFrame(
+                frame_path=frame_file,
+                timestamp_seconds=ts,
+                scene_score=scene_threshold,  # actual score not available in pass-2
+                width=info[0],
+                height=info[1],
+                size_bytes=fp.stat().st_size,
+            )
+        )
+    return frames
+
+
+def _extract_uniform_frames(
+    video_path: str,
+    output_dir: str,
+    max_frames: int,
+    timeout: int,
+) -> list[ExtractedFrame]:
+    """Fallback: extract evenly-spaced frames when scene detection fails."""
+    info = probe_media(video_path)
+    if info.duration_seconds <= 0:
+        return []
+    interval = max(info.duration_seconds / max_frames, 2.0)
+    out = Path(output_dir)
+    frames: list[ExtractedFrame] = []
+    ts = 0.0
+    idx = 0
+    while ts < info.duration_seconds and idx < max_frames:
+        idx += 1
+        frame_file = str(out / f"frame_{idx:04d}.png")
+        cmd = [
+            "ffmpeg",
+            "-ss",
+            f"{ts:.3f}",
+            "-i",
+            video_path,
+            "-frames:v",
+            "1",
+            "-y",
+            frame_file,
+        ]
+        rc, _ = _run_ffmpeg(cmd, 30)
+        fp = Path(frame_file)
+        if rc == 0 and fp.exists():
+            dim = _probe_image_dimensions(frame_file)
+            frames.append(
+                ExtractedFrame(
+                    frame_path=frame_file,
+                    timestamp_seconds=ts,
+                    scene_score=0.0,
+                    width=dim[0],
+                    height=dim[1],
+                    size_bytes=fp.stat().st_size,
+                )
+            )
+        ts += interval
+    return frames
+
+
+def _probe_image_dimensions(path: str) -> tuple[int, int]:
+    """Return (width, height) for an image via ffprobe, or (0, 0) on failure."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "json",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        data = json.loads(result.stdout)
+        stream = data.get("streams", [{}])[0]
+        return int(stream.get("width", 0)), int(stream.get("height", 0))
+    except Exception:
+        return 0, 0
+
+
+def crop_frame(
+    input_path: str,
+    output_path: str,
+    crop_region: tuple[int, int, int, int] | None = None,
+    target_size: tuple[int, int] = (1920, 1080),
+    timeout: int = 30,
+    dry_run: bool = False,
+) -> str:
+    """Crop and scale a frame image.
+
+    Args:
+        input_path: Source image file.
+        output_path: Destination image file.
+        crop_region: ``(x, y, width, height)`` or *None* for full frame.
+        target_size: ``(width, height)`` to scale to after cropping.
+        timeout: Subprocess timeout.
+        dry_run: If True, create an empty file and return immediately.
+
+    Returns:
+        Path to the output image.
+    """
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    if dry_run:
+        Path(output_path).touch()
+        return output_path
+
+    filters: list[str] = []
+    if crop_region:
+        x, y, w, h = crop_region
+        filters.append(f"crop={w}:{h}:{x}:{y}")
+    tw, th = target_size
+    filters.append(f"scale={tw}:{th}")
+    vf = ",".join(filters)
+
+    cmd = ["ffmpeg", "-i", input_path, "-filter:v", vf, "-frames:v", "1", "-y", output_path]
+    rc, err = _run_ffmpeg(cmd, timeout)
+    if rc != 0:
+        raise RuntimeError(f"crop_frame failed (exit {rc}): {err}")
+    return output_path
+
+
+def apply_style_filter(
+    input_path: str,
+    output_path: str,
+    filter_preset: str = "news_recolor",
+    timeout: int = 30,
+    dry_run: bool = False,
+) -> str:
+    """Apply a visual style filter to an image for copyright differentiation.
+
+    Args:
+        input_path: Source image.
+        output_path: Destination image.
+        filter_preset: Key in :data:`_STYLE_FILTER_PRESETS`.
+        timeout: Subprocess timeout.
+        dry_run: If True, copy *input_path* to *output_path* unchanged.
+
+    Returns:
+        Path to the styled image.
+
+    Raises:
+        ValueError: If *filter_preset* is unknown.
+    """
+    if filter_preset not in _STYLE_FILTER_PRESETS:
+        raise ValueError(
+            f"Unknown filter preset '{filter_preset}', choose from {list(_STYLE_FILTER_PRESETS)}"
+        )
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+    if dry_run:
+        import shutil
+
+        shutil.copy2(input_path, output_path)
+        return output_path
+
+    vf = _STYLE_FILTER_PRESETS[filter_preset]
+    cmd = ["ffmpeg", "-i", input_path, "-filter:v", vf, "-frames:v", "1", "-y", output_path]
+    rc, err = _run_ffmpeg(cmd, timeout)
+    if rc != 0:
+        raise RuntimeError(f"apply_style_filter failed (exit {rc}): {err}")
+    return output_path
+
+
 def _run_ffmpeg(cmd: list[str], timeout: int) -> tuple[int, str]:
     """Run ffmpeg command with timeout.
 

@@ -296,4 +296,34 @@ def download_episode(
     episode.status = EpisodeStatus.DOWNLOADED
     session.commit()
 
+    # Optionally download the video source for frame extraction
+    if settings.frame_extraction_enabled:
+        _try_download_video(episode.url, output_dir, settings)
+
     return audio_path
+
+
+def _try_download_video(url: str, output_dir: str, settings: Settings) -> None:
+    """Best-effort video download for frame extraction (non-fatal)."""
+    try:
+        from btcedu.services.download_service import download_video
+
+        video_path = download_video(
+            url=url,
+            output_dir=output_dir,
+            max_height=settings.frame_extract_video_height,
+        )
+        # Write metadata file so frame_extractor can locate the video later
+        import json
+        from datetime import UTC, datetime
+
+        meta_path = Path(output_dir) / "video_meta.json"
+        meta_path.write_text(
+            json.dumps(
+                {"video_path": video_path, "downloaded_at": datetime.now(UTC).isoformat()},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    except Exception:
+        logger.warning("Video download failed for %s (frame extraction will be skipped)", url)

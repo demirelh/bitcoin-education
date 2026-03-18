@@ -34,6 +34,7 @@ _STATUS_ORDER = {
     EpisodeStatus.TRANSLATED: 11,
     EpisodeStatus.ADAPTED: 12,
     EpisodeStatus.CHAPTERIZED: 13,
+    EpisodeStatus.FRAMES_EXTRACTED: 13.5,
     EpisodeStatus.IMAGES_GENERATED: 14,
     EpisodeStatus.TTS_DONE: 15,
     EpisodeStatus.RENDERED: 16,
@@ -61,8 +62,9 @@ _V2_STAGES = [
     ("adapt", EpisodeStatus.TRANSLATED),
     ("review_gate_2", EpisodeStatus.ADAPTED),
     ("chapterize", EpisodeStatus.ADAPTED),  # after review approved
-    ("imagegen", EpisodeStatus.CHAPTERIZED),  # search + rank (no finalize)
-    ("review_gate_stock", EpisodeStatus.CHAPTERIZED),  # human pins + approve
+    ("frameextract", EpisodeStatus.CHAPTERIZED),  # extract keyframes from source video
+    ("imagegen", EpisodeStatus.FRAMES_EXTRACTED),  # search + rank (no finalize)
+    ("review_gate_stock", EpisodeStatus.FRAMES_EXTRACTED),  # human pins + approve
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
     ("render", EpisodeStatus.TTS_DONE),  # Sprint 9
     ("review_gate_3", EpisodeStatus.RENDERED),  # Sprint 10
@@ -237,6 +239,7 @@ def _run_stage(
         "review_gate_2",
         "review_gate_translate",
         "chapterize",
+        "frameextract",
         "imagegen",
         "review_gate_stock",
         "tts",
@@ -529,6 +532,21 @@ def _run_stage(
                         f"${result.cost_usd:.4f}"
                     ),
                 )
+
+        elif stage_name == "frameextract":
+            from btcedu.core.frame_extractor import extract_frames
+
+            result = extract_frames(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+            if result.skipped:
+                return StageResult("frameextract", "skipped", elapsed, "frames current")
+            detail = (
+                f"{result.total_frames} frames extracted, "
+                f"{result.assigned_frames} assigned to chapters"
+            )
+            if result.cost_usd > 0:
+                detail += f" (${result.cost_usd:.4f})"
+            return StageResult("frameextract", "success", elapsed, detail)
 
         elif stage_name == "imagegen":
             # v2 pipeline: stock images only (no AI image generation)

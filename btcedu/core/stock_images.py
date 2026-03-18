@@ -1334,10 +1334,22 @@ def finalize_selections(
     candidates_manifest = json.loads(candidates_manifest_path.read_text(encoding="utf-8"))
     chapters_candidates = candidates_manifest.get("chapters", {})
 
+    # Load extracted frames manifest (if available) for frame-first selection
+    frames_manifest_path = output_base / "frames" / "manifest.json"
+    frame_assignments: dict[str, dict] = {}
+    if frames_manifest_path.exists():
+        try:
+            fm = json.loads(frames_manifest_path.read_text(encoding="utf-8"))
+            for assignment in fm.get("chapter_assignments", []):
+                frame_assignments[assignment["chapter_id"]] = assignment
+        except (json.JSONDecodeError, KeyError):
+            logger.warning("Could not load frames manifest for %s", episode_id)
+
     # Build image entries (same schema as DALL-E manifest)
     image_entries = []
     selected_count = 0
     placeholder_count = 0
+    frame_count = 0
 
     for chapter in chapters_doc.chapters:
         visual = chapter.visual
@@ -1351,7 +1363,42 @@ def finalize_selections(
             placeholder_count += 1
             continue
 
-        # Find selected candidate
+        # Priority 1: Use extracted frame if available
+        frame_info = frame_assignments.get(chapter.chapter_id)
+        if frame_info:
+            frame_path = Path(frame_info["assigned_frame"])
+            if frame_path.exists():
+                file_size = frame_path.stat().st_size
+                dest_filename = f"{chapter.chapter_id}_frame.png"
+                dest_path = images_dir / dest_filename
+                shutil.copy2(frame_path, dest_path)
+                entry = {
+                    "chapter_id": chapter.chapter_id,
+                    "chapter_title": chapter.title,
+                    "visual_type": visual.type,
+                    "asset_type": "photo",
+                    "file_path": f"images/{dest_filename}",
+                    "prompt": None,
+                    "generation_method": "frame_extraction",
+                    "model": None,
+                    "size": "1920x1080",
+                    "mime_type": "image/png",
+                    "size_bytes": file_size,
+                    "metadata": {
+                        "source": "tagesschau_frame",
+                        "timestamp_seconds": frame_info.get("timestamp_seconds"),
+                        "scene_score": frame_info.get("scene_score"),
+                        "has_anchor": frame_info.get("has_anchor", False),
+                        "was_cropped": frame_info.get("was_cropped", False),
+                    },
+                }
+                image_entries.append(entry)
+                selected_count += 1
+                frame_count += 1
+                _create_media_asset(session, episode_id, chapter.chapter_id, entry)
+                continue
+
+        # Priority 2: Find selected stock candidate
         ch_data = chapters_candidates.get(chapter.chapter_id, {})
         candidates = ch_data.get("candidates", [])
         selected = [c for c in candidates if c.get("selected")]

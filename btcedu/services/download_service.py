@@ -1,10 +1,20 @@
 import logging
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+_ALLOWED_AUDIO_FORMATS = frozenset({"m4a", "mp3", "wav", "opus", "flac", "aac", "ogg"})
+_URL_PATTERN = re.compile(r"^https?://[^\s]+$")
+
+
+def _validate_url(url: str) -> None:
+    """Validate that *url* looks like an HTTP(S) URL."""
+    if not isinstance(url, str) or not _URL_PATTERN.match(url):
+        raise ValueError(f"Invalid URL: {url!r}")
 
 
 def download_audio(
@@ -25,6 +35,10 @@ def download_audio(
     Raises:
         RuntimeError: If yt-dlp fails.
     """
+    _validate_url(url)
+    if audio_format not in _ALLOWED_AUDIO_FORMATS:
+        raise ValueError(f"Unsupported audio format: {audio_format!r}")
+
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -90,6 +104,10 @@ def download_video(
     Raises:
         RuntimeError: If yt-dlp fails.
     """
+    _validate_url(url)
+    if not isinstance(max_height, int) or max_height <= 0 or max_height > 4320:
+        raise ValueError(f"Invalid max_height: {max_height!r}")
+
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 

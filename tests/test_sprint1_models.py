@@ -202,9 +202,9 @@ class TestEpisodeV2Fields:
         for stage in new_stages:
             assert stage.value  # exists and has a string value
 
-        # Total enum count: 7 original + 9 new + 1 (SEGMENT) + 1 (FRAMEEXTRACT) = 18
-        assert len(PipelineStage) == 18
+        # Total enum count: 7 original + 9 new + 1 (SEGMENT) + 1 (FRAMEEXTRACT) + 1 (ANCHORGEN) = 19
+        assert len(PipelineStage) == 19
 
     def test_episode_status_total_count(self):
-        # 8 original + 10 new + 1 (SEGMENTED) + 1 (FRAMES_EXTRACTED) = 20
-        assert len(EpisodeStatus) == 20
+        # 8 original + 10 new + 1 (SEGMENTED) + 1 (FRAMES_EXTRACTED) + 1 (ANCHOR_GENERATED) = 21
+        assert len(EpisodeStatus) == 21

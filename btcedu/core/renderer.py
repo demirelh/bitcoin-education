@@ -96,7 +96,9 @@ def render_video(
         )
 
     # Check episode status (allow TTS_DONE or RENDERED for idempotency)
-    if episode.status not in (EpisodeStatus.TTS_DONE, EpisodeStatus.RENDERED) and not force:
+    if episode.status not in (
+        EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED, EpisodeStatus.RENDERED
+    ) and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'tts_done' or 'rendered'. Use --force to override."
@@ -141,6 +143,19 @@ def render_video(
     image_manifest = _load_image_manifest(image_manifest_path)
     tts_manifest = _load_tts_manifest(tts_manifest_path)
 
+    # Load anchor manifest (optional — only if anchor generation was enabled)
+    anchor_manifest_path = Path(settings.outputs_dir) / episode_id / "anchor" / "manifest.json"
+    anchor_manifest: dict = {}
+    if anchor_manifest_path.exists():
+        try:
+            anchor_manifest = json.loads(anchor_manifest_path.read_text(encoding="utf-8"))
+            logger.info(
+                "Loaded anchor manifest with %d segments",
+                len(anchor_manifest.get("segments", [])),
+            )
+        except (json.JSONDecodeError, KeyError):
+            logger.warning("Could not load anchor manifest, using images for all chapters")
+
     # Compute content hash (for idempotency) — includes enhancement flags
     _enh_hash_data = {}
     try:
@@ -164,7 +179,7 @@ def render_video(
         if _is_render_current(manifest_path, provenance_path, draft_path, content_hash):
             logger.info("Render is current for %s (use --force to re-render)", episode_id)
             # Still advance episode status so pipeline can proceed
-            if episode.status == EpisodeStatus.TTS_DONE:
+            if episode.status in (EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED):
                 episode.status = EpisodeStatus.RENDERED
                 session.commit()
             existing_provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
@@ -265,7 +280,8 @@ def render_video(
             # Resolve media files for this chapter
             try:
                 media_path, audio_path, duration, asset_type = _resolve_chapter_media(
-                    chapter.chapter_id, image_manifest, tts_manifest, base_dir
+                    chapter.chapter_id, image_manifest, tts_manifest, base_dir,
+                    anchor_manifest=anchor_manifest,
                 )
             except ValueError as e:
                 logger.warning("Skipping chapter %s: %s", chapter.chapter_id, e)
@@ -740,22 +756,49 @@ def _resolve_chapter_media(
     image_manifest: dict,
     tts_manifest: dict,
     base_dir: Path,
+    anchor_manifest: dict | None = None,
 ) -> tuple[Path, Path, float, str]:
     """Resolve media, audio paths and duration for a chapter.
+
+    Priority: anchor video > image/video from manifest.
 
     Args:
         chapter_id: Chapter identifier
         image_manifest: Image manifest dict
         tts_manifest: TTS manifest dict
         base_dir: Episode outputs directory
+        anchor_manifest: Anchor manifest dict (optional)
 
     Returns:
         Tuple of (media_path, audio_path, duration_seconds, asset_type)
-        asset_type is "photo" or "video" (Phase 4)
+        asset_type is "photo", "video", or "anchor_video"
 
     Raises:
         ValueError: If image/video or audio not found
     """
+    # Check anchor manifest first (TALKING_HEAD chapters)
+    if anchor_manifest:
+        for seg in anchor_manifest.get("segments", []):
+            if seg["chapter_id"] == chapter_id:
+                anchor_path = base_dir / seg["video_path"]
+                if anchor_path.exists():
+                    # Anchor video contains both video and audio synced together,
+                    # but we still need TTS audio for the final render mix
+                    audio_entry = None
+                    for s in tts_manifest.get("segments", []):
+                        if s["chapter_id"] == chapter_id:
+                            audio_entry = s
+                            break
+                    if audio_entry:
+                        audio_path = base_dir / audio_entry["file_path"]
+                        if audio_path.exists():
+                            return (
+                                anchor_path,
+                                audio_path,
+                                audio_entry["duration_seconds"],
+                                "video",
+                            )
+
     # Find image/video entry
     image_entry = None
     for img in image_manifest.get("images", []):

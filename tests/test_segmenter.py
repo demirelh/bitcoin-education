@@ -135,13 +135,12 @@ class TestStoryDocumentValidation:
         assert len(doc.stories) == 3
         assert doc.stories[0].is_lead_story is True
 
-    def test_story_document_invalid_total_stories(self):
-        from pydantic import ValidationError
-
+    def test_story_document_auto_corrects_total_stories(self):
+        """total_stories mismatch is auto-corrected to match actual list length."""
         data = _make_story_doc("ep001", 3)
         data["total_stories"] = 5  # Wrong count
-        with pytest.raises(ValidationError, match="total_stories"):
-            StoryDocument.model_validate(data)
+        doc = StoryDocument.model_validate(data)
+        assert doc.total_stories == 3  # Auto-corrected to actual length
 
     def test_story_document_duplicate_story_id(self):
         from pydantic import ValidationError

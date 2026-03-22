@@ -66,11 +66,9 @@ class StoryDocument(BaseModel):
     @model_validator(mode="after")
     def validate_document(self) -> "StoryDocument":
         """Validate document-level constraints."""
-        # Check total_stories matches list length
+        # Auto-correct total_stories to match actual list length (LLM may miscount)
         if self.total_stories != len(self.stories):
-            raise ValueError(
-                f"total_stories ({self.total_stories}) != len(stories) ({len(self.stories)})"
-            )
+            self.total_stories = len(self.stories)
 
         # Check story_id uniqueness
         story_ids = [s.story_id for s in self.stories]

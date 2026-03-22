@@ -1113,6 +1113,199 @@
     document.getElementById("cost-modal").classList.remove("open");
   };
 
+  // ── Analytics ─────────────────────────────────────────────────
+  window.showAnalytics = async function () {
+    const modal = document.getElementById("analytics-modal");
+    modal.classList.add("open");
+    showAnalyticsTab("throughput");
+  };
+
+  window.closeAnalytics = function () {
+    document.getElementById("analytics-modal").classList.remove("open");
+  };
+
+  window.showAnalyticsTab = function (tab) {
+    document.querySelectorAll(".analytics-tab").forEach(t => t.classList.remove("active"));
+    document.querySelectorAll(".analytics-panel").forEach(p => p.style.display = "none");
+    if (event && event.target) event.target.classList.add("active");
+    const panelId = { throughput: "analytics-throughput", errors: "analytics-errors", providers: "analytics-providers" }[tab];
+    document.getElementById(panelId).style.display = "block";
+    if (tab === "throughput") loadThroughputChart();
+    if (tab === "errors") loadErrorChart();
+    if (tab === "providers") loadProviderChart();
+  };
+
+  async function loadThroughputChart() {
+    const data = await GET("/analytics/throughput");
+    const days = data.days || [];
+    const canvas = document.getElementById("throughput-chart");
+    if (!canvas || days.length === 0) {
+      document.getElementById("throughput-summary").textContent = "No data yet.";
+      return;
+    }
+    const container = canvas.parentElement;
+    const W = container.offsetWidth || 600;
+    const H = 220;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    const padL = 40, padR = 20, padT = 20, padB = 40;
+    const chartW = W - padL - padR;
+    const chartH = H - padT - padB;
+    const maxEp = Math.max(...days.map(d => d.episodes), 1);
+    const barW = Math.max(4, Math.min(30, chartW / days.length - 2));
+
+    ctx.strokeStyle = "#30363d";
+    ctx.beginPath();
+    ctx.moveTo(padL, padT);
+    ctx.lineTo(padL, padT + chartH);
+    ctx.lineTo(padL + chartW, padT + chartH);
+    ctx.stroke();
+
+    ctx.fillStyle = "#8b949e";
+    ctx.font = "10px sans-serif";
+    ctx.textAlign = "right";
+    for (let i = 0; i <= 4; i++) {
+      const val = Math.round(maxEp * i / 4);
+      const y = padT + chartH - (chartH * i / 4);
+      ctx.fillText(String(val), padL - 4, y + 3);
+    }
+
+    days.forEach((d, i) => {
+      const x = padL + (i / days.length) * chartW + 1;
+      const barH = (d.episodes / maxEp) * chartH;
+      const y = padT + chartH - barH;
+      const gradient = ctx.createLinearGradient(x, y, x, y + barH);
+      gradient.addColorStop(0, "#3fb950");
+      gradient.addColorStop(1, "#238636");
+      ctx.fillStyle = gradient;
+      ctx.beginPath();
+      ctx.roundRect(x, y, barW, barH, 2);
+      ctx.fill();
+
+      if (days.length <= 14 || i % Math.ceil(days.length / 10) === 0) {
+        ctx.fillStyle = "#8b949e";
+        ctx.font = "9px sans-serif";
+        ctx.textAlign = "center";
+        const label = d.date ? d.date.slice(5) : "";
+        ctx.fillText(label, x + barW / 2, padT + chartH + 14);
+      }
+    });
+
+    const totalEp = days.reduce((s, d) => s + d.episodes, 0);
+    const totalCost = days.reduce((s, d) => s + d.cost_usd, 0);
+    document.getElementById("throughput-summary").textContent =
+      `${totalEp} episodes over ${days.length} days | Total cost: $${totalCost.toFixed(2)}`;
+  }
+
+  async function loadErrorChart() {
+    const data = await GET("/analytics/error-rate");
+    const stages = data.stages || [];
+    const canvas = document.getElementById("error-chart");
+    if (!canvas || stages.length === 0) return;
+    const container = canvas.parentElement;
+    const W = container.offsetWidth || 600;
+    const rowH = 28;
+    const H = stages.length * rowH + 16;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    const labelW = 120;
+    const barAreaW = W - labelW - 80;
+
+    stages.forEach((s, i) => {
+      const y = i * rowH + 8;
+      const total = s.success + s.failed;
+      if (total === 0) return;
+      const successW = (s.success / total) * barAreaW;
+      const failW = (s.failed / total) * barAreaW;
+
+      ctx.fillStyle = "#8b949e";
+      ctx.font = "11px sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(s.stage.length > 14 ? s.stage.slice(0, 13) + "\u2026" : s.stage, labelW - 6, y + 14);
+
+      ctx.fillStyle = "#238636";
+      ctx.beginPath();
+      ctx.roundRect(labelW, y + 2, successW, rowH - 8, [3, 0, 0, 3]);
+      ctx.fill();
+
+      if (failW > 0) {
+        ctx.fillStyle = "#f85149";
+        ctx.beginPath();
+        ctx.roundRect(labelW + successW, y + 2, failW, rowH - 8, [0, 3, 3, 0]);
+        ctx.fill();
+      }
+
+      ctx.fillStyle = "#e6edf3";
+      ctx.textAlign = "left";
+      const pct = total > 0 ? ((s.failed / total) * 100).toFixed(1) : "0";
+      ctx.fillText(`${pct}% err (${s.failed}/${total})`, labelW + successW + failW + 6, y + 14);
+    });
+  }
+
+  async function loadProviderChart() {
+    const data = await GET("/analytics/provider-cost");
+    const providers = data.providers || [];
+    const canvas = document.getElementById("provider-chart");
+    if (!canvas || providers.length === 0) {
+      document.getElementById("provider-summary").textContent = "No data yet.";
+      return;
+    }
+    const container = canvas.parentElement;
+    const W = container.offsetWidth || 600;
+    const rowH = 32;
+    const H = providers.length * rowH + 16;
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + "px";
+    canvas.style.height = H + "px";
+    const ctx = canvas.getContext("2d");
+    ctx.scale(dpr, dpr);
+    ctx.clearRect(0, 0, W, H);
+
+    const labelW = 140;
+    const barAreaW = W - labelW - 80;
+    const maxCost = Math.max(...providers.map(p => p.cost_usd), 0.001);
+    const colors = ["#58a6ff", "#3fb950", "#f0883e", "#f85149", "#bc8cff", "#79c0ff"];
+
+    providers.forEach((p, i) => {
+      const y = i * rowH + 8;
+      const barW = Math.max(2, (p.cost_usd / maxCost) * barAreaW);
+
+      ctx.fillStyle = "#8b949e";
+      ctx.font = "11px sans-serif";
+      ctx.textAlign = "right";
+      ctx.fillText(p.provider, labelW - 6, y + 16);
+
+      ctx.fillStyle = colors[i % colors.length];
+      ctx.beginPath();
+      ctx.roundRect(labelW, y + 4, barW, rowH - 10, 3);
+      ctx.fill();
+
+      ctx.fillStyle = "#e6edf3";
+      ctx.textAlign = "left";
+      ctx.fillText(`$${p.cost_usd.toFixed(4)} (${p.runs} runs)`, labelW + barW + 6, y + 16);
+    });
+
+    const totalCost = providers.reduce((s, p) => s + p.cost_usd, 0);
+    document.getElementById("provider-summary").textContent =
+      `Total: $${totalCost.toFixed(4)} across ${providers.length} providers`;
+  }
+
   // ── What's new ───────────────────────────────────────────────
   async function loadWhatsNew() {
     try {

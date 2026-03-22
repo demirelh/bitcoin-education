@@ -28,6 +28,7 @@
       <button class="btn" onclick="detectEpisodes()">Detect</button>
       <button class="btn btn-primary" id="batch-btn" onclick="toggleBatch()">Process All</button>
       <button class="btn" onclick="showCost()">Cost</button>
+      <button class="btn btn-sm" onclick="showAnalytics()">Analytics</button>
       <button class="btn" onclick="showReviews()">Reviews <span class="review-badge" id="review-badge"></span></button>
       <button class="btn" onclick="refresh()">Refresh</button>
     </div>
@@ -67,6 +68,7 @@
             <option value="frames_extracted">frames_extracted</option>
             <option value="images_generated">images_generated</option>
             <option value="tts_done">tts_done</option>
+            <option value="anchor_generated">anchor_generated</option>
             <option value="rendered">rendered</option>
             <option value="approved">approved</option>
             <option value="published">published</option>
@@ -166,6 +168,30 @@
         <canvas id="cost-chart" style="width:100%;height:auto;display:block;"></canvas>
       </div>
       <button class="btn" onclick="closeCost()" style="margin-top:12px;">Close</button>
+    </div>
+  </div>
+
+  <!-- Analytics modal -->
+  <div class="modal-overlay" id="analytics-modal" onclick="closeAnalytics()">
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:720px;">
+      <h3>Pipeline Analytics</h3>
+      <div class="analytics-tabs">
+        <button class="analytics-tab active" onclick="showAnalyticsTab('throughput')">Throughput</button>
+        <button class="analytics-tab" onclick="showAnalyticsTab('errors')">Error Rate</button>
+        <button class="analytics-tab" onclick="showAnalyticsTab('providers')">Provider Costs</button>
+      </div>
+      <div id="analytics-throughput" class="analytics-panel">
+        <canvas id="throughput-chart" style="width:100%;height:auto;display:block;"></canvas>
+        <p id="throughput-summary" style="margin-top:8px;color:var(--text-dim);font-size:12px;"></p>
+      </div>
+      <div id="analytics-errors" class="analytics-panel" style="display:none;">
+        <canvas id="error-chart" style="width:100%;height:auto;display:block;"></canvas>
+      </div>
+      <div id="analytics-providers" class="analytics-panel" style="display:none;">
+        <canvas id="provider-chart" style="width:100%;height:auto;display:block;"></canvas>
+        <p id="provider-summary" style="margin-top:8px;color:var(--text-dim);font-size:12px;"></p>
+      </div>
+      <button class="btn" onclick="closeAnalytics()" style="margin-top:12px;">Close</button>
     </div>
   </div>
 

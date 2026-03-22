@@ -2046,3 +2046,21 @@ body {
 .badge-frames_extracted { background: #bc8cff33; color: var(--purple); }
 .badge-cost_limit      { background: #f8514933; color: var(--red); }
 .badge-refined         { background: #58a6ff33; color: var(--accent); }
+
+/* Analytics modal */
+.analytics-tabs { display: flex; gap: 6px; margin-bottom: 12px; }
+.analytics-tab {
+  background: var(--surface);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.analytics-tab.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+.analytics-panel { min-height: 200px; }

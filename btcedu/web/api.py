@@ -112,6 +112,215 @@ def health():
     )
 
 
+@api_bp.route("/pipeline-health")
+def pipeline_health():
+    """Pipeline health monitoring: stage success rates, error trends, DLQ status."""
+    from datetime import timedelta
+
+    from sqlalchemy import case
+
+    session = _get_session()
+    try:
+        now = datetime.now(UTC)
+        t_24h = now - timedelta(hours=24)
+        t_7d = now - timedelta(days=7)
+
+        # --- Per-stage metrics ---
+        stages_data = {}
+        stage_rows = (
+            session.query(
+                PipelineRun.stage,
+                func.count().label("total"),
+                func.sum(
+                    case(
+                        (PipelineRun.status == RunStatus.SUCCESS, 1), else_=0
+                    )
+                ).label("successes"),
+                func.sum(
+                    case(
+                        (PipelineRun.status == RunStatus.FAILED, 1), else_=0
+                    )
+                ).label("failures"),
+                func.avg(
+                    func.julianday(PipelineRun.completed_at)
+                    - func.julianday(PipelineRun.started_at)
+                ).label("avg_duration_days"),
+            )
+            .filter(PipelineRun.started_at >= t_7d)
+            .group_by(PipelineRun.stage)
+            .all()
+        )
+
+        # Also get 24h breakdown
+        stage_rows_24h = (
+            session.query(
+                PipelineRun.stage,
+                func.count().label("total"),
+                func.sum(
+                    case(
+                        (PipelineRun.status == RunStatus.SUCCESS, 1), else_=0
+                    )
+                ).label("successes"),
+                func.sum(
+                    case(
+                        (PipelineRun.status == RunStatus.FAILED, 1), else_=0
+                    )
+                ).label("failures"),
+            )
+            .filter(PipelineRun.started_at >= t_24h)
+            .group_by(PipelineRun.stage)
+            .all()
+        )
+        stats_24h = {
+            row.stage: {
+                "total": row.total,
+                "successes": row.successes or 0,
+                "failures": row.failures or 0,
+            }
+            for row in stage_rows_24h
+        }
+
+        for row in stage_rows:
+            stage_name = row.stage.value if hasattr(row.stage, "value") else str(row.stage)
+            total_7d = row.total or 0
+            successes_7d = row.successes or 0
+            avg_days = row.avg_duration_days or 0
+            avg_seconds = avg_days * 86400
+
+            s24 = stats_24h.get(row.stage, {})
+            total_24h = s24.get("total", 0)
+            successes_24h = s24.get("successes", 0)
+            failures_24h = s24.get("failures", 0)
+
+            stages_data[stage_name] = {
+                "success_rate_24h": (
+                    round(successes_24h / total_24h, 3) if total_24h > 0 else None
+                ),
+                "success_rate_7d": (
+                    round(successes_7d / total_7d, 3) if total_7d > 0 else None
+                ),
+                "avg_duration_seconds": round(avg_seconds, 1),
+                "total_runs_24h": total_24h,
+                "total_runs_7d": total_7d,
+                "failures_24h": failures_24h,
+            }
+
+        # --- Error trends (last 7 days, grouped by date) ---
+        error_trends = []
+        failed_runs = (
+            session.query(PipelineRun)
+            .filter(
+                PipelineRun.status == RunStatus.FAILED,
+                PipelineRun.started_at >= t_7d,
+            )
+            .all()
+        )
+        # Group by date
+        from collections import Counter
+
+        trend_counter: Counter = Counter()
+        for run in failed_runs:
+            date_str = run.started_at.strftime("%Y-%m-%d") if run.started_at else "unknown"
+            # Extract category from error_message if present
+            err = run.error_message or ""
+            category = "unknown"
+            if err.startswith("[") and "]" in err:
+                category = err[1 : err.index("]")]
+            trend_counter[(date_str, category)] += 1
+
+        for (date_str, category), count in sorted(trend_counter.items()):
+            error_trends.append(
+                {"date": date_str, "category": category, "count": count}
+            )
+
+        # --- Dead-letter queue ---
+        dlq_data = {"pending": 0, "resolved_24h": 0, "entries": []}
+        try:
+            from btcedu.models.dead_letter import DeadLetterEntry
+
+            pending_count = (
+                session.query(func.count(DeadLetterEntry.id))
+                .filter(DeadLetterEntry.resolved_at.is_(None))
+                .scalar()
+            ) or 0
+            resolved_24h = (
+                session.query(func.count(DeadLetterEntry.id))
+                .filter(DeadLetterEntry.resolved_at >= t_24h)
+                .scalar()
+            ) or 0
+
+            pending_entries = (
+                session.query(DeadLetterEntry)
+                .filter(DeadLetterEntry.resolved_at.is_(None))
+                .order_by(DeadLetterEntry.created_at.desc())
+                .limit(50)
+                .all()
+            )
+            dlq_data = {
+                "pending": pending_count,
+                "resolved_24h": resolved_24h,
+                "entries": [
+                    {
+                        "id": e.id,
+                        "episode_id": e.episode_id,
+                        "stage": e.stage,
+                        "error_category": e.error_category,
+                        "error_message": e.error_message[:200],
+                        "suggestion": e.suggestion,
+                        "created_at": e.created_at.isoformat() if e.created_at else None,
+                        "retry_count": e.retry_count,
+                    }
+                    for e in pending_entries
+                ],
+            }
+        except Exception:
+            pass  # DLQ table may not exist yet pre-migration
+
+        # --- Episode summary ---
+        total_episodes = session.query(func.count(Episode.id)).scalar() or 0
+        failed_episodes = (
+            session.query(func.count(Episode.id))
+            .filter(Episode.error_message.isnot(None))
+            .scalar()
+        ) or 0
+        stuck_threshold = 3
+        stuck_episodes_q = (
+            session.query(Episode)
+            .filter(
+                Episode.error_message.isnot(None),
+                Episode.retry_count > stuck_threshold,
+            )
+            .all()
+        )
+
+        episodes_data = {
+            "total": total_episodes,
+            "failed": failed_episodes,
+            "stuck_episodes": [
+                {
+                    "episode_id": ep.episode_id,
+                    "title": ep.title,
+                    "status": ep.status.value if hasattr(ep.status, "value") else str(ep.status),
+                    "retry_count": ep.retry_count,
+                    "error_message": (ep.error_message or "")[:200],
+                }
+                for ep in stuck_episodes_q
+            ],
+        }
+
+        return jsonify(
+            {
+                "generated_at": now.isoformat(),
+                "stages": stages_data,
+                "error_trends": error_trends,
+                "dead_letter_queue": dlq_data,
+                "episodes": episodes_data,
+            }
+        )
+    finally:
+        session.close()
+
+
 @api_bp.route("/debug/db-schema")
 def debug_db_schema():
     """Return current database schema for debugging."""
@@ -1122,6 +1331,137 @@ def cost_summary():
                 "avg_per_episode": round(grand_total / ep_count, 4) if ep_count else 0,
             }
         )
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/analytics/throughput")
+def analytics_throughput():
+    """Return daily episode completion counts for throughput chart."""
+    session = _get_session()
+    try:
+        date_col = func.date(PipelineRun.completed_at)
+        rows = (
+            session.query(
+                date_col.label("day"),
+                func.count(func.distinct(PipelineRun.episode_id)).label("episodes"),
+                func.sum(PipelineRun.estimated_cost_usd).label("cost_usd"),
+            )
+            .filter(PipelineRun.status == "success")
+            .filter(PipelineRun.completed_at.isnot(None))
+            .group_by(date_col)
+            .order_by(date_col)
+            .all()
+        )
+        return jsonify(
+            {
+                "days": [
+                    {
+                        "date": str(row.day) if row.day else None,
+                        "episodes": row.episodes,
+                        "cost_usd": round(row.cost_usd or 0, 4),
+                    }
+                    for row in rows
+                    if row.day is not None
+                ]
+            }
+        )
+    finally:
+        session.close()
+
+
+@api_bp.route("/analytics/error-rate")
+def analytics_error_rate():
+    """Return success/failure counts per stage for error-rate chart."""
+    session = _get_session()
+    try:
+        rows = (
+            session.query(
+                PipelineRun.stage,
+                PipelineRun.status,
+                func.count().label("count"),
+            )
+            .group_by(PipelineRun.stage, PipelineRun.status)
+            .all()
+        )
+        # Pivot into per-stage success/failure
+        stage_map = {}
+        for row in rows:
+            stage_name = row.stage.value if hasattr(row.stage, "value") else str(row.stage)
+            if stage_name not in stage_map:
+                stage_map[stage_name] = {
+                    "stage": stage_name,
+                    "success": 0,
+                    "failed": 0,
+                    "running": 0,
+                }
+            status_val = row.status.value if hasattr(row.status, "value") else str(row.status)
+            if status_val == "success":
+                stage_map[stage_name]["success"] = row.count
+            elif status_val == "failed":
+                stage_map[stage_name]["failed"] = row.count
+            else:
+                stage_map[stage_name]["running"] = row.count
+
+        stages = list(stage_map.values())
+        for s in stages:
+            total = s["success"] + s["failed"]
+            s["error_rate"] = round(s["failed"] / total, 4) if total > 0 else 0
+
+        return jsonify({"stages": stages})
+    finally:
+        session.close()
+
+
+@api_bp.route("/analytics/provider-cost")
+def analytics_provider_cost():
+    """Return cost breakdown by provider (inferred from pipeline stage)."""
+    session = _get_session()
+    try:
+        # Map stages to providers
+        STAGE_PROVIDER_MAP = {
+            "transcribe": "OpenAI (Whisper)",
+            "correct": "Anthropic",
+            "translate": "Anthropic",
+            "adapt": "Anthropic",
+            "chapterize": "Anthropic",
+            "imagegen": "OpenAI (DALL-E)",
+            "tts": "ElevenLabs",
+            "anchorgen": "D-ID",
+            "render": "Local (ffmpeg)",
+            "publish": "YouTube",
+        }
+
+        rows = (
+            session.query(
+                PipelineRun.stage,
+                func.count().label("runs"),
+                func.sum(PipelineRun.estimated_cost_usd).label("cost_usd"),
+            )
+            .filter(PipelineRun.status == "success")
+            .group_by(PipelineRun.stage)
+            .all()
+        )
+
+        provider_map = {}
+        for row in rows:
+            stage_name = row.stage.value if hasattr(row.stage, "value") else str(row.stage)
+            provider = STAGE_PROVIDER_MAP.get(stage_name, "Other")
+            if provider not in provider_map:
+                provider_map[provider] = {"provider": provider, "runs": 0, "cost_usd": 0.0}
+            provider_map[provider]["runs"] += row.runs
+            provider_map[provider]["cost_usd"] += row.cost_usd or 0
+
+        providers = sorted(provider_map.values(), key=lambda p: -p["cost_usd"])
+        for p in providers:
+            p["cost_usd"] = round(p["cost_usd"], 4)
+
+        return jsonify({"providers": providers})
     finally:
         session.close()
 

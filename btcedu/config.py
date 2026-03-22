@@ -64,13 +64,17 @@ class Settings(BaseSettings):
     claude_max_tokens: int = 4096
     claude_temperature: float = 0.3
     max_retries: int = 3
+    retry_base_delay: float = 1.0  # seconds, for retry decorator
+    retry_max_delay: float = 60.0  # seconds, max backoff cap
+    retry_jitter: bool = True  # add random jitter to prevent thundering herd
+    max_stage_retries: int = 3  # max retries per stage on transient errors
     dry_run: bool = False
 
     # Pipeline Version Control
     pipeline_version: int = 2  # 1 = legacy (chunk->generate->refine), 2 = v2 pipeline
     profiles_dir: str = "btcedu/profiles"
     default_content_profile: str = "bitcoin_podcast"
-    max_episode_cost_usd: float = 10.0  # per-episode cost safety cap
+    max_episode_cost_usd: float = 15.0  # per-episode cost safety cap (raised for anchor)
 
     # Image Generation (Sprint 7)
     image_gen_provider: str = "dalle3"  # "dalle3" or "pexels"
@@ -114,6 +118,14 @@ class Settings(BaseSettings):
     elevenlabs_style: float = 0.0
     elevenlabs_use_speaker_boost: bool = True
 
+    # Anchor / D-ID (talking-head video generation)
+    did_api_key: str = ""
+    did_source_image_path: str = "data/anchor/default.png"
+    did_source_image_url: str = ""
+    anchor_provider: str = "d-id"
+    anchor_enabled: bool = False
+    anchor_max_chunk_seconds: int = 270
+
     # Render / ffmpeg (Sprint 9-10)
     render_resolution: str = "1920x1080"
     render_fps: int = 30
@@ -124,6 +136,33 @@ class Settings(BaseSettings):
     render_timeout_segment: int = 300  # 5 minutes
     render_timeout_concat: int = 600  # 10 minutes
     render_transition_duration: float = 0.5  # seconds for fade in/out (Sprint 10)
+
+    # Video quality enhancements (each individually toggleable)
+    render_ken_burns_enabled: bool = False
+    render_ken_burns_zoom_ratio: float = 0.04  # total zoom range (1.0 -> 1.04)
+
+    render_lower_thirds_animated: bool = False
+    render_lower_thirds_slide_duration: float = 0.4  # slide-in seconds
+    render_lower_thirds_gradient: bool = True  # gradient vs solid box
+
+    render_ticker_enabled: bool = False
+    render_ticker_speed: int = 80  # px/sec scroll speed
+    render_ticker_height: int = 50  # ticker bar height px
+    render_ticker_fontsize: int = 28
+
+    render_intro_enabled: bool = False
+    render_intro_duration: float = 4.0
+    render_intro_bg_color: str = "#004B87"
+    render_intro_show_name: str = "Bitcoin Haberleri"
+    render_outro_enabled: bool = False
+    render_outro_duration: float = 3.0
+    render_outro_bg_color: str = "#004B87"
+    render_outro_text: str = "Kaynak: Einundzwanzig Podcast"
+
+    render_color_correction_enabled: bool = False
+    render_color_saturation: float = 0.85  # <1.0 = desaturated
+    render_color_brightness: float = 0.02
+    render_color_blue_shift: float = 0.05  # cool tint
 
     # YouTube Publishing (Sprint 11)
     youtube_client_secrets_path: str = "data/client_secret.json"

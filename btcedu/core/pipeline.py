@@ -37,6 +37,7 @@ _STATUS_ORDER = {
     EpisodeStatus.FRAMES_EXTRACTED: 13.5,
     EpisodeStatus.IMAGES_GENERATED: 14,
     EpisodeStatus.TTS_DONE: 15,
+    EpisodeStatus.ANCHOR_GENERATED: 15.5,
     EpisodeStatus.RENDERED: 16,
     EpisodeStatus.APPROVED: 17,
     EpisodeStatus.PUBLISHED: 18,
@@ -66,7 +67,8 @@ _V2_STAGES = [
     ("imagegen", EpisodeStatus.FRAMES_EXTRACTED),  # search + rank (no finalize)
     ("review_gate_stock", EpisodeStatus.FRAMES_EXTRACTED),  # human pins + approve
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
-    ("render", EpisodeStatus.TTS_DONE),  # Sprint 9
+    ("anchorgen", EpisodeStatus.TTS_DONE),  # D-ID anchor (no-op if disabled)
+    ("render", EpisodeStatus.ANCHOR_GENERATED),  # Sprint 9
     ("review_gate_3", EpisodeStatus.RENDERED),  # Sprint 10
     ("publish", EpisodeStatus.APPROVED),  # Sprint 11
 ]
@@ -243,6 +245,7 @@ def _run_stage(
         "imagegen",
         "review_gate_stock",
         "tts",
+        "anchorgen",
         "render",
         "review_gate_3",
         "publish",
@@ -648,6 +651,26 @@ def _run_stage(
                     ),
                 )
 
+        elif stage_name == "anchorgen":
+            from btcedu.core.anchor_generator import generate_anchors
+
+            result = generate_anchors(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("anchorgen", "skipped", elapsed, detail="anchor current")
+            else:
+                return StageResult(
+                    "anchorgen",
+                    "success",
+                    elapsed,
+                    detail=(
+                        f"{result.segment_count} anchor segments, "
+                        f"{result.total_duration_seconds:.1f}s, "
+                        f"${result.cost_usd:.4f}"
+                    ),
+                )
+
         elif stage_name == "render":
             from btcedu.core.renderer import render_video
 
@@ -734,8 +757,21 @@ def _run_stage(
             raise ValueError(f"Unknown stage: {stage_name}")
 
     except Exception as e:
+        from btcedu.services.errors import (
+            ERROR_SUGGESTIONS,
+            PipelineError,
+            classify_error,
+        )
+
         elapsed = time.monotonic() - t0
-        return StageResult(stage_name, "failed", elapsed, error=str(e))
+        if isinstance(e, PipelineError):
+            category = e.category
+            error_msg = str(e)
+        else:
+            category = classify_error(e)
+            suggestion = ERROR_SUGGESTIONS.get(category, "Check logs for details.")
+            error_msg = f"[{category.value}] {e} — {suggestion}"
+        return StageResult(stage_name, "failed", elapsed, error=error_msg)
 
 
 def run_episode_pipeline(
@@ -816,6 +852,47 @@ def run_episode_pipeline(
             episode.error_message = report.error
             episode.retry_count += 1
             session.commit()
+
+            # Create dead-letter entry for permanent errors
+            try:
+                from btcedu.services.errors import (
+                    ErrorCategory,
+                    is_transient,
+                )
+
+                # Parse category from error string or classify
+                error_str = result.error or ""
+                category = ErrorCategory.UNKNOWN
+                for cat in ErrorCategory:
+                    if f"[{cat.value}]" in error_str:
+                        category = cat
+                        break
+
+                if not is_transient(category):
+                    from btcedu.models.dead_letter import DeadLetterEntry
+                    from btcedu.services.errors import ERROR_SUGGESTIONS
+
+                    dlq_entry = DeadLetterEntry(
+                        episode_id=episode.episode_id,
+                        stage=stage_name,
+                        error_category=category.value,
+                        error_message=error_str[:2000],
+                        suggestion=ERROR_SUGGESTIONS.get(
+                            category, "Check logs for details."
+                        ),
+                        retry_count=episode.retry_count,
+                    )
+                    session.add(dlq_entry)
+                    session.commit()
+                    logger.info(
+                        "  Dead-letter entry created for %s/%s (%s)",
+                        episode.episode_id,
+                        stage_name,
+                        category.value,
+                    )
+            except Exception:
+                logger.debug("Could not create DLQ entry", exc_info=True)
+
             break
         elif result.status == "review_pending":
             logger.info("  Stage %s: %s", stage_name, result.detail)

@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     claude_max_tokens: int = 4096
     claude_temperature: float = 0.3
     max_retries: int = 3
+    retry_base_delay: float = 1.0  # seconds, for retry decorator
+    retry_max_delay: float = 60.0  # seconds, max backoff cap
+    retry_jitter: bool = True  # add random jitter to prevent thundering herd
+    max_stage_retries: int = 3  # max retries per stage on transient errors
     dry_run: bool = False
 
     # Pipeline Version Control

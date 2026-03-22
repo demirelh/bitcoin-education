@@ -284,8 +284,8 @@ def test_all_migrations_run_sequentially(post_001_session):
     session = post_001_session
 
     pending = get_pending_migrations(session)
-    # 001 is already applied, so we should see 002, 003, 004, 005, 006, 007, 008
-    assert len(pending) == 7
+    # 001 is already applied, so we should see 002 through 009
+    assert len(pending) == 8
 
     run_migrations(session, dry_run=False)
 

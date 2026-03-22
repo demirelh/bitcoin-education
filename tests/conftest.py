@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from btcedu.db import Base
+from btcedu.models.dead_letter import DeadLetterEntry  # noqa: F401 — register table
 
 FIXTURES = Path(__file__).parent / "fixtures"
 SAMPLE_TRANSCRIPT = (FIXTURES / "sample_transcript_de.txt").read_text()

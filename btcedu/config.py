@@ -74,7 +74,7 @@ class Settings(BaseSettings):
     pipeline_version: int = 2  # 1 = legacy (chunk->generate->refine), 2 = v2 pipeline
     profiles_dir: str = "btcedu/profiles"
     default_content_profile: str = "bitcoin_podcast"
-    max_episode_cost_usd: float = 10.0  # per-episode cost safety cap
+    max_episode_cost_usd: float = 15.0  # per-episode cost safety cap (raised for anchor)
 
     # Image Generation (Sprint 7)
     image_gen_provider: str = "dalle3"  # "dalle3" or "pexels"
@@ -117,6 +117,14 @@ class Settings(BaseSettings):
     elevenlabs_similarity_boost: float = 0.75
     elevenlabs_style: float = 0.0
     elevenlabs_use_speaker_boost: bool = True
+
+    # Anchor / D-ID (talking-head video generation)
+    did_api_key: str = ""
+    did_source_image_path: str = "data/anchor/default.png"
+    did_source_image_url: str = ""
+    anchor_provider: str = "d-id"
+    anchor_enabled: bool = False
+    anchor_max_chunk_seconds: int = 270
 
     # Render / ffmpeg (Sprint 9-10)
     render_resolution: str = "1920x1080"

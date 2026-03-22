@@ -18,6 +18,22 @@ DALLE3_COST_STANDARD_1792 = 0.080  # $0.080 per image (1792x1024 or 1024x1792)
 DALLE3_COST_HD_1024 = 0.080  # $0.080 per image (1024x1024 HD)
 DALLE3_COST_HD_1792 = 0.120  # $0.120 per image (1792x1024 or 1024x1792 HD)
 
+# DALL-E 2 edit pricing (as of 2025)
+DALLE2_EDIT_COST_256 = 0.016   # $0.016 per image (256x256)
+DALLE2_EDIT_COST_512 = 0.018   # $0.018 per image (512x512)
+DALLE2_EDIT_COST_1024 = 0.020  # $0.020 per image (1024x1024)
+
+
+@dataclass
+class ImageEditRequest:
+    """Request for DALL-E image editing (inpainting/variation)."""
+
+    image_path: Path  # Source image to edit
+    prompt: str  # Edit instructions
+    model: str = "dall-e-2"  # edit API only supports dall-e-2
+    size: str = "1024x1024"  # dall-e-2 sizes: 256x256, 512x512, 1024x1024
+    mask_path: Path | None = None  # Optional mask for inpainting
+
 
 @dataclass
 class ImageGenRequest:
@@ -46,6 +62,10 @@ class ImageGenService(Protocol):
 
     def generate_image(self, request: ImageGenRequest) -> ImageGenResponse:
         """Generate an image from a prompt."""
+        ...
+
+    def edit_image(self, request: ImageEditRequest) -> ImageGenResponse:
+        """Edit an existing image using DALL-E."""
         ...
 
 
@@ -114,6 +134,121 @@ class DallE3ImageService:
             cost_usd=cost,
             model=request.model,
         )
+
+    def edit_image(self, request: ImageEditRequest) -> ImageGenResponse:
+        """Edit an existing image using DALL-E 2 edit API.
+
+        Args:
+            request: Image edit request with source image path and prompt
+
+        Returns:
+            ImageGenResponse with edited image URL and metadata
+
+        Raises:
+            RuntimeError: If API call fails after retries
+        """
+        response_data = self._call_dalle2_edit_with_retry(
+            image_path=request.image_path,
+            prompt=request.prompt,
+            size=request.size,
+            mask_path=request.mask_path,
+        )
+
+        image_url = response_data["data"][0]["url"]
+        revised_prompt = response_data["data"][0].get("revised_prompt", request.prompt)
+
+        cost = self._compute_edit_cost(request.size)
+
+        logger.info(
+            f"DALL-E 2 edited image: size={request.size}, cost=${cost:.3f}"
+        )
+
+        return ImageGenResponse(
+            image_url=image_url,
+            revised_prompt=revised_prompt,
+            file_path=None,
+            cost_usd=cost,
+            model=request.model,
+        )
+
+    def _call_dalle2_edit_with_retry(
+        self,
+        image_path: Path,
+        prompt: str,
+        size: str,
+        mask_path: Path | None = None,
+        max_retries: int = 3,
+    ) -> dict:
+        """Call DALL-E 2 edit API with exponential backoff retry.
+
+        Args:
+            image_path: Path to source image
+            prompt: Edit instructions
+            size: Output image size
+            mask_path: Optional mask image path
+            max_retries: Maximum number of retry attempts
+
+        Returns:
+            API response dict
+
+        Raises:
+            RuntimeError: If all retries fail
+        """
+        from openai import APIError, OpenAI, RateLimitError
+
+        client = OpenAI(api_key=self.api_key)
+
+        for attempt in range(max_retries):
+            try:
+                kwargs = {
+                    "model": "dall-e-2",
+                    "image": open(image_path, "rb"),
+                    "prompt": prompt,
+                    "size": size,
+                    "n": 1,
+                }
+                if mask_path is not None:
+                    kwargs["mask"] = open(mask_path, "rb")
+
+                response = client.images.edit(**kwargs)
+                return response.model_dump()
+            except RateLimitError as e:
+                if attempt < max_retries - 1:
+                    wait_time = 2**attempt
+                    logger.warning(
+                        f"DALL-E 2 edit rate limit hit (attempt {attempt + 1}/{max_retries}), "
+                        f"retrying in {wait_time}s..."
+                    )
+                    time.sleep(wait_time)
+                else:
+                    raise RuntimeError(
+                        f"DALL-E 2 edit rate limit exceeded after {max_retries} retries"
+                    ) from e
+            except APIError as e:
+                error_msg = str(e).lower()
+                if "content_policy_violation" in error_msg or "safety system" in error_msg:
+                    raise RuntimeError(
+                        f"DALL-E 2 edit rejected prompt due to content policy: {prompt[:100]}..."
+                    ) from e
+                raise RuntimeError(f"DALL-E 2 edit API error: {e}") from e
+
+        raise RuntimeError(f"DALL-E 2 edit call failed after {max_retries} attempts")
+
+    def _compute_edit_cost(self, size: str) -> float:
+        """Compute cost for DALL-E 2 edit based on size.
+
+        Args:
+            size: Image size (e.g., "1024x1024")
+
+        Returns:
+            Cost in USD
+        """
+        if "256" in size:
+            return DALLE2_EDIT_COST_256
+        elif "512" in size:
+            return DALLE2_EDIT_COST_512
+        else:
+            return DALLE2_EDIT_COST_1024
 
     def _call_dalle3_with_retry(
         self, prompt: str, size: str, quality: str, max_retries: int = 3

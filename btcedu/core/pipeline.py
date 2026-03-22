@@ -37,6 +37,7 @@ _STATUS_ORDER = {
     EpisodeStatus.FRAMES_EXTRACTED: 13.5,
     EpisodeStatus.IMAGES_GENERATED: 14,
     EpisodeStatus.TTS_DONE: 15,
+    EpisodeStatus.ANCHOR_GENERATED: 15.5,
     EpisodeStatus.RENDERED: 16,
     EpisodeStatus.APPROVED: 17,
     EpisodeStatus.PUBLISHED: 18,
@@ -66,7 +67,8 @@ _V2_STAGES = [
     ("imagegen", EpisodeStatus.FRAMES_EXTRACTED),  # search + rank (no finalize)
     ("review_gate_stock", EpisodeStatus.FRAMES_EXTRACTED),  # human pins + approve
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
-    ("render", EpisodeStatus.TTS_DONE),  # Sprint 9
+    ("anchorgen", EpisodeStatus.TTS_DONE),  # D-ID anchor (no-op if disabled)
+    ("render", EpisodeStatus.ANCHOR_GENERATED),  # Sprint 9
     ("review_gate_3", EpisodeStatus.RENDERED),  # Sprint 10
     ("publish", EpisodeStatus.APPROVED),  # Sprint 11
 ]
@@ -243,6 +245,7 @@ def _run_stage(
         "imagegen",
         "review_gate_stock",
         "tts",
+        "anchorgen",
         "render",
         "review_gate_3",
         "publish",
@@ -644,6 +647,26 @@ def _run_stage(
                     detail=(
                         f"{result.segment_count} segments, "
                         f"{result.total_duration_seconds:.1f}s total, "
+                        f"${result.cost_usd:.4f}"
+                    ),
+                )
+
+        elif stage_name == "anchorgen":
+            from btcedu.core.anchor_generator import generate_anchors
+
+            result = generate_anchors(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("anchorgen", "skipped", elapsed, detail="anchor current")
+            else:
+                return StageResult(
+                    "anchorgen",
+                    "success",
+                    elapsed,
+                    detail=(
+                        f"{result.segment_count} anchor segments, "
+                        f"{result.total_duration_seconds:.1f}s, "
                         f"${result.cost_usd:.4f}"
                     ),
                 )

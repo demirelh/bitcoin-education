@@ -1336,6 +1336,137 @@ def cost_summary():
 
 
 # ---------------------------------------------------------------------------
+# Analytics
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/analytics/throughput")
+def analytics_throughput():
+    """Return daily episode completion counts for throughput chart."""
+    session = _get_session()
+    try:
+        date_col = func.date(PipelineRun.completed_at)
+        rows = (
+            session.query(
+                date_col.label("day"),
+                func.count(func.distinct(PipelineRun.episode_id)).label("episodes"),
+                func.sum(PipelineRun.estimated_cost_usd).label("cost_usd"),
+            )
+            .filter(PipelineRun.status == "success")
+            .filter(PipelineRun.completed_at.isnot(None))
+            .group_by(date_col)
+            .order_by(date_col)
+            .all()
+        )
+        return jsonify(
+            {
+                "days": [
+                    {
+                        "date": str(row.day) if row.day else None,
+                        "episodes": row.episodes,
+                        "cost_usd": round(row.cost_usd or 0, 4),
+                    }
+                    for row in rows
+                    if row.day is not None
+                ]
+            }
+        )
+    finally:
+        session.close()
+
+
+@api_bp.route("/analytics/error-rate")
+def analytics_error_rate():
+    """Return success/failure counts per stage for error-rate chart."""
+    session = _get_session()
+    try:
+        rows = (
+            session.query(
+                PipelineRun.stage,
+                PipelineRun.status,
+                func.count().label("count"),
+            )
+            .group_by(PipelineRun.stage, PipelineRun.status)
+            .all()
+        )
+        # Pivot into per-stage success/failure
+        stage_map = {}
+        for row in rows:
+            stage_name = row.stage.value if hasattr(row.stage, "value") else str(row.stage)
+            if stage_name not in stage_map:
+                stage_map[stage_name] = {
+                    "stage": stage_name,
+                    "success": 0,
+                    "failed": 0,
+                    "running": 0,
+                }
+            status_val = row.status.value if hasattr(row.status, "value") else str(row.status)
+            if status_val == "success":
+                stage_map[stage_name]["success"] = row.count
+            elif status_val == "failed":
+                stage_map[stage_name]["failed"] = row.count
+            else:
+                stage_map[stage_name]["running"] = row.count
+
+        stages = list(stage_map.values())
+        for s in stages:
+            total = s["success"] + s["failed"]
+            s["error_rate"] = round(s["failed"] / total, 4) if total > 0 else 0
+
+        return jsonify({"stages": stages})
+    finally:
+        session.close()
+
+
+@api_bp.route("/analytics/provider-cost")
+def analytics_provider_cost():
+    """Return cost breakdown by provider (inferred from pipeline stage)."""
+    session = _get_session()
+    try:
+        # Map stages to providers
+        STAGE_PROVIDER_MAP = {
+            "transcribe": "OpenAI (Whisper)",
+            "correct": "Anthropic",
+            "translate": "Anthropic",
+            "adapt": "Anthropic",
+            "chapterize": "Anthropic",
+            "imagegen": "OpenAI (DALL-E)",
+            "tts": "ElevenLabs",
+            "anchorgen": "D-ID",
+            "render": "Local (ffmpeg)",
+            "publish": "YouTube",
+        }
+
+        rows = (
+            session.query(
+                PipelineRun.stage,
+                func.count().label("runs"),
+                func.sum(PipelineRun.estimated_cost_usd).label("cost_usd"),
+            )
+            .filter(PipelineRun.status == "success")
+            .group_by(PipelineRun.stage)
+            .all()
+        )
+
+        provider_map = {}
+        for row in rows:
+            stage_name = row.stage.value if hasattr(row.stage, "value") else str(row.stage)
+            provider = STAGE_PROVIDER_MAP.get(stage_name, "Other")
+            if provider not in provider_map:
+                provider_map[provider] = {"provider": provider, "runs": 0, "cost_usd": 0.0}
+            provider_map[provider]["runs"] += row.runs
+            provider_map[provider]["cost_usd"] += row.cost_usd or 0
+
+        providers = sorted(provider_map.values(), key=lambda p: -p["cost_usd"])
+        for p in providers:
+            p["cost_usd"] = round(p["cost_usd"], 4)
+
+        return jsonify({"providers": providers})
+    finally:
+        session.close()
+
+
+# ---------------------------------------------------------------------------
 # What's new
 # ---------------------------------------------------------------------------
 

@@ -541,6 +541,64 @@ class AddReviewItemDecisionsMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateDeadLetterQueueMigration(Migration):
+    """Migration 009: Create dead_letter_queue table for permanent pipeline failures."""
+
+    @property
+    def version(self) -> str:
+        return "009_create_dead_letter_queue"
+
+    @property
+    def description(self) -> str:
+        return "Create dead_letter_queue table for permanent pipeline failure tracking"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(
+            text(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name='dead_letter_queue'"
+            )
+        )
+        if not result.fetchone():
+            session.execute(
+                text("""
+                    CREATE TABLE dead_letter_queue (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        episode_id VARCHAR(64) NOT NULL,
+                        stage VARCHAR(32) NOT NULL,
+                        error_category VARCHAR(32) NOT NULL,
+                        error_message TEXT NOT NULL,
+                        suggestion TEXT NOT NULL DEFAULT '',
+                        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                        resolved_at TIMESTAMP,
+                        resolved_by VARCHAR(32),
+                        retry_count INTEGER NOT NULL DEFAULT 0
+                    )
+                """)
+            )
+            session.execute(
+                text(
+                    "CREATE INDEX idx_dlq_episode_id "
+                    "ON dead_letter_queue(episode_id)"
+                )
+            )
+            session.execute(
+                text(
+                    "CREATE INDEX idx_dlq_resolved "
+                    "ON dead_letter_queue(resolved_at)"
+                )
+            )
+            session.commit()
+            logger.info("Created dead_letter_queue table with indexes")
+        else:
+            logger.info("dead_letter_queue table already exists (skipped)")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -551,6 +609,7 @@ MIGRATIONS = [
     CreatePublishJobsTableMigration(),
     AddReviewItemDecisionsMigration(),
     AddContentProfileMigration(),
+    CreateDeadLetterQueueMigration(),
 ]
 
 

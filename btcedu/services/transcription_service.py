@@ -4,6 +4,8 @@ from pathlib import Path
 
 from openai import OpenAI
 
+from btcedu.services.retry import retry_on_transient
+
 logger = logging.getLogger(__name__)
 
 
@@ -30,6 +32,7 @@ def transcribe_audio(
     return _transcribe_chunked(audio_path, api_key, model, language, max_chunk_mb)
 
 
+@retry_on_transient(max_retries=3, base_delay=1.0)
 def _transcribe_single(
     audio_path: str,
     api_key: str,

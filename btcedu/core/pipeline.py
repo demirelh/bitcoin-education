@@ -734,8 +734,21 @@ def _run_stage(
             raise ValueError(f"Unknown stage: {stage_name}")
 
     except Exception as e:
+        from btcedu.services.errors import (
+            ERROR_SUGGESTIONS,
+            PipelineError,
+            classify_error,
+        )
+
         elapsed = time.monotonic() - t0
-        return StageResult(stage_name, "failed", elapsed, error=str(e))
+        if isinstance(e, PipelineError):
+            category = e.category
+            error_msg = str(e)
+        else:
+            category = classify_error(e)
+            suggestion = ERROR_SUGGESTIONS.get(category, "Check logs for details.")
+            error_msg = f"[{category.value}] {e} — {suggestion}"
+        return StageResult(stage_name, "failed", elapsed, error=error_msg)
 
 
 def run_episode_pipeline(
@@ -816,6 +829,47 @@ def run_episode_pipeline(
             episode.error_message = report.error
             episode.retry_count += 1
             session.commit()
+
+            # Create dead-letter entry for permanent errors
+            try:
+                from btcedu.services.errors import (
+                    ErrorCategory,
+                    is_transient,
+                )
+
+                # Parse category from error string or classify
+                error_str = result.error or ""
+                category = ErrorCategory.UNKNOWN
+                for cat in ErrorCategory:
+                    if f"[{cat.value}]" in error_str:
+                        category = cat
+                        break
+
+                if not is_transient(category):
+                    from btcedu.models.dead_letter import DeadLetterEntry
+                    from btcedu.services.errors import ERROR_SUGGESTIONS
+
+                    dlq_entry = DeadLetterEntry(
+                        episode_id=episode.episode_id,
+                        stage=stage_name,
+                        error_category=category.value,
+                        error_message=error_str[:2000],
+                        suggestion=ERROR_SUGGESTIONS.get(
+                            category, "Check logs for details."
+                        ),
+                        retry_count=episode.retry_count,
+                    )
+                    session.add(dlq_entry)
+                    session.commit()
+                    logger.info(
+                        "  Dead-letter entry created for %s/%s (%s)",
+                        episode.episode_id,
+                        stage_name,
+                        category.value,
+                    )
+            except Exception:
+                logger.debug("Could not create DLQ entry", exc_info=True)
+
             break
         elif result.status == "review_pending":
             logger.info("  Stage %s: %s", stage_name, result.detail)

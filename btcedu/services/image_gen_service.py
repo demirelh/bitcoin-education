@@ -8,6 +8,8 @@ from typing import Protocol
 
 import requests
 
+from btcedu.services.retry import retry_on_transient
+
 logger = logging.getLogger(__name__)
 
 # DALL-E 3 pricing (as of 2025)
@@ -182,6 +184,7 @@ class DallE3ImageService:
             return DALLE3_COST_STANDARD_1792 if "1792" in size else DALLE3_COST_STANDARD_1024
 
     @staticmethod
+    @retry_on_transient(max_retries=3, base_delay=1.0)
     def download_image(url: str, target_path: Path) -> Path:
         """Download image from URL to local file.
 

@@ -1,6 +1,5 @@
 import logging
 import re
-import shlex
 import shutil
 import subprocess
 import sys
@@ -68,13 +67,13 @@ def download_audio(
         ytdlp,
         "--extract-audio",
         "--audio-format",
-        shlex.quote(audio_format),
+        audio_format,
         "--output",
-        shlex.quote(output_template),
+        output_template,
         "--no-playlist",
         "--quiet",
         "--no-warnings",
-        shlex.quote(url),
+        url,
     ]
 
     logger.info("Downloading audio: %s -> %s", url, output_dir)
@@ -136,15 +135,15 @@ def download_video(
     cmd = [
         ytdlp,
         "--format",
-        shlex.quote(format_spec),
+        format_spec,
         "--merge-output-format",
         "mp4",
         "--output",
-        shlex.quote(output_template),
+        output_template,
         "--no-playlist",
         "--quiet",
         "--no-warnings",
-        shlex.quote(url),
+        url,
     ]
 
     logger.info("Downloading video: %s -> %s", url, output_dir)

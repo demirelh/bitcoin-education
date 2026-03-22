@@ -8,6 +8,8 @@ from typing import Protocol
 
 import requests
 
+from btcedu.services.retry import retry_on_transient
+
 logger = logging.getLogger(__name__)
 
 # Pexels API
@@ -167,6 +169,7 @@ class PexelsService:
             per_page=data.get("per_page", per_page),
         )
 
+    @retry_on_transient(max_retries=3, base_delay=1.0)
     def download_photo(
         self,
         photo: PexelsPhoto,
@@ -279,6 +282,7 @@ class PexelsService:
             per_page=data.get("per_page", per_page),
         )
 
+    @retry_on_transient(max_retries=3, base_delay=1.0)
     def download_video(
         self,
         video: PexelsVideo,

@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from btcedu.services.retry import retry_on_transient
+
 logger = logging.getLogger(__name__)
 
 _ALLOWED_AUDIO_FORMATS = frozenset({"m4a", "mp3", "wav", "opus", "flac", "aac", "ogg"})
@@ -32,6 +34,7 @@ def _find_ytdlp() -> str:
     )
 
 
+@retry_on_transient(max_retries=2, base_delay=2.0)
 def download_audio(
     url: str,
     output_dir: str,

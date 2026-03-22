@@ -1372,6 +1372,7 @@ _STYLE_FILTER_PRESETS: dict[str, str] = {
     "news_recolor": "hue=h=15:s=1.1,curves=vintage,vignette=PI/4,eq=contrast=1.05",
     "warm_tint": "colortemperature=temperature=6500,eq=saturation=1.1",
     "cool_tint": "colortemperature=temperature=4500,eq=saturation=0.9:contrast=1.05",
+    "sketch": "edgedetect=low=0.1:high=0.3,negate,eq=contrast=1.2:brightness=0.05",
 }
 
 

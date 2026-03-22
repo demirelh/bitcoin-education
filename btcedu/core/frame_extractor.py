@@ -47,6 +47,39 @@ class FrameExtractionResult:
 # ---------------------------------------------------------------------------
 
 
+def _apply_dalle_edit_style(
+    input_path: str,
+    output_path: str,
+    settings: Settings,
+) -> str:
+    """Apply style via DALL-E Edit API (dall-e-2 inpainting).
+
+    Args:
+        input_path: Path to the source frame image
+        output_path: Path to write the styled image
+        settings: Application settings (needs openai_api_key)
+
+    Returns:
+        output_path on success
+    """
+    from btcedu.services.image_gen_service import DallE3ImageService, ImageEditRequest
+
+    service = DallE3ImageService(api_key=settings.openai_api_key)
+    request = ImageEditRequest(
+        image_path=Path(input_path),
+        prompt=(
+            "Transform this video frame into a professional sketch-style illustration. "
+            "Maintain the composition and key visual elements. "
+            "Clean, modern line art with subtle color accents."
+        ),
+        size="1024x1024",
+    )
+    response = service.edit_image(request)
+    # Download the edited image
+    DallE3ImageService.download_image(response.image_url, Path(output_path))
+    return output_path
+
+
 def _compute_video_hash(video_path: Path) -> str:
     """Fast hash proxy: file size + mtime (avoids reading huge files)."""
     stat = video_path.stat()
@@ -341,12 +374,15 @@ def extract_frames(
 
             # Apply style filter
             styled_path = str(styled_dir / Path(kf.frame_path).name)
-            apply_style_filter(
-                input_path=input_for_style,
-                output_path=styled_path,
-                filter_preset=settings.frame_extract_style_preset,
-                dry_run=settings.dry_run,
-            )
+            if settings.frame_extract_style_provider == "dalle_edit":
+                _apply_dalle_edit_style(input_for_style, styled_path, settings)
+            else:
+                apply_style_filter(
+                    input_path=input_for_style,
+                    output_path=styled_path,
+                    filter_preset=settings.frame_extract_style_preset,
+                    dry_run=settings.dry_run,
+                )
 
             styled_frames.append(
                 {
@@ -356,7 +392,11 @@ def extract_frames(
                     "scene_score": kf.scene_score,
                     "has_anchor": is_anchor,
                     "was_cropped": was_cropped,
-                    "style_applied": f"ffmpeg:{settings.frame_extract_style_preset}",
+                    "style_applied": (
+                        "dalle_edit:dall-e-2"
+                        if settings.frame_extract_style_provider == "dalle_edit"
+                        else f"ffmpeg:{settings.frame_extract_style_preset}"
+                    ),
                 }
             )
 

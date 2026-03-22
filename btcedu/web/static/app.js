@@ -184,12 +184,14 @@
   const FILE_KEYS = [
     "audio", "transcript_raw", "transcript_clean", "chunks",
     "outline", "script", "shorts", "visuals", "qa", "publishing",
-    "outline_v2", "script_v2", "publishing_v2", "chapters"
+    "outline_v2", "script_v2", "publishing_v2", "chapters",
+    "stories", "stories_translated"
   ];
   const FILE_LABELS = [
     "Audio", "Transcript DE", "Transcript Clean", "Chunks",
     "Outline TR", "Script TR", "Shorts", "Visuals", "QA", "Publishing",
-    "Outline v2", "Script v2", "Publishing v2", "Chapters"
+    "Outline v2", "Script v2", "Publishing v2", "Chapters",
+    "Stories DE", "Stories TR"
   ];
 
   // ── Review UX helpers ────────────────────────────────────────
@@ -454,6 +456,10 @@
       </div>
       <div class="tabs" id="tabs">
         <div class="tab active" data-tab="transcript_clean">DE Transcript</div>
+        ${ep.content_profile === "tagesschau_tr" ? `
+        <div class="tab" data-tab="stories">Stories DE</div>
+        <div class="tab" data-tab="stories_translated">Stories TR</div>
+        ` : `
         <div class="tab" data-tab="outline">Outline TR</div>
         <div class="tab" data-tab="script">Script TR</div>
         <div class="tab" data-tab="qa">QA</div>
@@ -461,6 +467,7 @@
         <div class="tab" data-tab="outline_v2">Outline v2</div>
         <div class="tab" data-tab="script_v2">Script v2</div>
         <div class="tab" data-tab="publishing_v2">Publishing v2</div>
+        `}
         <div class="tab" data-tab="chapters">Chapters</div>
         <div class="tab" data-tab="stock_images">Stock Images</div>
         <div class="tab" data-tab="images">Images</div>

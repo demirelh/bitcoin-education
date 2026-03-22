@@ -379,8 +379,9 @@ def _get_job_manager():
     return current_app.config["job_manager"]
 
 
-# Allowlist: only alphanumeric, hyphens, underscores, and dots (no leading dot).
-_SAFE_PATH_COMPONENT_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9._-]*$")
+# Allowlist: alphanumeric, hyphens, underscores, and dots (no leading dot).
+# YouTube video IDs can start with '-' or '_', so allow those as first char.
+_SAFE_PATH_COMPONENT_RE = re.compile(r"^[a-zA-Z0-9_-][a-zA-Z0-9._-]*$")
 
 
 def _validate_episode_path(episode_id: str, base_dir: Path, *path_parts: str) -> Path | None:
@@ -466,6 +467,8 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
         "outline_v2": (out / "outline.tr.v2.md").exists(),
         "script_v2": (out / "script.long.tr.v2.md").exists(),
         "publishing_v2": (out / "publishing_pack.v2.json").exists(),
+        "stories": (out / "stories.json").exists(),
+        "stories_translated": (out / "stories_translated.json").exists(),
     }
 
 
@@ -1230,6 +1233,8 @@ _FILE_MAP = {
     "script_v2": ("outputs_dir", "{eid}/script.long.tr.v2.md"),
     "publishing_v2": ("outputs_dir", "{eid}/publishing_pack.v2.json"),
     "chapters": ("outputs_dir", "{eid}/chapters.json"),
+    "stories": ("outputs_dir", "{eid}/stories.json"),
+    "stories_translated": ("outputs_dir", "{eid}/stories_translated.json"),
 }
 
 

@@ -9,7 +9,7 @@
 | Phase | Status | Branch | Tests | In Main? |
 |-------|--------|--------|-------|----------|
 | 1: Content-Bereinigung | **Implementiert** | PR #32 gemerged | +161 Tests | Ja |
-| 2: Frame-Extraktion | **Teilweise implementiert** | PR #32 gemerged | +Tests | Ja |
+| 2: Frame-Extraktion | **~95% implementiert** | PR #32 gemerged | +42 Tests | Ja |
 | 3: Web-UI Modernisierung | **Implementiert (3a-3d)** | PR #33 gemerged | +Tests | Ja |
 | 4: Videoqualität | **Implementiert, nicht gemerged** | `claude/enhance-video-quality-nPSTa` | 1063 (alle grün) | **Nein** |
 | 5: KI-Sprecher | **Nur Plan, keine Implementierung** | `claude/ai-news-anchor-plan-As4ov` | nur Plan-Dokument | **Nein** |
@@ -27,21 +27,23 @@
 
 **Fehlend:** Nichts — vollständig implementiert.
 
-### Phase 2: Frame-Extraktion — TEILWEISE
-**Implementiert:**
-- `btcedu/core/frame_extractor.py` — Stage-Modul (Orchestrierung)
-- `btcedu/services/frame_extraction_service.py` — ffmpeg Keyframe-Extraktion
-- `btcedu/services/download_service.py` — Erweitert um Video-Download (nicht nur Audio)
+### Phase 2: Frame-Extraktion — ~95% ERLEDIGT
+**Implementiert (vollständig):**
+- `btcedu/core/frame_extractor.py` — Stage-Modul (476 Zeilen, vollständige Orchestrierung)
+- `btcedu/services/frame_extraction_service.py` — OpenCV Haar-Cascade Sprecher-Erkennung + Positionsheuristik
+- `btcedu/services/ffmpeg_service.py` — Keyframe-Extraktion (Scene-Detection), Crop, Style-Filter (3 Presets)
+- `btcedu/services/download_service.py` — Erweitert um Video-Download (yt-dlp, bis 720p)
+- `btcedu/core/pipeline.py` — `frameextract` Stage registriert (Position 13, nach chapterize, vor imagegen)
+- `btcedu/core/stock_images.py` — Fallback-Logik: Extracted Frame > Stock > DALL-E > Placeholder
+- `btcedu/models/episode.py` — `FRAMES_EXTRACTED` Status + `FRAMEEXTRACT` Stage
+- `btcedu/config.py` — 9 neue Settings (feature-flagged, default: off)
+- Tests: 42 neue Tests über 3 Dateien (907 Zeilen)
 - `docs/plans/frame-extraction-pipeline.md` — Plan
-- Tests: `test_frame_extractor.py`, `test_frame_extraction_service.py`, `test_ffmpeg_frame_extraction.py`
 
-**FEHLEND:**
-1. **Sprecher-Erkennung/Entfernung** — Keine Face-Detection, kein Inpainting, kein Crop
-2. **KI-Stil-Modifikation** — Keine Copyright-Schutz-Transformation
-3. **Pipeline-Integration** — `extract_frames` ist NICHT als Stage in `pipeline.py` registriert
-4. **Chapter-Zuordnung** — Frames werden extrahiert aber nicht automatisch Chapters zugeordnet
-5. **Fallback-Logik** — Kein Fallback auf Stock-Images wenn Frame-Extraktion fehlschlägt
-6. **Renderer-Integration** — Renderer nutzt die extrahierten Frames noch nicht
+**Fehlend (non-critical, ~5%):**
+1. **DALL-E Edit API Style-Provider** — Config-Option existiert (`frame_extract_style_provider: "dalle_edit"`), aber Code-Pfad nicht implementiert (nur ffmpeg funktioniert)
+2. **`sketch` Style-Preset** — Nur 3 von 4 geplanten Presets (news_recolor, warm_tint, cool_tint)
+3. **Alternative-Frames im Manifest** — Werden berechnet aber nicht vollständig persistiert
 
 ### Phase 3: Web-UI Modernisierung — ERLEDIGT (3a-3d)
 **Implementiert (Commit e43f213 + Fixes):**
@@ -115,105 +117,56 @@
 3. **Phase 5 PR erstellen** — `claude/ai-news-anchor-plan-As4ov` → main (nur Plan-Dokument)
 
 ### Implementierung nötig:
-4. **Phase 2 vervollständigen** — Frame-Extraktion Pipeline-Integration + Sprecher-Erkennung
-5. **Phase 5 implementieren** — KI-Sprecher (D-ID Service + Stage)
+4. **Phase 2 Feinschliff** — Frame-Extraktion: fehlende Style-Presets + DALL-E Edit Code-Pfad (optional, ~5%)
+5. **Phase 5 implementieren** — KI-Sprecher (D-ID Service + Stage, 0% → 100%)
+6. **Phase 3 Analytics** — Throughput-Chart, Error-Rate, Provider-Kosten-Breakdown (~15%)
 
 ---
 
 ## Prompts für fehlende Implementierungen
 
-### Prompt A: Phase 2 vervollständigen — Frame-Extraktion Pipeline-Integration
+### Prompt A: Phase 2 Feinschliff — Frame-Extraktion (optional, niedrige Priorität)
 
-**Verwendung:** Opus zum Planen, dann Sonnet zum Implementieren
+**Verwendung:** Direkt Sonnet (kleiner Scope, kein Opus-Plan nötig)
 
-#### Planungs-Prompt (Opus):
-
-```
-Du bist ein Senior Software Engineer. Vervollständige die Frame-Extraktion für das btcedu-Projekt.
-
-AKTUELLER STAND:
-- btcedu/core/frame_extractor.py EXISTIERT — Stage-Orchestrierung für Keyframe-Extraktion
-- btcedu/services/frame_extraction_service.py EXISTIERT — ffmpeg-basierte Scene-Detection
-- btcedu/services/download_service.py ERWEITERT — kann jetzt auch Video herunterladen
-- Tests existieren: test_frame_extractor.py, test_frame_extraction_service.py, test_ffmpeg_frame_extraction.py
-- PROBLEM: Die Frame-Extraktion ist NICHT in die Pipeline integriert!
-
-WAS FEHLT:
-1. Pipeline-Integration: extract_frames ist KEIN registriertes Stage in pipeline.py
-   - Neuer EpisodeStatus: FRAMES_EXTRACTED (zwischen IMAGES_GENERATED und TTS_DONE, oder als Alternative zu IMAGES_GENERATED)
-   - Neuer PipelineStage in _V2_STAGES
-   - _run_stage() Dispatch
-
-2. Sprecher-Erkennung: Tagesschau-Frames mit Nachrichtensprecher identifizieren
-   - Option A: Einfache Heuristik — Frames mit Gesicht im unteren Drittel = Sprecher
-   - Option B: Face-Detection mit mediapipe (leichtgewichtig, läuft auf ARM)
-   - Option C: LLM-basiert — Claude Vision API auf Keyframes anwenden ("Is this a news anchor shot?")
-   EMPFEHLUNG: Option C (Claude Vision) — keine lokale Dependency, höchste Genauigkeit
-
-3. Sprecher-Entfernung/Modifikation:
-   - Sprecher-Frames: Oberen Teil croppen (Grafik/Karte hinter dem Sprecher)
-   - Nicht-Sprecher-Frames: Leichte Modifikation für Copyright (Farbverschiebung + Crop)
-   - KEIN Inpainting nötig — zu teuer und komplex für MVP
-
-4. Chapter-Zuordnung:
-   - Frames haben Zeitstempel (aus Scene-Detection)
-   - Chapters haben estimated_duration_seconds und Story-Zuordnung
-   - Matching: Frame-Zeitstempel → nächstes Chapter
-   - Output: chapters.json erweitern mit frame_path pro Chapter
-
-5. Renderer-Integration:
-   - renderer.py: Wenn extracted_frame existiert → dieses verwenden statt DALL-E/Stock
-   - Fallback: Wenn kein Frame → bestehende image_generator.py / stock_images.py
-   - Priorität: extracted_frame > stock_image > generated_image
-
-6. Profil-Konfiguration:
-   - tagesschau_tr.yaml: frame_extraction: { enabled: true, prefer_over_stock: true }
-   - bitcoin_podcast.yaml: frame_extraction: { enabled: false } (Podcast hat kein Video)
-
-BESTEHENDE DATEIEN (lies diese):
-- btcedu/core/frame_extractor.py — aktueller Stand
-- btcedu/services/frame_extraction_service.py — aktueller Stand
-- btcedu/core/pipeline.py — Stage-Registrierung verstehen
-- btcedu/core/image_generator.py — Wie DALL-E Stage funktioniert
-- btcedu/core/stock_images.py — Wie Stock-Image Stage funktioniert
-- btcedu/core/renderer.py — Wie Renderer Bilder konsumiert
-- btcedu/models/episode.py — EpisodeStatus Enum
-- btcedu/models/media_asset.py — MediaAsset Model
-- btcedu/profiles/tagesschau_tr.yaml — Profil-Konfiguration
-- docs/plans/frame-extraction-pipeline.md — Ursprünglicher Plan
-
-CONSTRAINTS:
-- Raspberry Pi (ARM, kein CUDA) — keine schweren lokalen Modelle
-- Claude Vision API für Sprecher-Erkennung ist OK (Budget: ~$0.01 pro Bild)
-- Pipeline muss idempotent bleiben (SHA-256 Hash + Provenance)
-- Bestehende Tests dürfen NICHT brechen (aktuell 1028 auf main)
-- Frame-Extraktion soll OPTIONAL sein (Feature-Flag im Profil)
-
-Erstelle einen detaillierten Implementierungsplan mit:
-- Genaue Dateiliste (bestehend + neu)
-- Pipeline-Stage-Design (wo einfügen, welche Reihenfolge)
-- Sprecher-Erkennung via Claude Vision (Prompt-Design)
-- Frame-Crop-Strategie (kein Inpainting)
-- Chapter-Matching-Algorithmus
-- Renderer-Fallback-Logik
-- Test-Strategie
-```
+**Hinweis:** Phase 2 ist ~95% fertig. Pipeline-Integration, Sprecher-Erkennung (OpenCV),
+Chapter-Zuordnung, Fallback-Logik — alles implementiert und getestet (42 Tests).
 
 #### Implementierungs-Prompt (Sonnet):
 
 ```
-Implementiere die Frame-Extraktion Pipeline-Integration für btcedu gemäß folgendem Plan:
+Vervollständige die letzten fehlenden Features der Frame-Extraktion in btcedu.
 
-[PLAN VON OPUS HIER EINFÜGEN]
+AKTUELLER STAND (~95% fertig):
+- frameextract Stage ist registriert in pipeline.py (Position 13)
+- OpenCV Haar-Cascade Sprecher-Erkennung funktioniert
+- Smart-Crop der Sprecher-Region funktioniert
+- 3 Style-Presets funktionieren (news_recolor, warm_tint, cool_tint)
+- Fallback: Extracted Frame > Stock > DALL-E > Placeholder
+- 42 Tests, alle grün
+
+FEHLENDE FEATURES (3 kleine Aufgaben):
+
+1. `sketch` Style-Preset hinzufügen:
+   - In btcedu/services/ffmpeg_service.py _STYLE_FILTER_PRESETS dict
+   - Edge-Detection + reduzierte Sättigung (edgedetect + eq Filter)
+   - Test in tests/test_ffmpeg_frame_extraction.py ergänzen
+
+2. DALL-E Edit API Code-Pfad (optional):
+   - Config frame_extract_style_provider hat "dalle_edit" Option
+   - Aber frame_extractor.py ruft nur apply_style_filter() (ffmpeg) auf
+   - Wenn style_provider == "dalle_edit": DALL-E Edit API verwenden
+   - Service: btcedu/services/image_gen_service.py hat bereits DALL-E Calls
+   - Cost Guard beachten (max_episode_cost_usd)
+   - Tests mit gemockter API
+
+3. Alternative-Frames im Manifest persistieren:
+   - frame_extractor.py berechnet alternatives = ranked[1:4]
+   - Aber schreibt sie nicht ins manifest.json
+   - Feld alternative_frames: [] in chapter_assignments ergänzen
 
 REGELN:
-- Folge dem bestehenden Stage-Pattern (siehe btcedu/core/CLAUDE.md)
-- frame_extractor.py und frame_extraction_service.py ERWEITERN, nicht ersetzen
-- Pipeline-Integration: Neues Stage registrieren in pipeline.py
-- Renderer: Fallback-Logik (extracted_frame > stock > generated)
-- Profil-basiert: tagesschau_tr aktiviert, bitcoin_podcast deaktiviert
-- Alle bestehenden 1028 Tests müssen weiterhin passen
-- Neue Tests für alle neuen Funktionen
+- Bestehende 1028 Tests dürfen NICHT brechen
 - Ruff-konform (line-length 100, select E/W/F/I/UP)
 - Nach Implementierung: pytest -x -q ausführen
 ```
@@ -383,4 +336,60 @@ REGELN:
 - Dark Theme (bestehende Farbpalette)
 - Mobile-Responsive
 - SSE-Updates für neue Tabs nutzen
+```
+
+---
+
+### Prompt E: Phase 3 Analytics vervollständigen (~15% fehlend)
+
+**Verwendung:** Direkt Sonnet (kleiner Scope)
+
+**Hinweis:** Phase 3 ist ~85% fertig. SSE, v2-Filter, Video-Preview, Batch-Approve,
+Cost-Chart — alles implementiert. Fehlend sind erweiterte Analytics-Widgets.
+
+#### Implementierungs-Prompt (Sonnet):
+
+```
+Ergänze die fehlenden Analytics-Widgets im btcedu Dashboard.
+
+AKTUELLER STAND (~85% fertig):
+- SSE Live-Updates funktionieren (/api/stream)
+- Kosten-Chart (Canvas) im Cost-Modal vorhanden
+- Status-Summary-Bar mit Episoden-Zählung vorhanden
+- Batch-Approve für Reviews funktioniert
+
+FEHLENDE ANALYTICS (3 Widgets):
+
+1. Pipeline-Throughput-Chart:
+   - Canvas-basiertes Liniendiagramm (7-Tage-Trend)
+   - X-Achse: Tage, Y-Achse: Episoden abgeschlossen
+   - Datenquelle: PipelineRun Records gruppiert nach Datum
+   - Neuer API-Endpoint: GET /api/metrics/throughput?days=7
+   - Widget unter dem Status-Summary-Bar
+
+2. Error-Rate pro Stage:
+   - Horizontales Balkendiagramm
+   - Pro Stage: Erfolgsrate (grün) vs. Fehlerrate (rot)
+   - Datenquelle: PipelineRun success/failed Counts (letzte 7 Tage)
+   - Neuer API-Endpoint: GET /api/metrics/error-rates
+   - Oder: Bestehender /api/pipeline-health Endpoint nutzen (falls Phase 6 gemerged)
+
+3. API-Kosten-Breakdown nach Provider:
+   - Donut/Pie-Chart oder gestapeltes Balkendiagramm
+   - Aufschlüsselung: Anthropic (Claude) | OpenAI (DALL-E/Whisper) | ElevenLabs | Pexels (gratis)
+   - Datenquelle: PipelineRun cost_usd gruppiert nach Stage → Provider-Mapping
+   - Im bestehenden Cost-Modal ergänzen
+
+BESTEHENDE DATEIEN (lies diese):
+- btcedu/web/static/app.js — Bestehendes Dashboard (insb. renderCostChart Funktion)
+- btcedu/web/api.py — Bestehende Endpoints
+- btcedu/web/static/styles.css — Dark Theme Farben
+
+REGELN:
+- Canvas 2D API für Charts (kein Chart.js, kein externes Framework)
+- HiDPI-aware (devicePixelRatio)
+- Dark Theme Farben: #0d1117 bg, #161b22 surface, #58a6ff accent
+- Mobile-Responsive (Charts skalieren)
+- Bestehende Endpoints NICHT brechen
+- Ruff-konform für Python-Dateien
 ```

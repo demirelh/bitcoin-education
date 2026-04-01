@@ -1014,19 +1014,50 @@ def get_episode(episode_id: str):
 
 @api_bp.route("/detect", methods=["POST"])
 def detect():
-    """Detect new episodes — synchronous (fast network I/O)."""
+    """Detect new episodes from all active channels."""
     from btcedu.core.detector import detect_episodes
+    from btcedu.models.channel import Channel
 
     session = _get_session()
     settings = _get_settings()
     try:
-        result = detect_episodes(session, settings)
+        total_found = 0
+        total_new = 0
+
+        # Detect from all active channels
+        channels = session.query(Channel).filter(Channel.is_active.is_(True)).all()
+        for ch in channels:
+            if not ch.rss_url:
+                continue
+            # Determine profile from channel name convention
+            profile = "tagesschau_tr" if "tagesschau" in ch.name.lower() else None
+            ch_settings = settings
+            if profile:
+                ch_settings = settings.model_copy(update={"default_content_profile": profile})
+            try:
+                result = detect_episodes(
+                    session, ch_settings,
+                    channel_id=ch.channel_id, feed_url=ch.rss_url,
+                )
+                total_found += result.found
+                total_new += result.new
+            except Exception:
+                logger.exception("Detect failed for channel %s", ch.name)
+
+        # Also detect from default settings.rss_url if no channels matched it
+        default_urls = {ch.rss_url for ch in channels if ch.rss_url}
+        if settings.rss_url and settings.rss_url not in default_urls:
+            result = detect_episodes(session, settings)
+            total_found += result.found
+            total_new += result.new
+
+        total = session.query(Episode).count()
         return jsonify(
             {
                 "success": True,
-                "found": result.found,
-                "new": result.new,
-                "total": result.total,
+                "found": total_found,
+                "new": total_new,
+                "total": total,
             }
         )
     except Exception as e:

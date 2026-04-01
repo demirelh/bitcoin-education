@@ -1016,15 +1016,17 @@ def review_list(ctx: click.Context, status: str | None) -> None:
 @review.command()
 @click.argument("review_id", type=int)
 @click.option("--notes", default=None, help="Optional approval notes.")
+@click.option("--rating", type=click.IntRange(1, 5), default=None, help="Quality rating 1-5.")
 @click.pass_context
-def approve(ctx: click.Context, review_id: int, notes: str | None) -> None:
+def approve(ctx: click.Context, review_id: int, notes: str | None, rating: int | None) -> None:
     """Approve a review task."""
     from btcedu.core.reviewer import approve_review
 
     session = ctx.obj["session_factory"]()
     try:
-        decision = approve_review(session, review_id, notes=notes)
-        click.echo(f"[OK] Review {review_id} approved (decision {decision.id})")
+        decision = approve_review(session, review_id, notes=notes, quality_rating=rating)
+        stars = f" ({'\u2605' * rating}{'\u2606' * (5 - rating)})" if rating else ""
+        click.echo(f"[OK] Review {review_id} approved{stars} (decision {decision.id})")
     except ValueError as e:
         click.echo(f"[FAIL] {e}", err=True)
     finally:
@@ -1034,15 +1036,17 @@ def approve(ctx: click.Context, review_id: int, notes: str | None) -> None:
 @review.command()
 @click.argument("review_id", type=int)
 @click.option("--notes", default=None, help="Optional rejection notes.")
+@click.option("--rating", type=click.IntRange(1, 5), default=None, help="Quality rating 1-5.")
 @click.pass_context
-def reject(ctx: click.Context, review_id: int, notes: str | None) -> None:
+def reject(ctx: click.Context, review_id: int, notes: str | None, rating: int | None) -> None:
     """Reject a review task (reverts episode to TRANSCRIBED)."""
     from btcedu.core.reviewer import reject_review
 
     session = ctx.obj["session_factory"]()
     try:
-        decision = reject_review(session, review_id, notes=notes)
-        click.echo(f"[OK] Review {review_id} rejected (decision {decision.id})")
+        decision = reject_review(session, review_id, notes=notes, quality_rating=rating)
+        stars = f" ({'\u2605' * rating}{'\u2606' * (5 - rating)})" if rating else ""
+        click.echo(f"[OK] Review {review_id} rejected{stars} (decision {decision.id})")
     except ValueError as e:
         click.echo(f"[FAIL] {e}", err=True)
     finally:
@@ -1052,17 +1056,63 @@ def reject(ctx: click.Context, review_id: int, notes: str | None) -> None:
 @review.command(name="request-changes")
 @click.argument("review_id", type=int)
 @click.option("--notes", required=True, help="Feedback describing changes needed.")
+@click.option("--rating", type=click.IntRange(1, 5), default=None, help="Quality rating 1-5.")
 @click.pass_context
-def request_changes_cmd(ctx: click.Context, review_id: int, notes: str) -> None:
+def request_changes_cmd(
+    ctx: click.Context, review_id: int, notes: str, rating: int | None
+) -> None:
     """Request changes on a review task (reverts episode and marks artifacts stale)."""
     from btcedu.core.reviewer import request_changes
 
     session = ctx.obj["session_factory"]()
     try:
-        decision = request_changes(session, review_id, notes=notes)
-        click.echo(f"[OK] Changes requested on review {review_id} (decision {decision.id})")
+        decision = request_changes(session, review_id, notes=notes, quality_rating=rating)
+        stars = f" ({'\u2605' * rating}{'\u2606' * (5 - rating)})" if rating else ""
+        click.echo(
+            f"[OK] Changes requested on review {review_id}{stars} (decision {decision.id})"
+        )
     except ValueError as e:
         click.echo(f"[FAIL] {e}", err=True)
+    finally:
+        session.close()
+
+
+@review.command()
+@click.option("--stage", default=None, help="Filter by stage (e.g. correct, render).")
+@click.option("--profile", default=None, help="Filter by content profile.")
+@click.option("--json-output", "json_out", is_flag=True, help="Output as JSON.")
+@click.pass_context
+def feedback(
+    ctx: click.Context, stage: str | None, profile: str | None, json_out: bool
+) -> None:
+    """Export all review feedback (ratings + notes) for analysis."""
+    import json
+
+    from btcedu.core.reviewer import get_all_feedback
+
+    session = ctx.obj["session_factory"]()
+    try:
+        results = get_all_feedback(session, stage=stage, profile=profile)
+        if not results:
+            click.echo("No feedback found.")
+            return
+
+        if json_out:
+            click.echo(json.dumps(results, ensure_ascii=False, indent=2))
+        else:
+            for fb in results:
+                stars = (
+                    f"{'★' * fb['quality_rating']}{'☆' * (5 - fb['quality_rating'])}"
+                    if fb["quality_rating"]
+                    else "—"
+                )
+                click.echo(
+                    f"[{fb['stage']:15s}] {stars}  {fb['decision']:20s}  "
+                    f"{fb['episode_id']}  {fb['decided_at'][:10] if fb['decided_at'] else ''}"
+                )
+                if fb["notes"]:
+                    click.echo(f"  → {fb['notes'][:120]}")
+            click.echo(f"\nTotal: {len(results)} feedback entries")
     finally:
         session.close()
 

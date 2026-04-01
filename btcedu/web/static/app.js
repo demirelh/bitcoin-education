@@ -1891,8 +1891,10 @@
       html += '<div class="review-decisions"><h4>Decision History</h4>';
       data.decisions.forEach((d) => {
         const decClass = "badge-review-" + d.decision.replace("_", "-");
+        const stars = d.quality_rating ? " " + "\u2605".repeat(d.quality_rating) + "\u2606".repeat(5 - d.quality_rating) : "";
         html += `<div class="review-decision-entry">
           <span class="badge ${decClass}">${d.decision}</span>
+          ${stars ? `<span class="decision-stars">${stars}</span>` : ""}
           <span class="review-decision-time">${d.decided_at ? new Date(d.decided_at).toLocaleString() : ""}</span>
           ${d.notes ? `<div class="review-decision-notes">${esc(d.notes)}</div>` : ""}
         </div>`;
@@ -1900,18 +1902,23 @@
       html += "</div>";
     }
 
-    // Action buttons (only if pending/in_review)
+    // Action buttons + feedback form (only if pending/in_review)
     const isPending = data.status === "pending" || data.status === "in_review";
     if (isPending) {
-      html += `<div class="review-actions">
-        <button class="btn btn-primary" onclick="approveReview(${data.id})">Approve</button>
-        <button class="btn btn-danger" onclick="rejectReview(${data.id})">Reject</button>
-        <button class="btn btn-warning" onclick="toggleChangesForm()">Request Changes</button>
-        ${(data.stage === "correct" || data.stage === "adapt") ? `<button class="btn btn-secondary" onclick="applyReviewItems(${data.id})">Apply Accepted Changes</button>` : ""}
+      html += `<div class="review-feedback-panel">
+        <h4>Your Feedback</h4>
+        <div class="star-rating" id="star-rating">
+          <span class="star-label">Quality:</span>
+          ${[1,2,3,4,5].map(n => `<span class="star" data-value="${n}" onclick="setRating(${n})">&#9734;</span>`).join("")}
+          <span class="star-value" id="star-value"></span>
+        </div>
+        <textarea class="review-notes-textarea" id="review-notes" placeholder="Comments on quality, issues, suggestions for improvement..."></textarea>
       </div>
-      <div class="review-changes-form" id="review-changes-form" style="display:none;">
-        <textarea class="review-notes-textarea" id="review-notes" placeholder="Describe the changes needed..."></textarea>
-        <button class="btn btn-warning" onclick="submitRequestChanges(${data.id})">Submit Feedback</button>
+      <div class="review-actions">
+        <button class="btn btn-primary" onclick="approveReview(${data.id})">&#10004; Approve</button>
+        <button class="btn btn-danger" onclick="rejectReview(${data.id})">&#10008; Reject</button>
+        <button class="btn btn-warning" onclick="submitRequestChanges(${data.id})">&#8635; Request Changes</button>
+        ${(data.stage === "correct" || data.stage === "adapt") ? `<button class="btn btn-secondary" onclick="applyReviewItems(${data.id})">Apply Accepted Changes</button>` : ""}
       </div>`;
     }
 
@@ -2054,12 +2061,30 @@
   }
   window.batchApproveAll = batchApproveAll;
 
+  let currentRating = null;
+  function setRating(n) {
+    currentRating = n;
+    document.querySelectorAll("#star-rating .star").forEach((s) => {
+      s.innerHTML = parseInt(s.dataset.value) <= n ? "\u2605" : "\u2606";
+    });
+    const sv = document.getElementById("star-value");
+    if (sv) sv.textContent = n + "/5";
+  }
+  window.setRating = setRating;
+
+  function _getReviewFeedback() {
+    const notes = (document.getElementById("review-notes") || {}).value || "";
+    return { notes: notes.trim() || undefined, quality_rating: currentRating };
+  }
+
   async function approveReview(id) {
-    const r = await POST("/reviews/" + id + "/approve");
+    const fb = _getReviewFeedback();
+    const r = await POST("/reviews/" + id + "/approve", fb);
     if (r.error) {
       toast(r.error, false);
     } else {
       toast("Review approved");
+      currentRating = null;
       selectedReview = null;
       loadReviewList();
       updateReviewBadge();
@@ -2072,20 +2097,18 @@
     const isRender = selectedReview && selectedReview.stage === "render";
     if (!confirm("Reject this review?")) return;
 
-    let notes = "";
-    if (isRender) {
-      notes = prompt("Reject notes (required):", "") || "";
-      if (!notes.trim()) {
-        toast("Notes are required to reject render review", false);
-        return;
-      }
+    const fb = _getReviewFeedback();
+    if (isRender && !fb.notes) {
+      toast("Notes are required to reject render review", false);
+      return;
     }
 
-    const r = await POST("/reviews/" + id + "/reject", isRender ? { notes } : null);
+    const r = await POST("/reviews/" + id + "/reject", fb);
     if (r.error) {
       toast(r.error, false);
     } else {
       toast("Review rejected");
+      currentRating = null;
       selectedReview = null;
       loadReviewList();
       updateReviewBadge();
@@ -2094,23 +2117,18 @@
   }
   window.rejectReview = rejectReview;
 
-  function toggleChangesForm() {
-    const form = document.getElementById("review-changes-form");
-    form.style.display = form.style.display === "none" ? "block" : "none";
-  }
-  window.toggleChangesForm = toggleChangesForm;
-
   async function submitRequestChanges(id) {
-    const notes = document.getElementById("review-notes").value.trim();
-    if (!notes) {
+    const fb = _getReviewFeedback();
+    if (!fb.notes) {
       toast("Please provide notes describing the changes needed", false);
       return;
     }
-    const r = await POST("/reviews/" + id + "/request-changes", { notes });
+    const r = await POST("/reviews/" + id + "/request-changes", fb);
     if (r.error) {
       toast(r.error, false);
     } else {
       toast("Changes requested");
+      currentRating = null;
       selectedReview = null;
       loadReviewList();
       updateReviewBadge();

@@ -384,7 +384,9 @@ def authenticate(
         )
 
     flow = InstalledAppFlow.from_client_secrets_file(str(secrets_path), YOUTUBE_SCOPES)
-    creds = flow.run_local_server(port=0)  # Opens browser for consent
+    # Fixed port + no browser so headless SSH works with port-forwarding:
+    #   ssh -L 8085:localhost:8085 pi@<host>
+    creds = flow.run_local_server(port=8085, open_browser=False)
 
     # Save credentials
     creds_path = Path(credentials_path)

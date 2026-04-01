@@ -599,6 +599,40 @@ class CreateDeadLetterQueueMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class AddQualityRatingMigration(Migration):
+    """Migration 010: Add quality_rating column to review_decisions."""
+
+    @property
+    def version(self) -> str:
+        return "010_add_quality_rating"
+
+    @property
+    def description(self) -> str:
+        return "Add quality_rating column to review_decisions for user feedback"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        # Check if column already exists
+        result = session.execute(text("PRAGMA table_info(review_decisions)"))
+        columns = [row[1] for row in result.fetchall()]
+
+        if "quality_rating" not in columns:
+            session.execute(
+                text(
+                    "ALTER TABLE review_decisions "
+                    "ADD COLUMN quality_rating INTEGER"
+                )
+            )
+            session.commit()
+            logger.info("Added quality_rating column to review_decisions")
+        else:
+            logger.info("quality_rating column already exists (skipped)")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -610,6 +644,7 @@ MIGRATIONS = [
     AddReviewItemDecisionsMigration(),
     AddContentProfileMigration(),
     CreateDeadLetterQueueMigration(),
+    AddQualityRatingMigration(),
 ]
 
 

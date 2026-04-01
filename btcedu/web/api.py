@@ -1937,8 +1937,13 @@ def approve_review_route(review_id: int):
         from btcedu.core.reviewer import approve_review
 
         body = request.get_json(silent=True) or {}
+        rating = body.get("quality_rating")
+        if rating is not None:
+            rating = int(rating)
         try:
-            decision = approve_review(session, review_id, notes=body.get("notes"))
+            decision = approve_review(
+                session, review_id, notes=body.get("notes"), quality_rating=rating
+            )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
@@ -1970,8 +1975,13 @@ def reject_review_route(review_id: int):
 
         if task.stage == "render" and not notes:
             return jsonify({"error": "Notes are required when rejecting render review"}), 400
+        rating = body.get("quality_rating")
+        if rating is not None:
+            rating = int(rating)
         try:
-            decision = reject_review(session, review_id, notes=notes or None)
+            decision = reject_review(
+                session, review_id, notes=notes or None, quality_rating=rating
+            )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
@@ -1997,9 +2007,14 @@ def request_changes_route(review_id: int):
         notes = body.get("notes", "").strip()
         if not notes:
             return jsonify({"error": "Notes are required when requesting changes"}), 400
+        rating = body.get("quality_rating")
+        if rating is not None:
+            rating = int(rating)
 
         try:
-            decision = request_changes(session, review_id, notes=notes)
+            decision = request_changes(
+                session, review_id, notes=notes, quality_rating=rating
+            )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
@@ -2010,6 +2025,21 @@ def request_changes_route(review_id: int):
                 "decision": decision.decision,
             }
         )
+    finally:
+        session.close()
+
+
+@api_bp.route("/feedback")
+def get_feedback():
+    """Export all review feedback (ratings + notes) for analysis."""
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import get_all_feedback
+
+        stage = request.args.get("stage")
+        profile = request.args.get("profile")
+        feedback = get_all_feedback(session, stage=stage, profile=profile)
+        return jsonify({"feedback": feedback, "total": len(feedback)})
     finally:
         session.close()
 

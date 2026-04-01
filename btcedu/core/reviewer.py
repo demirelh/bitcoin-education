@@ -53,6 +53,12 @@ def _validate_actionable(task: ReviewTask) -> None:
         )
 
 
+def _validate_quality_rating(rating: int | None) -> None:
+    """Raise ValueError if quality_rating is not 1-5."""
+    if rating is not None and (not isinstance(rating, int) or rating < 1 or rating > 5):
+        raise ValueError(f"quality_rating must be 1-5, got {rating}")
+
+
 def _revert_episode(session: Session, episode_id: str) -> None:
     """Revert episode to previous stage based on current status.
 
@@ -211,6 +217,7 @@ def _write_review_history(task: ReviewTask, decision: ReviewDecision) -> None:
         "stage": task.stage,
         "decision": decision.decision,
         "notes": decision.notes,
+        "quality_rating": decision.quality_rating,
         "decided_at": decision.decided_at.isoformat() if decision.decided_at else None,
         "artifact_hash": task.artifact_hash,
         "task_status": task.status,
@@ -302,6 +309,7 @@ def approve_review(
     session: Session,
     review_task_id: int,
     notes: str | None = None,
+    quality_rating: int | None = None,
 ) -> ReviewDecision:
     """Approve a review task.
 
@@ -311,6 +319,7 @@ def approve_review(
     Returns:
         The created ReviewDecision.
     """
+    _validate_quality_rating(quality_rating)
     task = _get_task_or_raise(session, review_task_id)
     _validate_actionable(task)
 
@@ -332,6 +341,7 @@ def approve_review(
         review_task_id=task.id,
         decision="approved",
         notes=notes,
+        quality_rating=quality_rating,
     )
     session.add(decision)
     session.commit()
@@ -346,6 +356,7 @@ def reject_review(
     session: Session,
     review_task_id: int,
     notes: str | None = None,
+    quality_rating: int | None = None,
 ) -> ReviewDecision:
     """Reject a review task.
 
@@ -355,6 +366,7 @@ def reject_review(
     Returns:
         The created ReviewDecision.
     """
+    _validate_quality_rating(quality_rating)
     task = _get_task_or_raise(session, review_task_id)
     _validate_actionable(task)
 
@@ -376,6 +388,7 @@ def reject_review(
         review_task_id=task.id,
         decision="rejected",
         notes=notes,
+        quality_rating=quality_rating,
     )
     session.add(decision)
     session.commit()
@@ -390,6 +403,7 @@ def request_changes(
     session: Session,
     review_task_id: int,
     notes: str,
+    quality_rating: int | None = None,
 ) -> ReviewDecision:
     """Request changes on a review task.
 
@@ -399,15 +413,17 @@ def request_changes(
 
     Args:
         notes: Required — reviewer feedback for the re-correction.
+        quality_rating: Optional 1-5 quality rating.
 
     Returns:
         The created ReviewDecision.
 
     Raises:
-        ValueError: If notes is empty.
+        ValueError: If notes is empty or quality_rating is invalid.
     """
     if not notes or not notes.strip():
         raise ValueError("Notes are required when requesting changes")
+    _validate_quality_rating(quality_rating)
 
     task = _get_task_or_raise(session, review_task_id)
     _validate_actionable(task)
@@ -425,6 +441,7 @@ def request_changes(
         review_task_id=task.id,
         decision="changes_requested",
         notes=notes,
+        quality_rating=quality_rating,
     )
     session.add(decision)
     session.commit()
@@ -437,6 +454,54 @@ def request_changes(
         task.episode_id,
     )
     return decision
+
+
+def get_all_feedback(
+    session: Session,
+    stage: str | None = None,
+    profile: str | None = None,
+) -> list[dict]:
+    """Return all review decisions with notes or ratings for feedback analysis.
+
+    Args:
+        stage: Optional filter by review stage (e.g. "correct", "render").
+        profile: Optional filter by content_profile (e.g. "tagesschau_tr").
+
+    Returns:
+        List of feedback dicts with episode info, stage, decision, notes, rating.
+    """
+    query = (
+        session.query(ReviewDecision, ReviewTask, Episode)
+        .join(ReviewTask, ReviewDecision.review_task_id == ReviewTask.id)
+        .join(Episode, ReviewTask.episode_id == Episode.episode_id)
+    )
+
+    if stage:
+        query = query.filter(ReviewTask.stage == stage)
+    if profile:
+        query = query.filter(Episode.content_profile == profile)
+
+    # Only include decisions that have notes or ratings
+    query = query.filter(
+        (ReviewDecision.notes.isnot(None)) | (ReviewDecision.quality_rating.isnot(None))
+    )
+    query = query.order_by(ReviewDecision.decided_at.desc())
+
+    results = []
+    for decision, task, episode in query.all():
+        results.append({
+            "episode_id": task.episode_id,
+            "episode_title": episode.title,
+            "content_profile": episode.content_profile,
+            "stage": task.stage,
+            "decision": decision.decision,
+            "quality_rating": decision.quality_rating,
+            "notes": decision.notes,
+            "decided_at": decision.decided_at.isoformat() if decision.decided_at else None,
+            "review_task_id": task.id,
+            "decision_id": decision.id,
+        })
+    return results
 
 
 def get_pending_reviews(session: Session) -> list[ReviewTask]:
@@ -497,6 +562,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
             "id": d.id,
             "decision": d.decision,
             "notes": d.notes,
+            "quality_rating": d.quality_rating,
             "decided_at": d.decided_at.isoformat() if d.decided_at else None,
         }
         for d in task.decisions

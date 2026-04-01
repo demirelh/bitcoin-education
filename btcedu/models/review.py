@@ -82,6 +82,7 @@ class ReviewDecision(Base):
     )
     decision: Mapped[str] = mapped_column(String(32), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    quality_rating: Mapped[int | None] = mapped_column(Integer, nullable=True)
     decided_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

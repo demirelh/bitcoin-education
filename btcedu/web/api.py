@@ -2737,7 +2737,7 @@ def get_stage_runs(episode_id: str):
         # Read last N log lines for this episode (filtered later by frontend)
         log_lines = []
         settings = _get_settings()
-        log_path = Path(settings.data_dir) / "logs" / "episodes" / f"{episode_id}.log"
+        log_path = Path(settings.logs_dir) / "episodes" / f"{episode_id}.log"
         if log_path.exists():
             try:
                 text = log_path.read_text(encoding="utf-8")

@@ -1065,6 +1065,10 @@
 
     try {
       const data = await GET(`/episodes/${selected.episode_id}/stage-runs`);
+      if (data.error) {
+        viewer.innerHTML = `<p style="color:var(--red)">Error: ${esc(data.error)}</p>`;
+        return;
+      }
       viewer.innerHTML = renderStageDetailHTML(stageName, data);
     } catch (e) {
       viewer.innerHTML = `<p style="color:var(--red)">Failed to load stage details: ${esc(e.message)}</p>`;

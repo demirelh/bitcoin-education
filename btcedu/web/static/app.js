@@ -1087,17 +1087,66 @@
   function renderStageDetailHTML(stageName, data) {
     const stageData = data.stages[stageName];
     const isGate = _REVIEW_GATES.has(stageName);
-    const label = selected.stage_progress?.stages?.find(s => s.name === stageName)?.label || stageName;
+    const stageInfo = selected.stage_progress?.stages?.find(s => s.name === stageName);
+    const label = stageInfo?.label || stageName;
+    const stageState = stageInfo?.state || "pending";
 
     let html = `<div class="stage-detail-panel">`;
     html += `<h3 class="stage-detail-title">${esc(label)}</h3>`;
 
     if (!stageData) {
-      html += `<p class="stage-detail-empty">No runs recorded for this stage yet.</p>`;
-      if (!isGate) {
-        html += `<button class="btn btn-sm btn-primary" onclick="restartStage('${esc(stageName)}')">
-          Run ${esc(label)}</button>`;
+      // No PipelineRun records — infer status from stage_progress
+      if (stageState === "done") {
+        const dur = stageInfo.duration_seconds != null ? formatDuration(stageInfo.duration_seconds) : null;
+        const cost = stageInfo.cost_usd != null && stageInfo.cost_usd > 0 ? `$${stageInfo.cost_usd.toFixed(4)}` : null;
+        html += `<div class="stage-detail-status">
+          <span class="stage-badge badge-success">COMPLETED</span>
+        </div>`;
+        if (dur || cost) {
+          html += `<div class="stage-detail-section"><h4>Summary</h4>
+            <table class="stage-detail-table">
+              ${dur ? `<tr><td>Duration</td><td>${dur}</td></tr>` : ""}
+              ${cost ? `<tr><td>Cost</td><td>${cost}</td></tr>` : ""}
+            </table></div>`;
+        }
+      } else if (stageState === "failed") {
+        html += `<div class="stage-detail-status">
+          <span class="stage-badge badge-failed">FAILED</span>
+        </div>`;
+        if (data.error_message) {
+          html += `<div class="stage-detail-section stage-detail-error">
+            <h4>Error</h4><pre>${esc(data.error_message)}</pre></div>`;
+        }
+      } else if (stageState === "paused") {
+        html += `<div class="stage-detail-status">
+          <span class="stage-badge badge-running">PAUSED FOR REVIEW</span>
+        </div>`;
+      } else {
+        html += `<div class="stage-detail-status">
+          <span class="stage-badge" style="background:var(--border);color:var(--text-dim)">PENDING</span>
+        </div>`;
       }
+      if (!isGate && stageState !== "pending") {
+        html += `<div class="stage-detail-actions">
+          <button class="btn btn-sm btn-primary" onclick="restartStage('${esc(stageName)}')">
+          Restart ${esc(label)}</button></div>`;
+      } else if (!isGate && stageState === "pending") {
+        html += `<div class="stage-detail-actions">
+          <button class="btn btn-sm btn-primary" onclick="restartStage('${esc(stageName)}')">
+          Run ${esc(label)}</button></div>`;
+      }
+
+      // Show relevant log lines even without PipelineRun records
+      if (data.log_lines && data.log_lines.length > 0) {
+        const relevant = data.log_lines.filter(line => line.toLowerCase().includes(stageName)).slice(-30);
+        if (relevant.length > 0) {
+          html += `<div class="stage-detail-section">
+            <h4>Log (last ${relevant.length} lines)</h4>
+            <pre class="stage-log-pre">${esc(relevant.join("\n"))}</pre>
+          </div>`;
+        }
+      }
+
       html += `</div>`;
       return html;
     }

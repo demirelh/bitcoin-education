@@ -623,14 +623,17 @@ _STAGE_LABELS = {
     # v2
     "correct": "Correct",
     "review_gate_1": "Review 1",
+    "segment": "Segment",
     "translate": "Translate",
     "adapt": "Adapt",
     "review_gate_translate": "Review Translate",
     "review_gate_2": "Review 2",
     "chapterize": "Chapterize",
+    "frameextract": "Frames",
     "imagegen": "Images",
     "review_gate_stock": "Review Stock",
     "tts": "TTS",
+    "anchorgen": "D-ID Anchor",
     "render": "Render",
     "review_gate_3": "Review 3",
     "publish": "Publish",
@@ -646,8 +649,11 @@ _STAGE_TO_PIPELINE_STAGE = {
     "translate": PipelineStage.TRANSLATE,
     "adapt": PipelineStage.ADAPT,
     "chapterize": PipelineStage.CHAPTERIZE,
+    "segment": PipelineStage.SEGMENT,
+    "frameextract": PipelineStage.FRAMEEXTRACT,
     "imagegen": PipelineStage.IMAGEGEN,
     "tts": PipelineStage.TTS,
+    "anchorgen": PipelineStage.ANCHORGEN,
     "render": PipelineStage.RENDER,
     "publish": PipelineStage.PUBLISH,
 }
@@ -2668,6 +2674,96 @@ def get_publish_status(episode_id: str):
         )
     finally:
         session.close()
+
+
+# ---------------------------------------------------------------------------
+# Per-stage detail + restart (Jenkins-style)
+# ---------------------------------------------------------------------------
+
+_ALLOWED_STAGE_ACTIONS = frozenset({
+    "download", "transcribe", "correct", "segment", "translate", "adapt",
+    "chapterize", "frameextract", "imagegen", "tts", "anchorgen", "render",
+    "publish",
+    # v1 stages
+    "chunk", "generate", "refine",
+})
+
+
+@api_bp.route("/episodes/<episode_id>/stage-runs")
+def get_stage_runs(episode_id: str):
+    """Return all PipelineRun records for an episode, grouped by stage."""
+    session = _get_session()
+    try:
+        ep = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if not ep:
+            return jsonify({"error": "Episode not found"}), 404
+
+        runs = (
+            session.query(PipelineRun)
+            .filter(PipelineRun.episode_id == ep.id)
+            .order_by(PipelineRun.started_at.desc())
+            .all()
+        )
+
+        stages: dict[str, dict] = {}
+        for run in runs:
+            stage_name = run.stage.value
+            dur = None
+            if run.completed_at and run.started_at:
+                dur = round((run.completed_at - run.started_at).total_seconds(), 1)
+
+            entry = {
+                "id": run.id,
+                "status": run.status.value,
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+                "duration_seconds": dur,
+                "input_tokens": run.input_tokens,
+                "output_tokens": run.output_tokens,
+                "estimated_cost_usd": run.estimated_cost_usd,
+                "error_message": run.error_message,
+            }
+
+            if stage_name not in stages:
+                stages[stage_name] = {
+                    "latest": entry,
+                    "history": [],
+                    "run_count": 1,
+                }
+            else:
+                stages[stage_name]["history"].append(entry)
+                stages[stage_name]["run_count"] += 1
+
+        # Read last N log lines for this episode (filtered later by frontend)
+        log_lines = []
+        settings = _get_settings()
+        log_path = Path(settings.data_dir) / "logs" / "episodes" / f"{episode_id}.log"
+        if log_path.exists():
+            try:
+                text = log_path.read_text(encoding="utf-8")
+                log_lines = text.strip().split("\n")[-200:]
+            except OSError:
+                pass
+
+        return jsonify({
+            "stages": stages,
+            "log_lines": log_lines,
+            "episode_id": episode_id,
+            "status": ep.status.value,
+            "error_message": ep.error_message,
+        })
+    finally:
+        session.close()
+
+
+@api_bp.route("/episodes/<episode_id>/stage/<stage_name>", methods=["POST"])
+def run_single_stage(episode_id: str, stage_name: str):
+    """Restart a single pipeline stage for an episode."""
+    if stage_name not in _ALLOWED_STAGE_ACTIONS:
+        return jsonify({"error": f"Unknown stage: {stage_name}"}), 400
+
+    body = request.get_json(silent=True) or {}
+    return _submit_job(stage_name, episode_id, force=body.get("force", True))
 
 
 # ---------------------------------------------------------------------------

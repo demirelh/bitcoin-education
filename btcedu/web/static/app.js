@@ -221,9 +221,9 @@
       }
       const gateClass = stage.is_gate ? " ps-gate" : "";
       const stateClass = `ps-${stage.state}`;
-      const icon = stage.state === "paused" ? "⏸"
-                 : stage.state === "failed" ? "✗"
-                 : stage.state === "done" ? "✓"
+      const icon = stage.state === "paused" ? "\u23f8"
+                 : stage.state === "failed" ? "\u2717"
+                 : stage.state === "done" ? "\u2713"
                  : "";
       const dur = stage.duration_seconds != null
         ? formatDuration(stage.duration_seconds)
@@ -231,10 +231,12 @@
       const cost = stage.cost_usd != null && stage.cost_usd > 0
         ? `$${stage.cost_usd.toFixed(3)}`
         : "";
-      const tooltip = [stage.label, dur, cost].filter(Boolean).join(" · ");
+      const tooltip = [stage.label, dur, cost, "Click for details"].filter(Boolean).join(" \u00b7 ");
 
       html += `
-        <div class="ps-stage${gateClass} ${stateClass}" title="${esc(tooltip)}">
+        <div class="ps-stage ps-clickable${gateClass} ${stateClass}"
+             title="${esc(tooltip)}"
+             onclick="showStageDetail('${esc(stage.name)}')">
           <div class="ps-blob">${icon}</div>
           <div class="ps-label">${esc(stage.label)}</div>
           ${dur ? `<div class="ps-duration">${dur}</div>` : ""}
@@ -1044,6 +1046,151 @@
   function isDryRun() {
     const el = document.getElementById("chk-dryrun");
     return el ? el.checked : false;
+  }
+
+  // ── Stage Detail (Jenkins-style) ─────────────────────────────
+
+  const _REVIEW_GATES = new Set([
+    "review_gate_1", "review_gate_2", "review_gate_translate",
+    "review_gate_stock", "review_gate_3",
+  ]);
+
+  window.showStageDetail = async function (stageName) {
+    if (!selected) return;
+    const viewer = document.getElementById("viewer");
+    viewer.innerHTML = "Loading stage details...";
+
+    // Deselect tabs
+    document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+
+    try {
+      const data = await GET(`/episodes/${selected.episode_id}/stage-runs`);
+      viewer.innerHTML = renderStageDetailHTML(stageName, data);
+    } catch (e) {
+      viewer.innerHTML = `<p style="color:var(--red)">Failed to load stage details: ${esc(e.message)}</p>`;
+    }
+  };
+
+  window.restartStage = function (stageName) {
+    if (!selected) return;
+    submitJob(
+      stageName,
+      `/episodes/${selected.episode_id}/stage/${stageName}`,
+      { force: true }
+    );
+  };
+
+  function renderStageDetailHTML(stageName, data) {
+    const stageData = data.stages[stageName];
+    const isGate = _REVIEW_GATES.has(stageName);
+    const label = selected.stage_progress?.stages?.find(s => s.name === stageName)?.label || stageName;
+
+    let html = `<div class="stage-detail-panel">`;
+    html += `<h3 class="stage-detail-title">${esc(label)}</h3>`;
+
+    if (!stageData) {
+      html += `<p class="stage-detail-empty">No runs recorded for this stage yet.</p>`;
+      if (!isGate) {
+        html += `<button class="btn btn-sm btn-primary" onclick="restartStage('${esc(stageName)}')">
+          Run ${esc(label)}</button>`;
+      }
+      html += `</div>`;
+      return html;
+    }
+
+    const latest = stageData.latest;
+
+    // Status badge
+    const statusClass = latest.status === "success" ? "badge-success"
+                      : latest.status === "failed" ? "badge-failed"
+                      : "badge-running";
+    html += `<div class="stage-detail-status">
+      <span class="stage-badge ${statusClass}">${esc(latest.status.toUpperCase())}</span>
+      <span class="stage-detail-meta">Run #${stageData.run_count}</span>
+    </div>`;
+
+    // Timing
+    html += `<div class="stage-detail-section">
+      <h4>Timing</h4>
+      <table class="stage-detail-table">
+        <tr><td>Started</td><td>${latest.started_at ? new Date(latest.started_at).toLocaleString() : "\u2014"}</td></tr>
+        <tr><td>Completed</td><td>${latest.completed_at ? new Date(latest.completed_at).toLocaleString() : "\u2014"}</td></tr>
+        <tr><td>Duration</td><td>${latest.duration_seconds != null ? formatDuration(latest.duration_seconds) : "\u2014"}</td></tr>
+      </table>
+    </div>`;
+
+    // Cost & Tokens
+    if (latest.input_tokens > 0 || latest.output_tokens > 0 || latest.estimated_cost_usd > 0) {
+      html += `<div class="stage-detail-section">
+        <h4>Cost &amp; Tokens</h4>
+        <table class="stage-detail-table">
+          <tr><td>Input tokens</td><td>${latest.input_tokens.toLocaleString()}</td></tr>
+          <tr><td>Output tokens</td><td>${latest.output_tokens.toLocaleString()}</td></tr>
+          <tr><td>Cost</td><td>$${latest.estimated_cost_usd.toFixed(4)}</td></tr>
+        </table>
+      </div>`;
+    }
+
+    // Error
+    if (latest.error_message) {
+      html += `<div class="stage-detail-section stage-detail-error">
+        <h4>Error</h4>
+        <pre>${esc(latest.error_message)}</pre>
+      </div>`;
+    }
+
+    // Actions
+    if (!isGate) {
+      html += `<div class="stage-detail-actions">
+        <button class="btn btn-sm btn-primary" onclick="restartStage('${esc(stageName)}')">
+          Restart ${esc(label)}</button>
+      </div>`;
+    }
+
+    // Run history
+    if (stageData.history.length > 0) {
+      html += `<div class="stage-detail-section">
+        <h4>Run History</h4>
+        <table class="stage-history-table">
+          <thead><tr><th>Run</th><th>Status</th><th>Started</th><th>Duration</th><th>Cost</th><th>Error</th></tr></thead>
+          <tbody>`;
+
+      // Latest first
+      const allRuns = [stageData.latest, ...stageData.history];
+      allRuns.forEach((run, i) => {
+        const rowClass = run.status === "success" ? "row-success"
+                       : run.status === "failed" ? "row-failed"
+                       : "";
+        html += `<tr class="${rowClass}">
+          <td>#${allRuns.length - i}</td>
+          <td>${esc(run.status)}</td>
+          <td>${run.started_at ? new Date(run.started_at).toLocaleString() : "\u2014"}</td>
+          <td>${run.duration_seconds != null ? formatDuration(run.duration_seconds) : "\u2014"}</td>
+          <td>${run.estimated_cost_usd > 0 ? "$" + run.estimated_cost_usd.toFixed(4) : "\u2014"}</td>
+          <td>${run.error_message ? esc(trunc(run.error_message, 80)) : "\u2014"}</td>
+        </tr>`;
+      });
+      html += `</tbody></table></div>`;
+    }
+
+    // Relevant log lines
+    if (data.log_lines && data.log_lines.length > 0) {
+      const stageKey = stageName.replace("review_gate_", "review_gate_");
+      const relevant = data.log_lines.filter(line => {
+        const lower = line.toLowerCase();
+        return lower.includes(stageName) || lower.includes(stageKey);
+      }).slice(-30);
+
+      if (relevant.length > 0) {
+        html += `<div class="stage-detail-section">
+          <h4>Log (last ${relevant.length} lines)</h4>
+          <pre class="stage-log-pre">${esc(relevant.join("\n"))}</pre>
+        </div>`;
+      }
+    }
+
+    html += `</div>`;
+    return html;
   }
 
   // ── Global actions ───────────────────────────────────────────

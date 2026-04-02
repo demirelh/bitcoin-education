@@ -240,28 +240,30 @@ class JobManager:
             )
 
             try:
-                if job.action == "download":
-                    self._do_download(job, session, settings)
-                elif job.action == "transcribe":
-                    self._do_transcribe(job, session, settings)
-                elif job.action == "chunk":
-                    self._do_chunk(job, session, settings)
-                elif job.action == "generate":
-                    self._do_generate(job, session, settings)
-                elif job.action == "refine":
-                    self._do_refine(job, session, settings)
-                elif job.action == "tts":
-                    self._do_tts(job, session, settings)
-                elif job.action == "render":
-                    self._do_render(job, session, settings)
-                elif job.action == "publish":
-                    self._do_publish(job, session, settings)
-                elif job.action == "run":
-                    self._do_full_pipeline(job, session, settings)
-                elif job.action == "retry":
-                    self._do_retry(job, session, settings)
-                else:
+                _action_map = {
+                    "download": self._do_download,
+                    "transcribe": self._do_transcribe,
+                    "chunk": self._do_chunk,
+                    "generate": self._do_generate,
+                    "refine": self._do_refine,
+                    "correct": self._do_correct,
+                    "segment": self._do_segment,
+                    "translate": self._do_translate,
+                    "adapt": self._do_adapt,
+                    "chapterize": self._do_chapterize,
+                    "frameextract": self._do_frameextract,
+                    "imagegen": self._do_imagegen,
+                    "anchorgen": self._do_anchorgen,
+                    "tts": self._do_tts,
+                    "render": self._do_render,
+                    "publish": self._do_publish,
+                    "run": self._do_full_pipeline,
+                    "retry": self._do_retry,
+                }
+                handler = _action_map.get(job.action)
+                if handler is None:
                     raise ValueError(f"Unknown action: {job.action}")
+                handler(job, session, settings)
 
                 self._update(job, state="success", stage="done")
                 self._log(job, "Job completed successfully")
@@ -382,6 +384,129 @@ class JobManager:
             job,
             f"Refinement complete: {len(result.artifacts)} artifacts, ${result.total_cost_usd:.4f}",
         )
+
+    def _do_correct(self, job, session, settings):
+        from btcedu.core.corrector import correct_transcript
+
+        self._update(job, stage="correcting")
+        self._log(job, "Correcting transcript...")
+        result = correct_transcript(session, job.episode_id, settings, force=job.force)
+        self._update(
+            job,
+            result={
+                "success": True,
+                "cost_usd": getattr(result, "cost_usd", 0),
+            },
+        )
+        self._log(job, "Correction complete")
+
+    def _do_segment(self, job, session, settings):
+        from btcedu.core.segmenter import segment_broadcast
+
+        self._update(job, stage="segmenting")
+        self._log(job, "Segmenting stories...")
+        result = segment_broadcast(session, job.episode_id, settings, force=job.force)
+        self._update(
+            job,
+            result={
+                "success": True,
+                "cost_usd": getattr(result, "cost_usd", 0),
+            },
+        )
+        self._log(job, "Segmentation complete")
+
+    def _do_translate(self, job, session, settings):
+        from btcedu.core.translator import translate_transcript
+
+        self._update(job, stage="translating")
+        self._log(job, "Translating content...")
+        result = translate_transcript(session, job.episode_id, settings, force=job.force)
+        self._update(
+            job,
+            result={
+                "success": True,
+                "cost_usd": getattr(result, "total_cost_usd", 0),
+            },
+        )
+        self._log(
+            job,
+            f"Translation complete: ${getattr(result, 'total_cost_usd', 0):.4f}",
+        )
+
+    def _do_adapt(self, job, session, settings):
+        from btcedu.core.adapter import adapt_script
+
+        self._update(job, stage="adapting")
+        self._log(job, "Adapting content...")
+        result = adapt_script(session, job.episode_id, settings, force=job.force)
+        self._update(
+            job,
+            result={
+                "success": True,
+                "cost_usd": getattr(result, "total_cost_usd", 0),
+            },
+        )
+        self._log(job, "Adaptation complete")
+
+    def _do_chapterize(self, job, session, settings):
+        from btcedu.core.chapterizer import chapterize_script
+
+        self._update(job, stage="chapterizing")
+        self._log(job, "Creating chapters...")
+        result = chapterize_script(session, job.episode_id, settings, force=job.force)
+        self._update(
+            job,
+            result={
+                "success": True,
+                "cost_usd": getattr(result, "total_cost_usd", 0),
+            },
+        )
+        self._log(job, "Chapterization complete")
+
+    def _do_frameextract(self, job, session, settings):
+        from btcedu.core.frame_extractor import extract_frames
+
+        self._update(job, stage="extracting_frames")
+        self._log(job, "Extracting frames from source video...")
+        extract_frames(session, job.episode_id, settings, force=job.force)
+        self._update(
+            job,
+            result={"success": True},
+        )
+        self._log(job, "Frame extraction complete")
+
+    def _do_imagegen(self, job, session, settings):
+        from btcedu.core.image_generator import generate_images
+
+        self._update(job, stage="generating_images")
+        self._log(job, "Generating images...")
+        result = generate_images(session, job.episode_id, settings, force=job.force)
+        self._update(
+            job,
+            result={
+                "success": True,
+                "cost_usd": getattr(result, "total_cost_usd", 0),
+            },
+        )
+        self._log(
+            job,
+            f"Image generation complete: ${getattr(result, 'total_cost_usd', 0):.4f}",
+        )
+
+    def _do_anchorgen(self, job, session, settings):
+        from btcedu.core.anchor_generator import generate_anchors
+
+        self._update(job, stage="generating_anchor")
+        self._log(job, "Generating D-ID anchor video...")
+        result = generate_anchors(session, job.episode_id, settings, force=job.force)
+        self._update(
+            job,
+            result={
+                "success": True,
+                "cost_usd": getattr(result, "cost_usd", 0),
+            },
+        )
+        self._log(job, "Anchor video generation complete")
 
     def _do_tts(self, job, session, settings):
         from btcedu.core.tts import generate_tts

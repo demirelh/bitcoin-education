@@ -1835,6 +1835,158 @@ body {
     }
 }
 
+/* ── Stage Detail Panel (Jenkins-style) ───────────────────────────── */
+
+/* Clickable stages */
+.ps-clickable {
+    cursor: pointer;
+}
+
+.ps-clickable:hover .ps-blob {
+    transform: scale(1.25);
+    box-shadow: 0 0 8px rgba(88, 166, 255, 0.5);
+}
+
+.ps-clickable:hover .ps-label {
+    color: var(--accent);
+}
+
+/* Stage detail panel */
+.stage-detail-panel {
+    padding: 16px;
+    max-width: 700px;
+}
+
+.stage-detail-title {
+    margin: 0 0 12px;
+    font-size: 18px;
+    color: var(--text);
+}
+
+.stage-detail-empty {
+    color: var(--text-dim);
+    font-style: italic;
+}
+
+.stage-detail-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.stage-badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+}
+
+.stage-badge.badge-success {
+    background: var(--green);
+    color: #fff;
+}
+
+.stage-badge.badge-failed {
+    background: var(--red);
+    color: #fff;
+}
+
+.stage-badge.badge-running {
+    background: var(--accent);
+    color: #fff;
+    animation: psPulse 2s ease-in-out infinite;
+}
+
+.stage-detail-meta {
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+.stage-detail-section {
+    margin-bottom: 16px;
+}
+
+.stage-detail-section h4 {
+    margin: 0 0 6px;
+    font-size: 13px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.stage-detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.stage-detail-table td {
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.stage-detail-table td:first-child {
+    color: var(--text-dim);
+    width: 120px;
+}
+
+.stage-detail-error pre {
+    background: rgba(248, 81, 73, 0.1);
+    border: 1px solid var(--red);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--red);
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.stage-detail-actions {
+    margin: 16px 0;
+}
+
+/* Run history table */
+.stage-history-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+
+.stage-history-table th {
+    text-align: left;
+    padding: 4px 6px;
+    border-bottom: 2px solid var(--border);
+    color: var(--text-dim);
+    font-weight: 600;
+}
+
+.stage-history-table td {
+    padding: 4px 6px;
+    border-bottom: 1px solid var(--border);
+}
+
+.stage-history-table .row-success td:nth-child(2) { color: var(--green); }
+.stage-history-table .row-failed td:nth-child(2) { color: var(--red); }
+
+/* Log lines within stage detail */
+.stage-log-pre {
+    background: var(--bg-inset, #161b22);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 250px;
+    overflow-y: auto;
+    color: var(--text-dim);
+}
+
 /* ── Phase 4: Video candidate styles ──────────────────────────────────── */
 
 /* Badge overlay showing duration and play icon */

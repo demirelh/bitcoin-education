@@ -552,23 +552,50 @@ def _run_stage(
             return StageResult("frameextract", "success", elapsed, detail)
 
         elif stage_name == "imagegen":
-            # v2 pipeline: stock images only (no AI image generation)
-            from btcedu.core.stock_images import rank_candidates, search_stock_images
-
-            search_stock_images(session, episode.episode_id, settings, force=force)
-            rank_result = rank_candidates(session, episode.episode_id, settings, force=force)
-            elapsed = time.monotonic() - t0
-
-            return StageResult(
-                "imagegen",
-                "success",
-                elapsed,
-                detail=(
-                    f"{rank_result.chapters_ranked} chapters ranked, "
-                    f"{rank_result.chapters_skipped} skipped, "
-                    f"${rank_result.total_cost_usd:.4f}"
-                ),
+            # Check if Gemini frame editing is enabled for this episode
+            use_gemini = (
+                settings.gemini_image_edit_enabled
+                and settings.gemini_api_key
+                and getattr(episode, "content_profile", "") == "tagesschau_tr"
             )
+
+            if use_gemini:
+                from btcedu.core.frame_editor import edit_frames
+
+                result = edit_frames(session, episode.episode_id, settings, force=force)
+                elapsed = time.monotonic() - t0
+                if result.skipped:
+                    return StageResult("imagegen", "skipped", elapsed, "frame edits current")
+                return StageResult(
+                    "imagegen",
+                    "success",
+                    elapsed,
+                    detail=(
+                        f"{result.chapters_edited} frames edited (Gemini), "
+                        f"{result.chapters_skipped} skipped, "
+                        f"${result.total_cost_usd:.4f}"
+                    ),
+                )
+            else:
+                # Default: stock images (Pexels search + rank)
+                from btcedu.core.stock_images import rank_candidates, search_stock_images
+
+                search_stock_images(session, episode.episode_id, settings, force=force)
+                rank_result = rank_candidates(
+                    session, episode.episode_id, settings, force=force
+                )
+                elapsed = time.monotonic() - t0
+
+                return StageResult(
+                    "imagegen",
+                    "success",
+                    elapsed,
+                    detail=(
+                        f"{rank_result.chapters_ranked} chapters ranked, "
+                        f"{rank_result.chapters_skipped} skipped, "
+                        f"${rank_result.total_cost_usd:.4f}"
+                    ),
+                )
 
         elif stage_name == "review_gate_stock":
             from btcedu.core.reviewer import (

@@ -476,22 +476,54 @@ class JobManager:
         self._log(job, "Frame extraction complete")
 
     def _do_imagegen(self, job, session, settings):
-        from btcedu.core.image_generator import generate_images
+        from btcedu.models.episode import Episode
 
-        self._update(job, stage="generating_images")
-        self._log(job, "Generating images...")
-        result = generate_images(session, job.episode_id, settings, force=job.force)
-        self._update(
-            job,
-            result={
-                "success": True,
-                "cost_usd": getattr(result, "total_cost_usd", 0),
-            },
+        # Check if this episode should use Gemini frame editing
+        ep = session.query(Episode).filter(Episode.episode_id == job.episode_id).first()
+        use_gemini = (
+            ep
+            and getattr(ep, "content_profile", "") == "tagesschau_tr"
+            and settings.gemini_image_edit_enabled
+            and settings.gemini_api_key
         )
-        self._log(
-            job,
-            f"Image generation complete: ${getattr(result, 'total_cost_usd', 0):.4f}",
-        )
+
+        if use_gemini:
+            from btcedu.core.frame_editor import edit_frames
+
+            self._update(job, stage="editing_frames")
+            self._log(job, "Editing frames via Gemini...")
+            result = edit_frames(session, job.episode_id, settings, force=job.force)
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "edited": result.chapters_edited,
+                    "skipped": result.chapters_skipped,
+                    "cost_usd": result.total_cost_usd,
+                },
+            )
+            self._log(
+                job,
+                f"Frame editing complete: {result.chapters_edited} edited, "
+                f"${result.total_cost_usd:.4f}",
+            )
+        else:
+            from btcedu.core.image_generator import generate_images
+
+            self._update(job, stage="generating_images")
+            self._log(job, "Generating images...")
+            result = generate_images(session, job.episode_id, settings, force=job.force)
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "cost_usd": getattr(result, "total_cost_usd", 0),
+                },
+            )
+            self._log(
+                job,
+                f"Image generation complete: ${getattr(result, 'total_cost_usd', 0):.4f}",
+            )
 
     def _do_anchorgen(self, job, session, settings):
         from btcedu.core.anchor_generator import generate_anchors

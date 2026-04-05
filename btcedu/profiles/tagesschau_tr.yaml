@@ -10,6 +10,8 @@ stage_config:
     enabled: true
   adapt:
     skip: true
+  imagegen:
+    provider: gemini_frame_edit
   translate:
     mode: per_story
     register: formal_news

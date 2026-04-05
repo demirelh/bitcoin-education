@@ -86,6 +86,11 @@ class Settings(BaseSettings):
         "Clean, modern, minimalist design. "
     )
 
+    # Gemini Image Editing
+    gemini_api_key: str = ""
+    gemini_image_model: str = "gemini-2.0-flash-exp"
+    gemini_image_edit_enabled: bool = True
+
     # Frame Extraction
     frame_extraction_enabled: bool = False
     frame_extract_video_height: int = 720

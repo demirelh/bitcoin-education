@@ -853,6 +853,48 @@ def imagegen(
         session.close()
 
 
+@cli.command("frame-edit")
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to edit frames for (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Re-edit even if current.")
+@click.option("--dry-run", is_flag=True, default=False, help="Copy frames without Gemini.")
+@click.pass_context
+def frame_edit(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+    dry_run: bool,
+) -> None:
+    """Edit extracted frames via Gemini (translate DE text to TR)."""
+    from btcedu.core.frame_editor import edit_frames
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = edit_frames(session, eid, settings, force=force)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already up-to-date")
+                else:
+                    click.echo(
+                        f"[OK] {eid} -> {result.chapters_edited} edited, "
+                        f"{result.chapters_skipped} skipped (${result.total_cost_usd:.4f})"
+                    )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
 @cli.command()
 @click.option(
     "--episode-id",

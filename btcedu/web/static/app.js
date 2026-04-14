@@ -1775,6 +1775,23 @@
   async function onChannelChange() {
     const select = document.getElementById("channel-select");
     selectedChannelId = select.value || null;
+
+    // Auto-select the channel's content_profile in the profile dropdown
+    const profileSelect = document.getElementById("profile-select");
+    if (profileSelect) {
+      if (selectedChannelId) {
+        const ch = channels.find(c => c.channel_id === selectedChannelId);
+        const prof = ch && ch.content_profile ? ch.content_profile : "";
+        if (prof && Array.from(profileSelect.options).some(o => o.value === prof)) {
+          profileSelect.value = prof;
+          selectedProfile = prof;
+        }
+      } else {
+        // "All Channels" → clear profile filter
+        profileSelect.value = "";
+        selectedProfile = null;
+      }
+    }
     refresh();
   }
 
@@ -1815,14 +1832,20 @@
       channels = r.channels || [];
 
       if (channels.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="4" class="empty">No channels configured</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No channels configured</td></tr>';
         return;
       }
 
+      const profileOptions = ["bitcoin_podcast", "tagesschau_tr"];
       tbody.innerHTML = channels.map(ch => `
         <tr>
           <td>${esc(ch.name)}</td>
           <td>${esc(ch.youtube_channel_id || ch.rss_url || ch.channel_id)}</td>
+          <td>
+            <select onchange="updateChannelProfile(${ch.id}, this.value)">
+              ${profileOptions.map(p => `<option value="${p}" ${ch.content_profile === p ? "selected" : ""}>${esc(p)}</option>`).join("")}
+            </select>
+          </td>
           <td>
             <span style="color: ${ch.is_active ? 'var(--green)' : 'var(--text-dim)'}">
               ${ch.is_active ? '✓' : '✗'}
@@ -1837,14 +1860,26 @@
         </tr>
       `).join("");
     } catch (err) {
-      tbody.innerHTML = `<tr><td colspan="4" class="empty" style="color:var(--red)">Error: ${esc(err.message)}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="5" class="empty" style="color:var(--red)">Error: ${esc(err.message)}</td></tr>`;
     }
   }
+
+  async function updateChannelProfile(channelId, profile) {
+    const r = await api("PATCH", `/channels/${channelId}`, { content_profile: profile });
+    if (r.error) {
+      toast("Failed to update profile: " + r.error, false);
+      return;
+    }
+    toast("Profile updated");
+    loadChannels();
+  }
+  window.updateChannelProfile = updateChannelProfile;
 
   async function addChannel() {
     const name = document.getElementById("new-channel-name").value.trim();
     const youtubeId = document.getElementById("new-channel-youtube-id").value.trim();
     const rssUrl = document.getElementById("new-channel-rss").value.trim();
+    const profile = document.getElementById("new-channel-profile").value || "bitcoin_podcast";
 
     if (!name) {
       toast("Channel name is required", false);
@@ -1860,6 +1895,7 @@
       name,
       youtube_channel_id: youtubeId || null,
       rss_url: rssUrl || null,
+      content_profile: profile,
     });
 
     if (r.error) {

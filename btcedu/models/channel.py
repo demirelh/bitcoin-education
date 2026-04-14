@@ -22,6 +22,9 @@ class Channel(Base):
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     youtube_channel_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     rss_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    content_profile: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="bitcoin_podcast"
+    )
     is_active: Mapped[bool] = mapped_column(nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow

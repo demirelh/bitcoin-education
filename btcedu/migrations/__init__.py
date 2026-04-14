@@ -136,7 +136,7 @@ class AddChannelsSupportMigration(Migration):
                 """),
                 {
                     "channel_id": "default",
-                    "name": "Default Channel",
+                    "name": "Bitcoin Podcast",
                     "youtube_channel_id": settings.podcast_youtube_channel_id or None,
                     "rss_url": feed_url,
                     "now": datetime.now(UTC),
@@ -599,6 +599,60 @@ class CreateDeadLetterQueueMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class AddChannelContentProfileMigration(Migration):
+    """Migration 011: Add content_profile column to channels table."""
+
+    @property
+    def version(self) -> str:
+        return "011_add_channel_content_profile"
+
+    @property
+    def description(self) -> str:
+        return "Add content_profile column to channels and rename default channel"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("PRAGMA table_info(channels)"))
+        columns = [row[1] for row in result.fetchall()]
+
+        if "content_profile" not in columns:
+            session.execute(
+                text(
+                    "ALTER TABLE channels "
+                    "ADD COLUMN content_profile VARCHAR(64) "
+                    "DEFAULT 'bitcoin_podcast' NOT NULL"
+                )
+            )
+            session.commit()
+            logger.info("Added content_profile column to channels")
+        else:
+            logger.info("content_profile column already exists (skipped)")
+
+        # Backfill profile for existing channels based on name heuristic
+        session.execute(
+            text(
+                "UPDATE channels SET content_profile = 'tagesschau_tr' "
+                "WHERE LOWER(name) LIKE '%tagesschau%' "
+                "AND content_profile != 'tagesschau_tr'"
+            )
+        )
+        session.commit()
+
+        # Rename the legacy "Default Channel" to "Bitcoin Podcast"
+        session.execute(
+            text(
+                "UPDATE channels SET name = 'Bitcoin Podcast' "
+                "WHERE channel_id = 'default' AND name = 'Default Channel'"
+            )
+        )
+        session.commit()
+        logger.info("Renamed default channel to 'Bitcoin Podcast' (if present)")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 class AddQualityRatingMigration(Migration):
     """Migration 010: Add quality_rating column to review_decisions."""
 
@@ -645,6 +699,7 @@ MIGRATIONS = [
     AddContentProfileMigration(),
     CreateDeadLetterQueueMigration(),
     AddQualityRatingMigration(),
+    AddChannelContentProfileMigration(),
 ]
 
 

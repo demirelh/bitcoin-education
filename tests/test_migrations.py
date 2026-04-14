@@ -278,6 +278,11 @@ def test_api_works_after_migration(seeded_old_db):
     migration = AddChannelsSupportMigration()
     migration.up(session)
 
+    # Apply the later channel-profile migration too (ORM now expects this column)
+    from btcedu.migrations import AddChannelContentProfileMigration
+
+    AddChannelContentProfileMigration().up(session)
+
     # Now we should be able to query episodes with ORM
     # (Before migration, this would fail because Episode model expects channel_id)
     from btcedu.models.channel import Channel
@@ -293,5 +298,6 @@ def test_api_works_after_migration(seeded_old_db):
     # Query channel
     channel = session.query(Channel).filter(Channel.channel_id == "default").first()
     assert channel is not None
-    assert channel.name == "Default Channel"
+    assert channel.name == "Bitcoin Podcast"
+    assert channel.content_profile == "bitcoin_podcast"
     assert channel.is_active is True

@@ -1035,11 +1035,9 @@ def detect():
         for ch in channels:
             if not ch.rss_url:
                 continue
-            # Determine profile from channel name convention
-            profile = "tagesschau_tr" if "tagesschau" in ch.name.lower() else None
-            ch_settings = settings
-            if profile:
-                ch_settings = settings.model_copy(update={"default_content_profile": profile})
+            # Use the channel's configured content_profile
+            profile = ch.content_profile or settings.default_content_profile
+            ch_settings = settings.model_copy(update={"default_content_profile": profile})
             try:
                 result = detect_episodes(
                     session, ch_settings,
@@ -1755,6 +1753,7 @@ def list_channels():
                         "name": ch.name,
                         "youtube_channel_id": ch.youtube_channel_id,
                         "rss_url": ch.rss_url,
+                        "content_profile": ch.content_profile,
                         "is_active": ch.is_active,
                         "created_at": ch.created_at.isoformat(),
                     }
@@ -1774,6 +1773,7 @@ def create_channel():
     name = data.get("name", "").strip()
     youtube_channel_id = data.get("youtube_channel_id", "").strip()
     rss_url = data.get("rss_url", "").strip()
+    content_profile = (data.get("content_profile") or "bitcoin_podcast").strip()
 
     if not name:
         return jsonify({"error": "Channel name is required"}), 400
@@ -1801,6 +1801,7 @@ def create_channel():
             name=name,
             youtube_channel_id=youtube_channel_id or None,
             rss_url=rss_url or None,
+            content_profile=content_profile,
             is_active=True,
         )
 
@@ -1816,6 +1817,7 @@ def create_channel():
                     "name": channel.name,
                     "youtube_channel_id": channel.youtube_channel_id,
                     "rss_url": channel.rss_url,
+                    "content_profile": channel.content_profile,
                     "is_active": channel.is_active,
                     "created_at": channel.created_at.isoformat(),
                 }
@@ -2769,6 +2771,44 @@ def run_single_stage(episode_id: str, stage_name: str):
 # ---------------------------------------------------------------------------
 # Channel endpoints
 # ---------------------------------------------------------------------------
+
+
+@api_bp.route("/channels/<int:channel_id>", methods=["PATCH"])
+def update_channel(channel_id):
+    """Update channel fields (name, content_profile)."""
+    data = request.get_json() or {}
+    session = _get_session()
+    try:
+        from btcedu.models.channel import Channel
+
+        channel = session.query(Channel).filter(Channel.id == channel_id).first()
+        if not channel:
+            return jsonify({"error": "Channel not found"}), 404
+
+        if "name" in data:
+            name = (data.get("name") or "").strip()
+            if not name:
+                return jsonify({"error": "Channel name cannot be empty"}), 400
+            channel.name = name
+        if "content_profile" in data:
+            channel.content_profile = (
+                (data.get("content_profile") or "bitcoin_podcast").strip()
+            )
+
+        session.commit()
+        return jsonify(
+            {
+                "channel": {
+                    "id": channel.id,
+                    "channel_id": channel.channel_id,
+                    "name": channel.name,
+                    "content_profile": channel.content_profile,
+                    "is_active": channel.is_active,
+                }
+            }
+        )
+    finally:
+        session.close()
 
 
 @api_bp.route("/channels/<int:channel_id>/toggle", methods=["POST"])

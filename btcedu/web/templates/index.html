@@ -205,6 +205,10 @@
         <input type="text" id="new-channel-name" placeholder="Channel Name" class="modal-input">
         <input type="text" id="new-channel-youtube-id" placeholder="YouTube Channel ID (optional)" class="modal-input">
         <input type="text" id="new-channel-rss" placeholder="RSS URL (optional)" class="modal-input">
+        <select id="new-channel-profile" class="modal-input" title="Content profile">
+          <option value="bitcoin_podcast">Profile: Bitcoin Podcast</option>
+          <option value="tagesschau_tr">Profile: Tagesschau</option>
+        </select>
         <button class="btn btn-primary" onclick="addChannel()">Add Channel</button>
       </div>
 
@@ -214,13 +218,14 @@
           <thead>
             <tr>
               <th>Name</th>
-              <th>Channel ID</th>
+              <th>Source</th>
+              <th>Profile</th>
               <th>Active</th>
               <th>Actions</th>
             </tr>
           </thead>
           <tbody id="channel-list-body">
-            <tr><td colspan="4" class="empty">Loading...</td></tr>
+            <tr><td colspan="5" class="empty">Loading...</td></tr>
           </tbody>
         </table>
       </div>

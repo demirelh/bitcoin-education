@@ -891,6 +891,30 @@ body {
         z-index: 1;
     }
 
+    /* Tab groups - stack on mobile */
+    .tab-group {
+        flex-wrap: wrap;
+        border-right: none;
+        padding-right: 0;
+        margin-right: 0;
+        width: 100%;
+    }
+    .tab-group-label {
+        width: 100%;
+        padding: 4px 6px 2px;
+        font-size: 8px;
+    }
+
+    /* Overflow menu - full width on mobile */
+    .overflow-menu {
+        min-width: 200px;
+    }
+    .overflow-item {
+        min-height: 44px;
+        display: flex;
+        align-items: center;
+    }
+
     /* Content viewer - allow natural scrolling within its container */
     .viewer {
         max-height: 70vh;
@@ -2258,3 +2282,116 @@ body {
   border-color: var(--accent);
 }
 .analytics-panel { min-height: 200px; }
+
+/* ── Overflow Menu ──────────────────────────────────── */
+.action-overflow {
+    position: relative;
+    display: inline-block;
+}
+.btn-overflow {
+    font-size: 16px !important;
+    padding: 2px 10px !important;
+    letter-spacing: 2px;
+    background: var(--surface);
+    border-color: var(--border);
+    color: var(--text-dim);
+}
+.btn-overflow:hover {
+    color: var(--text);
+    border-color: var(--text-dim);
+}
+.overflow-menu {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    right: 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 0;
+    min-width: 180px;
+    z-index: 100;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.overflow-menu.open {
+    display: block;
+}
+.overflow-item {
+    display: block;
+    width: 100%;
+    padding: 6px 14px;
+    background: none;
+    border: none;
+    color: var(--text);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+}
+.overflow-item:hover {
+    background: var(--accent);
+    color: #fff;
+}
+.overflow-toggle {
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.overflow-toggle:hover {
+    background: rgba(88, 166, 255, 0.1);
+    color: var(--text);
+}
+.overflow-toggle input[type="checkbox"] {
+    margin: 0;
+}
+.overflow-warn {
+    color: var(--orange, #f90) !important;
+}
+.overflow-warn:hover {
+    background: rgba(255, 153, 0, 0.15);
+    color: var(--orange, #f90) !important;
+}
+.overflow-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 4px 0;
+}
+
+/* ── Tab Groups ─────────────────────────────────────── */
+.tabs {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+.tab-group {
+    display: flex;
+    align-items: flex-end;
+    gap: 0;
+    border-right: 1px solid var(--border);
+    padding-right: 2px;
+    margin-right: 2px;
+}
+.tab-group:last-child {
+    border-right: none;
+}
+.tab-group-label {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-dim);
+    opacity: 0.5;
+    padding: 0 6px 6px;
+    align-self: center;
+    white-space: nowrap;
+}
+
+/* Dimmed tabs (no data yet) */
+.tab-dim {
+    opacity: 0.35;
+}
+.tab-dim:hover {
+    opacity: 0.7;
+}

@@ -295,6 +295,109 @@
   }
   window.jumpToReview = jumpToReview;
 
+  // ── Contextual Action Buttons ──────────────────────────────
+  function renderContextActions(ep) {
+    const btns = [];
+    const st = ep.status;
+    const isFailed = st === "failed" || st === "cost_limit";
+    const isApproved = st === "approved";
+    const isPaused = ep.review_context && ep.review_context.state === "paused_for_review";
+    const isPublished = st === "published";
+
+    // Primary action: context-dependent
+    if (isFailed) {
+      btns.push('<button class="btn btn-sm btn-danger" onclick="actions.retry()">Retry</button>');
+    } else if (isApproved) {
+      btns.push('<button class="btn btn-sm btn-success" onclick="actions.publish()">Publish</button>');
+    } else if (isPaused) {
+      // Next-action banner already has the review button
+    } else if (!isPublished) {
+      btns.push('<button class="btn btn-sm btn-primary" onclick="actions.run()">\u25b6 Run Pipeline</button>');
+    }
+
+    // Publish also available for rendered (before approved)
+    if (st === "rendered") {
+      btns.push('<button class="btn btn-sm btn-success" onclick="actions.publish()">Publish</button>');
+    }
+
+    return btns.join("\n          ");
+  }
+
+  // ── Grouped Tabs ───────────────────────────────────────────
+  function renderGroupedTabs(ep) {
+    const f = ep.files || {};
+    const isTagesschau = ep.content_profile === "tagesschau_tr";
+    const isV1 = ep.pipeline_version === 1;
+
+    function tab(key, label, hasData) {
+      const cls = hasData === false ? "tab tab-dim" : "tab";
+      return `<div class="${cls}" data-tab="${key}">${label}</div>`;
+    }
+
+    let html = "";
+
+    // Group: Source
+    html += `<div class="tab-group">`;
+    html += `<span class="tab-group-label">Source</span>`;
+    html += `<div class="tab active" data-tab="transcript_clean">DE Transcript</div>`;
+    html += `</div>`;
+
+    // Group: Content
+    html += `<div class="tab-group">`;
+    html += `<span class="tab-group-label">Content</span>`;
+    if (isTagesschau) {
+      html += tab("stories", "Stories DE", f.stories);
+      html += tab("stories_translated", "Stories TR", f.stories_translated);
+    } else if (isV1) {
+      html += tab("outline", "Outline TR", f.outline);
+      html += tab("script", "Script TR", f.script);
+      html += tab("qa", "QA", f.qa);
+      html += tab("publishing", "Publishing", f.publishing);
+    } else {
+      html += tab("outline_v2", "Outline v2", f.outline_v2);
+      html += tab("script_v2", "Script v2", f.script_v2);
+      html += tab("publishing_v2", "Publishing v2", f.publishing_v2);
+    }
+    html += `</div>`;
+
+    // Group: Production
+    html += `<div class="tab-group">`;
+    html += `<span class="tab-group-label">Production</span>`;
+    html += tab("chapters", "Chapters", f.chapters);
+    html += tab("stock_images", "Stock Images", false);
+    html += tab("images", "Images", false);
+    html += tab("tts_audio", "TTS Audio", false);
+    html += tab("video", "Video", false);
+    html += `</div>`;
+
+    // Group: Meta
+    html += `<div class="tab-group">`;
+    html += `<span class="tab-group-label">Meta</span>`;
+    html += tab("report", "Report", true);
+    html += tab("logs", "Logs", true);
+    html += `</div>`;
+
+    return html;
+  }
+
+  // ── Overflow Menu ──────────────────────────────────────────
+  function toggleOverflow() {
+    const menu = document.getElementById("overflow-menu");
+    if (menu) menu.classList.toggle("open");
+  }
+  window.toggleOverflow = toggleOverflow;
+
+  // Close overflow on outside click
+  document.addEventListener("click", (e) => {
+    const menu = document.getElementById("overflow-menu");
+    if (menu && menu.classList.contains("open")) {
+      if (!e.target.closest(".action-overflow")) {
+        menu.classList.remove("open");
+      }
+    }
+  });
+
+
   function renderTable(eps) {
     const tbody = document.getElementById("ep-tbody");
     tbody.innerHTML = "";
@@ -443,40 +546,30 @@
         ${renderPipelineStepper(ep.stage_progress)}
         ${renderNextAction(ep)}
         <div class="detail-actions">
-          <button class="btn btn-sm" onclick="actions.download()" title="Download episode audio via yt-dlp">Download</button>
-          <button class="btn btn-sm" onclick="actions.transcribe()" title="Transcribe audio via Whisper API">Transcribe</button>
-          <button class="btn btn-sm" onclick="actions.chunk()" title="Split transcript into searchable chunks">Chunk</button>
-          <button class="btn btn-sm btn-primary" onclick="actions.generate()" title="Generate Turkish content via Claude API">Generate</button>
-          <button class="btn btn-sm" onclick="actions.refine()" title="Refine generated content using QA feedback (v1 → v2)">Refine</button>
-          <button class="btn btn-sm" onclick="actions.run()" title="Run full pipeline from the earliest incomplete stage">Run All</button>
-          <button class="btn btn-sm btn-danger" onclick="actions.retry()" title="Resume from the last failed stage">Retry</button>
-          <button class="btn btn-sm" onclick="actions.resetV2()" title="Reset to TRANSCRIBED & switch to v2 pipeline" style="border-color:var(--orange,#f90);color:var(--orange,#f90)">↻ v2</button>
-          <button class="btn btn-sm btn-success" onclick="actions.publish()" title="Publish approved video to YouTube">Publish</button>
-          <label><input type="checkbox" id="chk-force"> force</label>
-          <label><input type="checkbox" id="chk-dryrun"> dry-run</label>
+          ${renderContextActions(ep)}
+          <div class="action-overflow">
+            <button class="btn btn-sm btn-overflow" onclick="toggleOverflow()" title="More actions">⋯</button>
+            <div class="overflow-menu" id="overflow-menu">
+              <button class="overflow-item" onclick="actions.download()">Download</button>
+              <button class="overflow-item" onclick="actions.transcribe()">Transcribe</button>
+              ${ep.pipeline_version === 1 ? `
+              <button class="overflow-item" onclick="actions.chunk()">Chunk</button>
+              <button class="overflow-item" onclick="actions.generate()">Generate</button>
+              <button class="overflow-item" onclick="actions.refine()">Refine</button>
+              ` : ""}
+              <div class="overflow-divider"></div>
+              <label class="overflow-item overflow-toggle"><input type="checkbox" id="chk-force"> Force re-run</label>
+              <label class="overflow-item overflow-toggle"><input type="checkbox" id="chk-dryrun"> Dry-run</label>
+              ${ep.pipeline_version === 1 ? `
+              <div class="overflow-divider"></div>
+              <button class="overflow-item overflow-warn" onclick="actions.resetV2()">↻ Reset to v2</button>
+              ` : ""}
+            </div>
+          </div>
         </div>
       </div>
       <div class="tabs" id="tabs">
-        <div class="tab active" data-tab="transcript_clean">DE Transcript</div>
-        ${ep.content_profile === "tagesschau_tr" ? `
-        <div class="tab" data-tab="stories">Stories DE</div>
-        <div class="tab" data-tab="stories_translated">Stories TR</div>
-        ` : `
-        <div class="tab" data-tab="outline">Outline TR</div>
-        <div class="tab" data-tab="script">Script TR</div>
-        <div class="tab" data-tab="qa">QA</div>
-        <div class="tab" data-tab="publishing">Publishing</div>
-        <div class="tab" data-tab="outline_v2">Outline v2</div>
-        <div class="tab" data-tab="script_v2">Script v2</div>
-        <div class="tab" data-tab="publishing_v2">Publishing v2</div>
-        `}
-        <div class="tab" data-tab="chapters">Chapters</div>
-        <div class="tab" data-tab="stock_images">Stock Images</div>
-        <div class="tab" data-tab="images">Images</div>
-        <div class="tab" data-tab="tts_audio">TTS Audio</div>
-        <div class="tab" data-tab="video">Video</div>
-        <div class="tab" data-tab="report">Report</div>
-        <div class="tab" data-tab="logs">Logs</div>
+        ${renderGroupedTabs(ep)}
       </div>
       <div class="viewer" id="viewer">Click a tab to load content.</div>
     `;

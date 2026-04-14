@@ -18,9 +18,11 @@ Each service uses a Protocol for swappable implementations:
 - `feed_service.py` — RSS/YouTube feed parsing -> `list[EpisodeInfo]`
 - `download_service.py` — yt-dlp audio download
 - `transcription_service.py` — OpenAI Whisper API, auto-chunks large audio files
+- `gemini_image_service.py` — Gemini 2.0 Flash image editing via raw HTTP REST API. `edit_image()` -> `GeminiEditResult(image_path, cost_usd)`
+- `gemini_image_service.py` — Gemini 2.0 Flash image editing via raw HTTP REST API. `edit_image()` -> `GeminiEditResult(image_path, cost_usd)`
 
 ## Conventions
 
-- Raw HTTP (`requests`) for ElevenLabs and Pexels (no SDKs)
+- Raw HTTP (`requests`) for ElevenLabs, Pexels, and Gemini (no SDKs)
 - All services are stateless (instantiated per-call or with minimal config)
 - Tests mock all external APIs — no real API calls ever

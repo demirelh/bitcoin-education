@@ -22,6 +22,8 @@ Each v2 stage module follows the same pattern:
 - `reviewer.py` — review CRUD: `create_review_task()`, `approve_review()`, `reject_review()`, `has_approved_review()`, `has_pending_review()`
 - `stock_images.py` (60KB) — Pexels stock search, intent extraction, ranking, candidate finalization
 - `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4
+- `frame_editor.py` — Gemini 2.0 Flash frame editing for tagesschau episodes (translates German text overlays to Turkish)
+- `frame_editor.py` — Gemini 2.0 Flash frame editing for tagesschau episodes (translates German text overlays to Turkish)
 
 ## Common Tasks
 

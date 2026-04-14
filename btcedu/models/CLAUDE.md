@@ -11,7 +11,7 @@ All use `Mapped[]` / `mapped_column()` with `Base` from `btcedu/db.py` **EXCEPT 
 - `media_asset.py` — MediaAsset, MediaAssetType (**uses own `declarative_base()`!**)
 - `prompt_version.py` — PromptVersion (unique: `(name, version)` and `(name, content_hash)`)
 - `publish_job.py` — PublishJob, PublishJobStatus
-- `channel.py` — Channel
+- `channel.py` — Channel (has `content_profile` column, default `bitcoin_podcast`)
 - `migration.py` — SchemaMigration
 
 ## Pydantic Models (chapter_schema.py)

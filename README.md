@@ -1,496 +1,157 @@
-# btcedu - Bitcoin Education Automation
+# btcedu — Bitcoin Education Video Pipeline
 
 [![CI](https://github.com/demirelh/bitcoin-education/actions/workflows/ci.yml/badge.svg)](https://github.com/demirelh/bitcoin-education/actions/workflows/ci.yml)
-[![Security](https://github.com/demirelh/bitcoin-education/actions/workflows/security.yml/badge.svg)](https://github.com/demirelh/bitcoin-education/actions/workflows/security.yml)
 
-Automated pipeline that transforms German Bitcoin podcast episodes into Turkish educational YouTube content packages.
+Automated pipeline that transforms German podcast episodes into Turkish YouTube videos.
 
-**Source:** "Der Bitcoin Podcast" by Florian Bruce Boye (YouTube + RSS)
+**Stack:** Python 3.12, Click CLI, Flask web dashboard, SQLAlchemy 2.0 + SQLite + FTS5, Pydantic settings.
+Deployed on Raspberry Pi via systemd timers + Caddy reverse proxy.
 
-**📖 [Architecture Documentation](docs/ARCHITECTURE.md)** - Comprehensive technical overview for developers
-**🤖 [Claude Models Reference](docs/CLAUDE_MODELS.md)** - Complete guide to Claude AI models, capabilities, and technical limits
-**👥 [Contributing Guide](CONTRIBUTING.md)** - Development setup, code quality standards, and contribution guidelines
+## Pipeline
 
-## Pipeline Stages
+Two pipeline versions coexist (`pipeline_version` config: 1 = v1 legacy, 2 = v2 current).
 
+**v2 pipeline (current):**
 ```
-detect -> download -> transcribe -> chunk -> generate
-  RSS      yt-dlp     Whisper API   FTS5     Claude Sonnet
+NEW → DOWNLOADED → TRANSCRIBED → CORRECTED → [review] →
+TRANSLATED → ADAPTED → [review] → CHAPTERIZED →
+IMAGES_GENERATED → TTS_DONE → RENDERED → [review] → APPROVED → PUBLISHED
 ```
 
-Each episode produces 6 Turkish content artifacts:
-- `outline.tr.md` - Episode outline with citations
-- `script.long.tr.md` - Full YouTube video script
-- `shorts.tr.json` - 6 short-form video scripts
-- `visuals.json` - Visual/slide descriptions
-- `qa.json` - Q&A pairs for community posts
-- `publishing_pack.json` - Titles, descriptions, tags, thumbnails
+Review gates pause the pipeline and create ReviewTask records.
+Approval (via CLI or web dashboard) resumes processing.
+
+**imagegen dispatch:** tagesschau_tr episodes use Gemini 2.0 Flash frame editing (~$0.003/image);
+all others use Pexels stock images.
 
 ## Quickstart
 
 ```bash
-# 1. Clone and setup
-cd /home/pi/AI-Startup-Lab/bitcoin-education
+# Clone and setup
+git clone https://github.com/demirelh/bitcoin-education.git
+cd bitcoin-education
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,web]"
 
-# 2. Configure
-cp .env.example .env
-# Edit .env with your API keys:
-#   ANTHROPIC_API_KEY=sk-ant-...
-#   OPENAI_API_KEY=sk-...
-#   PODCAST_YOUTUBE_CHANNEL_ID=UC...
+# Configure
+cp .env.example .env   # edit with your API keys
 
-# 3. Initialize database
+# Initialize and run
 btcedu init-db
-
-# 4. Run database migrations (if updating from older version)
-btcedu migrate
-
-# 5. Run the pipeline
+btcedu detect
 btcedu run-latest
-```
-
-## Updating to a New Version
-
-### Automated Deployment (Recommended)
-
-Use the `run.sh` script to safely update the application in one command:
-
-```bash
-./run.sh
-```
-
-This script automatically:
-- Pulls the latest code from git
-- Installs/updates Python dependencies
-- Runs database migrations
-- Restarts the btcedu-web service
-
-### Manual Deployment
-
-Alternatively, you can run each step manually:
-
-```bash
-git pull
-pip install -e ".[web]"
-btcedu migrate
-sudo systemctl restart btcedu-web  # If using systemd
-```
-
-Check migration status at any time:
-
-```bash
-btcedu migrate-status
 ```
 
 ## CLI Commands
 
-### Automation (cron-ready)
+### Pipeline
 
 | Command | Description |
 |---------|-------------|
+| `btcedu run --episode-id ID` | Run full pipeline for episode |
 | `btcedu run-latest` | Detect + process newest pending episode |
-| `btcedu run-pending --max N --since YYYY-MM-DD` | Process all pending episodes |
-| `btcedu retry --episode-id ID` | Retry failed episodes from last successful stage |
+| `btcedu run-pending --max N` | Process all pending episodes |
+| `btcedu retry --episode-id ID` | Retry from last failed stage |
 
-### Manual operations
+### Individual Stages
 
 | Command | Description |
 |---------|-------------|
-| `btcedu detect` | Check RSS feed for new episodes (~15 most recent) |
-| `btcedu backfill` | Import full channel history via yt-dlp (see below) |
+| `btcedu detect` | Check feeds for new episodes |
+| `btcedu backfill` | Import full channel history via yt-dlp |
 | `btcedu download --episode-id ID` | Download audio |
 | `btcedu transcribe --episode-id ID` | Transcribe via Whisper |
-| `btcedu chunk --episode-id ID` | Chunk transcript + FTS5 index |
-| `btcedu generate --episode-id ID [--force] [--top-k 16]` | Generate content |
-| `btcedu run [--episode-id ID] [--force]` | Run full pipeline |
+| `btcedu correct --episode-id ID` | LLM transcript correction |
+| `btcedu translate --episode-id ID` | German → Turkish translation |
+| `btcedu adapt --episode-id ID` | Cultural adaptation |
+| `btcedu chapterize --episode-id ID` | Production chapter JSON |
+| `btcedu imagegen --episode-id ID` | Generate/select images |
+| `btcedu frame-edit --episode-id ID` | Gemini frame editing (tagesschau) |
+| `btcedu tts --episode-id ID` | Text-to-speech (ElevenLabs) |
+| `btcedu render --episode-id ID` | Assemble video (ffmpeg) |
+| `btcedu publish --episode-id ID` | Upload to YouTube |
 
-### Monitoring
-
-| Command | Description |
-|---------|-------------|
-| `btcedu status` | Episode counts by status + last 10 episodes |
-| `btcedu cost [--episode-id ID]` | API usage costs breakdown |
-| `btcedu report --episode-id ID` | Show latest pipeline report |
-| `btcedu journal [--tail N]` | Show project progress log |
-| `btcedu migrate-status` | Check database migration status |
-
-### Database Management
+### Monitoring & Review
 
 | Command | Description |
 |---------|-------------|
-| `btcedu init-db` | Initialize database (create tables) |
-| `btcedu migrate` | Run pending database migrations |
-| `btcedu migrate --dry-run` | Preview migrations without applying |
-| `btcedu migrate-status` | Show applied and pending migrations |
-
-All automation commands exit with code 0 on success, 1 on any failure.
-
-## Pipeline Actions Explained
-
-### detect
-
-Fetches the RSS feed and inserts new episodes into the database with status `new`. Does not download or process anything. Fast (network I/O only).
-
-### download / transcribe / chunk / generate
-
-Individual pipeline stages. Each runs only its specific step:
-
-| Stage | What it does | Status after |
-|-------|-------------|--------------|
-| **download** | Downloads audio via yt-dlp | `downloaded` |
-| **transcribe** | Sends audio to Whisper API | `transcribed` |
-| **chunk** | Splits transcript into overlapping searchable chunks (FTS5) | `chunked` |
-| **generate** | Calls Claude to produce 6 Turkish content artifacts | `generated` |
-
-Use `--force` (CLI) or the force checkbox (UI) to re-run a stage even if its output already exists.
-
-### run (Run All)
-
-Runs the full pipeline from the **earliest incomplete stage**:
-1. Examines the episode's current status
-2. Logs a pipeline plan showing what will run and what will skip
-3. Skips stages that are already completed
-4. Runs remaining stages in order
-5. Stops on first failure, records error
-
-**Idempotent**: running on a `generated` episode does nothing.
-**Force mode**: re-runs all stages regardless of current status.
-
-Example: episode at `downloaded` → skips download, runs transcribe → chunk → generate.
-
-### retry
-
-Resumes from the **last failed stage**:
-1. Requires the episode to have an error (from a previous failure)
-2. Clears the error
-3. Re-runs the pipeline from the current status (last successful stage)
-
-Example: episode at `chunked` with "generate failed" error → clears error, skips download/transcribe/chunk, runs generate.
-
-If the episode has no error, retry returns "Nothing to retry. Use 'run' instead."
-
-## Backfill Full Channel History
-
-YouTube's RSS feed only returns the **~15 most recent videos**. To import older videos, use `btcedu backfill` which uses yt-dlp to list all videos from the channel.
-
-```bash
-# Import all videos from the channel
-btcedu backfill
-
-# Preview what would be imported (no DB changes)
-btcedu backfill --dry-run
-
-# Only videos from 2024 onwards
-btcedu backfill --since 2024-01-01
-
-# Only videos before 2024
-btcedu backfill --until 2023-12-31
-
-# Import at most 10 new videos
-btcedu backfill --max 10
-
-# Combine filters
-btcedu backfill --since 2023-01-01 --until 2024-06-30 --max 20
-```
-
-**How it works:**
-- Runs `yt-dlp --flat-playlist -J` on the channel URL (no audio download)
-- Parses JSON output for video ID, title, and upload date
-- Inserts new episodes with status `new` (idempotent — existing episodes are never modified)
-- After backfill, use `btcedu run-pending` or the dashboard to process the new episodes
-
-**detect vs backfill:**
-| | `btcedu detect` | `btcedu backfill` |
-|---|---|---|
-| Source | YouTube RSS feed | yt-dlp channel listing |
-| Speed | ~1 second | 10-30 seconds |
-| Coverage | ~15 most recent | All videos |
-| Use case | Cron / incremental | One-off / catch-up |
+| `btcedu status` | Episode counts by status |
+| `btcedu cost [--episode-id ID]` | API cost breakdown |
+| `btcedu report --episode-id ID` | Pipeline run report |
+| `btcedu review list` | List pending reviews |
+| `btcedu review approve ID` | Approve a review gate |
+| `btcedu review reject ID --notes "..."` | Reject with feedback |
+| `btcedu migrate-status` | Database migration status |
 
 ## Web Dashboard
 
-A lightweight local web GUI for monitoring episodes and triggering pipeline actions.
-
 ```bash
-# Install web dependencies
 pip install -e ".[web]"
-
-# Start on localhost (default)
-btcedu web
-
-# Bind to LAN (accessible from other devices)
-btcedu web --host 0.0.0.0 --port 5000
+btcedu web                           # localhost:5000
+btcedu web --host 0.0.0.0 --port 5000  # LAN access
 ```
 
-Features:
-- Episode table with status badges, file presence indicators, and filters
-- Per-episode actions: download, transcribe, chunk, generate (with dry-run/force toggles)
-- Content viewer with tabs: transcript DE, outline TR, script TR, QA, publishing, report
-- Global actions: detect new episodes, cost summary
-- "What's new" bar: new episodes, failed episodes, incomplete pipelines
+Features: episode table with status badges, per-episode pipeline actions,
+content viewer (transcript, script, chapters, images), review management,
+cost summary, batch processing. Channel management with per-channel content profiles.
 
-The dashboard reads settings from `.env` server-side only (no secrets exposed to the browser).
-
-### Mobile Scroll Regression Checklist
-
-When making CSS/layout changes, verify mobile scrolling still works correctly:
-
-**iPhone Safari (or Chrome mobile emulation):**
-- [ ] Page loads without horizontal scrollbar
-- [ ] Episode list scrolls smoothly (up/down)
-- [ ] Can select an episode and view detail page
-- [ ] Can scroll back to top of episode list
-- [ ] Transcript/script/logs viewers scroll independently within their panels
-- [ ] Address bar show/hide doesn't break layout or scrolling
-- [ ] Device rotation (portrait ↔ landscape) works without scroll traps
-- [ ] Modal dialogs (Cost, Channels) scroll properly when content overflows
-- [ ] No "stuck" or trapped scroll positions
-- [ ] Bottom batch progress bar (if visible) doesn't block content
-
-**Quick test:** Load dashboard on iPhone → scroll episode list → select episode → scroll transcript → rotate device → back to list → scroll to bottom
-
-**Known issues fixed (2025-02-14):**
-- Body overflow: hidden prevented page scrolling
-- Fixed-height containers with overflow: hidden created scroll traps
-- Static 100vh didn't account for iOS Safari dynamic viewport
-- Missing -webkit-overflow-scrolling: touch for momentum scrolling
-
-## Progress Log
-
-Development progress is tracked in `docs/PROGRESS_LOG.md`. This append-only journal records plans, implementation milestones, and how to resume work in a new session.
-
-```bash
-# View recent entries
-btcedu journal --tail 30
-```
-
-To continue development in a new Claude session, paste the latest journal section as context.
+Production: gunicorn with gthread worker behind Caddy reverse proxy.
+See `deploy/` for systemd units and Caddy config.
 
 ## Configuration
 
-All settings are loaded from `.env` (see `.env.example`):
+All settings from `.env` (see `.env.example`):
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | required | Claude API key |
 | `OPENAI_API_KEY` | required | OpenAI/Whisper API key |
-| `PODCAST_YOUTUBE_CHANNEL_ID` | required | YouTube channel for RSS |
-| `CLAUDE_MODEL` | `claude-sonnet-4-20250514` | Model for content generation |
-| `DRY_RUN` | `false` | Write prompts to disk without API calls |
-| `CHUNK_SIZE` | `1500` | Characters per chunk (~350 tokens) |
-| `CLAUDE_MAX_TOKENS` | `4096` | Max output tokens per artifact |
+| `ELEVENLABS_API_KEY` | required (v2) | ElevenLabs TTS key |
+| `GEMINI_API_KEY` | `""` | Gemini API key (for frame editing) |
+| `GEMINI_IMAGE_EDIT_ENABLED` | `true` | Enable Gemini frame editing for tagesschau |
+| `PIPELINE_VERSION` | `2` | Pipeline version (1 or 2) |
+| `DRY_RUN` | `false` | Skip API calls, write placeholders |
+| `MAX_EPISODE_COST_USD` | `10` | Cost limit per episode |
+| `RENDER_PRESET` | `medium` | ffmpeg encoding preset |
+| `RENDER_TIMEOUT_SEGMENT` | `300` | ffmpeg segment timeout (seconds) |
+| `DATABASE_URL` | `sqlite:///data/btcedu.db` | Database connection |
 
-## Production Deployment (systemd)
+Full settings: `btcedu/config.py`.
 
-```bash
-# Copy unit files
-sudo cp deploy/btcedu-detect.service /etc/systemd/system/
-sudo cp deploy/btcedu-detect.timer /etc/systemd/system/
-sudo cp deploy/btcedu-run.service /etc/systemd/system/
-sudo cp deploy/btcedu-run.timer /etc/systemd/system/
-
-# Enable and start timers
-sudo systemctl daemon-reload
-sudo systemctl enable --now btcedu-detect.timer
-sudo systemctl enable --now btcedu-run.timer
-
-# Check timer status
-systemctl list-timers btcedu-*
-
-# View logs
-journalctl -u btcedu-detect --since today
-journalctl -u btcedu-run --since today
-```
-
-Schedule: detect every 6h, run-pending daily at 02:00.
-
-## Public Dashboard Deployment (DuckDNS + HTTPS)
-
-Expose the web dashboard publicly via Caddy reverse proxy with automatic TLS.
-
-**Architecture:** `Internet → DuckDNS → Router → Caddy (:443) → Gunicorn (:8091)`
-
-### Quick setup
+## Deployment
 
 ```bash
-# 1. Install gunicorn
-.venv/bin/pip install 'gunicorn>=22.0.0'
-
-# 2. Install and start the systemd service
-sudo cp deploy/btcedu-web.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now btcedu-web.service
-
-# 3. Generate a password hash for basic auth
-caddy hash-password --plaintext 'YOUR_PASSWORD'
-
-# 4. Edit /etc/caddy/Caddyfile - add inside lnodebtc.duckdns.org { }:
-#    @dashboard path /dashboard/*
-#    handle @dashboard {
-#        uri strip_prefix /dashboard
-#        basicauth {
-#            pi PASTE_HASH_HERE
-#        }
-#        reverse_proxy 127.0.0.1:8091
-#    }
-#    header {
-#        X-Content-Type-Options nosniff
-#        X-Frame-Options DENY
-#        Referrer-Policy no-referrer
-#    }
-
-# 5. Reload Caddy
-sudo systemctl reload caddy
+./run.sh   # git pull → pip install → migrate → restart services
 ```
 
-Dashboard will be at: **https://lnodebtc.duckdns.org/dashboard/**
-
-### Change password
-
-```bash
-caddy hash-password --plaintext 'NEW_PASSWORD'
-# Edit /etc/caddy/Caddyfile, replace the hash, then:
-sudo systemctl reload caddy
-```
-
-### Monitoring
-
-```bash
-sudo systemctl status btcedu-web
-sudo journalctl -u btcedu-web -f
-
-# Health check
-curl -u pi:PASSWORD https://lnodebtc.duckdns.org/dashboard/api/health
-```
-
-### Troubleshooting
-
-| Symptom | Cause | Fix |
-|---------|-------|-----|
-| HTML loads but JS non-functional | Absolute `/static/` or `/api/` paths bypass proxy | Use relative paths (no leading `/`) |
-| 401 on all requests | Basic auth credentials wrong | Re-generate hash: `caddy hash-password` |
-| 502 Bad Gateway | Gunicorn not running | `sudo systemctl restart btcedu-web` |
-| `/dashboard` gives 404 | Missing trailing slash redirect | Add `redir /dashboard /dashboard/ permanent` |
-
-### Security
-
-- Gunicorn binds to `127.0.0.1` only (never exposed directly)
-- Basic auth required for all dashboard routes
-- HTTPS with auto-renewing Let's Encrypt certificates (managed by Caddy)
-- Security headers: `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`
-- No API keys or secrets exposed to the browser
-
-## Cost
-
-~$0.38 per episode (6 Claude Sonnet calls with ~5k input / ~1.5k output tokens each).
-
-## Testing
-
-```bash
-source .venv/bin/activate
-python -m pytest tests/ -v
-```
+See `deploy/README.md` for systemd timer setup and Caddy reverse proxy config.
 
 ## Development
 
-### Running Checks Locally
-
-Before committing, run these checks to ensure code quality:
-
 ```bash
-# Activate virtual environment
-source .venv/bin/activate
-
-# Run linter
-ruff check btcedu/ tests/
-
-# Auto-fix linting issues
-ruff check btcedu/ tests/ --fix
-
-# Check code formatting
-ruff format --check btcedu/ tests/
-
-# Format code
-ruff format btcedu/ tests/
-
-# Run tests
-ANTHROPIC_API_KEY=dummy OPENAI_API_KEY=dummy WHISPER_API_KEY=dummy DRY_RUN=true pytest tests/ -v
+pip install -e ".[dev,web]"
+pytest                               # full test suite (~1189 tests)
+ruff check btcedu/ tests/            # lint
+ruff format btcedu/ tests/           # format
 ```
 
-### Pre-commit Hooks (Optional)
-
-Install pre-commit hooks to automatically run checks before each commit:
-
-```bash
-pip install pre-commit
-pre-commit install
-```
-
-Now checks will run automatically on `git commit`. To run manually on all files:
-
-```bash
-pre-commit run --all-files
-```
+See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards and workflow.
 
 ## System Requirements
 
 - Python 3.12+
-- ffmpeg (for audio splitting via pydub)
-- SQLite with FTS5 support (standard on most systems)
+- ffmpeg (for audio/video processing)
+- SQLite with FTS5 support
 
-## Project Structure
+## Documentation
 
-```
-btcedu/
-  cli.py              # Click CLI commands
-  config.py           # Pydantic settings
-  db.py               # SQLAlchemy engine/session
-  core/
-    detector.py       # RSS detection + download
-    transcriber.py    # Whisper transcription + chunking
-    chunker.py        # Text chunking + FTS5
-    generator.py      # Claude content generation
-    pipeline.py       # Pipeline orchestration + retry
-  models/
-    episode.py        # Episode, PipelineRun, Chunk ORM
-    content_artifact.py # ContentArtifact ORM
-    schemas.py        # Pydantic schemas
-  services/
-    feed_service.py   # RSS feed parsing
-    download_service.py # yt-dlp wrapper
-    transcription_service.py # Whisper API wrapper
-    claude_service.py # Claude API wrapper
-  utils/
-    journal.py        # Progress log utility
-  web/
-    app.py            # Flask app factory
-    api.py            # REST API endpoints
-    templates/        # Jinja2 HTML
-    static/           # JS + CSS
-  prompts/
-    system.py         # Shared Turkish system prompt
-    outline.py        # Outline prompt template
-    script.py         # Script prompt template
-    shorts.py         # Shorts prompt template
-    visuals.py        # Visuals prompt template
-    qa.py             # Q&A prompt template
-    publishing.py     # Publishing pack template
-deploy/
-  btcedu-detect.*     # systemd units for detection
-  btcedu-run.*        # systemd units for processing
-  btcedu-web.service  # systemd unit for web dashboard
-  Caddyfile.dashboard # Caddy config snippet
-  setup-web.sh        # Deployment helper script
-tests/
-data/
-  btcedu.db           # SQLite database
-  raw/                # Downloaded audio files
-  transcripts/        # Whisper transcripts
-  chunks/             # Chunk JSONL files
-  outputs/            # Generated content artifacts
-  reports/            # Pipeline run reports
-  chromadb/           # ChromaDB (optional)
-```
+| Document | Description |
+|----------|-------------|
+| [CLAUDE.md](CLAUDE.md) | Claude Code project context |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development workflow and standards |
+| [docs/architecture/](docs/architecture/) | Pipeline, review gate, render flow docs |
+| [docs/architecture/MASTERPLAN.md](docs/architecture/MASTERPLAN.md) | Original design document (historical) |
+| [docs/decisions/](docs/decisions/) | Architecture decision records |
+| [docs/runbooks/](docs/runbooks/) | Operator guides |
+| [deploy/](deploy/) | Deployment config and docs |

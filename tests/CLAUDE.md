@@ -1,4 +1,4 @@
-# tests/ — Test Suite (~867 tests)
+# tests/ — Test Suite (~1189 tests)
 
 ## Running Tests
 
@@ -27,7 +27,7 @@ pytest -k "test_render" -x            # match pattern
 
 5. **autouse fixtures**: some test files have `autouse=True` fixtures that patch functions for all tests in the file. If you need the real function, put your test in a separate file (see `test_intent_extract_registry.py` — separated from `test_stock_ranking.py`)
 
-6. **Mock all external APIs**: never make real API calls. Mock `call_claude`, `DallE3ImageService`, `ElevenLabsService`, `YouTubeDataAPIService`, etc.
+6. **Mock all external APIs**: never make real API calls. Mock `call_claude`, `DallE3ImageService`, `ElevenLabsService`, `GeminiImageService`, `YouTubeDataAPIService`, etc.
 
 ## Test File Organization
 

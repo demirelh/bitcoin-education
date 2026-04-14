@@ -1,6 +1,6 @@
 ---
 name: validate-phase
-description: Validate the current project state by running the full test suite and checking test count against baseline (867 tests)
+description: Validate the current project state by running the full test suite and checking test count against baseline (1189 tests)
 allowed-tools: Bash
 ---
 
@@ -17,7 +17,7 @@ echo "=== Tests ==="
 
 Check:
 1. Ruff lint: any errors?
-2. Test count: should be >= 867 (current baseline). Report if lower.
+2. Test count: should be >= 1189 (current baseline). Report if lower.
 3. Any test failures: report details.
 
-Baseline: 867 tests as of mini-hardening phase (2026-03-16).
+Baseline: 1189 tests as of mini-hardening phase (2026-03-16).

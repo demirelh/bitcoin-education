@@ -16,6 +16,8 @@ Reviews: `GET/POST /api/reviews/<id>/{approve,reject,request-changes}`
 Batch: `POST /api/batch/start`, `GET /api/batch/<id>`, `POST /api/batch/<id>/stop`
 Jobs: `GET /api/jobs/<id>` (polling for background job status)
 Files: `GET /api/episodes/<id>/files/<type>` (serve episode artifacts)
+Channels: `GET/POST /api/channels`, `PATCH /api/channels/<id>` (includes `content_profile`)
+Channels: `GET/POST /api/channels`, `PATCH /api/channels/<id>` (includes `content_profile`)
 
 ## Conventions
 

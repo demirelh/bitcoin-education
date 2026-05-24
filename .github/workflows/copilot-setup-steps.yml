@@ -1,0 +1,51 @@
+name: "Copilot Setup Steps"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+jobs:
+  copilot-setup-steps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install project with dev and web dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev,web]"
+
+      - name: Verify setup
+        env:
+          ANTHROPIC_API_KEY: dummy
+          OPENAI_API_KEY: dummy
+          WHISPER_API_KEY: dummy
+          DRY_RUN: "true"
+        run: |
+          echo "=== Verify ruff ==="
+          ruff check --version
+          echo "=== Verify pytest ==="
+          pytest --version
+          echo "=== Verify btcedu CLI ==="
+          btcedu --help
+          echo "=== Run linter ==="
+          ruff check btcedu/ tests/ || true
+          echo "=== Run tests ==="
+          pytest tests/ -x -q --tb=short

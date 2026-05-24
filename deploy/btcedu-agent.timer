@@ -1,0 +1,10 @@
+[Unit]
+Description=Run btcedu meta-agent every 24 hours
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1800
+Persistent=true
+
+[Install]
+WantedBy=timers.target

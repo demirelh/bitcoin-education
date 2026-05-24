@@ -1,0 +1,22 @@
+[Unit]
+Description=btcedu meta-agent: analyze project and create GitHub Issues
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/projects/bitcoin-education
+ExecStart=/home/pi/projects/bitcoin-education/.venv/bin/btcedu agent run-once --live
+Environment="PATH=/home/pi/projects/bitcoin-education/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Load .env
+EnvironmentFile=-/home/pi/projects/bitcoin-education/.env
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=btcedu-agent
+
+[Install]
+WantedBy=multi-user.target

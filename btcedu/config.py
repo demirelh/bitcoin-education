@@ -177,6 +177,17 @@ class Settings(BaseSettings):
     youtube_category_id: str = "27"  # Education
     youtube_default_language: str = "tr"
 
+    # Agent (meta-agent that creates GitHub Issues for Copilot)
+    agent_enabled: bool = False
+    agent_interval_hours: int = 24
+    agent_max_issues_per_run: int = 3
+    agent_github_repo: str = ""  # e.g. "demirelh/bitcoin-education"
+    agent_assignee: str = "copilot"
+    agent_label: str = "agent-generated"
+    agent_dry_run: bool = True  # safe default: propose only, don't create issues
+    agent_model: str = "claude-sonnet-4-20250514"
+    agent_max_tokens: int = 2048
+
     # Output
     outputs_dir: str = "data/outputs"
 

@@ -414,7 +414,7 @@ def create_intro_segment(
         "-map", "[v]", "-map", "1:a",
         "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "44100",
         "-t", str(duration),
         output_path,
     ]
@@ -491,7 +491,7 @@ def create_outro_segment(
         "-map", "[v]", "-map", "1:a",
         "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
         "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k",
+        "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "44100",
         "-t", str(duration),
         output_path,
     ]

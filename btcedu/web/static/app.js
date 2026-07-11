@@ -1017,7 +1017,7 @@
       const totalDur = (data.total_duration_seconds || 0).toFixed(1);
       const totalSize = ((data.total_size_bytes || 0) / 1024 / 1024).toFixed(1);
       const segments = data.segments || [];
-      const videoUrl = `api/episodes/${selected.episode_id}/render/draft.mp4`;
+      const videoUrl = `api/episodes/${selected.episode_id}/render/draft.mp4?v=${encodeURIComponent(data.generated_at || Date.now())}`;
 
       let chapterRows = segments.map(s => {
         const dur = (s.duration_seconds || 0).toFixed(1);

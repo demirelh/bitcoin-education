@@ -1125,6 +1125,12 @@ def concatenate_segments(
         str(concat_list_path),
         "-c",
         "copy",  # Stream copy (no re-encoding)
+        # Move moov atom to the front so browsers can start streaming and
+        # decoding audio immediately instead of waiting for the full file.
+        # Without this, HTML5 <video> often plays video but drops/mutes audio
+        # until the entire moov table has downloaded.
+        "-movflags",
+        "+faststart",
         output_path,
     ]
 

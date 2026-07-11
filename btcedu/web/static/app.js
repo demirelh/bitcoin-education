@@ -585,7 +585,7 @@
         video.controls = true;
         video.preload = "none";
         const source = document.createElement("source");
-        source.src = "api/episodes/" + ep.episode_id + "/render/draft.mp4";
+        source.src = "api/episodes/" + ep.episode_id + "/render/draft.mp4?v=" + (ep.updated_at || Date.now());
         source.type = "video/mp4";
         video.appendChild(source);
         previewDiv.appendChild(video);

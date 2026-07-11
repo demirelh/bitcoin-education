@@ -2633,11 +2633,12 @@ def get_render_video(episode_id: str):
     if not video_path.exists():
         return jsonify({"error": "Draft video not found"}), 404
 
-    return send_file(str(video_path), mimetype="video/mp4", conditional=True)
-
-
-@api_bp.route("/episodes/<episode_id>/render", methods=["POST"])
-def trigger_render(episode_id: str):
+    resp = send_file(str(video_path), mimetype="video/mp4", conditional=True)
+    # Force browsers to revalidate — the video file changes when the episode
+    # is re-rendered but the URL doesn't, so aggressive caching would show
+    # stale content (e.g. old placeholder colors) after a fix.
+    resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
     """Trigger render job."""
     body = request.get_json(silent=True) or {}
     return _submit_job("render", episode_id, force=body.get("force", False))

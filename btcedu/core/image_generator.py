@@ -121,6 +121,9 @@ def generate_images(
 
     # Load profile for profile-aware placeholder colors etc.
     _profile_accent = "#F7931A"
+    _profile_style_prefix = None
+    _imagegen_cfg: dict = {}
+    _profile = None
     try:
         from btcedu.profiles import get_registry as _get_profile_registry
 
@@ -128,6 +131,8 @@ def generate_images(
         _profile = _get_profile_registry(settings).get(_profile_name)
         _render_cfg = (_profile.stage_config.get("render", {}) if _profile else {}) or {}
         _profile_accent = _render_cfg.get("accent_color") or "#F7931A"
+        _imagegen_cfg = (_profile.stage_config.get("imagegen", {}) if _profile else {}) or {}
+        _profile_style_prefix = _imagegen_cfg.get("style_prefix", None)
     except Exception:
         pass
 
@@ -141,10 +146,18 @@ def generate_images(
     chapters_doc = _load_chapters(chapters_path)
     chapters_hash = _compute_chapters_content_hash(chapters_doc)
 
-    # Load and register prompt
+    # Load and register prompt (profile can override template file)
     registry = PromptRegistry(session)
-    template_file = TEMPLATES_DIR / "imagegen.md"
-    prompt_version = registry.register_version("imagegen", template_file, set_default=True)
+    _template_name = _imagegen_cfg.get("prompt_template", "imagegen.md") or "imagegen.md"
+    template_file = TEMPLATES_DIR / _template_name
+    if not template_file.exists():
+        logger.warning(
+            "Profile-requested imagegen template %s not found, falling back to imagegen.md",
+            _template_name,
+        )
+        template_file = TEMPLATES_DIR / "imagegen.md"
+    _prompt_key = template_file.stem  # 'imagegen' or 'imagegen_news'
+    prompt_version = registry.register_version(_prompt_key, template_file, set_default=True)
     _, template_body = registry.load_template(template_file)
     prompt_content_hash = registry.compute_hash(template_body)
 
@@ -268,7 +281,12 @@ def generate_images(
 
                     # Generate image
                     image_entry = _generate_single_image(
-                        chapter, image_prompt, image_service, output_dir, settings
+                        chapter,
+                        image_prompt,
+                        image_service,
+                        output_dir,
+                        settings,
+                        style_prefix_override=_profile_style_prefix,
                     )
                     total_cost += image_entry.metadata.get("cost_usd", 0.0)
                     generated_count += 1
@@ -537,18 +555,28 @@ def _generate_single_image(
     image_service,
     output_dir: Path,
     settings: Settings,
+    style_prefix_override: str | None = None,
 ) -> ImageEntry:
     """Generate a single image via configured provider.
 
     image_service is provider-agnostic (DallE3/Flux/Ideogram) — all conform
     to the ImageGenService protocol.
+
+    style_prefix_override: profile-supplied style prefix. If None, falls back
+    to the settings default. If empty string, disables the prefix entirely
+    (useful for news profiles where Bitcoin/crypto branding would leak in).
     """
+    if style_prefix_override is not None:
+        effective_prefix = style_prefix_override
+    else:
+        effective_prefix = getattr(settings, "image_gen_style_prefix", "")
+
     request = ImageGenRequest(
         prompt=image_prompt,
         model=getattr(settings, "image_gen_model", "dall-e-3"),
         size=getattr(settings, "image_gen_size", "1792x1024"),
         quality=getattr(settings, "image_gen_quality", "standard"),
-        style_prefix=getattr(settings, "image_gen_style_prefix", ""),
+        style_prefix=effective_prefix,
     )
 
     # Smart per-chapter routing: pick best provider for this chapter's visual type
@@ -560,6 +588,13 @@ def _generate_single_image(
 
         provider = select_provider_for_chapter(chapter)
         image_service = get_image_service(settings, provider=provider)
+
+    # Override service-level style_prefix so profile choice wins over factory default.
+    # Services concatenate self.style_prefix with the prompt; leaving the Bitcoin
+    # branding baked in there causes news profiles (Tagesschau) to bleed crypto
+    # imagery into every generated frame.
+    if hasattr(image_service, "style_prefix"):
+        image_service.style_prefix = effective_prefix
 
     response: ImageGenResponse = image_service.generate_image(request)
 

@@ -579,11 +579,44 @@ class JobManager:
 
         self._update(job, stage="rendering_video")
         self._log(job, "Rendering draft video...")
+
+        def _on_progress(evt: dict) -> None:
+            stage = evt.get("stage", "")
+            current = evt.get("current", 0)
+            total = evt.get("total", 0)
+            title = (evt.get("chapter_title") or evt.get("chapter_id") or "").strip()
+            pct = int(evt.get("progress_pct", 0))
+            if stage == "concat":
+                label = f"concat {total} segments"
+            else:
+                short = title if len(title) <= 40 else title[:37] + "..."
+                label = f"ch {current}/{total}: {short}" if short else f"ch {current}/{total}"
+            self._update(job, stage=label, progress_pct=pct)
+            self._broadcast(
+                "job_update",
+                {
+                    "job_id": job.job_id,
+                    "episode_id": job.episode_id,
+                    "state": "running",
+                    "stage": label,
+                    "action": job.action,
+                    "progress_pct": pct,
+                    "render_current": current,
+                    "render_total": total,
+                    "render_chapter_id": evt.get("chapter_id"),
+                    "render_chapter_title": title,
+                    "render_stage": stage,
+                },
+            )
+            if stage == "segment_done":
+                self._log(job, f"Rendered {current}/{total}: {title}")
+
         result = render_video(
             session,
             job.episode_id,
             settings,
             force=job.force,
+            progress_callback=_on_progress,
         )
         if result.skipped:
             self._update(

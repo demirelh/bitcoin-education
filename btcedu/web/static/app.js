@@ -2644,7 +2644,11 @@
           toast(data.message || "Job failed", false);
           refresh();
         } else if (data.state === "running") {
-          updateSpinner(data.action + ": " + (data.stage || "running"));
+          let label = data.action + ": " + (data.stage || "running");
+          if (typeof data.progress_pct === "number" && data.progress_pct > 0 && data.progress_pct <= 100) {
+            label += " — " + data.progress_pct + "%";
+          }
+          updateSpinner(label);
         }
       }
     });

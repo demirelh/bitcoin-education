@@ -6,6 +6,7 @@ import logging
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Callable
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -68,6 +69,7 @@ def render_video(
     episode_id: str,
     settings: Settings,
     force: bool = False,
+    progress_callback: "Callable[[dict], None] | None" = None,
 ) -> RenderResult:
     """Render draft video from chapter images, TTS audio, and overlays.
 
@@ -290,7 +292,21 @@ def render_video(
                 )
             return kwargs
 
-        for chapter in chapters_doc.chapters:
+        _chapters_total = len(chapters_doc.chapters)
+        for _ch_idx, chapter in enumerate(chapters_doc.chapters, start=1):
+            # Notify progress at start of each chapter
+            if progress_callback is not None:
+                try:
+                    progress_callback({
+                        "stage": "segment_start",
+                        "current": _ch_idx,
+                        "total": _chapters_total,
+                        "chapter_id": chapter.chapter_id,
+                        "chapter_title": getattr(chapter, "title", "") or "",
+                        "progress_pct": int(100 * (_ch_idx - 1) / max(_chapters_total, 1)),
+                    })
+                except Exception:
+                    pass
             # Resolve media files for this chapter
             try:
                 media_path, audio_path, duration, asset_type = _resolve_chapter_media(
@@ -447,6 +463,21 @@ def render_video(
             total_duration += duration
             total_size += segment_result.size_bytes
 
+            # Notify progress at completion of each chapter
+            if progress_callback is not None:
+                try:
+                    progress_callback({
+                        "stage": "segment_done",
+                        "current": _ch_idx,
+                        "total": _chapters_total,
+                        "chapter_id": chapter.chapter_id,
+                        "chapter_title": getattr(chapter, "title", "") or "",
+                        "size_bytes": segment_result.size_bytes,
+                        "progress_pct": int(100 * _ch_idx / max(_chapters_total, 1)),
+                    })
+                except Exception:
+                    pass
+
         # Concatenate segments
         if not segment_entries:
             raise RuntimeError("No segments were rendered")
@@ -504,6 +535,19 @@ def render_video(
             logger.info("Outro segment created (%.1fs)", settings.render_outro_duration)
 
         logger.info("Concatenating %d segments into draft video", len(segment_abs_paths))
+
+        if progress_callback is not None:
+            try:
+                progress_callback({
+                    "stage": "concat",
+                    "current": _chapters_total,
+                    "total": _chapters_total,
+                    "chapter_id": "concat",
+                    "chapter_title": f"Concat {len(segment_abs_paths)} segments",
+                    "progress_pct": 99,
+                })
+            except Exception:
+                pass
 
         concat_result = concatenate_segments(
             segment_paths=segment_abs_paths,

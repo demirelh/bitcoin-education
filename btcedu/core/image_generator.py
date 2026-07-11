@@ -119,6 +119,18 @@ def generate_images(
             f"Chapters file not found for episode {episode_id}: {chapters_path}"
         )
 
+    # Load profile for profile-aware placeholder colors etc.
+    _profile_accent = "#F7931A"
+    try:
+        from btcedu.profiles import get_registry as _get_profile_registry
+
+        _profile_name = getattr(episode, "content_profile", None) or "bitcoin_podcast"
+        _profile = _get_profile_registry(settings).get(_profile_name)
+        _render_cfg = (_profile.stage_config.get("render", {}) if _profile else {}) or {}
+        _profile_accent = _render_cfg.get("accent_color") or "#F7931A"
+    except Exception:
+        pass
+
     output_dir = Path(settings.outputs_dir) / episode_id / "images"
     manifest_path = output_dir / "manifest.json"
     provenance_path = (
@@ -281,7 +293,9 @@ def generate_images(
 
             else:
                 # Create template placeholder for title_card/talking_head
-                image_entry = _create_template_placeholder(chapter, output_dir)
+                image_entry = _create_template_placeholder(
+                    chapter, output_dir, accent_color=_profile_accent
+                )
                 template_count += 1
 
             image_entries.append(image_entry)
@@ -575,7 +589,7 @@ def _generate_single_image(
     )
 
 
-def _create_template_placeholder(chapter, output_dir: Path) -> ImageEntry:
+def _create_template_placeholder(chapter, output_dir: Path, accent_color: str = "#F7931A") -> ImageEntry:
     """Create a placeholder image for template types (title_card, talking_head).
 
     Args:
@@ -587,12 +601,23 @@ def _create_template_placeholder(chapter, output_dir: Path) -> ImageEntry:
     """
     from PIL import Image, ImageDraw, ImageFont
 
+    def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+        h = h.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+    try:
+        _accent_rgb = _hex_to_rgb(accent_color)
+    except Exception:
+        _accent_rgb = (247, 147, 26)
+
     # Create simple placeholder (solid color with text)
     width, height = 1920, 1080
     bg_color = (
-        (247, 147, 26)
+        _accent_rgb
         if chapter.visual.type == "title_card"
-        else (200, 200, 200)  # Bitcoin orange or gray
+        else (200, 200, 200)  # profile accent for title cards, gray otherwise
     )
 
     img = Image.new("RGB", (width, height), color=bg_color)

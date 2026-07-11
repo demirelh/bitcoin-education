@@ -367,12 +367,29 @@ def create_intro_segment(
     escaped_title = _escape_drawtext(episode_title)
     escaped_date = _escape_drawtext(episode_date)
 
+    # If accent_color and bg_color are identical (or near-identical), the show
+    # name text would be invisible against the background. Fall back to white
+    # in that case so the profile branding is always readable.
+    def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+        h = h.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+    try:
+        _r1, _g1, _b1 = _hex_to_rgb(accent_color)
+        _r2, _g2, _b2 = _hex_to_rgb(bg_color)
+        _dist = abs(_r1 - _r2) + abs(_g1 - _g2) + abs(_b1 - _b2)
+    except Exception:
+        _dist = 999
+    _show_color = "white" if _dist < 60 else accent_color
+
     fade_out_start = max(0, duration - 0.5)
 
     filter_parts = [
         f"[0:v]"
         f"drawtext=fontfile={font_path}:text='{escaped_show}'"
-        f":fontsize=80:fontcolor={accent_color}"
+        f":fontsize=80:fontcolor={_show_color}"
         f":x=(w-text_w)/2:y=(h/2)-80"
         f":enable='between(t\\,0.5\\,{duration})',"
         f"drawtext=fontfile={font_path}:text='{escaped_title}'"

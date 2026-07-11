@@ -148,6 +148,62 @@ These actions are STRICTLY PROHIBITED. Violation is a critical error:
 - Cultural adaptation ≠ content creation
 - When in doubt, adapt LESS rather than MORE
 
+### 13. Technical Term Explanations for Turkish Audience (T1)
+
+Turkish viewers are early-stage Bitcoin learners. When a Bitcoin/finance term appears for the FIRST TIME and is likely unfamiliar, add a brief in-line parenthetical explanation. Tag with `[T1]`.
+
+- **Trigger terms** (add explanation on first mention if unexplained in source):
+  - Metcalfe Yasası, Power Law, Halving/yarılanma, Difficulty Adjustment, UTXO, Hash Rate, Fiat, Stock-to-Flow, Realized Cap, Cantillon-Etkisi, Store of Value, Proof of Work / Proof of Stake, Custody, Cold Storage, Multi-Sig, Layer 2
+- **Format**: `Metcalfe Yasası [T1: her yeni kullanıcı ağın değerini kare olarak artırır]`
+- **Length limit**: 1 short sentence, max 15 kelime. Longer = pedagogic detour, avoid.
+- **Skip** if the source already explains the term in the next 1-2 sentences.
+
+### 14. Rhythm-fix for Enumeration Lists (T1) — MUTLAK KURAL
+
+**HER 4+ öğeli listeyi SIKIŞTIRMAK ZORUNDASINIZ.** Bu opsiyonel DEĞİLDİR. Monoton TTS okumasını önlemek için gereklidir. HER durumda `[T1: ...]` marker'ı ile etiketleyin — sessizce yeniden yazmak YASAKTIR, çünkü validation grep'i marker'ı arar.
+
+**FORMAT (zorunlu):**
+- Coğrafi listeler: `[T1: X'dan Y'ye, Z'den W'ya kadar]` (uzak-yakın kutup çifti)
+- Ürün/marka listeleri: `[T1: X'ten Y'ye kadar tüm büyük {kategori}]`
+- Örnek listeleri: `[T1: {ilk 2 örnek} gibi]` veya `[T1: {A}'dan {B}'ye]`
+
+**ZORUNLU ÖRNEKLER (bunları birebir uygulayın):**
+
+Örnek 1 — Ülke listesi (7 öğe):
+- ÖNCE: "Afrika'da olsun, Papua Yeni Gine'de olsun, Borneo'da olsun, Singapur'da olsun, Güney Amerika'da olsun, Patagonya'da olsun, Alaska'da olsun"
+- SONRA: "`[T1: Afrika'dan Alaska'ya, Patagonya'dan Papua'ya kadar dünyanın her köşesinde]`"
+
+Örnek 2 — Şehir listesi (5 öğe):
+- ÖNCE: "İstanbul, Ankara, İzmir, Bursa, Antalya"
+- SONRA: "`[T1: İstanbul'dan Antalya'ya büyük şehirlerimizde]`"
+
+Örnek 3 — Şirket listesi (6 öğe):
+- ÖNCE: "Apple, Google, Microsoft, Amazon, Meta, Netflix"
+- SONRA: "`[T1: Apple ve Google'dan Netflix'e kadar tüm tech devleri]`"
+
+Örnek 4 — Zaman/dönem listesi (4 öğe):
+- ÖNCE: "2013, 2017, 2021, 2024 yıllarında"
+- SONRA: "`[T1: 2013'ten 2024'e kadar her boğa döngüsünde]`"
+
+**KORUYUN (sıkıştırMAYIN):**
+- Bitcoin teknik sabitleri: "21 milyon arz, 10 dakikalık blok, 4 yıllık yarılanma" — bunlar ANLAM taşır
+- 3 veya daha az öğeli listeler — zaten kısa
+- Karar/oy listeleri: "evet, hayır, çekimser" — tam liste anlamlıdır
+
+**YASAK:**
+- Listeyi tamamen SİLMEK (mesaj kaybolur) → sıkıştır, silme
+- Marker'sız sessiz yeniden yazım (grep validation'ı için `[T1: ...]` şart)
+- 3 öğeyi 3'te bırakmak (kural sadece 4+ için geçerli)
+
+### 15. Personalized Outro CTA (T2)
+
+The FINAL chapter (outro) often ends with a generic "abone olmayı unutmayın" CTA. Personalize it with a question tied to the episode's theme to drive Turkish community engagement. Tag with `[T2]`.
+
+- **Add before or after generic CTA**: `[T2: Yorumlarda: {tema}la ilgili Türkiye'de sizin görüşünüz nedir?]`
+- **Choose theme** from the episode content, e.g. for a Bitcoin Standard episode: `Türkiye'de Bitcoin standardı mümkün mü, yoksa TL kaçınılmaz mı?`
+- **Preserve** the original CTA (abone/beğeni/görüşmek üzere) — the personalized question is ADDITIVE, not a replacement.
+- Only apply to the LAST section of the transcript. Skip if source has no CTA at all.
+
 ---
 
 # Input

@@ -215,6 +215,17 @@ def chapterize_script(
     t0 = time.monotonic()
 
     try:
+        # Inject chapterize stage_config into template (hook, chapter length rules)
+        chapterize_cfg = (profile_obj.stage_config.get("chapterize", {}) if profile_obj else {}) or {}
+        hook_max_seconds = chapterize_cfg.get("hook_max_seconds", 15)
+        min_chapter_seconds = chapterize_cfg.get("min_chapter_seconds", 30)
+        max_chapter_seconds = chapterize_cfg.get("max_chapter_seconds", 120)
+        template_body = (
+            template_body.replace("{{ hook_max_seconds }}", str(hook_max_seconds))
+            .replace("{{ min_chapter_seconds }}", str(min_chapter_seconds))
+            .replace("{{ max_chapter_seconds }}", str(max_chapter_seconds))
+        )
+
         # Split prompt template into system and user parts
         system_prompt, user_template = _split_prompt(template_body)
 
@@ -305,6 +316,25 @@ def chapterize_script(
             )
         else:
             final_chapter_doc = chapter_doc
+
+        # Merge chapters shorter than min_chapter_seconds (LLM constraint is unreliable).
+        merged_chapters = _merge_short_chapters(
+            list(final_chapter_doc.chapters), min_chapter_seconds
+        )
+        if len(merged_chapters) != len(final_chapter_doc.chapters):
+            logger.info(
+                "Merged %d short chapters (<%ds) into neighbors",
+                len(final_chapter_doc.chapters) - len(merged_chapters),
+                min_chapter_seconds,
+            )
+            for idx, ch in enumerate(merged_chapters):
+                ch.order = idx + 1
+                ch.chapter_id = f"ch{ch.order:02d}"
+            final_chapter_doc.chapters = merged_chapters
+            final_chapter_doc.total_chapters = len(merged_chapters)
+            final_chapter_doc.estimated_duration_seconds = sum(
+                c.narration.estimated_duration_seconds for c in merged_chapters
+            )
 
         # Validate duration estimates (recalculate from word count)
         for ch in final_chapter_doc.chapters:
@@ -566,6 +596,65 @@ def _segment_script(text: str, limit: int = SEGMENT_CHAR_LIMIT) -> list[str]:
         segments.append("\n\n".join(current_segment))
 
     return segments if segments else [text]  # Fallback: return original as single segment
+
+
+def _merge_short_chapters(chapters: list, min_seconds: int) -> list:
+    """Merge chapters shorter than min_seconds into a neighbor (skips Hook ch01).
+
+    Greedy bucket pack: once a chapter reaches min_seconds it is "closed" and
+    subsequent short chapters start a new bucket with the next chapter.
+    """
+    if not chapters:
+        return chapters
+
+    merged: list = [chapters[0]]  # keep hook as-is
+
+    def _dur(ch):
+        return getattr(ch.narration, "estimated_duration_seconds", 0) or 0
+
+    for ch in chapters[1:]:
+        prev = merged[-1] if merged else None
+        prev_is_short = (
+            prev is not None
+            and prev.chapter_id != "ch01"
+            and _dur(prev) < min_seconds
+        )
+        if _dur(ch) < min_seconds and prev_is_short:
+            # merge into prev
+            prev_text = prev.narration.text.rstrip()
+            new_text = f"{prev_text} {ch.narration.text.lstrip()}".strip()
+            new_wc = len(new_text.split())
+            prev.narration.text = new_text
+            prev.narration.word_count = new_wc
+            prev.narration.estimated_duration_seconds = _compute_duration_estimate(new_wc)
+            try:
+                prev.overlays = list(getattr(prev, "overlays", []) or []) + list(
+                    getattr(ch, "overlays", []) or []
+                )
+            except Exception:
+                pass
+        else:
+            merged.append(ch)
+
+    # tail: if last chapter is still short, merge it into predecessor
+    if len(merged) >= 2 and _dur(merged[-1]) < min_seconds and merged[-2].chapter_id != "ch01":
+        last = merged[-1]
+        prev = merged[-2]
+        prev_text = prev.narration.text.rstrip()
+        new_text = f"{prev_text} {last.narration.text.lstrip()}".strip()
+        new_wc = len(new_text.split())
+        prev.narration.text = new_text
+        prev.narration.word_count = new_wc
+        prev.narration.estimated_duration_seconds = _compute_duration_estimate(new_wc)
+        try:
+            prev.overlays = list(getattr(prev, "overlays", []) or []) + list(
+                getattr(last, "overlays", []) or []
+            )
+        except Exception:
+            pass
+        merged.pop()
+
+    return merged
 
 
 def _compute_duration_estimate(word_count: int) -> int:

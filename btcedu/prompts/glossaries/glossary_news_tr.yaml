@@ -1,0 +1,107 @@
+# Nachrichten-Glossar für Tagesschau DE→TR-Übersetzung
+# Zielgruppe: türkischsprachige Menschen in Deutschland, die deutsche Nachrichten
+# auf Türkisch konsumieren wollen. Register: formell, TRT/AA-Nachrichtenstil.
+
+terms:
+  # Deutsche Institutionen — NICHT übersetzen, aber beim ersten Auftreten erklären
+  Bundestag: "Bundestag (Almanya Federal Meclisi)"
+  Bundesrat: "Bundesrat (Almanya Eyaletler Meclisi)"
+  Bundeskanzler: "Federal Şansölye (Bundeskanzler)"
+  Bundespräsident: "Federal Cumhurbaşkanı (Bundespräsident)"
+  Bundesregierung: "Federal Hükümet"
+  Bundesministerium: "Federal Bakanlık"
+  Bundesverfassungsgericht: "Federal Anayasa Mahkemesi"
+  Bundeswehr: "Bundeswehr (Almanya Silahlı Kuvvetleri)"
+  Verfassungsschutz: "Anayasa Koruma Teşkilatı (Verfassungsschutz)"
+  BND: "BND (Almanya Federal İstihbarat Servisi)"
+  BKA: "BKA (Federal Kriminal Dairesi)"
+
+  # Parteien — NICHT übersetzen
+  CDU: "CDU (Hristiyan Demokrat Birlik)"
+  CSU: "CSU (Hristiyan Sosyal Birlik)"
+  SPD: "SPD (Almanya Sosyal Demokrat Partisi)"
+  Grüne: "Yeşiller Partisi (Grüne)"
+  FDP: "FDP (Hür Demokrat Parti)"
+  AfD: "AfD (Almanya için Alternatif)"
+  Linke: "Sol Parti (Die Linke)"
+  BSW: "BSW (Sahra Wagenknecht Birliği)"
+
+  # EU / International
+  Europäische Union: "Avrupa Birliği (AB)"
+  EU: "AB (Avrupa Birliği)"
+  Europäisches Parlament: "Avrupa Parlamentosu"
+  NATO: "NATO"
+  Vereinte Nationen: "Birleşmiş Milletler (BM)"
+  UN: "BM (Birleşmiş Milletler)"
+  UNO: "BM"
+  G7: "G7"
+  G20: "G20"
+
+  # Wirtschaft
+  Wirtschaft: "ekonomi"
+  Inflation: "enflasyon"
+  Rezession: "resesyon (durgunluk)"
+  Arbeitslosigkeit: "işsizlik"
+  Bruttoinlandsprodukt: "Gayri Safi Yurtiçi Hasıla (GSYH)"
+  BIP: "GSYH"
+  Aktienmarkt: "borsa"
+  DAX: "DAX (Almanya borsa endeksi)"
+  Zinssatz: "faiz oranı"
+  EZB: "AMB (Avrupa Merkez Bankası)"
+  Europäische Zentralbank: "Avrupa Merkez Bankası (AMB)"
+  Bundesbank: "Bundesbank (Almanya Merkez Bankası)"
+
+  # Politik & Konflikte (neutraler Ton!)
+  Krieg: "savaş"
+  Ukraine-Krieg: "Ukrayna Savaşı"
+  Nahost: "Orta Doğu"
+  Nahostkonflikt: "Orta Doğu çatışması"
+  Gaza: "Gazze"
+  Israel: "İsrail"
+  Palästina: "Filistin"
+  Russland: "Rusya"
+  China: "Çin"
+  USA: "ABD"
+
+  # Migration & Gesellschaft (heikel — sehr neutral)
+  Migration: "göç"
+  Migrant: "göçmen"
+  Flüchtling: "mülteci"
+  Asyl: "iltica"
+  Integration: "entegrasyon"
+  Ausländer: "yabancı uyruklu"
+
+  # Klima & Umwelt
+  Klimawandel: "iklim değişikliği"
+  Klimaschutz: "iklim koruma"
+  Erneuerbare Energien: "yenilenebilir enerji"
+  CO2: "karbondioksit (CO2)"
+  Energiewende: "enerji dönüşümü (Energiewende)"
+
+  # Türkei-relevante Themen (immer sauber)
+  Türkei: "Türkiye"
+  türkisch: "Türk"
+  Erdoğan: "Erdoğan"
+
+# Feste Redewendungen (Nachrichten-Standard)
+phrases:
+  "laut Angaben": "yetkililerin verdiği bilgiye göre"
+  "wie ARD berichtet": "ARD'nin haberine göre"
+  "das teilte X mit": "X, açıklama yaptı"
+  "unter der Bedingung der Anonymität": "isminin açıklanmaması koşuluyla"
+  "keine Stellungnahme": "yorum yapmadı"
+
+# Ton
+tone:
+  register: formal_news
+  address: sie-Form (Sie / haber dilinde nötr)
+  formality: TRT/AA-Standard, objektiv, sachlich
+  humor: keiner
+  bias: strikt neutral — keine wertenden Adjektive
+  perspective: |
+    Zielpublikum: Türken in Deutschland. Wenn eine Meldung DIREKT diese
+    Community betrifft (Migrationspolitik, Renten, Kindergeld, Doppelpass,
+    türkisch-deutsche Beziehungen), soll die Übersetzung diesen Aspekt
+    NICHT ausklammern, aber neutral halten. Keine Meinungsformung.
+  numbers: türkisches Zahlenformat (1.234,56 → 1.234,56 wird zu 1.234,56 im TR)
+  dates: türkisches Datumsformat (12. März 2026 → 12 Mart 2026)

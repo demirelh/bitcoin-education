@@ -58,10 +58,16 @@ class Settings(BaseSettings):
     chunk_overlap: float = 0.15  # 15% overlap
 
     # Content Generation
-    llm_provider: str = "anthropic"  # "anthropic" or "openai"
+    llm_provider: str = "anthropic"  # "anthropic" | "openai" | "github_models" | "copilot_cli"
     claude_model: str = "claude-sonnet-4-20250514"
     openai_llm_model: str = "gpt-4o"  # fallback model when using openai provider
-    claude_max_tokens: int = 4096
+    github_token: str = ""  # PAT with models:read scope
+    github_models_model: str = "openai/gpt-4.1"  # e.g. "openai/gpt-4.1", "anthropic/claude-sonnet-4.5"
+    github_models_endpoint: str = "https://models.github.ai/inference"
+    copilot_cli_model: str = "claude-sonnet-4.5"  # e.g. "claude-sonnet-4.5", "claude-opus-4.6"
+    copilot_cli_binary: str = "copilot"
+    copilot_cli_timeout: int = 900  # seconds per call
+    claude_max_tokens: int = 16384
     claude_temperature: float = 0.3
     max_retries: int = 3
     retry_base_delay: float = 1.0  # seconds, for retry decorator
@@ -77,7 +83,7 @@ class Settings(BaseSettings):
     max_episode_cost_usd: float = 15.0  # per-episode cost safety cap (raised for anchor)
 
     # Image Generation (Sprint 7)
-    image_gen_provider: str = "dalle3"  # "dalle3" or "pexels"
+    image_gen_provider: str = "dalle3"  # "dalle3" | "flux" | "ideogram" | "pexels"
     image_gen_model: str = "dall-e-3"
     image_gen_size: str = "1792x1024"  # DALL-E 3 landscape (closest to 1920x1080)
     image_gen_quality: str = "standard"  # "standard" or "hd"
@@ -85,6 +91,15 @@ class Settings(BaseSettings):
         "Professional educational content illustration for Bitcoin/cryptocurrency video. "
         "Clean, modern, minimalist design. "
     )
+
+    # Flux.1 via fal.ai (photoreal hero shots)
+    fal_api_key: str = ""
+
+    # Ideogram v2 (text-in-image, thumbnails)
+    ideogram_api_key: str = ""
+
+    # Per-chapter-type provider routing (auto-select best provider per visual type)
+    image_gen_smart_routing: bool = True
 
     # Gemini Image Editing
     gemini_api_key: str = ""

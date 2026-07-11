@@ -26,7 +26,7 @@ from btcedu.services.claude_service import ClaudeResponse, call_claude
 logger = logging.getLogger(__name__)
 
 # Texts longer than this (in characters) are split into segments
-SEGMENT_CHAR_LIMIT = 15_000
+SEGMENT_CHAR_LIMIT = 8_000
 
 
 def _utcnow() -> datetime:
@@ -136,12 +136,37 @@ def adapt_script(
         Path(settings.outputs_dir) / episode_id / "provenance" / "adapt_provenance.json"
     )
 
-    # Load and register prompt via PromptRegistry
+    # Resolve profile namespace so news/podcast pick up their own adapt prompt
+    content_profile = getattr(episode, "content_profile", None)
+    profile_obj = None
+    profile_namespace: str | None = None
+    adapt_cfg: dict = {}
+    try:
+        from btcedu.profiles import get_registry as get_profile_registry
+
+        pr = get_profile_registry(settings)
+        profile_obj = pr.get(content_profile) if content_profile else None
+        if profile_obj is not None:
+            profile_namespace = getattr(profile_obj, "prompt_namespace", None)
+            adapt_cfg = profile_obj.stage_config.get("adapt", {}) or {}
+    except Exception:  # noqa: BLE001
+        profile_namespace = None
+        adapt_cfg = {}
+
+    # Load and register prompt via PromptRegistry (profile-namespaced fallback)
     registry = PromptRegistry(session)
-    template_file = TEMPLATES_DIR / "adapt.md"
-    prompt_version = registry.register_version("adapt", template_file, set_default=True)
+    template_file = registry.resolve_template_path("adapt.md", profile=profile_namespace)
+    prompt_name = "adapt"
+    if profile_namespace and (TEMPLATES_DIR / profile_namespace / "adapt.md").exists():
+        prompt_name = f"{profile_namespace}/adapt"
+    prompt_version = registry.register_version(prompt_name, template_file, set_default=True)
     _, template_body = registry.load_template(template_file)
     prompt_content_hash = registry.compute_hash(template_body)
+
+    # Inject configured tiers so prompt can react (news: local_relevance only)
+    tiers_list = adapt_cfg.get("tiers") or []
+    tiers_block = ", ".join(tiers_list) if tiers_list else "all"
+    template_body = template_body.replace("{{ tiers }}", tiers_block)
 
     # Compute input content hashes for idempotency
     translation_text = translation_path.read_text(encoding="utf-8")
@@ -215,6 +240,11 @@ def adapt_script(
         # Segment text if needed
         segments = _segment_text(translation_text)
 
+        # Slice the German reference proportionally so each Turkish segment only
+        # sees the corresponding German portion. Without this, the model tends to
+        # re-adapt earlier German content on every segment, duplicating stories.
+        german_slices = _slice_german_by_segments(german_text, translation_text, segments)
+
         # Process each segment
         total_input_tokens = 0
         total_output_tokens = 0
@@ -222,10 +252,19 @@ def adapt_script(
         adapted_segments: list[str] = []
 
         for i, segment in enumerate(segments):
-            # For multi-segment: include full German text as reference (simplification)
-            # A more sophisticated implementation would align German segments with Turkish segments
-            user_message = user_template.replace("{{ translation }}", segment).replace(
-                "{{ original_german }}", german_text
+            german_ref = german_slices[i] if i < len(german_slices) else ""
+            # Segment-scoping instruction prevents the model from generating
+            # content for parts of the German reference that fall outside this
+            # segment's Turkish slice.
+            scoped_translation = (
+                segment
+                + "\n\n<!-- SEGMENT_SCOPE: Only adapt content that appears in "
+                "THIS Turkish segment above. If the German reference mentions "
+                "topics not present in this Turkish text, IGNORE them — they "
+                "belong to a different segment and will be adapted separately. -->"
+            )
+            user_message = user_template.replace("{{ translation }}", scoped_translation).replace(
+                "{{ original_german }}", german_ref
             )
 
             # Dry-run path
@@ -235,11 +274,14 @@ def adapt_script(
                 else None
             )
 
+            _template_max = getattr(prompt_version, "max_tokens", None) or 0
+            _effective_max = max(int(_template_max or 0), int(settings.claude_max_tokens or 0))
             response: ClaudeResponse = call_claude(
                 system_prompt=system_prompt,
                 user_message=user_message,
                 settings=settings,
                 dry_run_path=dry_run_path,
+                max_tokens=_effective_max or None,
             )
 
             adapted_segments.append(response.text)
@@ -273,9 +315,16 @@ def adapt_script(
             tier2_count,
         )
 
-        # Write output files
+        # Persist raw tagged version for review, but clean tags before downstream stages
+        # so TTS never speaks '[T1: ...]' aloud.
+        raw_tagged_path = adapted_path.parent / (adapted_path.stem + ".raw.md")
+        raw_tagged_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_tagged_path.write_text(adapted_text, encoding="utf-8")
+
+        clean_adapted_text = strip_tier_markers(adapted_text)
+
         adapted_path.parent.mkdir(parents=True, exist_ok=True)
-        adapted_path.write_text(adapted_text, encoding="utf-8")
+        adapted_path.write_text(clean_adapted_text, encoding="utf-8")
 
         diff_path.parent.mkdir(parents=True, exist_ok=True)
         diff_path.write_text(json.dumps(diff_data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -356,7 +405,7 @@ def adapt_script(
             "Adapted %s (%d→%d chars, %d adaptations, $%.4f)",
             episode_id,
             len(translation_text),
-            len(adapted_text),
+            len(clean_adapted_text),
             adaptation_count,
             total_cost,
         )
@@ -370,7 +419,7 @@ def adapt_script(
             output_tokens=total_output_tokens,
             cost_usd=total_cost,
             input_char_count=len(translation_text),
-            output_char_count=len(adapted_text),
+            output_char_count=len(clean_adapted_text),
             adaptation_count=adaptation_count,
             tier1_count=tier1_count,
             tier2_count=tier2_count,
@@ -455,6 +504,53 @@ def _split_prompt(template_body: str) -> tuple[str, str]:
     return (system, user)
 
 
+def _slice_german_by_segments(
+    german_text: str, translation_text: str, tr_segments: list[str]
+) -> list[str]:
+    """Slice the German reference into portions matching each Turkish segment.
+
+    Each Turkish segment is adapted with only the corresponding German portion
+    as reference (plus small overlap for context). Without this, the LLM tends
+    to re-adapt earlier German content in later segments, causing duplication.
+
+    Args:
+        german_text: Full German corrected transcript.
+        translation_text: Full concatenated Turkish translation.
+        tr_segments: The Turkish translation split into segments.
+
+    Returns:
+        List of German slices, one per Turkish segment. Single segment
+        returns full German text.
+    """
+    if len(tr_segments) <= 1:
+        return [german_text]
+
+    total_tr = sum(len(s) for s in tr_segments) or 1
+    total_de = len(german_text)
+    slices: list[str] = []
+    cursor_tr = 0
+    for i, seg in enumerate(tr_segments):
+        # Compute proportional German range for this segment
+        frac_start = cursor_tr / total_tr
+        cursor_tr += len(seg)
+        frac_end = cursor_tr / total_tr
+        de_start = int(frac_start * total_de)
+        de_end = int(frac_end * total_de)
+        # Small ~5 % overlap on either side for anaphora context
+        pad = max(200, total_de // 20)
+        de_start = max(0, de_start - pad)
+        de_end = min(total_de, de_end + pad)
+        # Snap to nearest paragraph boundary so we don't cut mid-sentence
+        snap_start = german_text.rfind("\n\n", 0, de_start + 100)
+        if snap_start > de_start - 500:
+            de_start = snap_start if snap_start >= 0 else de_start
+        snap_end = german_text.find("\n\n", max(0, de_end - 100))
+        if 0 < snap_end < de_end + 500:
+            de_end = snap_end
+        slices.append(german_text[de_start:de_end].strip())
+    return slices
+
+
 def _segment_text(text: str, limit: int = SEGMENT_CHAR_LIMIT) -> list[str]:
     """Split text into segments at paragraph breaks.
 
@@ -536,6 +632,48 @@ def _segment_text(text: str, limit: int = SEGMENT_CHAR_LIMIT) -> list[str]:
         segments.append("\n\n".join(current_segment))
 
     return segments if segments else [text]  # Fallback: return original as single segment
+
+
+def strip_tier_markers(text: str) -> str:
+    """Remove [T1:...]/[T2:...] adapter tags but keep their readable substitution content.
+
+    Rules:
+    - "[T1: Türkiye'deki SPK] yeni kurallar" → "Türkiye'deki SPK yeni kurallar"
+    - "[T1: ton düzeltmesi]" (meta-only, no substantive content) → dropped
+    - "[T1: [kaldırıldı: X]]" (removal marker) → dropped, replaced by short parenthetical
+    - Also strips "<!-- localization_notes ... -->" HTML comments used by news adapt.
+    """
+    if not text:
+        return text
+
+    # First: drop meta-only markers (no substantive replacement content)
+    meta_only = {"ton düzeltmesi", "tone adjustment", "kültürel referans korundu"}
+
+    def _replace(match: "re.Match[str]") -> str:
+        content = match.group(2).strip()
+        # Removal case: [T1: [kaldırıldı: ...]]  or nested brackets meaning "removed"
+        if content.lower().startswith("[kaldırıldı") or "kaldırıldı:" in content.lower():
+            return ""
+        # Pure meta-only tone markers
+        if content.lower() in meta_only:
+            return ""
+        # Handle "original → adapted" — keep only adapted side
+        if "→" in content:
+            _, adapted_part = content.split("→", 1)
+            return adapted_part.strip().strip('"').strip("'")
+        # Everything else: keep raw content, drop the [Tx: ...] wrapper
+        return content
+
+    pattern = r"\[(T1|T2):\s*((?:[^\[\]]|\[[^\]]*\])+)\]"
+    cleaned = re.sub(pattern, _replace, text)
+
+    # Strip HTML localization_notes comments
+    cleaned = re.sub(r"<!--\s*localization_notes.*?-->", "", cleaned, flags=re.DOTALL)
+
+    # Collapse multiple spaces/newlines introduced by removals
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def compute_adaptation_diff(

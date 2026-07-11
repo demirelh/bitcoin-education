@@ -27,6 +27,7 @@
     <div class="topbar-row">
       <button class="btn" onclick="detectEpisodes()">Detect</button>
       <button class="btn" onclick="showCost()">Cost</button>
+      <button class="btn" onclick="showCredits()" title="API balances & rolling spend">💳 Credits <span id="credits-badge" class="review-badge"></span></button>
       <button class="btn btn-sm" onclick="showAnalytics()">Analytics</button>
       <button class="btn" onclick="showReviews()">Reviews <span class="review-badge" id="review-badge"></span></button>
       <button class="btn" onclick="refresh()">Refresh</button>
@@ -167,6 +168,22 @@
         <canvas id="cost-chart" style="width:100%;height:auto;display:block;"></canvas>
       </div>
       <button class="btn" onclick="closeCost()" style="margin-top:12px;">Close</button>
+    </div>
+  </div>
+
+  <!-- Credits modal -->
+  <div class="modal-overlay" id="credits-modal" style="display:none;" onclick="closeCredits()">
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:820px;">
+      <h3>💳 API Credits & Rolling Spend</h3>
+      <p style="color:var(--text-dim);font-size:12px;margin-bottom:12px;">
+        Live balances where the API supports it, otherwise pipeline-tracked spend (7d/30d).
+        🟢 OK &nbsp; 🟡 Low &nbsp; 🔴 Critical
+      </p>
+      <div id="credits-body">Loading...</div>
+      <div style="margin-top:12px;display:flex;gap:8px;">
+        <button class="btn" onclick="loadCredits()">🔄 Refresh</button>
+        <button class="btn" onclick="closeCredits()">Close</button>
+      </div>
     </div>
   </div>
 

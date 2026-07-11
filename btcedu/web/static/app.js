@@ -2711,3 +2711,86 @@
     initSSE();
   });
 })();
+
+// ============================================================
+// Credits / API balance dashboard
+// ============================================================
+
+async function loadCredits() {
+  const body = document.getElementById('credits-body');
+  body.innerHTML = 'Loading...';
+  try {
+    const r = await fetch('api/credits');
+    const j = await r.json();
+    const rows = (j.credits || []).map(c => {
+      const emoji = { ok: '🟢', warn: '🟡', critical: '🔴', unknown: '⚪' }[c.status] || '⚪';
+      let details = '';
+      if (c.kind === 'live_balance') {
+        if (c.balance_usd !== null && c.balance_usd !== undefined) {
+          details += `<div><strong>Balance:</strong> $${c.balance_usd.toFixed(3)}</div>`;
+        }
+        if (c.chars_limit !== null && c.chars_limit !== undefined) {
+          const used = c.chars_used || 0;
+          const lim = c.chars_limit;
+          const rem = lim - used;
+          const pct = Math.round(100 * used / Math.max(lim, 1));
+          const barColor = pct < 70 ? '#4ade80' : pct < 90 ? '#facc15' : '#ef4444';
+          details += `<div><strong>Characters:</strong> ${used.toLocaleString()} / ${lim.toLocaleString()}
+            (${pct}% used, <strong>${rem.toLocaleString()} left</strong>)</div>
+            <div style="background:#333;height:8px;border-radius:4px;margin-top:4px;overflow:hidden;">
+              <div style="width:${pct}%;height:100%;background:${barColor};"></div>
+            </div>`;
+        }
+        if (c.tier) details += `<div style="color:var(--text-dim);font-size:11px;">Tier: ${c.tier}</div>`;
+      } else {
+        const today = (c.spent_today_usd || 0).toFixed(2);
+        const w7 = (c.spent_7d_usd || 0).toFixed(2);
+        const w30 = (c.spent_30d_usd || 0).toFixed(2);
+        details += `<div><strong>Spent</strong> today: $${today} · 7d: $${w7} · 30d: $${w30}</div>`;
+        if (c.note) details += `<div style="color:var(--text-dim);font-size:11px;">${c.note}</div>`;
+      }
+      if (c.error) details += `<div style="color:#ef4444;font-size:11px;">⚠ ${c.error}</div>`;
+      const dashLink = c.dashboard_url
+        ? `<a href="${c.dashboard_url}" target="_blank" rel="noopener" style="color:var(--accent);font-size:11px;">↗ Dashboard</a>`
+        : '';
+      return `<div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <div style="font-weight:600;">${emoji} ${c.display_name}</div>
+          ${dashLink}
+        </div>
+        ${details}
+      </div>`;
+    });
+    body.innerHTML = rows.join('') || '<em>No data</em>';
+
+    // Update badge in topbar
+    const nWarn = (j.credits || []).filter(c => c.status === 'warn' || c.status === 'critical').length;
+    const badge = document.getElementById('credits-badge');
+    if (badge) {
+      if (nWarn > 0) {
+        badge.textContent = String(nWarn);
+        badge.style.display = 'inline-block';
+        badge.style.background = (j.credits || []).some(c => c.status === 'critical') ? '#ef4444' : '#facc15';
+      } else {
+        badge.textContent = '';
+        badge.style.display = 'none';
+      }
+    }
+  } catch (e) {
+    body.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
+  }
+}
+
+function showCredits() {
+  document.getElementById('credits-modal').style.display = 'flex';
+  loadCredits();
+}
+
+function closeCredits() {
+  document.getElementById('credits-modal').style.display = 'none';
+}
+
+// Poll credits every 5 min for topbar badge
+setInterval(loadCredits, 5 * 60 * 1000);
+// Initial load (delayed so page renders first)
+setTimeout(loadCredits, 3000);

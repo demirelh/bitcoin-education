@@ -9,19 +9,29 @@ stage_config:
   segment:
     enabled: true
   adapt:
-    skip: true
+    skip: false
+    tiers: [anchor_unify, local_relevance]
   imagegen:
     provider: gemini_frame_edit
+    fallback_provider: ideogram
   translate:
     mode: per_story
     register: formal_news
     clean_moderator: true
+    use_glossary: true
   tts:
     voice_id: ""
-    stability: 0.6
+    stability: 0.7
+    similarity_boost: 0.75
     style: 0.0
+    model: eleven_turbo_v2_5
   render:
     accent_color: "#004B87"
+    ticker_enabled: true
+    intro_show_name: "Tagesschau Türkçe"
+    outro_text: "Kaynak: ARD Tagesschau — Türkçe altyazı & çeviri"
+    font: "Roboto-Condensed-Bold"
+    music_bed: "data/assets/music/news_bed.mp3"
 youtube:
   category_id: "25"
   default_language: tr

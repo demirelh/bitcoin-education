@@ -171,13 +171,10 @@ def generate_images(
     session.commit()
 
     try:
-        # Create image generation service
-        image_service = DallE3ImageService(
-            api_key=settings.openai_api_key,
-            default_size=getattr(settings, "image_gen_size", "1792x1024"),
-            default_quality=getattr(settings, "image_gen_quality", "standard"),
-            style_prefix=getattr(settings, "image_gen_style_prefix", ""),
-        )
+        # Create image generation service via factory (supports dalle3/flux/ideogram)
+        from btcedu.services.image_provider_factory import get_image_service
+
+        image_service = get_image_service(settings)
 
         # Filter chapters to process
         chapters_to_process = chapters_doc.chapters
@@ -523,23 +520,15 @@ def _generate_image_prompt(
 def _generate_single_image(
     chapter,
     image_prompt: str,
-    image_service: DallE3ImageService,
+    image_service,
     output_dir: Path,
     settings: Settings,
 ) -> ImageEntry:
-    """Generate a single image via API.
+    """Generate a single image via configured provider.
 
-    Args:
-        chapter: Chapter object
-        image_prompt: DALL-E prompt
-        image_service: Image generation service
-        output_dir: Directory to save images
-        settings: Application settings
-
-    Returns:
-        ImageEntry with metadata
+    image_service is provider-agnostic (DallE3/Flux/Ideogram) — all conform
+    to the ImageGenService protocol.
     """
-    # Generate image via API
     request = ImageGenRequest(
         prompt=image_prompt,
         model=getattr(settings, "image_gen_model", "dall-e-3"),
@@ -548,14 +537,23 @@ def _generate_single_image(
         style_prefix=getattr(settings, "image_gen_style_prefix", ""),
     )
 
+    # Smart per-chapter routing: pick best provider for this chapter's visual type
+    if getattr(settings, "image_gen_smart_routing", False):
+        from btcedu.services.image_provider_factory import (
+            get_image_service,
+            select_provider_for_chapter,
+        )
+
+        provider = select_provider_for_chapter(chapter)
+        image_service = get_image_service(settings, provider=provider)
+
     response: ImageGenResponse = image_service.generate_image(request)
 
-    # Download image
     filename = f"{chapter.chapter_id}_{chapter.title[:30].replace(' ', '_').lower()}.png"
     target_path = output_dir / filename
-    DallE3ImageService.download_image(response.image_url, target_path)
+    # All service classes expose static download_image with same signature
+    type(image_service).download_image(response.image_url, target_path)
 
-    # Get file size
     file_size = target_path.stat().st_size
 
     return ImageEntry(
@@ -564,7 +562,7 @@ def _generate_single_image(
         visual_type=chapter.visual.type,
         file_path=f"images/{filename}",
         prompt=image_prompt,
-        generation_method="dalle3",
+        generation_method=response.model.split("-")[0] if response.model else "unknown",
         model=response.model,
         size=request.size,
         mime_type="image/png",

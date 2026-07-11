@@ -104,19 +104,34 @@ def render_video(
             "expected 'tts_done' or 'rendered'. Use --force to override."
         )
 
-    # Load profile for profile-aware rendering (accent color etc.)
+    # Load profile for profile-aware rendering (accent color, feature toggles etc.)
+    _render_cfg: dict = {}
     try:
         from btcedu.profiles import get_registry as _get_profile_registry
 
         _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
         _profile = _get_profile_registry(settings).get(_profile_name)
-        _accent_color = (
-            _profile.stage_config.get("render", {}).get("accent_color") or "#F7931A"
-            if _profile
-            else "#F7931A"
-        )
+        _render_cfg = (_profile.stage_config.get("render", {}) if _profile else {}) or {}
+        _accent_color = _render_cfg.get("accent_color") or "#F7931A"
     except Exception:
+        _profile = None
+        _render_cfg = {}
         _accent_color = "#F7931A"
+
+    # Helper to prefer profile override, else fall back to global setting.
+    def _rc(key: str, default):
+        if key in _render_cfg and _render_cfg[key] is not None:
+            return _render_cfg[key]
+        return default
+
+    # Resolve effective render feature flags (profile overrides globals)
+    _eff_ken_burns = bool(_rc("ken_burns_enabled", getattr(settings, "render_ken_burns_enabled", False)))
+    _eff_lower_thirds = bool(_rc("lower_thirds_animated", getattr(settings, "render_lower_thirds_animated", False)))
+    _eff_ticker = bool(_rc("ticker_enabled", getattr(settings, "render_ticker_enabled", False)))
+    _eff_intro_show_name = str(_rc("intro_show_name", getattr(settings, "render_intro_show_name", "")))
+    _eff_outro_text = str(_rc("outro_text", getattr(settings, "render_outro_text", "")))
+    _eff_font = str(_rc("font", getattr(settings, "render_font", "")))
+    _eff_music_bed = str(_rc("music_bed", getattr(settings, "render_music_bed", "")))
 
     # Resolve paths
     chapters_path = Path(settings.outputs_dir) / episode_id / "chapters.json"
@@ -160,12 +175,14 @@ def render_video(
     _enh_hash_data = {}
     try:
         _enh_hash_data = {
-            "ken_burns": bool(settings.render_ken_burns_enabled),
-            "lower_thirds_animated": bool(settings.render_lower_thirds_animated),
-            "ticker": bool(settings.render_ticker_enabled),
+            "ken_burns": _eff_ken_burns,
+            "lower_thirds_animated": _eff_lower_thirds,
+            "ticker": _eff_ticker,
             "intro": bool(settings.render_intro_enabled),
             "outro": bool(settings.render_outro_enabled),
             "color_correction": bool(settings.render_color_correction_enabled),
+            "font": _eff_font,
+            "music_bed": _eff_music_bed,
         }
     except (AttributeError, TypeError):
         pass  # settings may lack these attrs (backward compat / mocks)
@@ -234,7 +251,7 @@ def render_video(
 
         # Build ticker text if enabled
         _ticker_text = None
-        if getattr(settings, "render_ticker_enabled", False) is True:
+        if _eff_ticker:
             _ticker_items = [ch.title for ch in chapters_doc.chapters]
             _ticker_text = "  |||  ".join(_ticker_items)
 
@@ -250,7 +267,7 @@ def render_video(
                 kwargs["color_brightness"] = settings.render_color_brightness
                 kwargs["color_blue_shift"] = settings.render_color_blue_shift
             # Animated lower thirds (both)
-            if getattr(settings, "render_lower_thirds_animated", False) is True:
+            if _eff_lower_thirds:
                 kwargs["animated_lower_thirds"] = True
                 kwargs["lower_third_slide_duration"] = (
                     settings.render_lower_thirds_slide_duration
@@ -263,10 +280,7 @@ def render_video(
                 kwargs["ticker_height"] = settings.render_ticker_height
                 kwargs["ticker_fontsize"] = settings.render_ticker_fontsize
             # Ken Burns (photo only)
-            if (
-                getattr(settings, "render_ken_burns_enabled", False) is True
-                and asset_type == "photo"
-            ):
+            if _eff_ken_burns and asset_type == "photo":
                 pattern = KEN_BURNS_PATTERNS[
                     chapter_idx % len(KEN_BURNS_PATTERNS)
                 ]
@@ -287,9 +301,9 @@ def render_video(
                 logger.warning("Skipping chapter %s: %s", chapter.chapter_id, e)
                 continue
 
-            # Convert overlays to OverlaySpec (profile-aware accent color)
+            # Convert overlays to OverlaySpec (profile-aware accent color + font)
             overlay_specs = _chapter_to_overlay_specs(
-                chapter, settings.render_font, accent_color=_accent_color
+                chapter, _eff_font or settings.render_font, accent_color=_accent_color
             )
 
             # Compute fade durations based on transition types (Sprint 10)
@@ -450,7 +464,7 @@ def render_video(
             _ep_title = getattr(episode, "title", "") or episode_id
             create_intro_segment(
                 output_path=str(intro_path),
-                show_name=settings.render_intro_show_name,
+                show_name=_eff_intro_show_name or settings.render_intro_show_name,
                 episode_title=_ep_title,
                 episode_date=_ep_date,
                 duration=settings.render_intro_duration,
@@ -458,7 +472,7 @@ def render_video(
                 fps=settings.render_fps,
                 bg_color=settings.render_intro_bg_color,
                 accent_color=_accent_color,
-                font=settings.render_font,
+                font=_eff_font or settings.render_font,
                 crf=settings.render_crf,
                 preset=settings.render_preset,
                 timeout_seconds=settings.render_timeout_segment,
@@ -473,13 +487,13 @@ def render_video(
             outro_path = segments_dir / "outro.mp4"
             create_outro_segment(
                 output_path=str(outro_path),
-                source_text=settings.render_outro_text,
+                source_text=_eff_outro_text or settings.render_outro_text,
                 duration=settings.render_outro_duration,
                 resolution=settings.render_resolution,
                 fps=settings.render_fps,
                 bg_color=settings.render_outro_bg_color,
                 accent_color=_accent_color,
-                font=settings.render_font,
+                font=_eff_font or settings.render_font,
                 crf=settings.render_crf,
                 preset=settings.render_preset,
                 timeout_seconds=settings.render_timeout_segment,

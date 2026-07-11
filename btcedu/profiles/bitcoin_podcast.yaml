@@ -8,9 +8,36 @@ stages_enabled: all
 stage_config:
   adapt:
     skip: false
-    tiers: [cultural, technical]
+    tiers: [cultural, technical, examples_turkey, local_regulation]
+  translate:
+    register: casual_educational
+    use_glossary: true
+  chapterize:
+    model: claude-haiku-4-5
+    max_chapter_seconds: 120
+    min_chapter_seconds: 60
+    require_hook: true
+    hook_max_seconds: 15
+  imagegen:
+    smart_routing: true
+    hero_provider: flux
+    text_provider: ideogram
+    broll_provider: pexels
+  tts:
+    voice_id: "lV90UmdRoVFQHzkxUPeu"
+    stability: 0.4
+    similarity_boost: 0.85
+    style: 0.3
+    model: eleven_turbo_v2_5
   render:
     accent_color: "#F7931A"
+    ken_burns_enabled: true
+    lower_thirds_animated: true
+    ticker_enabled: false
+    intro_show_name: "Bitcoin Türkçe"
+    outro_text: "Kanala abone olmayı unutmayın!"
+    font: "Inter-Black"
+    music_bed: "data/assets/music/electronic_bed.mp3"
 youtube:
   category_id: "27"
   default_language: tr
@@ -19,3 +46,4 @@ youtube:
 review_gates:
   review_gate_1:
     auto_approve_threshold: 5
+prompt_namespace: bitcoin_podcast

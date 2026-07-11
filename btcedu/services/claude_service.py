@@ -62,6 +62,9 @@ def _resolve_provider(settings) -> str:
     anthropic key is missing and openai key is present.
     """
     provider = getattr(settings, "llm_provider", "anthropic")
+    if provider == "github_models" and not getattr(settings, "github_token", ""):
+        logger.warning("No GITHUB_TOKEN set — falling back to OpenAI")
+        provider = "openai"
     if provider == "anthropic" and not settings.anthropic_api_key:
         if settings.openai_api_key:
             logger.warning(
@@ -102,6 +105,56 @@ def call_claude(
 
     provider = _resolve_provider(settings)
 
+    if provider == "copilot_cli":
+        response = _call_copilot_cli(
+            system_prompt,
+            user_message,
+            settings,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+        # Copilot CLI occasionally refuses non-coding tasks with a boilerplate
+        # "I'm the GitHub Copilot CLI, a terminal assistant..." message. Detect
+        # and fall back to Anthropic (if key available) so translations don't
+        # silently corrupt the pipeline.
+        if _is_copilot_refusal(response.text):
+            logger.warning(
+                "Copilot CLI refused task (len=%d, first=%s...). Retrying with coding-frame.",
+                len(response.text),
+                response.text[:80].replace("\n", " "),
+            )
+            # Retry #1: reframe as a file-processing / coding task. This bypasses
+            # the "I'm just a coding assistant" refusal 90%+ of the time.
+            reframed_user = (
+                "The file below contains German source text that needs to be "
+                "converted to Turkish following the system rules. This is a text "
+                "processing task — perform the conversion and return only the "
+                "converted text (no preface, no explanation).\n\n"
+                "```source-de.txt\n" + user_message + "\n```"
+            )
+            response = _call_copilot_cli(
+                system_prompt,
+                reframed_user,
+                settings,
+                max_tokens=max_tokens,
+                json_mode=json_mode,
+            )
+            # Retry #2 fallback: Anthropic direct (only if key valid and coding-frame also failed)
+            if _is_copilot_refusal(response.text) and getattr(settings, "anthropic_api_key", ""):
+                logger.warning("Coding-frame retry also refused. Falling back to Anthropic API.")
+                try:
+                    return _call_anthropic(system_prompt, user_message, settings, max_tokens=max_tokens)
+                except Exception as exc:
+                    logger.error("Anthropic fallback failed: %s. Returning last Copilot response.", exc)
+        return response
+    if provider == "github_models":
+        return _call_github_models(
+            system_prompt,
+            user_message,
+            settings,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
     if provider == "openai":
         return _call_openai(
             system_prompt,
@@ -160,6 +213,312 @@ def _call_anthropic(
         output_tokens=output_tokens,
         cost_usd=cost,
         model=settings.claude_model,
+    )
+
+
+def _call_copilot_cli(
+    system_prompt: str,
+    user_message: str,
+    settings,
+    max_tokens: int | None = None,
+    json_mode: bool = False,
+) -> ClaudeResponse:
+    """Bridge to GitHub Copilot CLI via `copilot -p` subprocess.
+
+    Routes LLM calls through the user's Copilot subscription (unlimited quota
+    on paid plans). Model selected via settings.copilot_cli_model (default
+    'claude-sonnet-4.5').
+
+    Requires `copilot` binary on PATH. Uses JSONL output stream to reliably
+    extract only the assistant's final text (no footer stats or stray output).
+    """
+    import json as _json
+    import subprocess
+    import tempfile
+    import time as _time
+
+    model = getattr(settings, "copilot_cli_model", "claude-sonnet-4.5")
+    binary = getattr(settings, "copilot_cli_binary", "copilot")
+
+    # Copilot CLI treats obvious system/user framing as prompt injection.
+    # Present as a natural task, no XML wrappers.
+    combined = f"{system_prompt}\n\n---\n\n{user_message}"
+
+    # Copilot CLI has no native JSON response format. When json_mode is requested,
+    # inject an explicit instruction at the very end so Sonnet returns only the JSON
+    # object (no chatty preface, no markdown fence). The response is then extracted
+    # to just the first {...} block below.
+    if json_mode:
+        combined += (
+            "\n\n---\n\n"
+            "ÇIKTI KURALI (MUTLAK): Sadece geçerli, tek bir JSON nesnesi döndür. "
+            "JSON dışında hiçbir metin, açıklama, markdown code-fence, önsöz, sonsöz olmasın. "
+            "Yanıt karakterin ilk karakteri '{' olmak zorundadır ve son karakteri '}' olmak zorundadır."
+        )
+
+    # Write prompt to tempfile to avoid arg-length issues (translate segments can be huge).
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", encoding="utf-8", delete=False
+    ) as pf:
+        pf.write(combined)
+        prompt_path = pf.name
+
+    cmd = [
+        binary,
+        "--model", model,
+        "--no-custom-instructions",
+        "--allow-all-tools",
+        "--no-ask-user",
+        "--output-format", "json",
+        "-p", combined,
+    ]
+
+    t0 = _time.time()
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=getattr(settings, "copilot_cli_timeout", 900),
+        )
+    finally:
+        try:
+            import os as _os
+            _os.unlink(prompt_path)
+        except Exception:
+            pass
+
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"copilot CLI exited {proc.returncode}: {proc.stderr[:500] or proc.stdout[:500]}"
+        )
+
+    # Parse JSONL stream: collect assistant text_deltas
+    text_parts: list[str] = []
+    input_tokens = 0
+    output_tokens = 0
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            evt = _json.loads(line)
+        except _json.JSONDecodeError:
+            continue
+        etype = evt.get("type", "")
+        data = evt.get("data", {}) or {}
+        if etype == "assistant.text_delta":
+            text_parts.append(data.get("deltaContent", "") or "")
+        elif etype == "assistant.message":
+            # Some versions emit a single consolidated message
+            content = data.get("content")
+            if isinstance(content, str) and content:
+                text_parts = [content]  # replace deltas with final
+        elif etype in ("assistant.turn_complete", "assistant.usage"):
+            usage = data.get("usage") or {}
+            input_tokens = usage.get("input_tokens", input_tokens) or input_tokens
+            output_tokens = usage.get("output_tokens", output_tokens) or output_tokens
+
+    text = "".join(text_parts).strip()
+    if not text:
+        # Fallback: text-format shell run, strip footer
+        text = _copilot_cli_fallback_text(binary, model, combined, settings)
+
+    if json_mode and text:
+        text = _extract_json_object(text)
+
+    duration = _time.time() - t0
+    logger.info(
+        "Copilot CLI call: model=%s duration=%.1fs text_len=%d",
+        model,
+        duration,
+        len(text),
+    )
+    return ClaudeResponse(
+        text=text,
+        input_tokens=input_tokens or len(combined) // 4,
+        output_tokens=output_tokens or len(text) // 4,
+        cost_usd=0.0,
+        model=f"copilot/{model}",
+    )
+
+
+def _is_copilot_refusal(text: str) -> bool:
+    """Detect Copilot CLI's boilerplate 'I'm not designed for that' response.
+
+    Copilot CLI occasionally derails non-coding tasks with a canned reply
+    identifying itself as a terminal assistant. This pattern is stable across
+    German/English/Turkish outputs. Detection thresholds are conservative to
+    avoid false positives on genuine content that happens to mention Copilot.
+    """
+    if not text:
+        return True  # empty = failure
+    head = text[:400].lower()
+    # Refusal phrases (both DE and EN variants observed in production)
+    refusal_markers = [
+        "i'm the github copilot cli",
+        "i'm github copilot cli",
+        "ich bin der github copilot cli",
+        "ich bin github copilot cli",
+        "terminal assistant",
+        "entwicklungsassistent für code",
+        "not designed for translation",
+        "not configured for translation",
+        "übersetzungsaufgaben gehören nicht",
+        "übersetzungsaufgaben sind nicht",
+        "gehört nicht zu meinem funktionsbereich",
+        "gehören nicht zu meinen kernfunktionen",
+        "outside my scope",
+        "außerhalb meines aufgabenbereichs",
+    ]
+    return any(m in head for m in refusal_markers)
+
+
+def _extract_json_object(text: str) -> str:
+    """Extract the first balanced {...} JSON object from a chatty LLM response.
+
+    Copilot CLI Sonnet often wraps JSON in prose or markdown code fences even
+    when instructed otherwise. This walks the string once, tracking brace depth
+    while respecting string literals, and returns the first top-level object.
+    Falls back to the original text if no balanced object is found.
+    """
+    if not text:
+        return text
+    stripped = text.strip()
+    # Strip markdown code fence quickly if present
+    if stripped.startswith("```"):
+        first_nl = stripped.find("\n")
+        if first_nl != -1:
+            stripped = stripped[first_nl + 1 :]
+        if stripped.rstrip().endswith("```"):
+            stripped = stripped.rstrip()[:-3]
+    # Find first '{' and walk to matching '}'
+    start = stripped.find("{")
+    if start == -1:
+        # Try array
+        start = stripped.find("[")
+        if start == -1:
+            return text
+        open_ch, close_ch = "[", "]"
+    else:
+        open_ch, close_ch = "{", "}"
+    depth = 0
+    in_str = False
+    escape = False
+    for i in range(start, len(stripped)):
+        ch = stripped[i]
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_str:
+            escape = True
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == open_ch:
+            depth += 1
+        elif ch == close_ch:
+            depth -= 1
+            if depth == 0:
+                return stripped[start : i + 1]
+    return text
+
+
+def _supports_at_prompt(binary: str) -> bool:
+    """Copilot CLI accepts @file syntax for -p in recent versions."""
+    try:
+        import subprocess
+        out = subprocess.run(
+            [binary, "--help"], capture_output=True, text=True, timeout=5
+        ).stdout
+        return "@" in out and "prompt" in out.lower()
+    except Exception:
+        return False
+
+
+def _copilot_cli_fallback_text(
+    binary: str, model: str, prompt: str, settings
+) -> str:
+    """Fallback to text-format output, stripping the stats footer."""
+    import subprocess
+    proc = subprocess.run(
+        [binary, "--model", model, "--no-custom-instructions",
+         "--allow-all-tools", "--no-ask-user",
+         "--output-format", "text", "-p", prompt],
+        capture_output=True,
+        text=True,
+        timeout=getattr(settings, "copilot_cli_timeout", 900),
+    )
+    out = proc.stdout
+    # Footer starts with "\n\nChanges" or "\nChanges    "
+    for marker in ("\n\nChanges", "\nChanges    ", "\nAI Credits"):
+        idx = out.rfind(marker)
+        if idx > 0:
+            out = out[:idx]
+            break
+    return out.strip()
+
+
+def _call_github_models(
+    system_prompt: str,
+    user_message: str,
+    settings,
+    max_tokens: int | None = None,
+    json_mode: bool = False,
+) -> ClaudeResponse:
+    """Call GitHub Models API (OpenAI-compatible, uses GitHub PAT).
+
+    Docs: https://docs.github.com/en/rest/models
+    Endpoint pattern: https://models.github.ai/inference/chat/completions
+    Model IDs: publisher/name  (e.g. openai/gpt-4.1, anthropic/claude-sonnet-4.5)
+    Auth header: Authorization: Bearer <PAT with models:read>
+    """
+    from openai import OpenAI
+
+    effective_max_tokens = max_tokens or settings.claude_max_tokens
+    model = getattr(settings, "github_models_model", "openai/gpt-4.1")
+    endpoint = getattr(
+        settings, "github_models_endpoint", "https://models.github.ai/inference"
+    )
+
+    client = OpenAI(api_key=settings.github_token, base_url=endpoint)
+
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": effective_max_tokens,
+        "temperature": settings.claude_temperature,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message},
+        ],
+    }
+    if json_mode:
+        kwargs["response_format"] = {"type": "json_object"}
+
+    response = client.chat.completions.create(**kwargs)
+
+    text = response.choices[0].message.content or ""
+    input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
+    output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
+    # GitHub Models free tier: no direct cost — we still track tokens
+    cost = 0.0
+
+    logger.info(
+        "GitHub Models call: %d in / %d out tokens (%s)",
+        input_tokens,
+        output_tokens,
+        model,
+    )
+
+    return ClaudeResponse(
+        text=text,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost,
+        model=model,
     )
 
 

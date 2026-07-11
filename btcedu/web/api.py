@@ -2834,3 +2834,18 @@ def toggle_channel(channel_id):
         )
     finally:
         session.close()
+
+
+@api_bp.route("/credits", methods=["GET"])
+def get_credits():
+    """Live credit balances + usage tracking for all external APIs."""
+    from btcedu.services.credits_service import get_all_credits, to_dict
+
+    settings = current_app.config["settings"]
+    session_factory = current_app.config["session_factory"]
+    with session_factory() as session:
+        statuses = get_all_credits(session, settings)
+    return jsonify({
+        "credits": [to_dict(s) for s in statuses],
+        "generated_at": statuses[0].fetched_at if statuses else None,
+    })

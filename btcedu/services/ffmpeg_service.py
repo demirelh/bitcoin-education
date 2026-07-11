@@ -258,10 +258,10 @@ def _build_animated_lower_third(
 
     # Gradient background: two stacked drawbox at different opacities
     filters.append(
-        f"drawbox=x=0:y={bar_y}:w=w:h={bar_h}:color=black@0.7:t=fill:{enable}"
+        f"drawbox=x=0:y={bar_y}:w=iw:h={bar_h}:color=black@0.7:t=fill:{enable}"
     )
     filters.append(
-        f"drawbox=x=0:y={bar_y}:w=w:h={bar_h // 2}"
+        f"drawbox=x=0:y={bar_y}:w=iw:h={bar_h // 2}"
         f":color=black@0.5:t=fill:{enable}"
     )
 
@@ -319,9 +319,9 @@ def _build_ticker_filters(
     escaped = _escape_drawtext(ticker_text)
     filters = [
         # Separator line
-        f"drawbox=x=0:y=h-{height}-1:w=w:h=1:color=white@0.8:t=fill",
+        f"drawbox=x=0:y=h-{height}-1:w=iw:h=1:color=white@0.8:t=fill",
         # Ticker background
-        f"drawbox=x=0:y=h-{height}:w=w:h={height}:color=black@0.8:t=fill",
+        f"drawbox=x=0:y=h-{height}:w=iw:h={height}:color=black@0.8:t=fill",
         # Scrolling text
         (
             f"drawtext=fontfile={font_path}:text='{escaped}'"

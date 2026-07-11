@@ -25,7 +25,7 @@ from btcedu.services.claude_service import ClaudeResponse, call_claude
 logger = logging.getLogger(__name__)
 
 # Transcripts longer than this (in characters) are split into segments
-SEGMENT_CHAR_LIMIT = 15_000
+SEGMENT_CHAR_LIMIT = 6_000
 
 
 def _utcnow() -> datetime:
@@ -225,6 +225,15 @@ def translate_transcript(
         # Split prompt template into system and user parts
         system_prompt, user_template = _split_prompt(template_body)
 
+        # Inject domain glossary (if profile has one) into the system prompt
+        try:
+            from btcedu.prompts.glossary_loader import inject_glossary_into_prompt
+
+            profile_id = getattr(profile_obj, "profile_id", None) or profile_namespace
+            system_prompt = inject_glossary_into_prompt(system_prompt, profile_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Glossary injection failed: %s", e)
+
         total_input_tokens = 0
         total_output_tokens = 0
         total_cost = 0.0
@@ -269,11 +278,15 @@ def translate_transcript(
                     else None
                 )
 
+                # Use template's max_tokens (from frontmatter) if higher than global setting.
+                _template_max = getattr(prompt_version, "max_tokens", None) or 0
+                _effective_max = max(int(_template_max or 0), int(settings.claude_max_tokens or 0))
                 response: ClaudeResponse = call_claude(
                     system_prompt=system_prompt,
                     user_message=user_message,
                     settings=settings,
                     dry_run_path=dry_run_path,
+                    max_tokens=_effective_max or None,
                 )
 
                 translated_segments.append(response.text)
@@ -286,6 +299,16 @@ def translate_transcript(
             # Write translated transcript file
             translated_path.parent.mkdir(parents=True, exist_ok=True)
             translated_path.write_text(translated_text, encoding="utf-8")
+
+        # Fidelity check: warn loudly if TR output is dramatically shorter than DE input.
+        _ratio = len(translated_text) / max(len(corrected_text), 1)
+        if _ratio < 0.75:
+            logger.warning(
+                "Translation fidelity LOW: %s TR/DE char ratio=%.2f "
+                "(DE=%d chars → TR=%d chars). Model may be summarizing instead of translating. "
+                "Consider smaller SEGMENT_CHAR_LIMIT, higher max_tokens, or stronger prompt.",
+                episode_id, _ratio, len(corrected_text), len(translated_text),
+            )
 
         # Mark downstream adaptation as stale if it exists (cascade invalidation)
         adapted_path = Path(settings.outputs_dir) / episode_id / "script.adapted.tr.md"
@@ -580,14 +603,19 @@ def _translate_per_story(
             active_system, active_user_tpl = system_prompt, user_template
 
         # Translate headline
-        headline_user = active_user_tpl.replace("{{ transcript }}", story.headline_de)
+        # NOTE: Headlines are always translated with the STANDARD prompt, even
+        # for intro/outro stories. The intro/outro prompt is tuned for full
+        # broadcast greetings (strips moderator names, replaces sign-offs) and
+        # produces garbage or refusals when applied to a 3-word headline like
+        # "Begrüßung und Themenüberblick".
+        headline_user = user_template.replace("{{ transcript }}", story.headline_de)
         dry_run_path = (
             Path(settings.outputs_dir) / episode_id / f"dry_run_translate_s{i:02d}_head.json"
             if settings.dry_run
             else None
         )
         headline_response: ClaudeResponse = call_claude(
-            system_prompt=active_system,
+            system_prompt=system_prompt,
             user_message=headline_user,
             settings=settings,
             dry_run_path=dry_run_path,

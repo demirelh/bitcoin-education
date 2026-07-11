@@ -2039,3 +2039,69 @@ def youtube_status(ctx: click.Context) -> None:
             click.echo(f"Error            : {status['error']}")
     except Exception as e:
         click.echo(f"[FAIL] Could not check status: {e}", err=True)
+
+
+@cli.command(name="thumbnail")
+@click.argument("episode_id")
+@click.option("--n", "n_candidates", type=int, default=3, help="Number of thumbnail candidates")
+@click.option("--force", is_flag=True, help="Regenerate even if candidates exist")
+@click.pass_context
+def thumbnail_cmd(ctx: click.Context, episode_id: str, n_candidates: int, force: bool) -> None:
+    """Generate 3 YouTube thumbnail candidates for an episode (Ideogram v2)."""
+    from btcedu.core.thumbnail_generator import generate_thumbnails
+
+    settings = ctx.obj["settings"]
+    session_factory = ctx.obj["session_factory"]
+    with session_factory() as session:
+        result = generate_thumbnails(
+            session, episode_id, settings, n_candidates=n_candidates, force=force
+        )
+    click.echo(f"Generated {len(result.candidates)} thumbnail candidate(s) for {episode_id}")
+    for c in result.candidates:
+        click.echo(f"  [{c.variant}] {c.file_path} — hook: {c.hook_text!r} — ${c.cost_usd:.3f}")
+    click.echo(f"Total cost: ${result.total_cost_usd:.3f}")
+
+
+@cli.command(name="credits")
+@click.option("--json", "as_json", is_flag=True, help="Emit machine-readable JSON")
+@click.pass_context
+def credits_cmd(ctx: click.Context, as_json: bool) -> None:
+    """Show live credits/balances and rolling spend for all external APIs."""
+    from btcedu.services.credits_service import get_all_credits, to_dict
+
+    settings = ctx.obj["settings"]
+    session_factory = ctx.obj["session_factory"]
+    with session_factory() as session:
+        statuses = get_all_credits(session, settings)
+
+    if as_json:
+        click.echo(json.dumps([to_dict(s) for s in statuses], indent=2, default=str))
+        return
+
+    def _emoji(status: str) -> str:
+        return {"ok": "🟢", "warn": "🟡", "critical": "🔴", "unknown": "⚪"}.get(status, "⚪")
+
+    click.echo(f"\n=== 💳 API Credits & Usage (as of {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}) ===\n")
+    for s in statuses:
+        icon = _emoji(s.status)
+        click.echo(f"{icon} {s.display_name}")
+        if s.kind == "live_balance":
+            if s.balance_usd is not None:
+                click.echo(f"    Balance: ${s.balance_usd:,.3f}")
+            if s.chars_limit is not None:
+                remaining = (s.chars_limit or 0) - (s.chars_used or 0)
+                pct = 100.0 * (s.chars_used or 0) / max(s.chars_limit, 1)
+                click.echo(f"    Characters: {s.chars_used:,} / {s.chars_limit:,}  ({pct:.0f}% used, {remaining:,} left)")
+            if s.tier:
+                click.echo(f"    Tier: {s.tier}")
+        else:  # usage_tracking
+            click.echo(
+                f"    Spent today: ${s.spent_today_usd or 0:.2f}  |  7d: ${s.spent_7d_usd or 0:.2f}  |  30d: ${s.spent_30d_usd or 0:.2f}"
+            )
+            if s.note:
+                click.echo(f"    ({s.note})")
+        if s.dashboard_url:
+            click.echo(f"    ↗ {s.dashboard_url}")
+        if s.error:
+            click.echo(f"    ⚠ Error: {s.error}")
+        click.echo()

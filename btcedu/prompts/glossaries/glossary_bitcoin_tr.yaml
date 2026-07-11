@@ -1,0 +1,101 @@
+# Bitcoin / Cryptocurrency Glossar für DE→TR-Übersetzung
+# Zielgruppe: türkischsprachige Krypto-Interessierte in Deutschland
+# Regeln:
+#   - Anglizismen bei erstem Auftreten mit türkischer Erklärung, danach beibehalten
+#   - Bitcoin-Community Slang beibehalten (HODL, FOMO, FUD)
+#   - Zahlen als lokal (nokta statt Komma für Tausendertrennung)
+
+terms:
+  # Core Konzepte
+  Bitcoin: "Bitcoin (BTC)"
+  Blockchain: "blok zinciri (blockchain)"
+  Kryptowährung: "kripto para"
+  Wallet: "cüzdan (wallet)"
+  Halving: "yarılanma (halving) — her ~4 yılda bir Bitcoin madencilik ödülünün yarıya inmesi"
+  Mining: "madencilik (mining)"
+  Miner: "madenci (miner)"
+  Node: "düğüm (node)"
+  Full Node: "tam düğüm (full node)"
+  Fork: "çatallanma (fork)"
+  Softfork: "yumuşak çatallanma"
+  Hardfork: "sert çatallanma"
+
+  # Wertspeicher-Thesen
+  Wertspeicher: "değer saklama aracı"
+  digitales Gold: "dijital altın"
+  Inflation: "enflasyon"
+  Fiat: "fiat para (devlet parası)"
+  Kaufkraft: "satın alma gücü"
+  Geldmenge: "para arzı"
+
+  # Lightning Network
+  Lightning Network: "Lightning Network (Yıldırım Ağı)"
+  Lightning Node: "Lightning düğümü"
+  Channel: "kanal"
+  Sidechain: "yan zincir"
+  Layer 2: "Katman 2"
+
+  # Trading / Analyse
+  Bullenmarkt: "boğa piyasası (bull market)"
+  Bärenmarkt: "ayı piyasası (bear market)"
+  Zyklus: "döngü"
+  Support: "destek seviyesi"
+  Widerstand: "direnç seviyesi"
+  Dollar-Cost-Averaging: "DCA (dolar maliyet ortalaması) — düzenli aralıklarla sabit tutar alımı"
+  DCA: "DCA (dolar maliyet ortalaması)"
+
+  # Community Slang (BEIBEHALTEN, evtl. kurz erklären)
+  HODL: "HODL (uzun vadeli tut ve satma)"
+  FOMO: "FOMO (kaçırma korkusu)"
+  FUD: "FUD (korku, belirsizlik, şüphe yayma)"
+  Whale: "balina (büyük yatırımcı)"
+  Shitcoin: "shitcoin (değersiz altcoin — argo)"
+  Rekt: "rekt (büyük kayıp yaşamak)"
+
+  # Sicherheit
+  Cold Storage: "soğuk depolama (cold storage)"
+  Hot Wallet: "sıcak cüzdan"
+  Hardware Wallet: "donanım cüzdanı (hardware wallet)"
+  Seed Phrase: "seed phrase (kurtarma kelimeleri) — cüzdan yedekleme kelimeleri"
+  Private Key: "özel anahtar (private key)"
+  Public Key: "genel anahtar (public key)"
+  Multisig: "multisig (çoklu imza)"
+
+  # DeFi / Ökonomie
+  DeFi: "DeFi (merkeziyetsiz finans)"
+  CeFi: "CeFi (merkezi finans)"
+  Stablecoin: "sabit para (stablecoin)"
+  Yield: "getiri"
+  Staking: "staking (kilitleyerek ödül kazanma)"
+
+  # Deutschland-spezifisch (nicht übersetzen aber kurz erklären)
+  Bundesbank: "Bundesbank (Almanya Merkez Bankası)"
+  BaFin: "BaFin (Almanya Finansal Denetleme Kurumu)"
+  KStG: "KStG (Almanya Kurumlar Vergisi Kanunu)"
+  Steuererklärung: "vergi beyannamesi (Steuererklärung)"
+  Freigrenze: "vergiden muaf sınır (Freigrenze)"
+
+  # Türkei-Kontext (für kulturelle Brücken)
+  Türkische Lira: "Türk Lirası (TL)"
+  BDDK: "BDDK (Bankacılık Düzenleme ve Denetleme Kurumu)"
+  SPK: "SPK (Sermaye Piyasası Kurulu)"
+
+# Feste Redewendungen (immer so übersetzen)
+phrases:
+  "Not your keys, not your coins": "Anahtar senin değilse, coin senin değildir"
+  "Number go up": "Fiyat yükselir (Number go up)"
+  "Fix the money, fix the world": "Parayı düzelt, dünyayı düzelt"
+  "Bitcoin fixes this": "Bitcoin bunu çözer"
+  "Be your own bank": "Kendi bankan ol"
+  "Have fun staying poor": "Fakir kalmanın tadını çıkar (Bitcoin skeptiklerine ironi)"
+
+# Ton
+tone:
+  register: casual_educational
+  address: du-Form (sen)
+  formality: informell aber sachlich
+  humor: leichte Ironie erlaubt, kein Spott
+  cultural_bridge: |
+    Bei Themen wie Inflation und Wertverfall bevorzugt türkische Beispiele
+    (Lira-Wertverlust seit 2018) neben deutschen Beispielen, um Relevanz für
+    türkischsprachige Leser in Deutschland herzustellen.

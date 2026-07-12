@@ -453,6 +453,14 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
     chunks = Path(settings.chunks_dir) / episode_id
     out = Path(settings.outputs_dir) / episode_id
 
+    # v2 news-pipeline artifacts (Tagesschau etc.)
+    script_adapted = (out / "script.adapted.tr.md").exists()
+    chapters_json = (out / "chapters.json").exists()
+    images_manifest = (out / "images" / "manifest.json").exists()
+    tts_dir = out / "tts"
+    tts_present = tts_dir.exists() and any(tts_dir.glob("ch*.mp3"))
+    render_draft = (out / "render" / "draft.mp4").exists()
+
     return {
         "audio": any(raw.glob("audio.*")) if raw.exists() else False,
         "transcript_raw": (trans / "transcript.de.txt").exists(),
@@ -469,6 +477,12 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
         "publishing_v2": (out / "publishing_pack.v2.json").exists(),
         "stories": (out / "stories.json").exists(),
         "stories_translated": (out / "stories_translated.json").exists(),
+        # v2 news-pipeline artifacts
+        "script_adapted": script_adapted,
+        "chapters": chapters_json,
+        "images": images_manifest,
+        "tts": tts_present,
+        "video": render_draft,
     }
 
 

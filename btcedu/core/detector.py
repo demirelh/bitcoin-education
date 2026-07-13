@@ -325,5 +325,28 @@ def _try_download_video(url: str, output_dir: str, settings: Settings) -> None:
             ),
             encoding="utf-8",
         )
-    except Exception:
-        logger.warning("Video download failed for %s (frame extraction will be skipped)", url)
+    except Exception as exc:
+        logger.warning(
+            "Video download failed for %s: %s (writing failure marker)", url, exc
+        )
+        # Persist a marker so downstream stages can detect the missing video
+        # instead of silently producing empty manifests.
+        try:
+            import json
+            from datetime import UTC, datetime
+
+            marker = Path(output_dir) / "video_download_failed.json"
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(
+                json.dumps(
+                    {
+                        "url": url,
+                        "error": str(exc),
+                        "failed_at": datetime.now(UTC).isoformat(),
+                    },
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            logger.exception("Could not write video_download_failed.json for %s", url)

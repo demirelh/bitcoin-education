@@ -232,8 +232,25 @@ def extract_frames(
     provenance_path = outputs / episode_id / "provenance" / "frames_provenance.json"
     chapters_path = outputs / episode_id / "chapters.json"
 
+    # --- profile check: does this profile require video frames? -----------
+    profile_requires_frames = False
+    try:
+        from btcedu.profiles import get_registry
+
+        _profile = get_registry(settings).get(
+            getattr(episode, "content_profile", "bitcoin_podcast")
+        )
+        _imagegen_cfg = _profile.stage_config.get("imagegen", {}) or {}
+        if _imagegen_cfg.get("provider") == "gemini_frame_edit":
+            profile_requires_frames = True
+    except Exception:
+        pass
+
     # --- feature flag ------------------------------------------------------
-    if not settings.frame_extraction_enabled:
+    # A profile that needs frames overrides the global disable-flag —
+    # otherwise the pipeline silently produces empty manifests and render
+    # later dies with a confusing "image manifest not found".
+    if not settings.frame_extraction_enabled and not profile_requires_frames:
         logger.info("Frame extraction disabled; advancing status for %s", episode_id)
         if episode.status == EpisodeStatus.CHAPTERIZED:
             episode.status = EpisodeStatus.FRAMES_EXTRACTED
@@ -264,6 +281,38 @@ def extract_frames(
                 break
 
     if video_path is None:
+        # If the profile requires video-derived images (e.g. gemini frame edit)
+        # and the source video is unavailable, fail hard rather than silently
+        # advancing status. Advancing produces "empty" downstream artifacts
+        # (no images), which then breaks render with a confusing error.
+        video_required = False
+        try:
+            from btcedu.profiles import get_registry
+
+            profile = get_registry(settings).get(
+                getattr(episode, "content_profile", "bitcoin_podcast")
+            )
+            imagegen_cfg = profile.stage_config.get("imagegen", {}) or {}
+            if imagegen_cfg.get("provider") == "gemini_frame_edit":
+                video_required = True
+        except Exception:
+            pass
+
+        download_failed_marker = Path(settings.raw_data_dir) / episode_id / "video_download_failed.json"
+
+        if video_required:
+            hint = ""
+            if download_failed_marker.exists():
+                hint = (
+                    " Video download had previously failed (see "
+                    f"{download_failed_marker}). Re-run download with --force."
+                )
+            raise FileNotFoundError(
+                f"Source video not found for {episode_id} but profile "
+                f"'{getattr(episode, 'content_profile', '')}' requires it for "
+                f"frame-based image generation.{hint}"
+            )
+
         logger.warning("No video file for %s; writing empty manifest", episode_id)
         frames_dir.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(

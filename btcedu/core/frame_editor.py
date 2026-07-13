@@ -165,14 +165,21 @@ def edit_frames(
 
     # --- load frames manifest ---
     if not frames_manifest_path.exists():
-        logger.warning("No frames manifest for %s; nothing to edit", episode_id)
-        if episode.status == EpisodeStatus.FRAMES_EXTRACTED:
-            episode.status = EpisodeStatus.IMAGES_GENERATED
-            session.commit()
-        return FrameEditResult(episode_id=episode_id, skipped=True)
+        raise FileNotFoundError(
+            f"No frames manifest for {episode_id}: {frames_manifest_path}. "
+            "Frame extraction must produce a manifest before Gemini frame "
+            "editing can run. Re-run the 'frameextract' stage."
+        )
 
     frames_manifest = json.loads(frames_manifest_path.read_text(encoding="utf-8"))
     chapter_assignments = frames_manifest.get("chapter_assignments", [])
+    if not chapter_assignments:
+        err = frames_manifest.get("error")
+        raise ValueError(
+            f"Frames manifest for {episode_id} has no chapter assignments"
+            + (f" (error: {err})" if err else "")
+            + ". Cannot produce images. Re-run 'frameextract' with a valid video source."
+        )
 
     # --- load chapters ---
     if not chapters_path.exists():

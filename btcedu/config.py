@@ -103,7 +103,7 @@ class Settings(BaseSettings):
 
     # Gemini Image Editing
     gemini_api_key: str = ""
-    gemini_image_model: str = "gemini-2.0-flash-exp"
+    gemini_image_model: str = "gemini-2.5-flash-image"
     gemini_image_edit_enabled: bool = True
 
     # Frame Extraction

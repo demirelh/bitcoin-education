@@ -246,7 +246,33 @@ def edit_frames(
         result = FrameEditResult(episode_id=episode_id)
         image_entries: list[dict] = []
 
-        for assignment in chapter_assignments:
+        # Ensure every chapter gets at least a fallback frame so the renderer
+        # doesn't have to skip chapters (which produces silent gaps in the
+        # final video). Chapters that weren't assigned a specific keyframe
+        # fall back to the first available styled frame.
+        assigned_ids = {a["chapter_id"] for a in chapter_assignments}
+        styled_frames = sorted(
+            (ep_dir / "frames" / "styled").glob("*.png")
+        ) if (ep_dir / "frames" / "styled").exists() else []
+        fallback_frame = str(styled_frames[0]) if styled_frames else None
+
+        augmented_assignments = list(chapter_assignments)
+        for ch in chapters_doc.chapters:
+            if ch.chapter_id not in assigned_ids and fallback_frame:
+                logger.info(
+                    "Chapter %s has no assigned frame; using fallback %s",
+                    ch.chapter_id,
+                    fallback_frame,
+                )
+                augmented_assignments.append(
+                    {
+                        "chapter_id": ch.chapter_id,
+                        "assigned_frame": fallback_frame,
+                        "fallback": True,
+                    }
+                )
+
+        for assignment in augmented_assignments:
             cid = assignment["chapter_id"]
             frame_path = Path(assignment["assigned_frame"])
             chapter = chapters_by_id.get(cid)
@@ -347,6 +373,23 @@ def edit_frames(
                 })
 
         # --- write images manifest ---
+        # Renderer expects an "images" key with {chapter_id, file_path, asset_type}
+        # for each chapter. We keep "entries" for provenance/debugging but also
+        # emit the renderer-compatible shape.
+        images_for_renderer = [
+            {
+                "chapter_id": e["chapter_id"],
+                "file_path": str(
+                    Path(e["edited_frame"]).resolve().relative_to(ep_dir.resolve())
+                )
+                if Path(e["edited_frame"]).resolve().is_relative_to(ep_dir.resolve())
+                else e["edited_frame"],
+                "asset_type": "photo",
+                "source": e.get("method", "gemini_frame_edit"),
+            }
+            for e in image_entries
+            if Path(e["edited_frame"]).exists()
+        ]
         manifest_data = {
             "episode_id": episode_id,
             "schema_version": "1.0",
@@ -355,6 +398,7 @@ def edit_frames(
             "total_edited": result.chapters_edited,
             "total_skipped": result.chapters_skipped,
             "total_cost_usd": result.total_cost_usd,
+            "images": images_for_renderer,
             "entries": image_entries,
         }
         images_manifest_path.write_text(

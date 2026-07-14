@@ -713,6 +713,70 @@ def has_approved_review(
     return task is not None and task.status == ReviewStatus.APPROVED.value
 
 
+def profile_auto_approves(settings, episode) -> bool:
+    """True if the episode's content profile enables ``auto_approve_reviews``.
+
+    Lets stage modules (translator/adapter/chapterizer) bypass their
+    independent review-approval requirement for fully-automatic profiles,
+    regardless of gate execution order. Defaults to False when the profile
+    cannot be resolved.
+    """
+    try:
+        from btcedu.profiles import get_registry
+
+        name = getattr(episode, "content_profile", None) or "bitcoin_podcast"
+        return bool(get_registry(settings).get(name).auto_approve_reviews)
+    except Exception:
+        return False
+
+
+def auto_approve_stage(
+    session: Session,
+    episode_id: str,
+    stage: str,
+    artifact_paths: list[str] | None = None,
+) -> ReviewTask | None:
+    """Idempotently create an already-APPROVED ReviewTask for a stage.
+
+    Used by profiles with ``auto_approve_reviews`` so downstream stages that
+    independently require an approved review (translator/adapter/chapterizer
+    query for an APPROVED ReviewTask on the 'correct'/'adapt' stage) can
+    proceed without human interaction. No-op if an approved review already
+    exists for this episode+stage.
+    """
+    if has_approved_review(session, episode_id, stage):
+        return None
+
+    paths = artifact_paths or []
+    task = ReviewTask(
+        episode_id=episode_id,
+        stage=stage,
+        status=ReviewStatus.APPROVED.value,
+        artifact_paths=json.dumps(paths),
+        artifact_hash=_compute_artifact_hash(paths),
+        reviewed_at=_utcnow(),
+        reviewer_notes="auto-approved: profile auto_approve_reviews enabled",
+    )
+    session.add(task)
+    session.flush()
+
+    decision = ReviewDecision(
+        review_task_id=task.id,
+        decision="approved",
+        notes="auto-approved: profile auto_approve_reviews enabled",
+    )
+    session.add(decision)
+    session.commit()
+
+    logger.info(
+        "Auto-approved review for episode %s stage '%s' (task %d)",
+        episode_id,
+        stage,
+        task.id,
+    )
+    return task
+
+
 def has_pending_review(
     session: Session,
     episode_id: str,

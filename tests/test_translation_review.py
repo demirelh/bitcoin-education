@@ -488,13 +488,16 @@ class TestReviewGateTranslateRunStage:
 
         assert result.status == "success"
         assert "translation review approved" in result.detail
-        # No review task must be created when reviews are auto-approved
+        # Auto-approve records a real APPROVED review so downstream stages
+        # (chapterizer etc.) that independently require approval can proceed.
         task = (
             db_session.query(ReviewTask)
             .filter(ReviewTask.episode_id == "ep_ts_review")
             .first()
         )
-        assert task is None
+        assert task is not None
+        assert task.stage == "translate"
+        assert task.status == "approved"
 
     def test_requires_v2_pipeline(self, db_session, settings_with_profiles, tmp_path):
         """review_gate_translate raises ValueError for v1 episodes."""

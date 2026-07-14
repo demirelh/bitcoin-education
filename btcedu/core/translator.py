@@ -93,33 +93,35 @@ def translate_transcript(
     # Check Review Gate 1 approval (unless episode already segmented/translated or force flag)
     # Per MASTERPLAN §3.1, translation must not proceed until Review Gate 1 is approved.
     if episode.status in (EpisodeStatus.CORRECTED, EpisodeStatus.SEGMENTED) and not force:
-        from btcedu.core.reviewer import has_pending_review
+        from btcedu.core.reviewer import has_pending_review, profile_auto_approves
 
-        # First check if there's a pending review (not yet approved/rejected)
-        if has_pending_review(session, episode_id):
-            raise ValueError(
-                f"Episode {episode_id} has pending review for correction stage. "
-                "Translation cannot proceed until Review Gate 1 is approved."
+        # Profiles with auto_approve_reviews run fully automatically — skip the gate.
+        if not profile_auto_approves(settings, episode):
+            # First check if there's a pending review (not yet approved/rejected)
+            if has_pending_review(session, episode_id):
+                raise ValueError(
+                    f"Episode {episode_id} has pending review for correction stage. "
+                    "Translation cannot proceed until Review Gate 1 is approved."
+                )
+
+            # Verify at least one approved review exists for the correct stage
+            from btcedu.models.review import ReviewStatus, ReviewTask  # noqa: I001
+
+            approved_review = (
+                session.query(ReviewTask)
+                .filter(
+                    ReviewTask.episode_id == episode_id,
+                    ReviewTask.stage == "correct",
+                    ReviewTask.status == ReviewStatus.APPROVED.value,
+                )
+                .first()
             )
 
-        # Verify at least one approved review exists for the correct stage
-        from btcedu.models.review import ReviewTask, ReviewStatus  # noqa: I001
-
-        approved_review = (
-            session.query(ReviewTask)
-            .filter(
-                ReviewTask.episode_id == episode_id,
-                ReviewTask.stage == "correct",
-                ReviewTask.status == ReviewStatus.APPROVED.value,
-            )
-            .first()
-        )
-
-        if not approved_review:
-            raise ValueError(
-                f"Episode {episode_id} correction has not been approved. "
-                "Translation cannot proceed until Review Gate 1 is approved."
-            )
+            if not approved_review:
+                raise ValueError(
+                    f"Episode {episode_id} correction has not been approved. "
+                    "Translation cannot proceed until Review Gate 1 is approved."
+                )
 
     # Resolve paths
     corrected_path = Path(settings.transcripts_dir) / episode_id / "transcript.corrected.de.txt"

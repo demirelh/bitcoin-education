@@ -90,32 +90,34 @@ def adapt_script(
 
     # Check Review Gate 1 approval (correction must be approved)
     if episode.status == EpisodeStatus.TRANSLATED and not force:
-        from btcedu.core.reviewer import has_pending_review
+        from btcedu.core.reviewer import has_pending_review, profile_auto_approves
         from btcedu.models.review import ReviewStatus, ReviewTask
 
-        # Check if there's a pending review for correction
-        if has_pending_review(session, episode_id):
-            raise ValueError(
-                f"Episode {episode_id} has pending review. "
-                "Adaptation cannot proceed until reviews are resolved."
+        # Profiles with auto_approve_reviews run fully automatically — skip the gate.
+        if not profile_auto_approves(settings, episode):
+            # Check if there's a pending review for correction
+            if has_pending_review(session, episode_id):
+                raise ValueError(
+                    f"Episode {episode_id} has pending review. "
+                    "Adaptation cannot proceed until reviews are resolved."
+                )
+
+            # Verify correction was approved
+            approved_correct = (
+                session.query(ReviewTask)
+                .filter(
+                    ReviewTask.episode_id == episode_id,
+                    ReviewTask.stage == "correct",
+                    ReviewTask.status == ReviewStatus.APPROVED.value,
+                )
+                .first()
             )
 
-        # Verify correction was approved
-        approved_correct = (
-            session.query(ReviewTask)
-            .filter(
-                ReviewTask.episode_id == episode_id,
-                ReviewTask.stage == "correct",
-                ReviewTask.status == ReviewStatus.APPROVED.value,
-            )
-            .first()
-        )
-
-        if not approved_correct:
-            raise ValueError(
-                f"Episode {episode_id} correction has not been approved. "
-                "Adaptation cannot proceed until Review Gate 1 is approved."
-            )
+            if not approved_correct:
+                raise ValueError(
+                    f"Episode {episode_id} correction has not been approved. "
+                    "Adaptation cannot proceed until Review Gate 1 is approved."
+                )
 
     # Resolve paths
     translation_path = Path(settings.transcripts_dir) / episode_id / "transcript.tr.txt"

@@ -452,6 +452,33 @@ class TestTranslateTranscript:
         with pytest.raises(ValueError, match="correction has not been approved"):
             translate_transcript(db_session, "ep_test", mock_settings, force=False)
 
+    def test_translate_bypasses_gate_for_auto_approve_profile(
+        self, db_session, corrected_episode_no_approval, mock_settings
+    ):
+        """Profiles with auto_approve_reviews translate without an approved review.
+
+        Regression: fully-automatic tagesschau runs stalled at 'translate' with
+        'correction has not been approved' even though the review gate was
+        auto-approved.
+        """
+        # tagesschau_tr sets auto_approve_reviews=true; no ReviewTask exists.
+        corrected_episode_no_approval.content_profile = "tagesschau_tr"
+        db_session.commit()
+
+        with patch("btcedu.core.translator.call_claude") as mock_claude:
+            mock_claude.return_value = type(
+                "Response",
+                (),
+                {
+                    "text": "Turkish translation here",
+                    "input_tokens": 100,
+                    "output_tokens": 120,
+                    "cost_usd": 0.01,
+                },
+            )
+            result = translate_transcript(db_session, "ep_test", mock_settings, force=False)
+            assert not result.skipped
+
     def test_translate_fails_with_pending_review(
         self, db_session, corrected_episode_no_approval, mock_settings
     ):

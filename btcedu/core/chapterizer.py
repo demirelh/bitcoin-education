@@ -98,31 +98,33 @@ def chapterize_script(
 
     # Check Review Gate 2 approval (adaptation must be approved) — only for adapted path
     if episode.status == EpisodeStatus.ADAPTED and not force and not use_story_mode:
-        from btcedu.core.reviewer import has_pending_review
+        from btcedu.core.reviewer import has_pending_review, profile_auto_approves
 
-        # Check if there's a pending review for adaptation
-        if has_pending_review(session, episode_id):
-            raise ValueError(
-                f"Episode {episode_id} has pending review. "
-                "Chapterization cannot proceed until reviews are resolved."
+        # Profiles with auto_approve_reviews run fully automatically — skip the gate.
+        if not profile_auto_approves(settings, episode):
+            # Check if there's a pending review for adaptation
+            if has_pending_review(session, episode_id):
+                raise ValueError(
+                    f"Episode {episode_id} has pending review. "
+                    "Chapterization cannot proceed until reviews are resolved."
+                )
+
+            # Verify adaptation was approved
+            approved_adapt = (
+                session.query(ReviewTask)
+                .filter(
+                    ReviewTask.episode_id == episode_id,
+                    ReviewTask.stage == "adapt",
+                    ReviewTask.status == ReviewStatus.APPROVED.value,
+                )
+                .first()
             )
 
-        # Verify adaptation was approved
-        approved_adapt = (
-            session.query(ReviewTask)
-            .filter(
-                ReviewTask.episode_id == episode_id,
-                ReviewTask.stage == "adapt",
-                ReviewTask.status == ReviewStatus.APPROVED.value,
-            )
-            .first()
-        )
-
-        if not approved_adapt:
-            raise ValueError(
-                f"Episode {episode_id} adaptation has not been approved. "
-                "Chapterization cannot proceed until Review Gate 2 is approved."
-            )
+            if not approved_adapt:
+                raise ValueError(
+                    f"Episode {episode_id} adaptation has not been approved. "
+                    "Chapterization cannot proceed until Review Gate 2 is approved."
+                )
 
     # Resolve input path: stories mode vs adapted script mode
     if use_story_mode:

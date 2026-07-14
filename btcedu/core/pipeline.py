@@ -334,6 +334,7 @@ def _run_stage(
 
         elif stage_name == "review_gate_1":
             from btcedu.core.reviewer import (
+                auto_approve_stage,
                 create_review_task,
                 has_approved_review,
                 has_pending_review,
@@ -342,6 +343,15 @@ def _run_stage(
             # Check if already approved
             auto_approve, _ = _profile_pipeline_flags(settings, episode)
             if auto_approve or has_approved_review(session, episode.episode_id, "correct"):
+                if auto_approve:
+                    corrected = (
+                        Path(settings.transcripts_dir)
+                        / episode.episode_id
+                        / "transcript.corrected.de.txt"
+                    )
+                    auto_approve_stage(
+                        session, episode.episode_id, "correct", [str(corrected)]
+                    )
                 elapsed = time.monotonic() - t0
                 return StageResult("review_gate_1", "success", elapsed, detail="review approved")
 
@@ -432,6 +442,7 @@ def _run_stage(
 
         elif stage_name == "review_gate_2":
             from btcedu.core.reviewer import (
+                auto_approve_stage,
                 create_review_task,
                 has_approved_review,
                 has_pending_review,
@@ -440,6 +451,13 @@ def _run_stage(
             # Check if already approved
             auto_approve, _ = _profile_pipeline_flags(settings, episode)
             if auto_approve or has_approved_review(session, episode.episode_id, "adapt"):
+                if auto_approve:
+                    adapted = (
+                        Path(settings.outputs_dir)
+                        / episode.episode_id
+                        / "script.adapted.tr.md"
+                    )
+                    auto_approve_stage(session, episode.episode_id, "adapt", [str(adapted)])
                 elapsed = time.monotonic() - t0
                 return StageResult(
                     "review_gate_2",
@@ -481,6 +499,7 @@ def _run_stage(
 
         elif stage_name == "review_gate_translate":
             from btcedu.core.reviewer import (
+                auto_approve_stage,
                 create_review_task,
                 has_approved_review,
                 has_pending_review,
@@ -489,6 +508,15 @@ def _run_stage(
 
             auto_approve, _ = _profile_pipeline_flags(settings, episode)
             if auto_approve or has_approved_review(session, episode.episode_id, "translate"):
+                if auto_approve:
+                    stories = (
+                        Path(settings.outputs_dir)
+                        / episode.episode_id
+                        / "stories_translated.json"
+                    )
+                    auto_approve_stage(
+                        session, episode.episode_id, "translate", [str(stories)]
+                    )
                 elapsed = time.monotonic() - t0
                 return StageResult(
                     "review_gate_translate",
@@ -619,6 +647,7 @@ def _run_stage(
 
         elif stage_name == "review_gate_stock":
             from btcedu.core.reviewer import (
+                auto_approve_stage,
                 create_review_task,
                 has_approved_review,
                 has_pending_review,
@@ -628,6 +657,8 @@ def _run_stage(
             # Check if already approved
             auto_approve, _ = _profile_pipeline_flags(settings, episode)
             if auto_approve or has_approved_review(session, episode.episode_id, "stock_images"):
+                if auto_approve:
+                    auto_approve_stage(session, episode.episode_id, "stock_images")
                 select_result = finalize_selections(session, episode.episode_id, settings)
                 elapsed = time.monotonic() - t0
                 return StageResult(
@@ -741,6 +772,7 @@ def _run_stage(
 
         elif stage_name == "review_gate_3":
             from btcedu.core.reviewer import (
+                auto_approve_stage,
                 create_review_task,
                 has_approved_review,
                 has_pending_review,
@@ -749,6 +781,14 @@ def _run_stage(
             # Check if already approved
             auto_approve, auto_publish = _profile_pipeline_flags(settings, episode)
             if auto_approve or has_approved_review(session, episode.episode_id, "render"):
+                if auto_approve:
+                    draft = (
+                        Path(settings.outputs_dir)
+                        / episode.episode_id
+                        / "render"
+                        / "draft.mp4"
+                    )
+                    auto_approve_stage(session, episode.episode_id, "render", [str(draft)])
                 # Set episode status to APPROVED (final state before publish)
                 episode.status = EpisodeStatus.APPROVED
                 session.commit()

@@ -28,6 +28,48 @@ logger = logging.getLogger(__name__)
 # Visual types that need API generation vs. template/placeholder
 VISUAL_TYPES_NEEDING_GENERATION = {"diagram", "b_roll", "screen_share"}
 
+# Profile imagegen.provider values that select the generative (Flux/Ideogram/DALL-E)
+# image path with per-chapter smart routing.
+GENERATIVE_PROVIDERS = {"generative", "smart", "auto", "flux", "ideogram", "dalle3"}
+
+# Extra visual types that should be generated (not template placeholders) when a
+# profile uses the generative path — e.g. news title cards rendered by Ideogram.
+GENERATIVE_EXTRA_TYPES = {"title_card"}
+
+# Visual types best rendered by Ideogram (legible in-image text / infographics).
+_TEXT_IN_IMAGE_TYPES = {
+    "quote",
+    "chart",
+    "text_heavy",
+    "title_card",
+    "thumbnail",
+    "diagram",
+    "infographic",
+    "map",
+}
+
+
+def _route_provider_for_chapter(chapter) -> str:
+    """Pick the best image provider for a chapter's visual type.
+
+    - Text-in-image / infographic chapters (title cards, charts, labelled weather
+      maps) → Ideogram (renders legible text far better than Flux/DALL-E).
+    - Explicit stock placeholders → DALL-E 3 (until Pexels fallback kicks in).
+    - Photoreal editorial footage (b_roll, hero, lifestyle) → Flux (quality/cost).
+    """
+    raw_type = getattr(getattr(chapter, "visual", None), "type", "") or ""
+    # VisualType is a (str, Enum); str() yields "VisualType.X", so read .value.
+    visual_type = str(getattr(raw_type, "value", raw_type)).lower()
+    overlays = getattr(chapter, "overlays", None) or []
+    has_text_overlay = any(
+        getattr(o, "text", None) and len(getattr(o, "text", "")) > 8 for o in overlays
+    )
+    if visual_type in _TEXT_IN_IMAGE_TYPES or has_text_overlay:
+        return "ideogram"
+    if visual_type == "stock":
+        return "dalle3"
+    return "flux"
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -232,6 +274,15 @@ def generate_images(
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # When the profile uses the generative path (Flux/Ideogram/DALL-E), route
+        # each chapter to the best provider per visual type and also generate
+        # title cards (via Ideogram) instead of flat template placeholders.
+        _profile_provider = str(_imagegen_cfg.get("provider", "") or "").lower()
+        _generative_profile = _profile_provider in GENERATIVE_PROVIDERS
+        _smart_routing = (
+            _generative_profile or getattr(settings, "image_gen_smart_routing", False)
+        )
+
         for chapter in chapters_to_process:
             # Skip if no visual or processing only a specific chapter
             visual = chapter.visual
@@ -252,7 +303,9 @@ def generate_images(
                 continue
 
             # Check if generation is needed for this visual type
-            if _needs_generation(visual.type):
+            if _needs_generation(visual.type) or (
+                _generative_profile and visual.type in GENERATIVE_EXTRA_TYPES
+            ):
                 try:
                     # Check cost limit before generating
                     episode_total_cost = _get_episode_total_cost(session, episode_id)
@@ -287,6 +340,7 @@ def generate_images(
                         output_dir,
                         settings,
                         style_prefix_override=_profile_style_prefix,
+                        smart_routing=_smart_routing,
                     )
                     total_cost += image_entry.metadata.get("cost_usd", 0.0)
                     generated_count += 1
@@ -556,6 +610,7 @@ def _generate_single_image(
     output_dir: Path,
     settings: Settings,
     style_prefix_override: str | None = None,
+    smart_routing: bool | None = None,
 ) -> ImageEntry:
     """Generate a single image via configured provider.
 
@@ -565,6 +620,10 @@ def _generate_single_image(
     style_prefix_override: profile-supplied style prefix. If None, falls back
     to the settings default. If empty string, disables the prefix entirely
     (useful for news profiles where Bitcoin/crypto branding would leak in).
+
+    smart_routing: when True, pick the best provider per chapter visual type
+    (Flux for photoreal b-roll, Ideogram for title cards / labelled maps).
+    Defaults to the settings.image_gen_smart_routing flag when None.
     """
     if style_prefix_override is not None:
         effective_prefix = style_prefix_override
@@ -580,13 +639,12 @@ def _generate_single_image(
     )
 
     # Smart per-chapter routing: pick best provider for this chapter's visual type
-    if getattr(settings, "image_gen_smart_routing", False):
-        from btcedu.services.image_provider_factory import (
-            get_image_service,
-            select_provider_for_chapter,
-        )
+    if smart_routing is None:
+        smart_routing = getattr(settings, "image_gen_smart_routing", False)
+    if smart_routing:
+        from btcedu.services.image_provider_factory import get_image_service
 
-        provider = select_provider_for_chapter(chapter)
+        provider = _route_provider_for_chapter(chapter)
         image_service = get_image_service(settings, provider=provider)
 
     # Override service-level style_prefix so profile choice wins over factory default.

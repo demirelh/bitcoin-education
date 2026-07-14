@@ -163,6 +163,24 @@ def _profile_pipeline_flags(settings: Settings, episode: Episode) -> tuple[bool,
         return False, True
 
 
+def _imagegen_provider(settings: Settings, episode: Episode) -> str:
+    """Return the configured imagegen provider for the episode's profile.
+
+    Empty string when the profile or config cannot be resolved (callers then
+    fall back to the default stock-image path).
+    """
+    try:
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(settings).get(
+            getattr(episode, "content_profile", "bitcoin_podcast")
+        )
+        imagegen_cfg = profile.stage_config.get("imagegen", {}) or {}
+        return str(imagegen_cfg.get("provider", "") or "").lower()
+    except Exception:
+        return ""
+
+
 @dataclass
 class StagePlan:
     """One stage decision in a pipeline plan (produced before execution)."""
@@ -600,12 +618,21 @@ def _run_stage(
             return StageResult("frameextract", "success", elapsed, detail)
 
         elif stage_name == "imagegen":
-            # Check if Gemini frame editing is enabled for this episode
+            provider = _imagegen_provider(settings, episode)
+
+            # Gemini frame-editing (news video frames) — only when explicitly
+            # configured and enabled.
             use_gemini = (
-                settings.gemini_image_edit_enabled
+                provider == "gemini_frame_edit"
+                and settings.gemini_image_edit_enabled
                 and settings.gemini_api_key
                 and getattr(episode, "content_profile", "") == "tagesschau_tr"
             )
+            # Generative per-chapter images (Flux photoreal + Ideogram text/maps,
+            # DALL-E 3 fallback) via smart routing.
+            from btcedu.core.image_generator import GENERATIVE_PROVIDERS
+
+            use_generative = provider in GENERATIVE_PROVIDERS
 
             if use_gemini:
                 from btcedu.core.frame_editor import edit_frames
@@ -622,6 +649,24 @@ def _run_stage(
                         f"{result.chapters_edited} frames edited (Gemini), "
                         f"{result.chapters_skipped} skipped, "
                         f"${result.total_cost_usd:.4f}"
+                    ),
+                )
+            elif use_generative:
+                from btcedu.core.image_generator import generate_images
+
+                result = generate_images(session, episode.episode_id, settings, force=force)
+                elapsed = time.monotonic() - t0
+                if result.skipped:
+                    return StageResult("imagegen", "skipped", elapsed, "images current")
+                return StageResult(
+                    "imagegen",
+                    "success",
+                    elapsed,
+                    detail=(
+                        f"{result.generated_count} generated, "
+                        f"{result.template_count} placeholders, "
+                        f"{result.failed_count} failed "
+                        f"(${result.cost_usd:.4f})"
                     ),
                 )
             else:

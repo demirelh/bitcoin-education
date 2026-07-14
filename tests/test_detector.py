@@ -295,45 +295,55 @@ class TestDownloadEpisode:
         with pytest.raises(ValueError, match="Episode not found"):
             download_episode(db_session, "nonexistent", settings)
 
+    @patch("btcedu.core.detector._profile_requires_video", return_value=True)
     @patch("btcedu.core.detector._try_download_video")
     @patch("btcedu.services.download_service.download_audio")
-    def test_downloads_video_for_frame_edit_profile(
-        self, mock_dl, mock_video, db_session, tmp_path
+    def test_downloads_video_when_profile_requires_it(
+        self, mock_dl, mock_video, mock_requires, db_session, tmp_path
     ):
-        """tagesschau_tr (imagegen=gemini_frame_edit) must fetch the source video
+        """When the profile needs video-derived frames, download the source video
         even when frame_extraction_enabled is False (profile drives the need)."""
-        from btcedu.profiles import reset_registry
-
-        reset_registry()
         settings = self._make_settings(tmp_path)
         assert settings.frame_extraction_enabled is False
-        ep = self._seed_episode(db_session)
-        ep.content_profile = "tagesschau_tr"
-        db_session.commit()
+        self._seed_episode(db_session)
         mock_dl.return_value = str(tmp_path / "raw" / "dQw4w9WgXcQ" / "audio.m4a")
 
         download_episode(db_session, "dQw4w9WgXcQ", settings)
 
         mock_video.assert_called_once()
 
+    @patch("btcedu.core.detector._profile_requires_video", return_value=False)
     @patch("btcedu.core.detector._try_download_video")
     @patch("btcedu.services.download_service.download_audio")
-    def test_skips_video_for_stock_profile(
-        self, mock_dl, mock_video, db_session, tmp_path
+    def test_skips_video_when_profile_does_not_require_it(
+        self, mock_dl, mock_video, mock_requires, db_session, tmp_path
     ):
-        """Default profile (Pexels stock, no frame edit) must not fetch video."""
-        from btcedu.profiles import reset_registry
-
-        reset_registry()
+        """Profiles that don't need video frames must not fetch the source video."""
         settings = self._make_settings(tmp_path)
-        ep = self._seed_episode(db_session)
-        ep.content_profile = "bitcoin_podcast"
-        db_session.commit()
+        self._seed_episode(db_session)
         mock_dl.return_value = str(tmp_path / "raw" / "dQw4w9WgXcQ" / "audio.m4a")
 
         download_episode(db_session, "dQw4w9WgXcQ", settings)
 
         mock_video.assert_not_called()
+
+    def test_profile_requires_video_true_for_gemini_frame_edit(self, db_session, tmp_path):
+        """_profile_requires_video keys off imagegen.provider == gemini_frame_edit."""
+        from types import SimpleNamespace
+
+        from btcedu.core.detector import _profile_requires_video
+
+        settings = self._make_settings(tmp_path)
+        ep_yes = SimpleNamespace(content_profile="x")
+        ep_no = SimpleNamespace(content_profile="y")
+        with patch("btcedu.profiles.get_registry") as mock_reg:
+            def _get(name):
+                cfg = "gemini_frame_edit" if name == "x" else "generative"
+                return SimpleNamespace(stage_config={"imagegen": {"provider": cfg}})
+
+            mock_reg.return_value.get.side_effect = _get
+            assert _profile_requires_video(ep_yes, settings) is True
+            assert _profile_requires_video(ep_no, settings) is False
 
 
 # ── yt-dlp channel listing ────────────────────────────────────────

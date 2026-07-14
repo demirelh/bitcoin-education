@@ -12,7 +12,7 @@ stage_config:
     skip: false
     tiers: [anchor_unify, local_relevance]
   imagegen:
-    provider: gemini_frame_edit
+    provider: generative
     fallback_provider: ideogram
     prompt_template: imagegen_news.md
     style_prefix: "Photorealistic news illustration in the style of a European public-broadcaster newscast (ARD/Tagesschau). Neutral, journalistic tone. No cryptocurrency, no Bitcoin, no crypto symbols, no financial markets iconography. Editorial photo composition. "

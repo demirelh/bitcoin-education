@@ -94,6 +94,52 @@ class TestNeedsGeneration:
 
 
 # ---------------------------------------------------------------------------
+# _route_provider_for_chapter (per-chapter smart routing)
+# ---------------------------------------------------------------------------
+
+
+class TestRouteProviderForChapter:
+    def _chapter(self, visual_type):
+        doc = ChapterDocument(**_make_chapters_json(visual_type=visual_type))
+        return doc.chapters[0]
+
+    def test_b_roll_routes_to_flux(self):
+        from btcedu.core.image_generator import _route_provider_for_chapter
+
+        assert _route_provider_for_chapter(self._chapter("b_roll")) == "flux"
+
+    def test_title_card_routes_to_ideogram(self):
+        from btcedu.core.image_generator import _route_provider_for_chapter
+
+        assert _route_provider_for_chapter(self._chapter("title_card")) == "ideogram"
+
+    def test_diagram_routes_to_ideogram(self):
+        from btcedu.core.image_generator import _route_provider_for_chapter
+
+        assert _route_provider_for_chapter(self._chapter("diagram")) == "ideogram"
+
+    def test_stock_routes_to_dalle3(self):
+        # "stock" isn't a valid ChapterDocument enum, but the router must still
+        # map it via the raw-string path used by non-schema callers.
+        from types import SimpleNamespace
+
+        from btcedu.core.image_generator import _route_provider_for_chapter
+
+        chapter = SimpleNamespace(visual=SimpleNamespace(type="stock"), overlays=[])
+        assert _route_provider_for_chapter(chapter) == "dalle3"
+
+    def test_talking_head_defaults_to_flux(self):
+        from btcedu.core.image_generator import _route_provider_for_chapter
+
+        assert _route_provider_for_chapter(self._chapter("talking_head")) == "flux"
+
+    def test_unknown_defaults_to_flux(self):
+        from btcedu.core.image_generator import _route_provider_for_chapter
+
+        assert _route_provider_for_chapter(self._chapter("screen_share")) == "flux"
+
+
+# ---------------------------------------------------------------------------
 # _split_prompt
 # ---------------------------------------------------------------------------
 

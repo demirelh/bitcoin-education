@@ -3,7 +3,7 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -896,3 +896,70 @@ class TestV2PipelineE2E:
         report = run_episode_pipeline(db_session, ep, v2_settings)
 
         assert report.total_cost_usd == pytest.approx(0.025, abs=0.001)
+
+
+# ── imagegen stage dispatch (generative vs stock) ────────────────
+
+
+class TestImagegenDispatch:
+    """The imagegen stage routes by the profile's imagegen.provider:
+    tagesschau_tr (provider: generative) → generate_images; other profiles
+    fall back to the Pexels stock path."""
+
+    def _v2_episode(self, db_session, profile):
+        ep = Episode(
+            episode_id=f"ep_img_{profile}",
+            source="youtube_rss",
+            title="Imagegen dispatch test",
+            url="https://youtube.com/watch?v=img",
+            status=EpisodeStatus.FRAMES_EXTRACTED,
+            pipeline_version=2,
+            content_profile=profile,
+        )
+        db_session.add(ep)
+        db_session.commit()
+        return ep
+
+    def test_generative_profile_calls_generate_images(self, db_session, tmp_path):
+        settings = _make_settings(tmp_path)
+        settings.pipeline_version = 2
+        ep = self._v2_episode(db_session, "tagesschau_tr")
+
+        fake_result = MagicMock(
+            skipped=False,
+            generated_count=8,
+            template_count=0,
+            failed_count=0,
+            cost_usd=0.12,
+        )
+        with (
+            patch(
+                "btcedu.core.image_generator.generate_images", return_value=fake_result
+            ) as mock_gen,
+            patch("btcedu.core.stock_images.search_stock_images") as mock_stock,
+        ):
+            result = _run_stage(db_session, ep, settings, "imagegen")
+
+        mock_gen.assert_called_once()
+        mock_stock.assert_not_called()
+        assert result.status == "success"
+
+    def test_default_profile_uses_stock_path(self, db_session, tmp_path):
+        settings = _make_settings(tmp_path)
+        settings.pipeline_version = 2
+        ep = self._v2_episode(db_session, "bitcoin_podcast")
+
+        rank_result = MagicMock(chapters_ranked=3, chapters_skipped=0, total_cost_usd=0.0)
+        with (
+            patch("btcedu.core.image_generator.generate_images") as mock_gen,
+            patch("btcedu.core.stock_images.search_stock_images") as mock_search,
+            patch(
+                "btcedu.core.stock_images.rank_candidates", return_value=rank_result
+            ) as mock_rank,
+        ):
+            result = _run_stage(db_session, ep, settings, "imagegen")
+
+        mock_gen.assert_not_called()
+        mock_search.assert_called_once()
+        mock_rank.assert_called_once()
+        assert result.status == "success"

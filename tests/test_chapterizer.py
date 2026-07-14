@@ -301,6 +301,102 @@ def test_chapterize_script_success(
 
 @patch("btcedu.core.chapterizer.call_claude")
 @patch("btcedu.core.chapterizer.PromptRegistry")
+def test_chapterize_prefers_adapted_script_over_stories_json(
+    mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path
+):
+    """When adapt ran (script.adapted.tr.md exists), chapterize must use that clean
+    tr-only narrative and NOT fall into story mode with the raw stories_translated.json.
+
+    Feeding the raw stories JSON (which also carries text_de and can exceed the segment
+    char limit) forces char-based segmentation that cuts across stories and produces
+    duplicated chapters. Regression guard for the 17-chapter duplication bug.
+    """
+    settings = MagicMock()
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.transcripts_dir = str(tmp_path / "transcripts")
+    settings.claude_model = "claude-sonnet-4-20250514"
+    settings.claude_temperature = 0.3
+    settings.claude_max_tokens = 8192
+    settings.dry_run = False
+
+    ep_dir = Path(settings.outputs_dir) / "ep_test"
+    ep_dir.mkdir(parents=True, exist_ok=True)
+
+    # Clean adapted narrative (what chapterize SHOULD use)
+    adapted_marker = "ADAPTED_NARRATIVE_MARKER"
+    (ep_dir / "script.adapted.tr.md").write_text(
+        f"# Bitcoin\n\n{adapted_marker} Merhaba arkadaslar. " * 20,
+        encoding="utf-8",
+    )
+    # Large raw stories JSON (what story mode WOULD wrongly use)
+    stories_marker = "STORIES_JSON_MARKER"
+    (ep_dir / "stories_translated.json").write_text(
+        json.dumps(
+            {
+                "stories": [
+                    {"text_tr": f"{stories_marker} tr {i}", "text_de": "x" * 4000}
+                    for i in range(11)
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    mock_version = MagicMock()
+    mock_version.version = 1
+    mock_registry.return_value.register_version.return_value = mock_version
+    mock_registry.return_value.load_template.return_value = (
+        "",
+        "# System\n\n# Input\n\n{{episode_id}}\n{{adapted_script}}",
+    )
+    mock_registry.return_value.compute_hash.return_value = "prompt_hash_123"
+
+    mock_response = MagicMock()
+    mock_response.text = json.dumps(
+        {
+            "schema_version": "1.0",
+            "episode_id": "ep_test",
+            "title": "Bitcoin",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 60,
+            "chapters": [
+                {
+                    "chapter_id": "ch01",
+                    "title": "Giris",
+                    "order": 1,
+                    "narration": {
+                        "text": " ".join(["kelime"] * 150),
+                        "word_count": 150,
+                        "estimated_duration_seconds": 60,
+                    },
+                    "visual": {
+                        "type": "title_card",
+                        "description": "Logo",
+                        "image_prompt": None,
+                    },
+                    "overlays": [],
+                    "transitions": {"in": "fade", "out": "cut"},
+                }
+            ],
+        }
+    )
+    mock_response.input_tokens = 100
+    mock_response.output_tokens = 50
+    mock_response.cost_usd = 0.01
+    mock_call_claude.return_value = mock_response
+
+    chapterize_script(db_session, "ep_test", settings, force=True)
+
+    # Single call (adapted script fits in one segment) and it used the adapted narrative,
+    # not the raw stories JSON.
+    assert mock_call_claude.call_count == 1
+    user_message = mock_call_claude.call_args.kwargs["user_message"]
+    assert adapted_marker in user_message
+    assert stories_marker not in user_message
+
+
+@patch("btcedu.core.chapterizer.call_claude")
+@patch("btcedu.core.chapterizer.PromptRegistry")
 def test_chapterize_script_idempotency(
     mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path
 ):

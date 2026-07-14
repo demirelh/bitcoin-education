@@ -81,9 +81,13 @@ def chapterize_script(
         raise ValueError(f"Episode not found: {episode_id}")
 
     # Determine if this is a story-mode episode (tagesschau news profiles)
-    # Story mode: stories_translated.json exists and profile skips adapt
+    # Story mode: stories_translated.json exists AND adapt was skipped (no adapted script).
+    # When adapt ran (script.adapted.tr.md exists), prefer that clean tr-only narrative:
+    # feeding the raw 30k+ char stories JSON (which also carries text_de) forces
+    # char-based segmentation that cuts across stories and produces duplicated chapters.
     stories_translated_path = Path(settings.outputs_dir) / episode_id / "stories_translated.json"
-    use_story_mode = stories_translated_path.exists()
+    adapted_script_path = Path(settings.outputs_dir) / episode_id / "script.adapted.tr.md"
+    use_story_mode = stories_translated_path.exists() and not adapted_script_path.exists()
 
     # Allow both ADAPTED, TRANSLATED (story mode), and CHAPTERIZED status
     allowed_statuses = {EpisodeStatus.ADAPTED, EpisodeStatus.CHAPTERIZED}
@@ -162,6 +166,7 @@ def chapterize_script(
 
     # Resolve profile namespace for prompt namespacing
     content_profile = getattr(episode, "content_profile", None)
+    profile_obj = None
     try:
         from btcedu.profiles import get_registry as get_profile_registry
 

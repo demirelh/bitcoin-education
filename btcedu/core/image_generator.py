@@ -3,6 +3,8 @@
 import hashlib
 import json
 import logging
+import re
+import unicodedata
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +29,47 @@ logger = logging.getLogger(__name__)
 
 # Visual types that need API generation vs. template/placeholder
 VISUAL_TYPES_NEEDING_GENERATION = {"diagram", "b_roll", "screen_share"}
+
+# Transliteration map for characters that NFKD does not decompose to an ASCII
+# base (Turkish dotless-i, German eszett, etc.). Applied before NFKD so chapter
+# titles yield filesystem- and URL-safe ASCII filenames that survive
+# werkzeug.secure_filename() unchanged when served back to the dashboard.
+_FILENAME_TRANSLIT = str.maketrans(
+    {
+        "ı": "i",
+        "İ": "I",
+        "ş": "s",
+        "Ş": "S",
+        "ğ": "g",
+        "Ğ": "G",
+        "ç": "c",
+        "Ç": "C",
+        "ö": "o",
+        "Ö": "O",
+        "ü": "u",
+        "Ü": "U",
+        "ä": "a",
+        "Ä": "A",
+        "ß": "ss",
+        "ø": "o",
+        "å": "a",
+    }
+)
+
+
+def _slugify_filename_part(text: str, max_len: int = 30) -> str:
+    """Turn a chapter title into an ASCII, URL-safe filename fragment.
+
+    Non-ASCII characters (Turkish/German diacritics) are transliterated so the
+    resulting filename matches what ``secure_filename`` preserves, ensuring the
+    image-serving route can locate the file on disk.
+    """
+    text = text.translate(_FILENAME_TRANSLIT)
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").lower()
+    text = text[:max_len].strip("_")
+    return text or "chapter"
+
 
 # Profile imagegen.provider values that select the generative (Flux/Ideogram/DALL-E)
 # image path with per-chapter smart routing.
@@ -656,7 +699,7 @@ def _generate_single_image(
 
     response: ImageGenResponse = image_service.generate_image(request)
 
-    filename = f"{chapter.chapter_id}_{chapter.title[:30].replace(' ', '_').lower()}.png"
+    filename = f"{chapter.chapter_id}_{_slugify_filename_part(chapter.title)}.png"
     target_path = output_dir / filename
     # All service classes expose static download_image with same signature
     type(image_service).download_image(response.image_url, target_path)

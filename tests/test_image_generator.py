@@ -12,6 +12,7 @@ from btcedu.core.image_generator import (
     _is_image_gen_current,
     _mark_downstream_stale,
     _needs_generation,
+    _slugify_filename_part,
     _split_prompt,
 )
 from btcedu.models.chapter_schema import ChapterDocument
@@ -77,6 +78,41 @@ class TestNeedsGeneration:
     def test_diagram_needs_generation(self):
         assert _needs_generation("diagram") is True
 
+
+class TestSlugifyFilenamePart:
+    def test_turkish_chars_transliterated(self):
+        # ü→u, ı→i, ğ→g, ş→s must be preserved (not stripped)
+        assert (
+            _slugify_filename_part("selamlama ve gündem tanıtımı")
+            == "selamlama_ve_gundem_tanitimi"
+        )
+
+    def test_apostrophe_and_comma_removed(self):
+        assert _slugify_filename_part("rusya'nın ukrayna'ya") == "rusya_nin_ukrayna_ya"
+
+    def test_result_survives_secure_filename(self):
+        from werkzeug.utils import secure_filename
+
+        for title in [
+            "İspanya yarı finalde, DFB Klopp",
+            "BAP 50. yıl dönümünü kutluyor",
+            "hava tahmini",
+            "srebrenitsa katliamı'nın anılm",
+        ]:
+            fname = f"ch01_{_slugify_filename_part(title)}.png"
+            # secure_filename must not alter an already-safe filename
+            assert secure_filename(fname) == fname
+
+    def test_max_len_enforced(self):
+        result = _slugify_filename_part("a" * 100)
+        assert len(result) <= 30
+
+    def test_empty_falls_back(self):
+        assert _slugify_filename_part("") == "chapter"
+        assert _slugify_filename_part("!!!") == "chapter"
+
+
+class TestNeedsGenerationRest:
     def test_b_roll_needs_generation(self):
         assert _needs_generation("b_roll") is True
 

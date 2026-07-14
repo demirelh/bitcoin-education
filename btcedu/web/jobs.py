@@ -478,11 +478,16 @@ class JobManager:
     def _do_imagegen(self, job, session, settings):
         from btcedu.models.episode import Episode
 
-        # Check if this episode should use Gemini frame editing
+        # Dispatch on the profile's imagegen.provider, consistent with the full
+        # pipeline (_run_stage): gemini_frame_edit → Gemini frame editing,
+        # anything else → generative/stock image generation.
         ep = session.query(Episode).filter(Episode.episode_id == job.episode_id).first()
+
+        from btcedu.core.pipeline import _imagegen_provider
+
+        provider = _imagegen_provider(settings, ep) if ep else ""
         use_gemini = (
-            ep
-            and getattr(ep, "content_profile", "") == "tagesschau_tr"
+            provider == "gemini_frame_edit"
             and settings.gemini_image_edit_enabled
             and settings.gemini_api_key
         )
@@ -517,12 +522,16 @@ class JobManager:
                 job,
                 result={
                     "success": True,
-                    "cost_usd": getattr(result, "total_cost_usd", 0),
+                    "generated": result.generated_count,
+                    "placeholders": result.template_count,
+                    "failed": result.failed_count,
+                    "cost_usd": result.cost_usd,
                 },
             )
             self._log(
                 job,
-                f"Image generation complete: ${getattr(result, 'total_cost_usd', 0):.4f}",
+                f"Image generation complete: {result.generated_count} generated, "
+                f"{result.failed_count} failed (${result.cost_usd:.4f})",
             )
 
     def _do_anchorgen(self, job, session, settings):

@@ -338,11 +338,28 @@ def download_episode(
     episode.status = EpisodeStatus.DOWNLOADED
     session.commit()
 
-    # Optionally download the video source for frame extraction
-    if settings.frame_extraction_enabled:
+    # Optionally download the video source for frame extraction.
+    # Trigger when globally enabled OR when the episode's content profile needs
+    # video-derived images (imagegen provider == gemini_frame_edit, e.g.
+    # tagesschau_tr), so news episodes always get their source video.
+    if settings.frame_extraction_enabled or _profile_requires_video(episode, settings):
         _try_download_video(episode.url, output_dir, settings)
 
     return audio_path
+
+
+def _profile_requires_video(episode: Episode, settings: Settings) -> bool:
+    """True if the episode's content profile needs the source video for frames."""
+    try:
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(settings).get(
+            getattr(episode, "content_profile", "bitcoin_podcast")
+        )
+        imagegen_cfg = profile.stage_config.get("imagegen", {}) or {}
+        return imagegen_cfg.get("provider") == "gemini_frame_edit"
+    except Exception:
+        return False
 
 
 def _try_download_video(url: str, output_dir: str, settings: Settings) -> None:

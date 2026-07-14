@@ -295,6 +295,46 @@ class TestDownloadEpisode:
         with pytest.raises(ValueError, match="Episode not found"):
             download_episode(db_session, "nonexistent", settings)
 
+    @patch("btcedu.core.detector._try_download_video")
+    @patch("btcedu.services.download_service.download_audio")
+    def test_downloads_video_for_frame_edit_profile(
+        self, mock_dl, mock_video, db_session, tmp_path
+    ):
+        """tagesschau_tr (imagegen=gemini_frame_edit) must fetch the source video
+        even when frame_extraction_enabled is False (profile drives the need)."""
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        settings = self._make_settings(tmp_path)
+        assert settings.frame_extraction_enabled is False
+        ep = self._seed_episode(db_session)
+        ep.content_profile = "tagesschau_tr"
+        db_session.commit()
+        mock_dl.return_value = str(tmp_path / "raw" / "dQw4w9WgXcQ" / "audio.m4a")
+
+        download_episode(db_session, "dQw4w9WgXcQ", settings)
+
+        mock_video.assert_called_once()
+
+    @patch("btcedu.core.detector._try_download_video")
+    @patch("btcedu.services.download_service.download_audio")
+    def test_skips_video_for_stock_profile(
+        self, mock_dl, mock_video, db_session, tmp_path
+    ):
+        """Default profile (Pexels stock, no frame edit) must not fetch video."""
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        settings = self._make_settings(tmp_path)
+        ep = self._seed_episode(db_session)
+        ep.content_profile = "bitcoin_podcast"
+        db_session.commit()
+        mock_dl.return_value = str(tmp_path / "raw" / "dQw4w9WgXcQ" / "audio.m4a")
+
+        download_episode(db_session, "dQw4w9WgXcQ", settings)
+
+        mock_video.assert_not_called()
+
 
 # ── yt-dlp channel listing ────────────────────────────────────────
 

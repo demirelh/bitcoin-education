@@ -186,14 +186,14 @@
     "outline", "script", "shorts", "visuals", "qa", "publishing",
     "outline_v2", "script_v2", "publishing_v2",
     "stories", "stories_translated",
-    "script_adapted", "chapters", "images", "tts", "video"
+    "script_adapted", "chapters", "transcript_tr", "images", "tts", "video"
   ];
   const FILE_LABELS = [
     "Audio", "Transcript DE", "Transcript Clean", "Chunks",
     "Outline TR", "Script TR", "Shorts", "Visuals", "QA", "Publishing",
     "Outline v2", "Script v2", "Publishing v2",
     "Stories DE", "Stories TR",
-    "Script (adapted)", "Chapters", "Images", "TTS Audio", "Rendered Video"
+    "Script (adapted)", "Chapters", "Transcript TR", "Images", "TTS Audio", "Rendered Video"
   ];
 
   // ── Review UX helpers ────────────────────────────────────────
@@ -342,6 +342,7 @@
     html += `<div class="tab-group">`;
     html += `<span class="tab-group-label">Source</span>`;
     html += `<div class="tab active" data-tab="transcript_clean">DE Transcript</div>`;
+    html += tab("transcript_tr", "TR Transcript", f.transcript_tr);
     html += `</div>`;
 
     // Group: Content

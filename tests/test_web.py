@@ -467,6 +467,38 @@ class TestFileViewer:
         content = json.loads(r.get_json()["content"])
         assert content["success"] is True
 
+    def test_file_transcript_tr(self, client, test_settings):
+        ep_dir = Path(test_settings.outputs_dir) / "ep001"
+        ep_dir.mkdir(parents=True)
+        chapters = {
+            "schema_version": "1.0",
+            "episode_id": "ep001",
+            "title": "Test Bölümü",
+            "total_chapters": 2,
+            "estimated_duration_seconds": 20,
+            "chapters": [
+                {"chapter_id": "c2", "title": "İkinci", "order": 2,
+                 "narration": {"text": "İkinci cümle."}},
+                {"chapter_id": "c1", "title": "Birinci", "order": 1,
+                 "narration": {"text": "Birinci cümle."}},
+            ],
+        }
+        (ep_dir / "chapters.json").write_text(
+            json.dumps(chapters, ensure_ascii=False), encoding="utf-8"
+        )
+
+        r = client.get("/api/episodes/ep001/files/transcript_tr")
+        assert r.status_code == 200
+        content = r.get_json()["content"]
+        # Title present, chapters ordered by `order`, narration text included
+        assert "# Test Bölümü" in content
+        assert content.index("Birinci cümle.") < content.index("İkinci cümle.")
+        assert "1. Birinci" in content and "2. İkinci" in content
+
+    def test_file_transcript_tr_missing(self, client):
+        r = client.get("/api/episodes/ep001/files/transcript_tr")
+        assert r.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # Cost + What's new

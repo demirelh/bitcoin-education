@@ -480,10 +480,50 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
         # v2 news-pipeline artifacts
         "script_adapted": script_adapted,
         "chapters": chapters_json,
+        # Turkish spoken transcript is reconstructed from chapters.json narration
+        "transcript_tr": chapters_json,
         "images": images_manifest,
         "tts": tts_present,
         "video": render_draft,
     }
+
+
+def _build_tr_transcript(episode_id: str, settings) -> str | None:
+    """Reconstruct the Turkish spoken transcript from chapters.json.
+
+    Concatenates every chapter's narration text (the exact words spoken in the
+    rendered video) into a readable document, prefixed with the episode title
+    and per-chapter headings. Returns None when chapters.json is missing or
+    unreadable.
+    """
+    path = Path(settings.outputs_dir) / episode_id / "chapters.json"
+    if not path.exists():
+        return None
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    chapters = sorted(
+        doc.get("chapters", []),
+        key=lambda c: c.get("order", 0),
+    )
+    lines: list[str] = []
+    title = doc.get("title")
+    if title:
+        lines.append(f"# {title}")
+        lines.append("")
+
+    for ch in chapters:
+        heading = ch.get("title") or ch.get("chapter_id") or ""
+        order = ch.get("order")
+        prefix = f"{order}. " if order else ""
+        lines.append(f"## {prefix}{heading}".rstrip())
+        text = (ch.get("narration") or {}).get("text", "").strip()
+        lines.append(text)
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
 
 
 def _get_story_count(episode_id: str, settings) -> int | None:
@@ -1311,6 +1351,17 @@ def get_file(episode_id: str, file_type: str):
         if not reports:
             return jsonify({"error": "No reports found"}), 404
         path = reports[0]
+    elif file_type == "transcript_tr":
+        # Synthesised from chapters.json narration (Turkish spoken transcript)
+        transcript = _build_tr_transcript(episode_id, settings)
+        if transcript is None:
+            return jsonify({"error": "TR transcript not available (no chapters yet)"}), 404
+        return jsonify(
+            {
+                "content": transcript,
+                "path": str(Path(settings.outputs_dir) / episode_id / "chapters.json"),
+            }
+        )
     elif file_type in _FILE_MAP:
         dir_attr, pattern = _FILE_MAP[file_type]
         base = getattr(settings, dir_attr)

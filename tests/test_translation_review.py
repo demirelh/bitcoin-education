@@ -385,18 +385,19 @@ class TestReviewGateTranslateRunStage:
             json.dumps(_make_stories_translated("ep_ts_review")), encoding="utf-8"
         )
 
-        result = _run_stage(
-            db_session,
-            tagesschau_episode,
-            settings_with_profiles,
-            "review_gate_translate",
-            force=False,
-        )
+        with patch(
+            "btcedu.core.pipeline._profile_pipeline_flags", return_value=(False, True)
+        ):
+            result = _run_stage(
+                db_session,
+                tagesschau_episode,
+                settings_with_profiles,
+                "review_gate_translate",
+                force=False,
+            )
 
         assert result.status == "review_pending"
         assert "translation review task created" in result.detail
-
-        # ReviewTask created with stage="translate"
         task = (
             db_session.query(ReviewTask)
             .filter(
@@ -457,6 +458,26 @@ class TestReviewGateTranslateRunStage:
         db_session.add(task)
         db_session.commit()
 
+        with patch(
+            "btcedu.core.pipeline._profile_pipeline_flags", return_value=(False, True)
+        ):
+            result = _run_stage(
+                db_session,
+                tagesschau_episode,
+                settings_with_profiles,
+                "review_gate_translate",
+                force=False,
+            )
+
+        assert result.status == "review_pending"
+        assert "awaiting translation review" in result.detail
+
+    def test_auto_approves_when_profile_disables_reviews(
+        self, db_session, tagesschau_episode, settings_with_profiles, tmp_path
+    ):
+        """With auto_approve_reviews=True (tagesschau_tr), the gate never blocks."""
+        from btcedu.core.pipeline import _run_stage
+
         result = _run_stage(
             db_session,
             tagesschau_episode,
@@ -465,8 +486,15 @@ class TestReviewGateTranslateRunStage:
             force=False,
         )
 
-        assert result.status == "review_pending"
-        assert "awaiting translation review" in result.detail
+        assert result.status == "success"
+        assert "translation review approved" in result.detail
+        # No review task must be created when reviews are auto-approved
+        task = (
+            db_session.query(ReviewTask)
+            .filter(ReviewTask.episode_id == "ep_ts_review")
+            .first()
+        )
+        assert task is None
 
     def test_requires_v2_pipeline(self, db_session, settings_with_profiles, tmp_path):
         """review_gate_translate raises ValueError for v1 episodes."""

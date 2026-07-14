@@ -41,3 +41,11 @@ youtube:
   tags: [haberler, almanya, türkçe, tagesschau]
 review_gates: {}
 prompt_namespace: tagesschau_tr
+# Run the pipeline fully automatically: skip all human review gates
+# (review_gate_1/2/stock/3) and stop before the actual YouTube upload.
+auto_approve_reviews: true
+auto_publish: false
+ingest:
+  # Ingest the main 20:00 Uhr broadcast and the "100 Sekunden" edition;
+  # skip 16:00 Uhr, tagesthemen, nachtmagazin and other formats.
+  title_include: "(?i)tagesschau.*(20[:.]?00\\s*Uhr|100\\s*Sekunden)"

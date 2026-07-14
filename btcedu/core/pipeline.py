@@ -146,6 +146,23 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _profile_pipeline_flags(settings: Settings, episode: Episode) -> tuple[bool, bool]:
+    """Return (auto_approve_reviews, auto_publish) for the episode's profile.
+
+    Defaults to (False, True) — i.e. keep human review gates and allow
+    publishing — when the profile cannot be resolved.
+    """
+    try:
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(settings).get(
+            getattr(episode, "content_profile", "bitcoin_podcast")
+        )
+        return bool(profile.auto_approve_reviews), bool(profile.auto_publish)
+    except Exception:
+        return False, True
+
+
 @dataclass
 class StagePlan:
     """One stage decision in a pipeline plan (produced before execution)."""
@@ -323,7 +340,8 @@ def _run_stage(
             )
 
             # Check if already approved
-            if has_approved_review(session, episode.episode_id, "correct"):
+            auto_approve, _ = _profile_pipeline_flags(settings, episode)
+            if auto_approve or has_approved_review(session, episode.episode_id, "correct"):
                 elapsed = time.monotonic() - t0
                 return StageResult("review_gate_1", "success", elapsed, detail="review approved")
 
@@ -420,7 +438,8 @@ def _run_stage(
             )
 
             # Check if already approved
-            if has_approved_review(session, episode.episode_id, "adapt"):
+            auto_approve, _ = _profile_pipeline_flags(settings, episode)
+            if auto_approve or has_approved_review(session, episode.episode_id, "adapt"):
                 elapsed = time.monotonic() - t0
                 return StageResult(
                     "review_gate_2",
@@ -468,7 +487,8 @@ def _run_stage(
             )
             from btcedu.core.translation_diff import compute_translation_diff
 
-            if has_approved_review(session, episode.episode_id, "translate"):
+            auto_approve, _ = _profile_pipeline_flags(settings, episode)
+            if auto_approve or has_approved_review(session, episode.episode_id, "translate"):
                 elapsed = time.monotonic() - t0
                 return StageResult(
                     "review_gate_translate",
@@ -606,7 +626,8 @@ def _run_stage(
             from btcedu.core.stock_images import finalize_selections
 
             # Check if already approved
-            if has_approved_review(session, episode.episode_id, "stock_images"):
+            auto_approve, _ = _profile_pipeline_flags(settings, episode)
+            if auto_approve or has_approved_review(session, episode.episode_id, "stock_images"):
                 select_result = finalize_selections(session, episode.episode_id, settings)
                 elapsed = time.monotonic() - t0
                 return StageResult(
@@ -726,7 +747,8 @@ def _run_stage(
             )
 
             # Check if already approved
-            if has_approved_review(session, episode.episode_id, "render"):
+            auto_approve, auto_publish = _profile_pipeline_flags(settings, episode)
+            if auto_approve or has_approved_review(session, episode.episode_id, "render"):
                 # Set episode status to APPROVED (final state before publish)
                 episode.status = EpisodeStatus.APPROVED
                 session.commit()
@@ -771,6 +793,16 @@ def _run_stage(
             )
 
         elif stage_name == "publish":
+            _, auto_publish = _profile_pipeline_flags(settings, episode)
+            if not auto_publish:
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "publish",
+                    "skipped",
+                    elapsed,
+                    detail="publishing disabled for profile (episode left APPROVED)",
+                )
+
             from btcedu.core.publisher import publish_video
 
             result = publish_video(session, episode.episode_id, settings, force=force)

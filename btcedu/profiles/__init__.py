@@ -27,7 +27,20 @@ class ContentProfile(BaseModel):
     stage_config: dict = {}
     review_gates: dict = {}
     youtube: dict = {}
+    ingest: dict = {}
+    auto_approve_reviews: bool = False
+    auto_publish: bool = True
     prompt_namespace: str | None = None
+
+    def title_include_pattern(self) -> str | None:
+        """Return the ingest title-include regex for this profile, if any.
+
+        Episodes whose title does not match this pattern are skipped during
+        detection/backfill. Used e.g. to ingest only the tagesschau 20:00 Uhr
+        broadcast and exclude other formats (100 Sekunden, 16:00 Uhr, ...).
+        """
+        pattern = (self.ingest or {}).get("title_include")
+        return pattern or None
 
     @field_validator("pipeline_version")
     @classmethod

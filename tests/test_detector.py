@@ -618,3 +618,100 @@ class TestBackfillEpisodes:
         assert result.new == 1
         ep = db_session.query(Episode).first()
         assert ep.episode_id == "dated"
+
+
+# ── Ingest title filter (per content profile) ──────────────────────
+
+
+class TestIngestTitleFilter:
+    """The tagesschau_tr profile ingests only the 20:00 Uhr broadcast."""
+
+    def _mixed_feed(self):
+        return """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015">
+  <entry>
+    <yt:videoId>ts2000</yt:videoId>
+    <title>tagesschau 20:00 Uhr, 14.07.2026</title>
+    <link href="https://www.youtube.com/watch?v=ts2000"/>
+    <published>2026-07-14T20:00:00+00:00</published>
+  </entry>
+  <entry>
+    <yt:videoId>ts100s</yt:videoId>
+    <title>tagesschau in 100 Sekunden</title>
+    <link href="https://www.youtube.com/watch?v=ts100s"/>
+    <published>2026-07-14T12:00:00+00:00</published>
+  </entry>
+  <entry>
+    <yt:videoId>ts1600</yt:videoId>
+    <title>tagesschau 16:00 Uhr, 14.07.2026</title>
+    <link href="https://www.youtube.com/watch?v=ts1600"/>
+    <published>2026-07-14T16:00:00+00:00</published>
+  </entry>
+</feed>"""
+
+    def _settings(self, profile):
+        from btcedu.config import Settings
+
+        return Settings(
+            podcast_rss_url="https://example.com/feed.xml",
+            default_content_profile=profile,
+        )
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_tagesschau_keeps_2000_and_100s(self, mock_fetch, db_session):
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        mock_fetch.return_value = self._mixed_feed()
+        result = detect_episodes(db_session, self._settings("tagesschau_tr"))
+
+        assert result.new == 2
+        ids = sorted(e.episode_id for e in db_session.query(Episode).all())
+        assert ids == ["ts100s", "ts2000"]
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_profile_without_filter_keeps_all(self, mock_fetch, db_session):
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        mock_fetch.return_value = self._mixed_feed()
+        result = detect_episodes(db_session, self._settings("bitcoin_podcast"))
+
+        assert result.new == 3
+
+    @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
+    def test_backfill_applies_filter(self, mock_fetch, db_session):
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        mock_fetch.return_value = [
+            EpisodeInfo(
+                episode_id="ts2000",
+                title="tagesschau 20:00 Uhr, 14.07.2026",
+                published_at=datetime(2026, 7, 14, tzinfo=UTC),
+                url="https://youtube.com/watch?v=ts2000",
+                source="youtube_backfill",
+            ),
+            EpisodeInfo(
+                episode_id="ts100s",
+                title="tagesschau in 100 Sekunden",
+                published_at=datetime(2026, 7, 14, tzinfo=UTC),
+                url="https://youtube.com/watch?v=ts100s",
+                source="youtube_backfill",
+            ),
+            EpisodeInfo(
+                episode_id="ts1600",
+                title="tagesschau 16:00 Uhr, 14.07.2026",
+                published_at=datetime(2026, 7, 14, tzinfo=UTC),
+                url="https://youtube.com/watch?v=ts1600",
+                source="youtube_backfill",
+            ),
+        ]
+        settings = _make_backfill_settings(default_content_profile="tagesschau_tr")
+        result = backfill_episodes(db_session, settings)
+
+        assert result.new == 2
+        ids = sorted(e.episode_id for e in db_session.query(Episode).all())
+        assert ids == ["ts100s", "ts2000"]

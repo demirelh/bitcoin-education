@@ -1,4 +1,5 @@
 import logging
+import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -15,6 +16,35 @@ from btcedu.services.feed_service import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_title_filter(settings: Settings) -> re.Pattern | None:
+    """Compile the ingest title-include regex for the active content profile.
+
+    Returns None when no profile-level filter is configured (default behaviour:
+    ingest everything). Used to restrict e.g. the tagesschau channel to the
+    20:00 Uhr broadcast only.
+    """
+    profile_name = getattr(settings, "default_content_profile", None)
+    if not profile_name:
+        return None
+    try:
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(settings).get(profile_name)
+    except Exception:
+        return None
+
+    pattern = profile.title_include_pattern()
+    if not pattern:
+        return None
+    try:
+        return re.compile(pattern)
+    except re.error:
+        logger.warning(
+            "Invalid ingest title_include pattern for profile %s: %r", profile_name, pattern
+        )
+        return None
 
 
 def _resolve_channel_id(
@@ -100,6 +130,14 @@ def detect_episodes(
 
     feed_content = fetch_feed(feed_url)
     episodes = parse_feed(feed_content, settings.source_type)
+
+    title_filter = _resolve_title_filter(settings)
+    if title_filter is not None:
+        before = len(episodes)
+        episodes = [ep for ep in episodes if title_filter.search(ep.title or "")]
+        skipped = before - len(episodes)
+        if skipped:
+            logger.info("Title filter skipped %d/%d episodes", skipped, before)
 
     result = DetectResult(found=len(episodes))
 
@@ -200,6 +238,10 @@ def backfill_episodes(
 
     all_videos = fetch_channel_videos_ytdlp(yt_channel_id)
     result = DetectResult(found=len(all_videos))
+
+    title_filter = _resolve_title_filter(settings)
+    if title_filter is not None:
+        all_videos = [ep for ep in all_videos if title_filter.search(ep.title or "")]
 
     # Apply date filters
     filtered: list[EpisodeInfo] = []

@@ -18,6 +18,7 @@ Transformiere den deutschen Intro/Outro-Text in einen **neutralen türkischen Na
 
 ### ENTFERNEN (PFLICHT)
 
+0. **GENERISCHER OPENER**: Erzeuge KEINEN inhaltsleeren Eröffnungssatz wie „İşte günün haberleri", „Günün haberleri", „Günün önemli gelişmeleri". Die Sendung beginnt direkt mit dem ersten Nachrichtenthema. Wenn das Intro NUR eine Begrüßung/Anmoderation ohne konkrete Themenvorschau ist, gib einen LEEREN Text (leerer String) zurück.
 1. **MODERATORNAMEN**: Alle Moderatornamen werden KOMPLETT entfernt. Es darf kein deutscher Moderatorname im Output erscheinen.
 2. **SENDUNGSNAMEN**: "tagesschau", "Tagesschau", "tagesthemen", "Das Erste", "ARD", "Nachtmagazin" dürfen NICHT im türkischen Output erscheinen.
 3. **BEGRÜSSUNGSFORMELN**: Deutsche Begrüßungen werden durch neutrale türkische Nachrichtenformeln ersetzt oder weggelassen.
@@ -39,11 +40,11 @@ Transformiere den deutschen Intro/Outro-Text in einen **neutralen türkischen Na
 
 | Deutsch | Türkisch |
 |---------|----------|
-| "Guten Abend, meine Damen und Herren" | "Günün önemli gelişmeleri" |
+| "Guten Abend, meine Damen und Herren" | (weglassen) |
 | "Willkommen zur tagesschau" | (weglassen) |
-| "Hier sind die Nachrichten" | "İşte günün haberleri" |
+| "Hier sind die Nachrichten" | (weglassen) |
 | "Heute mit folgenden Themen:" | "Gündemdeki konular:" |
-| "Die Nachrichten des Tages" | "Günün haberleri" |
+| "Die Nachrichten des Tages" | (weglassen) |
 
 ### Outro-Muster
 
@@ -69,4 +70,4 @@ Formelles Nachrichtentürkisch (haber spikeri dili):
 
 # Ausgabeformat
 
-Gib NUR den türkischen Text zurück. Keine Erklärungen, keine Kommentare, keine Markierungen. Wenn der Input nur eine Begrüßungsfloskel ohne Themenvorschau ist, gib einen einzeiligen neutralen Opener zurück.
+Gib NUR den türkischen Text zurück. Keine Erklärungen, keine Kommentare, keine Markierungen. Wenn der Input nur eine Begrüßungsfloskel ohne konkrete Themenvorschau ist, gib einen LEEREN String zurück (keinen generischen Opener wie „İşte günün haberleri").

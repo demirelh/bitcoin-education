@@ -266,8 +266,16 @@ def chapterize_script(
                 json_mode=True,
             )
 
-            # Parse JSON response
-            chapter_data = _parse_json_response(response.text, episode_id, segment, settings)
+            # Parse JSON response (retry once if the model emitted invalid JSON)
+            try:
+                chapter_data = _parse_json_response(response.text, episode_id, segment, settings)
+            except json.JSONDecodeError as e:
+                logger.warning(
+                    "Chapterization output was not valid JSON (%s) — retrying with correction", e
+                )
+                chapter_data = _retry_with_json_correction(
+                    e, response.text, episode_id, segment, system_prompt, settings
+                )
 
             # Fix common LLM output issues before validation
             chapter_data = _fix_chapter_data(chapter_data, episode_id)
@@ -845,6 +853,61 @@ def _fix_chapter_data(data: dict, episode_id: str) -> dict:
         data["total_chapters"] = len(chapters)
 
     return data
+
+
+def _retry_with_json_correction(
+    decode_error: json.JSONDecodeError,
+    bad_output: str,
+    episode_id: str,
+    segment: str,
+    system_prompt: str,
+    settings: Settings,
+) -> dict:
+    """Retry chapterization after the model emitted syntactically invalid JSON.
+
+    json_mode normally prevents this, but flaky providers occasionally drop a comma
+    or otherwise break the structure. Ask the model to return the SAME content as
+    strictly valid JSON.
+
+    Args:
+        decode_error: The JSONDecodeError raised while parsing the first attempt.
+        bad_output: The raw (invalid) model output, for context.
+        episode_id: Episode ID.
+        segment: The adapted script segment.
+        system_prompt: The system prompt.
+        settings: Application settings.
+
+    Returns:
+        Parsed JSON dict (unvalidated; caller validates).
+
+    Raises:
+        json.JSONDecodeError: If the retry is also invalid JSON.
+    """
+    corrective_prompt = f"""Your previous response was NOT valid JSON.
+
+Parser error: {decode_error}
+
+Return the SAME chapter document, but as strictly valid JSON only. Rules:
+- Output ONLY the JSON object, no prose, no markdown code fences.
+- Every array/object element must be separated by a comma.
+- No trailing commas, no comments.
+- Keep all chapters and their full narration text unchanged.
+
+Re-emit valid JSON for this input:
+{segment}
+"""
+
+    logger.info("Retrying chapterization after JSON decode error for %s", episode_id)
+
+    response: ClaudeResponse = call_claude(
+        system_prompt=system_prompt,
+        user_message=corrective_prompt,
+        settings=settings,
+        max_tokens=16384,
+        json_mode=True,
+    )
+
+    return _parse_json_response(response.text, episode_id, segment, settings)
 
 
 def _retry_with_correction(

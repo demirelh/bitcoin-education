@@ -397,6 +397,86 @@ def test_chapterize_prefers_adapted_script_over_stories_json(
 
 @patch("btcedu.core.chapterizer.call_claude")
 @patch("btcedu.core.chapterizer.PromptRegistry")
+def test_chapterize_retries_on_invalid_json(
+    mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path
+):
+    """If the model emits syntactically invalid JSON, chapterize retries once with a
+    corrective prompt and recovers instead of failing the whole stage.
+    """
+    settings = MagicMock()
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.transcripts_dir = str(tmp_path / "transcripts")
+    settings.claude_model = "claude-sonnet-4-20250514"
+    settings.claude_temperature = 0.3
+    settings.claude_max_tokens = 8192
+    settings.dry_run = False
+
+    adapted_path = Path(settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
+    adapted_path.parent.mkdir(parents=True, exist_ok=True)
+    adapted_path.write_text("# Bitcoin\n\nMerhaba arkadaslar. " * 20, encoding="utf-8")
+
+    mock_version = MagicMock()
+    mock_version.version = 1
+    mock_registry.return_value.register_version.return_value = mock_version
+    mock_registry.return_value.load_template.return_value = (
+        "",
+        "# System\n\n# Input\n\n{{episode_id}}\n{{adapted_script}}",
+    )
+    mock_registry.return_value.compute_hash.return_value = "prompt_hash_123"
+
+    valid_json = json.dumps(
+        {
+            "schema_version": "1.0",
+            "episode_id": "ep_test",
+            "title": "Bitcoin",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 60,
+            "chapters": [
+                {
+                    "chapter_id": "ch01",
+                    "title": "Giris",
+                    "order": 1,
+                    "narration": {
+                        "text": " ".join(["kelime"] * 150),
+                        "word_count": 150,
+                        "estimated_duration_seconds": 60,
+                    },
+                    "visual": {
+                        "type": "title_card",
+                        "description": "Logo",
+                        "image_prompt": None,
+                    },
+                    "overlays": [],
+                    "transitions": {"in": "fade", "out": "cut"},
+                }
+            ],
+        }
+    )
+
+    bad_response = MagicMock()
+    bad_response.text = '{"chapters": [ {"a": 1} {"b": 2} ]}'  # missing comma → JSONDecodeError
+    bad_response.input_tokens = 100
+    bad_response.output_tokens = 50
+    bad_response.cost_usd = 0.01
+
+    good_response = MagicMock()
+    good_response.text = valid_json
+    good_response.input_tokens = 100
+    good_response.output_tokens = 50
+    good_response.cost_usd = 0.01
+
+    mock_call_claude.side_effect = [bad_response, good_response]
+
+    result = chapterize_script(db_session, "ep_test", settings, force=True)
+
+    assert result.chapter_count == 1
+    assert mock_call_claude.call_count == 2  # first bad, retry good
+    episode = db_session.query(Episode).filter(Episode.episode_id == "ep_test").first()
+    assert episode.status == EpisodeStatus.CHAPTERIZED
+
+
+@patch("btcedu.core.chapterizer.call_claude")
+@patch("btcedu.core.chapterizer.PromptRegistry")
 def test_chapterize_script_idempotency(
     mock_registry, mock_call_claude, adapted_episode, db_session, tmp_path
 ):

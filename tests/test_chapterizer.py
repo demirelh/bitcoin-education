@@ -11,6 +11,7 @@ from btcedu.core.chapterizer import (
     ChapterizationResult,
     _compute_duration_estimate,
     _is_chapterization_current,
+    _parse_json_response,
     _segment_script,
     _split_prompt,
     chapterize_script,
@@ -71,6 +72,24 @@ def adapted_episode(db_session, tmp_path):
 # ---------------------------------------------------------------------------
 # Helper Function Tests
 # ---------------------------------------------------------------------------
+
+
+def test_parse_json_response_repairs_unescaped_quotes():
+    """The dominant chapterize JSON failure is an unescaped double-quote inside a
+    narration string (tagesschau text is full of quotes). _parse_json_response must
+    recover such output via structural repair instead of raising.
+    """
+    settings = MagicMock()
+    # Unescaped inner quotes → stdlib json.loads raises 'Expecting , delimiter'
+    bad = (
+        '{"episode_id":"ep","chapters":[{"chapter_id":"ch07","title":"Spor",'
+        '"narration":{"text":"Kaleci "Sadece kale vuruşlarında rahatsız ediyordu" dedi.",'
+        '"word_count":9}}]}'
+    )
+    result = _parse_json_response(bad, "ep", "segment", settings)
+    assert result["chapters"][0]["chapter_id"] == "ch07"
+    assert "kale vuruşlarında" in result["chapters"][0]["narration"]["text"]
+    assert result["chapters"][0]["narration"]["word_count"] == 9
 
 
 def test_compute_duration_estimate():

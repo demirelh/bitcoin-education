@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import json_repair
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -738,11 +739,31 @@ def _parse_json_response(
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        # Try to fix common LLM JSON quirks
+        # Try to fix common LLM JSON quirks (comments, trailing commas)
         cleaned = _clean_json(text)
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError as e:
+            # Last resort: structural repair. The dominant failure mode is an
+            # unescaped double-quote inside a narration string (the tagesschau
+            # text is full of German „…" quotes and embedded speech), which the
+            # model copies verbatim and breaks JSON at the same char every time.
+            # json_repair reliably re-escapes these while preserving content.
+            logger.warning(
+                "Standard JSON parse failed for %s (%s) — attempting structural repair",
+                episode_id,
+                e,
+            )
+            try:
+                repaired = json_repair.loads(cleaned)
+                if isinstance(repaired, dict) and repaired:
+                    logger.info("json_repair recovered a valid document for %s", episode_id)
+                    return repaired
+                logger.error(
+                    "json_repair returned an unusable result for %s: %r", episode_id, repaired
+                )
+            except Exception as repair_err:  # noqa: BLE001 - repair is best-effort
+                logger.error("json_repair also failed for %s: %s", episode_id, repair_err)
             logger.error("Failed to parse JSON response for %s: %s", episode_id, e)
             logger.error("Response text (first 500 chars): %s", response_text[:500])
             raise

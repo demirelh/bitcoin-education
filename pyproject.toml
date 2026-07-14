@@ -21,6 +21,7 @@ dependencies = [
     "yt-dlp>=2024.0.0",
     "pydub>=0.25.0",
     "requests>=2.31.0",
+    "json-repair>=0.30.0",
 ]
 
 [project.optional-dependencies]

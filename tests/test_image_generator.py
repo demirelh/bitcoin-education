@@ -549,6 +549,30 @@ class TestGenerateImagesValidation:
         with pytest.raises(ValueError, match="expected 'chapterized'"):
             generate_images(db_session, "ep_wrong", settings)
 
+    def test_accepts_frames_extracted_status(self, db_session, tmp_path):
+        """frameextract runs right before imagegen in v2 and sets FRAMES_EXTRACTED;
+        generate_images must accept it as a valid precondition (not raise on status).
+        """
+        ep = Episode(
+            episode_id="ep_frames",
+            source="youtube_rss",
+            title="Frames Extracted",
+            url="https://youtube.com/watch?v=f",
+            status=EpisodeStatus.FRAMES_EXTRACTED,
+            pipeline_version=2,
+        )
+        db_session.add(ep)
+        db_session.commit()
+
+        from btcedu.config import Settings
+        from btcedu.core.image_generator import generate_images
+
+        settings = Settings(anthropic_api_key="test")
+        # Should fail later (missing chapters.json), NOT on the status precondition.
+        with pytest.raises(Exception) as exc_info:
+            generate_images(db_session, "ep_frames", settings)
+        assert "expected 'chapterized'" not in str(exc_info.value)
+
     def test_rejects_missing_chapters_json(self, db_session, tmp_path):
         ep = Episode(
             episode_id="ep_no_ch",

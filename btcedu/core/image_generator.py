@@ -187,14 +187,23 @@ def generate_images(
             "Image generation is only supported for v2 pipeline."
         )
 
-    # Check episode status (allow CHAPTERIZED or IMAGES_GENERATED for idempotency)
+    # Check episode status (allow CHAPTERIZED, FRAMES_EXTRACTED or IMAGES_GENERATED
+    # for idempotency). In the v2 pipeline the frameextract stage runs immediately
+    # before imagegen and advances status to FRAMES_EXTRACTED (a no-op for the
+    # generative/stock profiles), so that is a valid precondition too.
     if (
-        episode.status not in (EpisodeStatus.CHAPTERIZED, EpisodeStatus.IMAGES_GENERATED)
+        episode.status
+        not in (
+            EpisodeStatus.CHAPTERIZED,
+            EpisodeStatus.FRAMES_EXTRACTED,
+            EpisodeStatus.IMAGES_GENERATED,
+        )
         and not force
     ):
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
-            "expected 'chapterized' or 'images_generated'. Use --force to override."
+            "expected 'chapterized', 'frames_extracted' or 'images_generated'. "
+            "Use --force to override."
         )
 
     # Resolve paths

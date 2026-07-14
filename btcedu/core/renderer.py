@@ -335,8 +335,24 @@ def render_video(
             segment_path = segments_dir / segment_filename
             segment_rel_path = f"render/segments/{segment_filename}"
 
-            # Skip segment if it already exists and is valid (idempotency guard)
+            # Skip segment if it already exists, is valid, AND is newer than its
+            # inputs (image/video + audio). Merely existing is not enough: when
+            # images or TTS are regenerated, the old segment is stale and MUST be
+            # re-rendered, otherwise the final video keeps the previous content.
             if segment_path.exists() and segment_path.stat().st_size > 0:
+                seg_mtime = segment_path.stat().st_mtime
+                input_mtimes = []
+                for _inp in (media_path, audio_path):
+                    try:
+                        if _inp and Path(_inp).exists():
+                            input_mtimes.append(Path(_inp).stat().st_mtime)
+                    except OSError:
+                        pass
+                segment_is_fresh = not input_mtimes or seg_mtime >= max(input_mtimes)
+            else:
+                segment_is_fresh = False
+
+            if segment_is_fresh:
                 try:
                     probe_media(str(segment_path))
                     logger.info(

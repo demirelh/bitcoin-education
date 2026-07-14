@@ -702,6 +702,149 @@ def test_render_video_non_dry_run(db_session, settings, tmp_path):
     assert asset.size_bytes > 0
 
 
+def test_render_rerenders_stale_segments(db_session, settings, tmp_path):
+    """Regression: a pre-existing segment must be re-rendered when its image/audio
+    inputs are newer than the segment file. Previously the idempotency guard skipped
+    any segment that merely existed, so regenerated images/TTS were silently ignored
+    and the final video kept the old content.
+    """
+    import os
+
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.dry_run = False
+
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    base = Path(settings.outputs_dir) / "ep001"
+    _create_test_chapters_json("ep001", Path(settings.outputs_dir))
+    _create_test_image_manifest("ep001", Path(settings.outputs_dir))
+    _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
+
+    # Pre-create STALE segment files (non-empty) with an old mtime.
+    seg_dir = base / "render" / "segments"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    old = 1_000_000.0
+    for cid in ("ch01", "ch02"):
+        p = seg_dir / f"{cid}.mp4"
+        p.write_bytes(b"\x00" * 1024)
+        os.utime(p, (old, old))
+
+    # Make image + audio inputs NEWER than the stale segments.
+    new = old + 10_000.0
+    for rel in ("images/ch01.png", "images/ch02.png", "tts/ch01.mp3", "tts/ch02.mp3"):
+        f = base / rel
+        os.utime(f, (new, new))
+
+    rendered = []
+
+    def mock_create_segment(image_path, audio_path, output_path, duration, **kw):
+        rendered.append(Path(output_path).stem)
+        return _mock_segment_result(output_path, duration=duration)
+
+    def mock_concatenate_segments(segment_paths, output_path, **kw):
+        return _mock_concat_result(output_path, segment_count=len(segment_paths))
+
+    with (
+        patch(
+            "btcedu.services.ffmpeg_service.create_segment",
+            side_effect=mock_create_segment,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.concatenate_segments",
+            side_effect=mock_concatenate_segments,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.probe_media",
+            return_value=None,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.get_ffmpeg_version",
+            return_value="ffmpeg version 6.0-mock",
+        ),
+    ):
+        render_video(db_session, "ep001", settings, force=True)
+
+    # Both stale segments must have been re-rendered.
+    assert "ch01" in rendered
+    assert "ch02" in rendered
+
+
+def test_render_skips_fresh_segments(db_session, settings, tmp_path):
+    """Companion: a segment NEWER than its inputs is reused (not re-rendered)."""
+    import os
+
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.dry_run = False
+
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    base = Path(settings.outputs_dir) / "ep001"
+    _create_test_chapters_json("ep001", Path(settings.outputs_dir))
+    _create_test_image_manifest("ep001", Path(settings.outputs_dir))
+    _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
+
+    # Inputs old, segments new → fresh, should be skipped.
+    old = 1_000_000.0
+    for rel in ("images/ch01.png", "images/ch02.png", "tts/ch01.mp3", "tts/ch02.mp3"):
+        os.utime(base / rel, (old, old))
+
+    seg_dir = base / "render" / "segments"
+    seg_dir.mkdir(parents=True, exist_ok=True)
+    new = old + 10_000.0
+    for cid in ("ch01", "ch02"):
+        p = seg_dir / f"{cid}.mp4"
+        p.write_bytes(b"\x00" * 1024)
+        os.utime(p, (new, new))
+
+    rendered = []
+
+    def mock_create_segment(image_path, audio_path, output_path, duration, **kw):
+        rendered.append(Path(output_path).stem)
+        return _mock_segment_result(output_path, duration=duration)
+
+    def mock_concatenate_segments(segment_paths, output_path, **kw):
+        return _mock_concat_result(output_path, segment_count=len(segment_paths))
+
+    with (
+        patch(
+            "btcedu.services.ffmpeg_service.create_segment",
+            side_effect=mock_create_segment,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.concatenate_segments",
+            side_effect=mock_concatenate_segments,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.probe_media",
+            return_value=None,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.get_ffmpeg_version",
+            return_value="ffmpeg version 6.0-mock",
+        ),
+    ):
+        render_video(db_session, "ep001", settings, force=True)
+
+    # Fresh segments reused → create_segment not called.
+    assert rendered == []
+
+
 def test_render_video_error_rollback(db_session, settings, tmp_path):
     """Test that render failure sets PipelineRun to failed and records error.
 

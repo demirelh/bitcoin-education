@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -27,6 +28,56 @@ logger = logging.getLogger(__name__)
 
 # Transcripts longer than this (in characters) are split into segments
 SEGMENT_CHAR_LIMIT = 15_000
+
+# Tokens the ASR corrector must NEVER alter: numbers/dates and sport-tournament
+# names. The corrector fixes spelling/punctuation only; it is not a fact-checker.
+# Guards against LLM over-correction (e.g. "Fußball-WM" -> "Fußball-EM",
+# "12. Juli" -> "13. Juli") which would silently corrupt every downstream stage.
+_PROTECTED_TOKEN_RE = re.compile(
+    r"\d"  # any digit: dates, times, results, percentages, amounts
+    r"|\b(?:WM|EM|Welt(?:meister\w*|meisterschaft)|Europa(?:meister\w*|meisterschaft))\b",
+    re.IGNORECASE,
+)
+
+
+def _has_protected_token(span: str) -> bool:
+    return bool(_PROTECTED_TOKEN_RE.search(span))
+
+
+def _revert_protected_token_changes(original: str, corrected: str) -> str:
+    """Restore original wording for any ASR-correction edit that touched a
+    protected token (numbers/dates or sport-tournament names).
+
+    The correction prompt forbids factual changes, but the LLM occasionally
+    over-corrects (turning "Fußball-WM" into "Fußball-EM", or shifting a date).
+    Such edits corrupt every downstream stage. This deterministic guard aligns
+    the original and corrected text word-by-word and reverts only the
+    ``replace`` spans that involve a protected token — all other corrections
+    (spelling, punctuation, names) are preserved untouched.
+    """
+    orig_words = original.split()
+    corr_words = corrected.split()
+    if not orig_words or not corr_words:
+        return corrected
+
+    result = corrected
+    matcher = SequenceMatcher(None, orig_words, corr_words)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != "replace":
+            continue
+        orig_span = " ".join(orig_words[i1:i2])
+        corr_span = " ".join(corr_words[j1:j2])
+        if not corr_span or orig_span == corr_span:
+            continue
+        if _has_protected_token(orig_span) or _has_protected_token(corr_span):
+            if corr_span in result:
+                result = result.replace(corr_span, orig_span, 1)
+                logger.info(
+                    "Reverted protected-token over-correction: %r -> %r",
+                    corr_span,
+                    orig_span,
+                )
+    return result
 
 
 def _utcnow() -> datetime:
@@ -195,7 +246,7 @@ def correct_transcript(
                 dry_run_path=dry_run_path,
             )
 
-            corrected_segments.append(response.text)
+            corrected_segments.append(_revert_protected_token_changes(segment, response.text))
             total_input_tokens += response.input_tokens
             total_output_tokens += response.output_tokens
             total_cost += response.cost_usd

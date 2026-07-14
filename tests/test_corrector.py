@@ -10,6 +10,7 @@ from click.testing import CliRunner
 from btcedu.core.corrector import (
     CorrectionResult,
     _is_correction_current,
+    _revert_protected_token_changes,
     _segment_transcript,
     _split_prompt,
     compute_correction_diff,
@@ -66,6 +67,36 @@ def mock_settings(tmp_path):
 # ---------------------------------------------------------------------------
 # Unit tests: compute_correction_diff
 # ---------------------------------------------------------------------------
+
+
+class TestRevertProtectedTokenChanges:
+    def test_reverts_tournament_over_correction(self):
+        original = "Spanien steht im Halbfinale der Fußball-WM. Der Europameister gewann."
+        corrected = "Spanien steht im Halbfinale der Fußball-EM. Der Europameister gewann."
+        result = _revert_protected_token_changes(original, corrected)
+        assert "Fußball-WM" in result
+        assert "Fußball-EM" not in result
+
+    def test_reverts_date_shift(self):
+        original = "die Wettervorhersage für morgen Sonntag, den 12. Juli."
+        corrected = "die Wettervorhersage für morgen Sonntag, den 13. Juli."
+        result = _revert_protected_token_changes(original, corrected)
+        assert "12. Juli" in result
+        assert "13. Juli" not in result
+
+    def test_preserves_legitimate_spelling_fix(self):
+        original = "Heute über Bit Coin und den Bundes tag sprechen."
+        corrected = "Heute über Bitcoin und den Bundestag sprechen."
+        result = _revert_protected_token_changes(original, corrected)
+        assert result == corrected
+
+    def test_reverts_number_but_keeps_other_fixes(self):
+        original = "Die Grünnen erhielten 12 Prozent der Stimmen."
+        corrected = "Die Grünen erhielten 15 Prozent der Stimmen."
+        result = _revert_protected_token_changes(original, corrected)
+        assert "Grünen" in result  # legitimate spelling fix kept
+        assert "12 Prozent" in result  # number over-correction reverted
+        assert "15 Prozent" not in result
 
 
 class TestComputeCorrectionDiff:

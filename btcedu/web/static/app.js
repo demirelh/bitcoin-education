@@ -700,13 +700,15 @@
       const generated = images.filter(i => i.generation_method !== 'failed');
 
       let cards = images.map(img => {
-        const imgUrl = `api/episodes/${selected.episode_id}/images/${esc(img.filename || img.chapter_id + '.png')}`;
-        const isFailed = img.generation_method === 'failed';
+        const fname = img.filename
+          || (img.file_path ? img.file_path.split('/').pop() : img.chapter_id + '.png');
+        const imgUrl = `api/episodes/${selected.episode_id}/images/${esc(fname)}`;
+        const isFailed = img.generation_method === 'failed' || img.source === 'failed';
         return `
           <div class="image-card ${isFailed ? 'image-failed' : ''}">
             <div class="image-card-header">
               <strong>${esc(img.chapter_id)}</strong>
-              <span class="image-method">${esc(img.generation_method || 'generated')}</span>
+              <span class="image-method">${esc(img.generation_method || img.source || 'generated')}</span>
             </div>
             ${isFailed
               ? '<div class="image-placeholder">Generation failed</div>'

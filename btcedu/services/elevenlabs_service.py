@@ -31,6 +31,7 @@ class TTSRequest:
     similarity_boost: float = 0.75
     style: float = 0.0
     use_speaker_boost: bool = True
+    speed: float = 1.0
 
 
 @dataclass
@@ -82,6 +83,7 @@ class ElevenLabsService:
             "similarity_boost": request.similarity_boost,
             "style": request.style,
             "use_speaker_boost": request.use_speaker_boost,
+            "speed": request.speed,
         }
 
         char_count = len(request.text)

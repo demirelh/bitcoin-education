@@ -185,6 +185,27 @@ def test_synthesize_success(mock_post, mock_measure):
     assert call_args[1]["headers"]["xi-api-key"] == "test_key"
 
 
+@patch("btcedu.services.elevenlabs_service._measure_duration")
+@patch("btcedu.services.elevenlabs_service.requests.post")
+def test_synthesize_sends_speed_in_voice_settings(mock_post, mock_measure):
+    """The speed voice setting is forwarded to the ElevenLabs payload."""
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"audio"
+    mock_post.return_value = mock_response
+    mock_measure.return_value = (5.0, 44100)
+
+    service = ElevenLabsService(api_key="k", default_voice_id="v")
+    req = TTSRequest(text="Merhaba", voice_id="v", speed=1.08, style=0.35, stability=0.45)
+    service.synthesize(req)
+
+    payload = mock_post.call_args[1]["json"]
+    vs = payload["voice_settings"]
+    assert vs["speed"] == pytest.approx(1.08)
+    assert vs["style"] == pytest.approx(0.35)
+    assert vs["stability"] == pytest.approx(0.45)
+
+
 @patch("btcedu.services.elevenlabs_service.time.sleep")
 @patch("btcedu.services.elevenlabs_service._measure_duration")
 @patch("btcedu.services.elevenlabs_service.requests.post")

@@ -155,6 +155,7 @@ def generate_tts(
         _voice_id = _tts_cfg.get("voice_id") or settings.elevenlabs_voice_id
         _stability = _tts_cfg.get("stability", settings.elevenlabs_stability)
         _style = _tts_cfg.get("style", settings.elevenlabs_style)
+        _speed = _tts_cfg.get("speed", settings.elevenlabs_speed)
 
         # Create TTS service
         from btcedu.services.elevenlabs_service import ElevenLabsService
@@ -238,6 +239,7 @@ def generate_tts(
                 voice_id=_voice_id,
                 stability=_stability,
                 style=_style,
+                speed=_speed,
             )
             audio_entries.append(entry)
             total_cost += entry.cost_usd
@@ -413,6 +415,7 @@ def _generate_single_audio(
     voice_id: str | None = None,
     stability: float | None = None,
     style: float | None = None,
+    speed: float | None = None,
 ) -> AudioEntry:
     """Generate audio for a single chapter.
 
@@ -429,6 +432,7 @@ def _generate_single_audio(
     effective_voice_id = voice_id or settings.elevenlabs_voice_id
     effective_stability = stability if stability is not None else settings.elevenlabs_stability
     effective_style = style if style is not None else settings.elevenlabs_style
+    effective_speed = speed if speed is not None else settings.elevenlabs_speed
 
     if settings.dry_run:
         # Write a minimal silent MP3 placeholder
@@ -459,6 +463,7 @@ def _generate_single_audio(
         similarity_boost=settings.elevenlabs_similarity_boost,
         style=effective_style,
         use_speaker_boost=settings.elevenlabs_use_speaker_boost,
+        speed=effective_speed,
     )
 
     response = tts_service.synthesize(request)

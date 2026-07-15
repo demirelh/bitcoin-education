@@ -234,7 +234,12 @@ def test_accent_color_from_profile():
 
 
 def test_tts_profile_config_values():
-    """Tagesschau profile has higher TTS stability than default."""
+    """Tagesschau profile declares tuned TTS voice settings.
+
+    The news voice was retuned for a livelier, less monotone delivery
+    (lower stability + some style + slightly faster speed), so it no longer
+    uses the very high stability that produced a flat, tiring narration.
+    """
     reset_registry()
     settings = Settings(profiles_dir="btcedu/profiles", pipeline_version=2)
     registry = get_registry(settings)
@@ -242,8 +247,12 @@ def test_tts_profile_config_values():
     ts = registry.get("tagesschau_tr")
     tts_cfg = ts.stage_config.get("tts", {})
 
+    assert tts_cfg.get("voice_id")  # explicit news voice (Irem)
     assert "stability" in tts_cfg
-    assert tts_cfg["stability"] >= 0.6  # news requires higher stability
+    # Moderate stability keeps it coherent but not monotone.
+    assert 0.3 <= tts_cfg["stability"] <= 0.6
+    assert tts_cfg.get("style", 0.0) > 0.0  # some expressiveness
+    assert tts_cfg.get("speed", 1.0) > 1.0  # slightly faster than default
 
 
 def test_bitcoin_profile_has_tts_voice():

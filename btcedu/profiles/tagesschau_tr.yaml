@@ -22,10 +22,11 @@ stage_config:
     clean_moderator: true
     use_glossary: true
   tts:
-    voice_id: ""
-    stability: 0.7
+    voice_id: "NsFK0aDGLbVusA7tQfOB"  # Irem (tr, female) — livelier than POLAT
+    stability: 0.45
     similarity_boost: 0.75
-    style: 0.0
+    style: 0.35
+    speed: 1.08
     model: eleven_turbo_v2_5
   render:
     accent_color: "#004B87"

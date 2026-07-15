@@ -132,6 +132,9 @@ class Settings(BaseSettings):
     elevenlabs_similarity_boost: float = 0.75
     elevenlabs_style: float = 0.0
     elevenlabs_use_speaker_boost: bool = True
+    # Playback speed for ElevenLabs voice_settings (0.7–1.2; 1.0 = normal).
+    # Higher = faster/less sluggish delivery.
+    elevenlabs_speed: float = 1.0
 
     # Anchor / D-ID (talking-head video generation)
     did_api_key: str = ""

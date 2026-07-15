@@ -1133,10 +1133,84 @@
         return;
       }
       viewer.innerHTML = renderStageDetailHTML(stageName, data);
+      if (stageName === "render") {
+        startRenderProgressPolling(selected.episode_id);
+      }
     } catch (e) {
       viewer.innerHTML = `<p style="color:var(--red)">Failed to load stage details: ${esc(e.message)}</p>`;
     }
   };
+
+  let _renderProgressTimer = null;
+  function stopRenderProgressPolling() {
+    if (_renderProgressTimer) {
+      clearInterval(_renderProgressTimer);
+      _renderProgressTimer = null;
+    }
+  }
+
+  async function pollRenderProgressOnce(episodeId) {
+    const el = document.getElementById("render-progress-live");
+    if (!el) {
+      // User navigated away from the render detail view.
+      stopRenderProgressPolling();
+      return;
+    }
+    let p;
+    try {
+      p = await GET(`/episodes/${episodeId}/render/progress`);
+    } catch {
+      return;
+    }
+    // If the view changed while awaiting, bail.
+    const el2 = document.getElementById("render-progress-live");
+    if (!el2) {
+      stopRenderProgressPolling();
+      return;
+    }
+    const stage = p.stage || "idle";
+    if (stage === "idle") {
+      el2.innerHTML = "";
+      return;
+    }
+    const pct = Math.max(0, Math.min(100, parseInt(p.progress_pct || 0, 10)));
+    const cur = p.current || 0;
+    const total = p.total || 0;
+    const title = (p.chapter_title || p.chapter_id || "").toString();
+    let stateLabel;
+    let barClass = "";
+    if (stage === "done") {
+      stateLabel = "Render complete";
+      stopRenderProgressPolling();
+    } else if (stage === "failed") {
+      stateLabel = "Render failed" + (p.error ? `: ${p.error}` : "");
+      barClass = "render-bar-failed";
+      stopRenderProgressPolling();
+    } else if (stage === "concat") {
+      stateLabel = `Concatenating segments (${total})`;
+    } else {
+      const verb = stage === "segment_done" ? "Rendered" : "Rendering";
+      stateLabel = `${verb} chapter ${cur}/${total}${title ? " — " + title : ""}`;
+    }
+    const updated = p.updated_at ? new Date(p.updated_at).toLocaleTimeString() : "";
+    el2.innerHTML = `
+      <div class="render-progress ${stage === "done" ? "render-progress-done" : ""}">
+        <div class="render-progress-head">
+          <strong>${esc(stateLabel)}</strong>
+          <span>${pct}%</span>
+        </div>
+        <div class="render-progress-track">
+          <div class="render-progress-fill ${barClass}" style="width:${pct}%"></div>
+        </div>
+        ${updated ? `<div class="render-progress-meta">updated ${esc(updated)}</div>` : ""}
+      </div>`;
+  }
+
+  function startRenderProgressPolling(episodeId) {
+    stopRenderProgressPolling();
+    pollRenderProgressOnce(episodeId);
+    _renderProgressTimer = setInterval(() => pollRenderProgressOnce(episodeId), 2500);
+  }
 
   window.restartStage = function (stageName) {
     if (!selected) return;
@@ -1156,6 +1230,11 @@
 
     let html = `<div class="stage-detail-panel">`;
     html += `<h3 class="stage-detail-title">${esc(label)}</h3>`;
+
+    // Live render progress (populated by polling for the render stage).
+    if (stageName === "render") {
+      html += `<div id="render-progress-live"></div>`;
+    }
 
     if (!stageData) {
       // No PipelineRun records — infer status from stage_progress

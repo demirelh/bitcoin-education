@@ -2639,6 +2639,36 @@ def get_render_manifest(episode_id: str):
     return jsonify(content)
 
 
+@api_bp.route("/episodes/<episode_id>/render/progress")
+def get_render_progress(episode_id: str):
+    """Return live render progress for an episode.
+
+    Reads ``render/progress.json`` written by the renderer on every chapter/
+    concat event. Works regardless of how the render was triggered (pipeline
+    autostart or web job). Returns ``{"stage": "idle"}`` when no run has
+    written progress yet.
+    """
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+    settings = _get_settings()
+    progress_path = _validate_episode_path(
+        episode_id, Path(settings.outputs_dir), "render", "progress.json"
+    )
+
+    if not progress_path:
+        return jsonify({"error": "Episode not found"}), 404
+
+    if not progress_path.exists():
+        return jsonify({"stage": "idle"})
+
+    try:
+        content = json.loads(progress_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return jsonify({"stage": "idle"})
+    return jsonify(content)
+
+
 @api_bp.route("/episodes/<episode_id>/render/draft.mp4")
 def get_render_video(episode_id: str):
     """Serve draft video MP4 file with byte-range support for HTML5 scrubbing."""

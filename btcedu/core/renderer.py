@@ -24,6 +24,25 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _write_render_progress(render_dir: Path, payload: dict) -> None:
+    """Persist render progress to ``render/progress.json`` atomically.
+
+    Written on every progress event regardless of how render was triggered
+    (pipeline autostart or web job), so the dashboard can show live progress
+    even when no browser initiated the run.
+    """
+    try:
+        render_dir.mkdir(parents=True, exist_ok=True)
+        data = dict(payload)
+        data["updated_at"] = _utcnow().isoformat()
+        tmp = render_dir / "progress.json.tmp"
+        tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(render_dir / "progress.json")
+    except Exception:
+        # Progress reporting is best-effort; never let it break rendering.
+        pass
+
+
 # Overlay style defaults based on overlay type
 OVERLAY_STYLES = {
     "lower_third": {"fontsize": 48, "fontcolor": "white", "position": "bottom_center"},
@@ -293,20 +312,25 @@ def render_video(
             return kwargs
 
         _chapters_total = len(chapters_doc.chapters)
-        for _ch_idx, chapter in enumerate(chapters_doc.chapters, start=1):
-            # Notify progress at start of each chapter
+
+        def _emit(evt: dict) -> None:
+            _write_render_progress(render_dir, evt)
             if progress_callback is not None:
                 try:
-                    progress_callback({
-                        "stage": "segment_start",
-                        "current": _ch_idx,
-                        "total": _chapters_total,
-                        "chapter_id": chapter.chapter_id,
-                        "chapter_title": getattr(chapter, "title", "") or "",
-                        "progress_pct": int(100 * (_ch_idx - 1) / max(_chapters_total, 1)),
-                    })
+                    progress_callback(evt)
                 except Exception:
                     pass
+
+        for _ch_idx, chapter in enumerate(chapters_doc.chapters, start=1):
+            # Notify progress at start of each chapter
+            _emit({
+                "stage": "segment_start",
+                "current": _ch_idx,
+                "total": _chapters_total,
+                "chapter_id": chapter.chapter_id,
+                "chapter_title": getattr(chapter, "title", "") or "",
+                "progress_pct": int(100 * (_ch_idx - 1) / max(_chapters_total, 1)),
+            })
             # Resolve media files for this chapter
             try:
                 media_path, audio_path, duration, asset_type = _resolve_chapter_media(
@@ -480,19 +504,15 @@ def render_video(
             total_size += segment_result.size_bytes
 
             # Notify progress at completion of each chapter
-            if progress_callback is not None:
-                try:
-                    progress_callback({
-                        "stage": "segment_done",
-                        "current": _ch_idx,
-                        "total": _chapters_total,
-                        "chapter_id": chapter.chapter_id,
-                        "chapter_title": getattr(chapter, "title", "") or "",
-                        "size_bytes": segment_result.size_bytes,
-                        "progress_pct": int(100 * _ch_idx / max(_chapters_total, 1)),
-                    })
-                except Exception:
-                    pass
+            _emit({
+                "stage": "segment_done",
+                "current": _ch_idx,
+                "total": _chapters_total,
+                "chapter_id": chapter.chapter_id,
+                "chapter_title": getattr(chapter, "title", "") or "",
+                "size_bytes": segment_result.size_bytes,
+                "progress_pct": int(100 * _ch_idx / max(_chapters_total, 1)),
+            })
 
         # Concatenate segments
         if not segment_entries:
@@ -552,18 +572,14 @@ def render_video(
 
         logger.info("Concatenating %d segments into draft video", len(segment_abs_paths))
 
-        if progress_callback is not None:
-            try:
-                progress_callback({
-                    "stage": "concat",
-                    "current": _chapters_total,
-                    "total": _chapters_total,
-                    "chapter_id": "concat",
-                    "chapter_title": f"Concat {len(segment_abs_paths)} segments",
-                    "progress_pct": 99,
-                })
-            except Exception:
-                pass
+        _emit({
+            "stage": "concat",
+            "current": _chapters_total,
+            "total": _chapters_total,
+            "chapter_id": "concat",
+            "chapter_title": f"Concat {len(segment_abs_paths)} segments",
+            "progress_pct": 99,
+        })
 
         concat_result = concatenate_segments(
             segment_paths=segment_abs_paths,
@@ -653,6 +669,15 @@ def render_video(
             total_size,
         )
 
+        _emit({
+            "stage": "done",
+            "current": _chapters_total,
+            "total": _chapters_total,
+            "chapter_id": "done",
+            "chapter_title": "Render complete",
+            "progress_pct": 100,
+        })
+
         return RenderResult(
             episode_id=episode_id,
             render_path=render_dir,
@@ -671,6 +696,10 @@ def render_video(
         pipeline_run.error_message = str(e)
         episode.error_message = str(e)
         session.commit()
+        _write_render_progress(
+            render_dir,
+            {"stage": "failed", "error": str(e), "chapter_title": "Render failed"},
+        )
         logger.error("Render failed for %s: %s", episode_id, e)
         raise
 

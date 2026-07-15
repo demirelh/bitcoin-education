@@ -553,3 +553,61 @@ class TestBatchDurationQueryEfficiency:
             assert transcribe_stage["duration_seconds"] is not None
             assert transcribe_stage["duration_seconds"] >= 44.0
             assert transcribe_stage["cost_usd"] == pytest.approx(0.02, abs=0.001)
+
+
+# ---------------------------------------------------------------------------
+# Render progress endpoint + renderer progress file
+# ---------------------------------------------------------------------------
+
+
+class TestRenderProgressEndpoint:
+    def test_idle_when_no_progress_file(self, client):
+        resp = client.get("/api/episodes/ep_new/render/progress")
+        assert resp.status_code == 200
+        assert resp.get_json() == {"stage": "idle"}
+
+    def test_unknown_episode_returns_404(self, client):
+        resp = client.get("/api/episodes/does_not_exist/render/progress")
+        assert resp.status_code == 404
+
+    def test_returns_written_progress(self, client, test_settings):
+        import json
+        from pathlib import Path
+
+        render_dir = Path(test_settings.outputs_dir) / "ep_new" / "render"
+        render_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "stage": "segment_done",
+            "current": 3,
+            "total": 8,
+            "chapter_title": "Iran-USA",
+            "progress_pct": 37,
+        }
+        (render_dir / "progress.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        resp = client.get("/api/episodes/ep_new/render/progress")
+        assert resp.status_code == 200
+        body = resp.get_json()
+        assert body["stage"] == "segment_done"
+        assert body["current"] == 3
+        assert body["total"] == 8
+        assert body["progress_pct"] == 37
+
+
+class TestWriteRenderProgress:
+    def test_writes_and_overwrites_atomically(self, tmp_path):
+        import json
+
+        from btcedu.core.renderer import _write_render_progress
+
+        render_dir = tmp_path / "render"
+        _write_render_progress(render_dir, {"stage": "segment_start", "progress_pct": 0})
+        data = json.loads((render_dir / "progress.json").read_text())
+        assert data["stage"] == "segment_start"
+        assert "updated_at" in data
+        assert not (render_dir / "progress.json.tmp").exists()
+
+        _write_render_progress(render_dir, {"stage": "done", "progress_pct": 100})
+        data = json.loads((render_dir / "progress.json").read_text())
+        assert data["stage"] == "done"
+        assert data["progress_pct"] == 100

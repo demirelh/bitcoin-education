@@ -508,6 +508,45 @@ body {
     z-index: 1;
 }
 
+/* Live render progress (stage detail) */
+.render-progress {
+    margin: 10px 0 16px;
+    padding: 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+}
+.render-progress-done {
+    border-color: var(--green, #3fb950);
+}
+.render-progress-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+.render-progress-track {
+    background: var(--border);
+    border-radius: 4px;
+    height: 14px;
+    overflow: hidden;
+}
+.render-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), #4a9eff);
+    transition: width 0.4s ease;
+}
+.render-progress-fill.render-bar-failed {
+    background: var(--red, #f85149);
+}
+.render-progress-meta {
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
 /* Channel selector */
 .channel-selector {
     display: flex;

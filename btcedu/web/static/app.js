@@ -67,6 +67,7 @@
   }
   const GET = (p) => api("GET", p);
   const POST = (p, b) => api("POST", p, b);
+  const PUT = (p, b) => api("PUT", p, b);
 
   // ── Toast ────────────────────────────────────────────────────
   function toast(msg, ok = true) {
@@ -2183,6 +2184,37 @@
           <div class="review-script-list">${chaptersHtml}</div>
         </div>`;
       }
+
+      // Proposed YouTube metadata (Review Gate 3) — editable before approval.
+      if (data.youtube_metadata) {
+        const meta = data.youtube_metadata;
+        const tagsStr = Array.isArray(meta.tags) ? meta.tags.join(", ") : "";
+        const src = meta.source === "edited" ? "düzenlendi" : "otomatik";
+        html += `<div class="review-metadata-panel" data-review-id="${data.id}">
+          <strong>YouTube Metadata (öneri · ${src})</strong>
+          <div class="review-meta-field">
+            <label>Başlık / Title <span class="review-meta-count" id="meta-title-count"></span></label>
+            <input type="text" id="meta-title" maxlength="100" value="${esc(meta.title || "")}">
+          </div>
+          <div class="review-meta-field">
+            <label>Açıklama / Description</label>
+            <textarea id="meta-description" rows="8">${esc(meta.description || "")}</textarea>
+          </div>
+          <div class="review-meta-field">
+            <label>Etiketler / Tags (virgülle ayırın)</label>
+            <input type="text" id="meta-tags" value="${esc(tagsStr)}">
+          </div>
+          <div class="review-meta-field review-meta-inline">
+            <span>Kategori: <code>${esc(meta.category_id || "")}</code></span>
+            <span>Gizlilik: <code>${esc(meta.privacy_status || "")}</code></span>
+            <span>Dil: <code>${esc(meta.default_language || "")}</code></span>
+          </div>
+          <div class="review-meta-actions">
+            <button type="button" class="btn btn-sm" onclick="saveReviewMetadata(${data.id})">Metadata kaydet</button>
+            <span id="meta-save-status" class="review-meta-status"></span>
+          </div>
+        </div>`;
+      }
     }
 
     // TTS audio preview for tts-stage reviews
@@ -2259,6 +2291,29 @@
     detail.innerHTML = html;
   }
   window.selectReview = selectReview;
+
+  async function saveReviewMetadata(reviewId) {
+    const titleEl = document.getElementById("meta-title");
+    const descEl = document.getElementById("meta-description");
+    const tagsEl = document.getElementById("meta-tags");
+    const statusEl = document.getElementById("meta-save-status");
+    if (!titleEl) return;
+    if (statusEl) statusEl.textContent = "Kaydediliyor…";
+    const body = {
+      title: titleEl.value,
+      description: descEl ? descEl.value : "",
+      tags: tagsEl ? tagsEl.value : "",
+    };
+    const res = await PUT(`/reviews/${reviewId}/metadata`, body);
+    if (res.error) {
+      if (statusEl) statusEl.textContent = "Hata: " + res.error;
+      toast("Metadata kaydedilemedi: " + res.error, false);
+    } else {
+      if (statusEl) statusEl.textContent = "Kaydedildi ✓";
+      toast("Metadata kaydedildi", true);
+    }
+  }
+  window.saveReviewMetadata = saveReviewMetadata;
 
   function renderDiffViewer(diff, originalText, correctedText, itemDecisions, isActionable, reviewId) {
     if (diff.error) {

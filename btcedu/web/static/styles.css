@@ -1523,6 +1523,57 @@ body {
     border-radius: 6px;
     margin: 12px 0;
 }
+.review-metadata-panel {
+    padding: 12px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 12px 0;
+}
+.review-meta-field {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.review-meta-field label {
+    font-size: 12px;
+    color: var(--text-dim);
+    font-weight: 600;
+}
+.review-meta-field input,
+.review-meta-field textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 6px 8px;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 13px;
+}
+.review-meta-field textarea {
+    resize: vertical;
+    white-space: pre-wrap;
+}
+.review-meta-inline {
+    flex-direction: row;
+    gap: 16px;
+    flex-wrap: wrap;
+    font-size: 12px;
+    color: var(--text-dim);
+}
+.review-meta-actions {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+.review-meta-status {
+    font-size: 12px;
+    color: var(--text-dim);
+}
 .review-script-list {
     margin-top: 8px;
     max-height: 320px;

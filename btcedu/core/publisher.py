@@ -246,6 +246,149 @@ def _load_tts_durations(episode_id: str, settings: Settings) -> dict[str, float]
         return {}
 
 
+def _suggest_news_title(episode: Episode, chapters_list: list[dict]) -> str:
+    """Build a topic-based YouTube title for a news episode.
+
+    Combines the broadcast date (parsed from the episode title) with the
+    most substantive chapter topics, e.g.
+    "tagesschau 11.07.2026 — İran-ABD, Ukrayna, Srebrenica | Türkçe".
+    Returns an empty string if no usable topics are found.
+    """
+    import re
+
+    date_match = re.search(r"\b(\d{1,2}\.\d{1,2}\.\d{4})\b", episode.title or "")
+    date_str = date_match.group(1) if date_match else ""
+
+    # Chapter titles to skip: intro/title cards and weather boilerplate.
+    _skip = ("tagesschau", "hava durumu", "hava tahmini", "giriş", "wetter", "intro")
+
+    topics: list[str] = []
+    for ch in sorted(chapters_list, key=lambda c: c.get("order", 0)):
+        ch_title = (ch.get("title") or "").strip()
+        if not ch_title:
+            continue
+        low = ch_title.lower()
+        if any(s in low for s in _skip):
+            continue
+        topics.append(ch_title)
+        if len(topics) >= 3:
+            break
+
+    if not topics:
+        return ""
+
+    base = f"tagesschau {date_str}".strip()
+    topic_str = ", ".join(topics)
+    title = f"{base} — {topic_str} | Türkçe"
+    return title[:100]
+
+
+def _metadata_path(episode_id: str, settings: Settings) -> Path:
+    return Path(settings.outputs_dir) / episode_id / "render" / "youtube_metadata.json"
+
+
+def load_persisted_metadata(episode_id: str, settings: Settings) -> dict | None:
+    """Load a previously generated/reviewed youtube_metadata.json, if present."""
+    path = _metadata_path(episode_id, settings)
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict) or not data.get("title"):
+        return None
+    return data
+
+
+def generate_metadata_suggestion(
+    session: Session,
+    episode_id: str,
+    settings: Settings,
+    force: bool = False,
+) -> dict:
+    """Generate and persist proposed YouTube metadata for pre-publish review.
+
+    Writes ``render/youtube_metadata.json`` with title, description, tags and
+    publish settings (category/privacy/language) taken from the profile. If a
+    file already exists it is returned unchanged unless ``force`` is set, so
+    reviewer edits are never overwritten.
+
+    Returns the metadata dict.
+    """
+    if not force:
+        existing = load_persisted_metadata(episode_id, settings)
+        if existing is not None:
+            return existing
+
+    episode = session.query(Episode).filter_by(episode_id=episode_id).first()
+    if episode is None:
+        raise ValueError(f"Episode not found: {episode_id}")
+
+    title, description, tags = _build_youtube_metadata(episode, settings, session=session)
+
+    # Pull publish defaults from the profile's youtube config.
+    yt_config: dict = {}
+    try:
+        from btcedu.profiles import get_registry as _get_profile_registry
+
+        profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+        profile = _get_profile_registry(settings).get(profile_name)
+        yt_config = profile.youtube if profile else {}
+    except Exception:
+        yt_config = {}
+
+    data = {
+        "title": title,
+        "description": description,
+        "tags": tags,
+        "category_id": str(yt_config.get("category_id", "22")),
+        "privacy_status": yt_config.get("default_privacy", "unlisted"),
+        "default_language": yt_config.get("default_language", "tr"),
+        "generated_at": _utcnow().isoformat(),
+        "source": "auto",
+    }
+
+    path = _metadata_path(episode_id, settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return data
+
+
+def save_metadata_edits(
+    episode_id: str,
+    settings: Settings,
+    updates: dict,
+) -> dict:
+    """Merge reviewer edits into the persisted youtube_metadata.json.
+
+    Accepts ``title``, ``description`` and ``tags`` keys. Marks the source as
+    ``edited`` so downstream knows a human adjusted the proposal.
+    """
+    path = _metadata_path(episode_id, settings)
+    current = load_persisted_metadata(episode_id, settings) or {}
+
+    if "title" in updates and updates["title"] is not None:
+        current["title"] = str(updates["title"])[:100]
+    if "description" in updates and updates["description"] is not None:
+        current["description"] = str(updates["description"])[:5000]
+    if "tags" in updates and updates["tags"] is not None:
+        tags = updates["tags"]
+        if isinstance(tags, str):
+            tags = [t.strip() for t in tags.split(",") if t.strip()]
+        current["tags"] = [str(t) for t in tags]
+
+    if not current.get("title"):
+        raise ValueError("Metadata must have a non-empty title")
+
+    current["source"] = "edited"
+    current["edited_at"] = _utcnow().isoformat()
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+    return current
+
+
 def _build_youtube_metadata(
     episode: Episode,
     settings: Settings,
@@ -288,6 +431,12 @@ def _build_youtube_metadata(
             pass
 
     # Truncate title to YouTube limit
+    # For news content, prefer a topic-based title over the generic
+    # "tagesschau … — Türkçe" placeholder so viewers see the actual stories.
+    if _profile_domain == "news":
+        news_title = _suggest_news_title(episode, chapters_list)
+        if news_title:
+            title = news_title
     title = title[:100]
 
     # Load TTS durations for accurate timestamps
@@ -457,8 +606,15 @@ def publish_video(
         or getattr(settings, "youtube_default_privacy", "unlisted")
     )
 
-    # Build metadata (pass session for profile-aware tags/category)
-    title, description, tags = _build_youtube_metadata(episode, settings, session=session)
+    # Build metadata (pass session for profile-aware tags/category).
+    # Prefer the metadata reviewed at Gate 3 so what was approved is published.
+    _persisted = load_persisted_metadata(episode_id, settings)
+    if _persisted is not None:
+        title = _persisted["title"]
+        description = _persisted.get("description", "")
+        tags = _persisted.get("tags", [])
+    else:
+        title, description, tags = _build_youtube_metadata(episode, settings, session=session)
 
     # Run all 4 safety checks
     checks = _run_all_safety_checks(session, episode, settings, title, description, tags)

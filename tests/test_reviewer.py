@@ -584,6 +584,10 @@ def test_get_review_detail_video_fields(db_session, tmp_path):
     assert detail["render_manifest"]["total_duration_seconds"] == 120.5
     assert detail["chapter_script"] is not None
     assert detail["chapter_script"][0]["text"] == "Hello world"
+    # Gate 3: proposed YouTube metadata is generated and returned
+    assert detail["youtube_metadata"] is not None
+    assert detail["youtube_metadata"]["title"]
+    assert detail["youtube_metadata"]["tags"]
 
 
 def test_get_review_detail_video_fields_missing_files(db_session, tmp_path):

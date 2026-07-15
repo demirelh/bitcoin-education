@@ -384,6 +384,38 @@ class TestPublishVideo:
         db_session.refresh(approved_episode)
         assert approved_episode.status == EpisodeStatus.APPROVED
 
+    def test_prefers_persisted_metadata(
+        self, db_session, approved_episode, approved_review_task, settings, tmp_path
+    ):
+        settings.dry_run = True
+        settings.outputs_dir = str(tmp_path / "outputs")
+        _make_chapters_json(tmp_path, approved_episode.episode_id)
+        # Persist reviewer-approved metadata with a distinctive title.
+        meta_path = (
+            tmp_path / "outputs" / approved_episode.episode_id / "render" / "youtube_metadata.json"
+        )
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "title": "REVIEWED TITLE 123",
+                    "description": "reviewed description",
+                    "tags": ["reviewed"],
+                    "source": "edited",
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        publish_video(db_session, approved_episode.episode_id, settings)
+
+        prov_path = (
+            tmp_path / "outputs" / approved_episode.episode_id / "provenance" / "publish.json"
+        )
+        data = json.loads(prov_path.read_text())
+        assert data["metadata_snapshot"]["title"] == "REVIEWED TITLE 123"
+        assert data["metadata_snapshot"]["tags"] == ["reviewed"]
+
     def test_safety_check_failure_raises(self, db_session, approved_episode, settings, tmp_path):
         """No review task → safety check should fail."""
         settings.outputs_dir = str(tmp_path / "outputs")
@@ -447,3 +479,169 @@ class TestGetLatestPublishJob:
         assert job is not None
         # Latest by created_at (job2 inserted after job1)
         assert job.status == "published"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Gate-3 YouTube metadata suggestion / persistence / editing
+# ---------------------------------------------------------------------------
+
+
+def _make_news_chapters_json(tmp_path, episode_id):
+    chapters_dir = tmp_path / "outputs" / episode_id
+    chapters_dir.mkdir(parents=True, exist_ok=True)
+
+    def _ch(cid, title, order, text, dur):
+        return {
+            "chapter_id": cid,
+            "title": title,
+            "order": order,
+            "narration": {"text": text, "estimated_duration_seconds": dur},
+        }
+
+    data = {
+        "episode_id": episode_id,
+        "title": "tagesschau 20:00 Uhr — Türkçe",
+        "chapters": [
+            _ch("ch01", "tagesschau", 1, "Günün haberleri.", 10),
+            _ch("ch02", "İran-ABD Görüşmeleri", 2, "Oman'da görüşmeler.", 40),
+            _ch("ch03", "Ukrayna'ya Saldırılar", 3, "Kramatorsk saldırı altında.", 40),
+            _ch("ch04", "Srebrenica Anması", 4, "Anma töreni.", 40),
+            _ch("ch10", "Hava Durumu", 10, "Yarın için tahmin.", 20),
+        ],
+    }
+    (chapters_dir / "chapters.json").write_text(
+        json.dumps(data, ensure_ascii=False), encoding="utf-8"
+    )
+    return data
+
+
+@pytest.fixture
+def news_episode(db_session):
+    ep = Episode(
+        episode_id="ep_news_001",
+        source="tagesschau_rss",
+        title="tagesschau 20:00 Uhr, 11.07.2026",
+        url="https://tagesschau.de/x",
+        status=EpisodeStatus.RENDERED,
+        pipeline_version=2,
+        content_profile="tagesschau_tr",
+    )
+    db_session.add(ep)
+    db_session.commit()
+    return ep
+
+
+class TestSuggestNewsTitle:
+    def test_builds_topic_title_with_date(self, news_episode, tmp_path):
+        data = _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import _suggest_news_title
+
+        title = _suggest_news_title(news_episode, data["chapters"])
+        assert "11.07.2026" in title
+        assert "İran-ABD Görüşmeleri" in title
+        assert "Türkçe" in title
+        # Generic intro/weather chapters are skipped
+        assert "tagesschau" in title  # date prefix
+        assert "Hava Durumu" not in title
+        assert len(title) <= 100
+
+    def test_returns_empty_without_topics(self, news_episode):
+        from btcedu.core.publisher import _suggest_news_title
+
+        assert _suggest_news_title(news_episode, []) == ""
+
+
+class TestGenerateMetadataSuggestion:
+    def test_persists_metadata_file(self, db_session, news_episode, settings, tmp_path):
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import generate_metadata_suggestion
+
+        data = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        assert data["title"]
+        assert data["description"]
+        assert data["tags"]
+        assert data["source"] == "auto"
+        path = (
+            Path(settings.outputs_dir)
+            / news_episode.episode_id
+            / "render"
+            / "youtube_metadata.json"
+        )
+        assert path.exists()
+        on_disk = json.loads(path.read_text(encoding="utf-8"))
+        assert on_disk["title"] == data["title"]
+
+    def test_pulls_profile_publish_settings(self, db_session, news_episode, settings, tmp_path):
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import generate_metadata_suggestion
+
+        data = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        assert data["category_id"] == "25"
+        assert data["privacy_status"] == "unlisted"
+        assert data["default_language"] == "tr"
+
+    def test_does_not_overwrite_existing_without_force(
+        self, db_session, news_episode, settings, tmp_path
+    ):
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import generate_metadata_suggestion, save_metadata_edits
+
+        generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        save_metadata_edits(
+            news_episode.episode_id, settings, {"title": "Elle düzenlenmiş başlık"}
+        )
+        again = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        assert again["title"] == "Elle düzenlenmiş başlık"
+        assert again["source"] == "edited"
+
+    def test_force_regenerates(self, db_session, news_episode, settings, tmp_path):
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import generate_metadata_suggestion, save_metadata_edits
+
+        generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        save_metadata_edits(news_episode.episode_id, settings, {"title": "X"})
+        regen = generate_metadata_suggestion(
+            db_session, news_episode.episode_id, settings, force=True
+        )
+        assert regen["source"] == "auto"
+        assert regen["title"] != "X"
+
+
+class TestSaveMetadataEdits:
+    def test_merges_edits(self, db_session, news_episode, settings, tmp_path):
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import generate_metadata_suggestion, save_metadata_edits
+
+        generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        updated = save_metadata_edits(
+            news_episode.episode_id,
+            settings,
+            {"title": "Yeni Başlık", "tags": "a, b, c"},
+        )
+        assert updated["title"] == "Yeni Başlık"
+        assert updated["tags"] == ["a", "b", "c"]
+        assert updated["source"] == "edited"
+
+    def test_rejects_empty_title(self, db_session, news_episode, settings, tmp_path):
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import generate_metadata_suggestion, save_metadata_edits
+
+        generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        with pytest.raises(ValueError):
+            save_metadata_edits(news_episode.episode_id, settings, {"title": ""})
+
+
+class TestLoadPersistedMetadata:
+    def test_returns_none_when_absent(self, settings):
+        from btcedu.core.publisher import load_persisted_metadata
+
+        assert load_persisted_metadata("nope", settings) is None
+
+    def test_roundtrip(self, db_session, news_episode, settings, tmp_path):
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import generate_metadata_suggestion, load_persisted_metadata
+
+        gen = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        loaded = load_persisted_metadata(news_episode.episode_id, settings)
+        assert loaded is not None
+        assert loaded["title"] == gen["title"]

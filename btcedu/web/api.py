@@ -2007,6 +2007,32 @@ def get_review_detail(review_id: int):
         session.close()
 
 
+@api_bp.route("/reviews/<int:review_id>/metadata", methods=["PUT"])
+def update_review_metadata(review_id: int):
+    """Save reviewer edits to the proposed YouTube metadata for a render review."""
+    session = _get_session()
+    try:
+        from btcedu.core.publisher import save_metadata_edits
+        from btcedu.models.review import ReviewTask
+
+        task = session.query(ReviewTask).filter_by(id=review_id).first()
+        if task is None:
+            return jsonify({"error": f"Review not found: {review_id}"}), 404
+        if task.stage != "render":
+            return jsonify({"error": "Metadata editing only available for video reviews"}), 400
+
+        body = request.get_json(silent=True) or {}
+        settings = _get_settings()
+        try:
+            updated = save_metadata_edits(task.episode_id, settings, body)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        return jsonify({"success": True, "youtube_metadata": updated})
+    finally:
+        session.close()
+
+
 @api_bp.route("/reviews/batch-approve", methods=["POST"])
 def batch_approve_reviews():
     """Approve multiple review tasks in one request."""

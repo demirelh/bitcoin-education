@@ -825,6 +825,17 @@ def _run_stage(
 
             # Check if already approved
             auto_approve, auto_publish = _profile_pipeline_flags(settings, episode)
+
+            # Generate proposed YouTube metadata (title/description/tags) so it
+            # can be reviewed at this gate and reused at publish time. Never let
+            # a metadata failure block the review gate.
+            try:
+                from btcedu.core.publisher import generate_metadata_suggestion
+
+                generate_metadata_suggestion(session, episode.episode_id, settings)
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("Gate 3 metadata suggestion failed: %s", exc)
+
             if auto_approve or has_approved_review(session, episode.episode_id, "render"):
                 if auto_approve:
                     draft = (
@@ -861,12 +872,19 @@ def _run_stage(
                 Path(settings.outputs_dir) / episode.episode_id / "render" / "render_manifest.json"
             )
             chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
+            metadata_path = (
+                Path(settings.outputs_dir) / episode.episode_id / "render" / "youtube_metadata.json"
+            )
+
+            _artifacts = [str(draft_path), str(chapters_path)]
+            if metadata_path.exists():
+                _artifacts.append(str(metadata_path))
 
             create_review_task(
                 session,
                 episode.episode_id,
                 stage="render",
-                artifact_paths=[str(draft_path), str(chapters_path)],
+                artifact_paths=_artifacts,
                 diff_path=str(manifest_path) if manifest_path.exists() else None,
             )
             elapsed = time.monotonic() - t0

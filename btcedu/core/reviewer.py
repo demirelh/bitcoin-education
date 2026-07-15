@@ -572,6 +572,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
     video_url = None
     render_manifest = None
     chapter_script = None
+    youtube_metadata = None
     if task.stage == "render" and episode:
         # Check if draft.mp4 exists
         settings = _get_runtime_settings()
@@ -605,6 +606,22 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
                 ]
             except (json.JSONDecodeError, OSError, TypeError):
                 chapter_script = None
+
+        # Proposed YouTube metadata (title/description/tags) for pre-publish
+        # review. Generate on demand if not yet persisted.
+        try:
+            from btcedu.core.publisher import (
+                generate_metadata_suggestion,
+                load_persisted_metadata,
+            )
+
+            youtube_metadata = load_persisted_metadata(episode.episode_id, settings)
+            if youtube_metadata is None:
+                youtube_metadata = generate_metadata_suggestion(
+                    session, episode.episode_id, settings
+                )
+        except Exception:
+            youtube_metadata = None
 
     # Load per-item decisions (Phase 5; also for translation review)
     item_decisions_map: dict = {}
@@ -660,6 +677,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         "video_url": video_url,  # Sprint 10: for render review
         "render_manifest": render_manifest,  # Sprint 10: for render review
         "chapter_script": chapter_script,  # Sprint 10: for render review
+        "youtube_metadata": youtube_metadata,  # Gate 3: proposed YouTube metadata
         "review_checklist": review_checklist,  # Phase 3: news editorial checklist
         "review_mode": review_mode,  # Phase 3: "bilingual" for translation reviews
         "stories": bilingual_stories,  # Phase 3: bilingual story pairs

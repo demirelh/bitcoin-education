@@ -191,6 +191,81 @@ class TestRunEpisodePipeline:
 # ── RunPending ───────────────────────────────────────────────────
 
 
+class TestEnsureStagePipelineRun:
+    """Gap-fill PipelineRun timing for stages that don't record their own."""
+
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_fills_timing_for_download(self, mock_stage, db_session, new_episode, tmp_path):
+        """download has no PipelineRun of its own → gap-fill creates one."""
+        from btcedu.models.episode import PipelineRun, PipelineStage, RunStatus
+
+        mock_stage.return_value = StageResult("download", "success", 12.5, detail="ok")
+        settings = _make_settings(tmp_path)
+
+        run_episode_pipeline(db_session, new_episode, settings)
+
+        runs = (
+            db_session.query(PipelineRun)
+            .filter(
+                PipelineRun.episode_id == new_episode.id,
+                PipelineRun.stage == PipelineStage.DOWNLOAD,
+                PipelineRun.status == RunStatus.SUCCESS,
+            )
+            .all()
+        )
+        assert len(runs) == 1
+        dur = (runs[0].completed_at - runs[0].started_at).total_seconds()
+        assert 12.0 <= dur <= 13.0
+        assert runs[0].git_commit is not None
+
+    def test_does_not_duplicate_existing_run(self, db_session, new_episode, tmp_path):
+        """If the stage already recorded its own run, no duplicate is added."""
+        from btcedu.core.pipeline import _ensure_stage_pipeline_run
+        from btcedu.models.episode import PipelineRun, PipelineStage, RunStatus
+
+        own = PipelineRun(
+            episode_id=new_episode.id,
+            stage=PipelineStage.TRANSLATE,
+            status=RunStatus.SUCCESS,
+            started_at=datetime(2025, 6, 1, 10, 0, 0, tzinfo=UTC),
+            completed_at=datetime(2025, 6, 1, 10, 5, 0, tzinfo=UTC),
+            estimated_cost_usd=0.42,
+        )
+        db_session.add(own)
+        db_session.commit()
+
+        # since = well before the existing run's completed_at → detected as
+        # the stage's own record, so no duplicate is added.
+        since = datetime(2025, 6, 1, 9, 0, 0, tzinfo=UTC)
+        _ensure_stage_pipeline_run(db_session, new_episode, "translate", 300.0, since)
+
+        runs = (
+            db_session.query(PipelineRun)
+            .filter(
+                PipelineRun.episode_id == new_episode.id,
+                PipelineRun.stage == PipelineStage.TRANSLATE,
+            )
+            .all()
+        )
+        assert len(runs) == 1
+        assert runs[0].estimated_cost_usd == 0.42
+
+    def test_ignores_review_gates(self, db_session, new_episode):
+        """Review gates have no PipelineStage → no record is created."""
+        from btcedu.core.pipeline import _ensure_stage_pipeline_run
+        from btcedu.core.pipeline import _utcnow as _pu
+        from btcedu.models.episode import PipelineRun
+
+        _ensure_stage_pipeline_run(db_session, new_episode, "review_gate_1", 0.1, _pu())
+
+        assert (
+            db_session.query(PipelineRun)
+            .filter(PipelineRun.episode_id == new_episode.id)
+            .count()
+            == 0
+        )
+
+
 class TestRunPending:
     @patch("btcedu.core.pipeline.run_episode_pipeline")
     def test_processes_in_published_at_order(self, mock_run, db_session, tmp_path):

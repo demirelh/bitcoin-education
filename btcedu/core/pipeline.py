@@ -5,13 +5,19 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
-from btcedu.models.episode import Episode, EpisodeStatus
+from btcedu.models.episode import (
+    Episode,
+    EpisodeStatus,
+    PipelineRun,
+    PipelineStage,
+    RunStatus,
+)
 
 # Lazy import to avoid circular imports at module level:
 # from btcedu.core.reviewer import has_pending_review
@@ -232,6 +238,82 @@ def resolve_pipeline_plan(
             plan.append(StagePlan(stage_name, "skip", "not ready"))
 
     return plan
+
+
+# Stages that own a genuine PipelineStage timing record. Review gates are
+# excluded (near-instant, no timing value).
+_STAGE_NAME_TO_PIPELINE_STAGE = {
+    "download": PipelineStage.DOWNLOAD,
+    "transcribe": PipelineStage.TRANSCRIBE,
+    "correct": PipelineStage.CORRECT,
+    "segment": PipelineStage.SEGMENT,
+    "translate": PipelineStage.TRANSLATE,
+    "adapt": PipelineStage.ADAPT,
+    "chapterize": PipelineStage.CHAPTERIZE,
+    "frameextract": PipelineStage.FRAMEEXTRACT,
+    "imagegen": PipelineStage.IMAGEGEN,
+    "tts": PipelineStage.TTS,
+    "anchorgen": PipelineStage.ANCHORGEN,
+    "render": PipelineStage.RENDER,
+    "publish": PipelineStage.PUBLISH,
+}
+
+
+def _ensure_stage_pipeline_run(
+    session: Session,
+    episode: Episode,
+    stage_name: str,
+    duration_seconds: float,
+    since: datetime,
+) -> None:
+    """Record a PipelineRun for stages that don't create one themselves.
+
+    Some stages (download, transcribe) never write a PipelineRun, and others
+    can return early on skip/idempotency paths before writing one. Without a
+    successful PipelineRun record, the dashboard cannot show a stage duration,
+    which is why some completed stages appeared with no time. This fills the
+    gap using the elapsed time already measured by ``_run_stage`` — but only
+    when the stage did not already record its own run during this invocation.
+
+    Args:
+        since: Timestamp captured just before the stage started. If a SUCCESS
+            run for this stage completed at/after this moment, the stage
+            already recorded its own timing and no gap-fill row is added.
+    """
+    ps = _STAGE_NAME_TO_PIPELINE_STAGE.get(stage_name)
+    if ps is None:
+        return
+
+    # If the stage recorded its own SUCCESS run during this invocation, don't
+    # duplicate it.
+    existing = (
+        session.query(PipelineRun)
+        .filter(
+            PipelineRun.episode_id == episode.id,
+            PipelineRun.stage == ps,
+            PipelineRun.status == RunStatus.SUCCESS,
+            PipelineRun.completed_at >= since,
+        )
+        .first()
+    )
+    if existing is not None:
+        return
+
+    now = _utcnow()
+    started = now - timedelta(seconds=max(duration_seconds, 0.0))
+    from btcedu.version import get_git_commit
+
+    session.add(
+        PipelineRun(
+            episode_id=episode.id,
+            stage=ps,
+            status=RunStatus.SUCCESS,
+            started_at=started,
+            completed_at=now,
+            git_commit=get_git_commit(),
+        )
+    )
+    session.commit()
 
 
 def _run_stage(
@@ -952,8 +1034,14 @@ def run_episode_pipeline(
         logger.info("  Stage: %s", stage_name)
         if stage_callback:
             stage_callback(stage_name)
+        stage_started = _utcnow()
         result = _run_stage(session, episode, settings, stage_name, force=force)
         report.stages.append(result)
+
+        if result.status == "success":
+            _ensure_stage_pipeline_run(
+                session, episode, stage_name, result.duration_seconds, stage_started
+            )
 
         if result.status == "failed":
             logger.error("  Stage %s failed: %s", stage_name, result.error)

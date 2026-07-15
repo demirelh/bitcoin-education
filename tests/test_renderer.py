@@ -513,6 +513,37 @@ def test_render_video_dry_run(db_session, settings, tmp_path):
     assert episode.status == EpisodeStatus.RENDERED
 
 
+def test_render_video_clears_stale_marker(db_session, settings, tmp_path):
+    """A successful render must remove any leftover .stale marker."""
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.dry_run = True
+
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    _create_test_chapters_json("ep001", Path(settings.outputs_dir))
+    _create_test_image_manifest("ep001", Path(settings.outputs_dir))
+    _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
+
+    # Simulate cascade invalidation having written a stale marker.
+    render_dir = Path(settings.outputs_dir) / "ep001" / "render"
+    render_dir.mkdir(parents=True, exist_ok=True)
+    stale_marker = render_dir / "draft.mp4.stale"
+    stale_marker.write_text("stale")
+
+    result = render_video(db_session, "ep001", settings)
+
+    assert not result.skipped
+    assert not stale_marker.exists()
+
+
 def test_render_video_idempotent(db_session, settings, tmp_path):
     """Test render idempotency (skip if current)."""
     settings.outputs_dir = str(tmp_path / "outputs")

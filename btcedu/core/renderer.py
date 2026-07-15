@@ -590,6 +590,14 @@ def render_video(
 
         total_size += concat_result.size_bytes
 
+        # Draft is freshly rendered: clear any .stale marker from cascade invalidation
+        stale_marker = draft_path.with_suffix(".mp4.stale")
+        if stale_marker.exists():
+            try:
+                stale_marker.unlink()
+            except OSError as e:
+                logger.warning("Could not remove stale marker %s: %s", stale_marker, e)
+
         # Write render manifest
         manifest_data = {
             "episode_id": episode_id,

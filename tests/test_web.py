@@ -219,6 +219,101 @@ class TestEpisodeEndpoints:
         assert data["cost"]["output_tokens"] == 2000
 
 
+class TestWorkflowFiles:
+    """Stage-derived, profile-aware workflow dots for the episode list."""
+
+    def _settings(self, tmp_path):
+        return Settings(
+            anthropic_api_key="test-key",
+            database_url="sqlite:///:memory:",
+            raw_data_dir=str(tmp_path / "raw"),
+            transcripts_dir=str(tmp_path / "transcripts"),
+            outputs_dir=str(tmp_path / "outputs"),
+            reports_dir=str(tmp_path / "reports"),
+            pipeline_version=2,
+            profiles_dir="btcedu/profiles",
+        )
+
+    def _news_episode(self):
+        return Episode(
+            episode_id="ep_wf_news",
+            source="youtube_rss",
+            title="tagesschau 20:00 Uhr",
+            url="https://youtube.com/watch?v=wf",
+            status=EpisodeStatus.APPROVED,
+            pipeline_version=2,
+            content_profile="tagesschau_tr",
+        )
+
+    def test_only_relevant_keys_and_ordered(self, tmp_path):
+        from btcedu.web.api import _workflow_files
+
+        s = self._settings(tmp_path)
+        wf = _workflow_files(self._news_episode(), s)
+        assert wf is not None
+        keys = [f["key"] for f in wf]
+        # News workflow: segment/stories + translation, no legacy v1 dots
+        assert keys == [
+            "audio",
+            "transcript_raw",
+            "transcript_clean",
+            "stories",
+            "translation",
+            "script_adapted",
+            "chapters",
+            "images",
+            "tts",
+            "video",
+        ]
+        assert "chunks" not in keys
+        assert "script" not in keys
+
+    def test_all_present_when_files_exist(self, tmp_path):
+        from btcedu.web.api import _workflow_files
+
+        s = self._settings(tmp_path)
+        eid = "ep_wf_news"
+        raw = Path(s.raw_data_dir) / eid
+        trans = Path(s.transcripts_dir) / eid
+        out = Path(s.outputs_dir) / eid
+        for d in (raw, trans, out, out / "images", out / "tts", out / "render"):
+            d.mkdir(parents=True, exist_ok=True)
+        (raw / "audio.mp3").write_text("x")
+        (trans / "transcript.de.txt").write_text("x")
+        (trans / "transcript.clean.de.txt").write_text("x")
+        (out / "stories.json").write_text("{}")
+        (out / "stories_translated.json").write_text("{}")
+        (out / "script.adapted.tr.md").write_text("x")
+        (out / "chapters.json").write_text("{}")
+        (out / "images" / "manifest.json").write_text("{}")
+        (out / "tts" / "ch01.mp3").write_text("x")
+        (out / "render" / "draft.mp4").write_text("x")
+
+        wf = _workflow_files(self._news_episode(), s)
+        assert wf is not None
+        assert all(f["present"] for f in wf), [f for f in wf if not f["present"]]
+
+    def test_partial_completion_shows_remaining_grey(self, tmp_path):
+        from btcedu.web.api import _workflow_files
+
+        s = self._settings(tmp_path)
+        eid = "ep_wf_news"
+        trans = Path(s.transcripts_dir) / eid
+        out = Path(s.outputs_dir) / eid
+        trans.mkdir(parents=True, exist_ok=True)
+        out.mkdir(parents=True, exist_ok=True)
+        (trans / "transcript.de.txt").write_text("x")
+        (trans / "transcript.clean.de.txt").write_text("x")
+        (out / "stories.json").write_text("{}")
+
+        wf = _workflow_files(self._news_episode(), s)
+        present = {f["key"]: f["present"] for f in wf}
+        assert present["transcript_raw"] is True
+        assert present["stories"] is True
+        assert present["video"] is False
+        assert present["images"] is False
+
+
 # ---------------------------------------------------------------------------
 # Pipeline action endpoints (now return 202 + job_id)
 # ---------------------------------------------------------------------------

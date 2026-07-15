@@ -488,6 +488,83 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
     }
 
 
+# Maps each artifact-producing pipeline stage to a workflow-file key + label.
+# Review gates and helper stages (frameextract, anchorgen) produce no primary
+# artifact and are intentionally omitted.
+_STAGE_WORKFLOW_KEY = {
+    "download": "audio",
+    "transcribe": "transcript_raw",
+    "correct": "transcript_clean",
+    "chunk": "chunks",
+    "segment": "stories",
+    "translate": "translation",
+    "adapt": "script_adapted",
+    "generate": "script",
+    "chapterize": "chapters",
+    "imagegen": "images",
+    "tts": "tts",
+    "render": "video",
+}
+
+_WORKFLOW_LABELS = {
+    "audio": "Audio",
+    "transcript_raw": "Transcript DE",
+    "transcript_clean": "Transcript Clean",
+    "chunks": "Chunks",
+    "stories": "Stories DE",
+    "translation": "Translation TR",
+    "script_adapted": "Script (adapted)",
+    "script": "Script TR",
+    "chapters": "Chapters",
+    "images": "Images",
+    "tts": "TTS Audio",
+    "video": "Rendered Video",
+}
+
+
+def _workflow_files(ep, settings) -> list[dict] | None:
+    """Return the ordered workflow-file dots relevant to *this* episode.
+
+    Unlike ``_file_presence`` (which returns every possible v1+v2 artifact key),
+    this derives the artifacts from the episode's actual pipeline stages
+    (profile/version aware) so a fully completed episode shows every dot green
+    and never carries irrelevant legacy dots.
+
+    Returns a list of ``{"key", "label", "present"}`` in stage order, or
+    ``None`` when the stage list cannot be resolved (frontend then falls back
+    to the legacy full dot list).
+    """
+    from btcedu.core.pipeline import _get_stages
+
+    try:
+        stages = _get_stages(settings, ep)
+    except Exception:
+        return None
+
+    presence = _file_presence(ep.episode_id, settings)
+    trans = Path(settings.transcripts_dir) / ep.episode_id
+
+    result: list[dict] = []
+    seen: set[str] = set()
+    for name, _required in stages:
+        key = _STAGE_WORKFLOW_KEY.get(name)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        if key == "translation":
+            # News uses per-story stories_translated.json; other profiles write
+            # a plain transcript.tr.txt. Either counts as translated.
+            present = bool(
+                presence.get("stories_translated")
+                or (trans / "transcript.tr.txt").exists()
+            )
+        else:
+            present = bool(presence.get(key, False))
+        result.append({"key": key, "label": _WORKFLOW_LABELS.get(key, key), "present": present})
+
+    return result or None
+
+
 def _build_tr_transcript(episode_id: str, settings) -> str | None:
     """Reconstruct the Turkish spoken transcript from chapters.json.
 
@@ -897,6 +974,7 @@ def _episode_to_dict(
             else None
         ),
         "files": _file_presence(ep.episode_id, settings),
+        "workflow_files": _workflow_files(ep, settings),
         "story_count": _get_story_count(ep.episode_id, settings),
         "review_context": review_context,
         "pipeline_state": _compute_pipeline_state(status_val, review_context),

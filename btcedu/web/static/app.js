@@ -411,10 +411,18 @@
       tr.onclick = () => selectEpisode(ep);
 
       const pub = ep.published_at ? ep.published_at.slice(0, 10) : "\u2014";
-      const dots = FILE_KEYS.map((k, i) => {
-        const present = ep.files && ep.files[k];
-        return `<span class="file-dot ${present ? "present" : ""}" title="${FILE_LABELS[i]}"></span>`;
-      }).join("");
+      let dots;
+      if (Array.isArray(ep.workflow_files) && ep.workflow_files.length > 0) {
+        // Stage-derived workflow dots (profile/version aware): all green == done.
+        dots = ep.workflow_files.map((f) =>
+          `<span class="file-dot ${f.present ? "present" : ""}" title="${esc(f.label)}"></span>`
+        ).join("");
+      } else {
+        dots = FILE_KEYS.map((k, i) => {
+          const present = ep.files && ep.files[k];
+          return `<span class="file-dot ${present ? "present" : ""}" title="${FILE_LABELS[i]}"></span>`;
+        }).join("");
+      }
 
       const profileBadge = ep.content_profile && ep.content_profile !== "bitcoin_podcast"
         ? `<span class="badge badge-profile" title="${esc(ep.content_profile)}">${esc(ep.content_profile)}</span> `

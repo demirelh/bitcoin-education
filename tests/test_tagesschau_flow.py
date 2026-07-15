@@ -98,15 +98,21 @@ class TestGetStages:
         assert translate_stage[1] == EpisodeStatus.CORRECTED
 
     def test_get_stages_tagesschau_tr(self, tagesschau_episode, settings_with_profiles):
-        """tagesschau_tr episode: has segment, no adapt, no review_gate_2, chapterize=TRANSLATED."""
+        """tagesschau_tr episode: has segment AND adapt (anchor unification).
+
+        Since commit 2d7b366 the news profile keeps the adapt stage
+        (adapt.skip=false, tiers anchor_unify/local_relevance) in addition to
+        the segment stage, so translate runs on SEGMENTED and chapterize on
+        ADAPTED.
+        """
         from btcedu.core.pipeline import _get_stages
 
         stages = _get_stages(settings_with_profiles, tagesschau_episode)
         stage_names = [n for n, _ in stages]
 
         assert "segment" in stage_names
-        assert "adapt" not in stage_names
-        assert "review_gate_2" not in stage_names
+        assert "adapt" in stage_names
+        assert "review_gate_2" in stage_names
         assert "chapterize" in stage_names
 
         # segment requires CORRECTED
@@ -117,9 +123,13 @@ class TestGetStages:
         translate_stage = next((s, r) for s, r in stages if s == "translate")
         assert translate_stage[1] == EpisodeStatus.SEGMENTED
 
-        # chapterize requires TRANSLATED (not ADAPTED) for tagesschau
+        # adapt runs after translate on TRANSLATED
+        adapt_stage = next((s, r) for s, r in stages if s == "adapt")
+        assert adapt_stage[1] == EpisodeStatus.TRANSLATED
+
+        # chapterize requires ADAPTED for tagesschau (adapt is enabled)
         chapterize_stage = next((s, r) for s, r in stages if s == "chapterize")
-        assert chapterize_stage[1] == EpisodeStatus.TRANSLATED
+        assert chapterize_stage[1] == EpisodeStatus.ADAPTED
 
     def test_get_stages_no_episode(self, settings_with_profiles):
         """With no episode, returns default v2 stages."""

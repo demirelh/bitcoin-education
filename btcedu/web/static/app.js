@@ -1889,33 +1889,17 @@
     const select = document.getElementById("channel-select");
     selectedChannelId = select.value || null;
 
-    // Auto-select the channel's content_profile in the profile dropdown
-    const profileSelect = document.getElementById("profile-select");
-    if (profileSelect) {
-      if (selectedChannelId) {
-        const ch = channels.find(c => c.channel_id === selectedChannelId);
-        const prof = ch && ch.content_profile ? ch.content_profile : "";
-        if (prof && Array.from(profileSelect.options).some(o => o.value === prof)) {
-          profileSelect.value = prof;
-          selectedProfile = prof;
-        }
-      } else {
-        // "All Channels" → clear profile filter
-        profileSelect.value = "";
-        selectedProfile = null;
-      }
+    // A channel fully determines its content_profile, so we derive the profile
+    // filter from the selected channel instead of a separate dropdown.
+    if (selectedChannelId) {
+      const ch = channels.find(c => c.channel_id === selectedChannelId);
+      selectedProfile = ch && ch.content_profile ? ch.content_profile : null;
+    } else {
+      // "All Channels" → no profile filter
+      selectedProfile = null;
     }
     refresh();
   }
-
-  async function onProfileChange() {
-    const select = document.getElementById("profile-select");
-    if (select) {
-      selectedProfile = select.value || null;
-      refresh();
-    }
-  }
-  window.onProfileChange = onProfileChange;
 
   function showChannelManager() {
     document.getElementById("channel-modal").style.display = "flex";

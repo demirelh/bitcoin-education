@@ -103,11 +103,14 @@ def sse_stream():
 @api_bp.route("/health")
 def health():
     """Health check for monitoring and proxy verification."""
+    from btcedu.version import get_git_commit
+
     return jsonify(
         {
             "status": "ok",
             "time": datetime.now(UTC).isoformat(),
             "version": "0.1.0",
+            "git_commit": get_git_commit(),
         }
     )
 
@@ -833,6 +836,7 @@ def _build_stage_progress(
                 "is_gate": is_gate,
                 "duration_seconds": None,
                 "cost_usd": None,
+                "git_commit": None,
             }
         )
 
@@ -878,7 +882,7 @@ def _build_stage_progress(
                     found = True
 
     # Attach durations from duration_cache or query directly
-    ep_duration_map: dict[PipelineStage, tuple[float, float]] = {}
+    ep_duration_map: dict[PipelineStage, tuple[float, float, str | None]] = {}
     if duration_cache is not None:
         ep_duration_map = duration_cache.get(episode.id, {})
     else:
@@ -900,16 +904,24 @@ def _build_stage_progress(
                     dur = (run.completed_at - run.started_at).total_seconds()
                 else:
                     dur = 0.0
-                ep_duration_map[run.stage] = (dur, run.estimated_cost_usd)
+                ep_duration_map[run.stage] = (
+                    dur,
+                    run.estimated_cost_usd,
+                    getattr(run, "git_commit", None),
+                )
 
+    latest_commit = None
     for s in stages:
         if s["is_gate"]:
             continue
         ps = _STAGE_TO_PIPELINE_STAGE.get(s["name"])
         if ps and ps in ep_duration_map:
-            dur, cost = ep_duration_map[ps]
+            dur, cost, commit = ep_duration_map[ps]
             s["duration_seconds"] = dur
             s["cost_usd"] = cost
+            s["git_commit"] = commit
+            if commit:
+                latest_commit = commit
 
     # Compute summary fields
     current_stage = None
@@ -927,6 +939,7 @@ def _build_stage_progress(
         "current_stage": current_stage,
         "completed_count": completed_count,
         "total_count": total_count,
+        "git_commit": latest_commit,
     }
 
 
@@ -1085,7 +1098,7 @@ def list_episodes():
         # Batch duration query: most recent successful PipelineRun per (episode, stage)
         # PipelineRun.episode_id is an int FK to episodes.id
         # Build {episode.id: {PipelineStage: (duration_seconds, cost_usd)}}
-        duration_cache: dict[int, dict[PipelineStage, tuple[float, float]]] = {}
+        duration_cache: dict[int, dict[PipelineStage, tuple[float, float, str | None]]] = {}
         all_runs = (
             session.query(PipelineRun)
             .filter(PipelineRun.status == RunStatus.SUCCESS)
@@ -1103,7 +1116,11 @@ def list_episodes():
                     dur = 0.0
                 if run.episode_id not in duration_cache:
                     duration_cache[run.episode_id] = {}
-                duration_cache[run.episode_id][run.stage] = (dur, run.estimated_cost_usd)
+                duration_cache[run.episode_id][run.stage] = (
+                    dur,
+                    run.estimated_cost_usd,
+                    getattr(run, "git_commit", None),
+                )
 
         return jsonify(
             [
@@ -2893,6 +2910,7 @@ def get_stage_runs(episode_id: str):
                 "input_tokens": run.input_tokens,
                 "output_tokens": run.output_tokens,
                 "estimated_cost_usd": run.estimated_cost_usd,
+                "git_commit": getattr(run, "git_commit", None),
                 "error_message": run.error_message,
             }
 

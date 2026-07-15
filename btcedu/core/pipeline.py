@@ -972,11 +972,14 @@ def run_episode_pipeline(
     )
 
     content_profile = getattr(episode, "content_profile", "bitcoin_podcast")
+    from btcedu.version import get_git_commit
+
     logger.info(
-        "Pipeline start: %s (%s) [profile=%s]",
+        "Pipeline start: %s (%s) [profile=%s] [commit=%s]",
         episode.episode_id,
         episode.title,
         content_profile,
+        get_git_commit(),
     )
 
     stages = _get_stages(settings, episode)

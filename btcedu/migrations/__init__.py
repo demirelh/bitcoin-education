@@ -687,6 +687,34 @@ class AddQualityRatingMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class AddPipelineRunGitCommitMigration(Migration):
+    """Migration 012: Add git_commit column to pipeline_runs for traceability."""
+
+    @property
+    def version(self) -> str:
+        return "012_add_pipeline_run_git_commit"
+
+    @property
+    def description(self) -> str:
+        return "Add git_commit column to pipeline_runs so each stage run is traceable to a commit"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("PRAGMA table_info(pipeline_runs)"))
+        columns = [row[1] for row in result.fetchall()]
+
+        if "git_commit" not in columns:
+            session.execute(text("ALTER TABLE pipeline_runs ADD COLUMN git_commit VARCHAR(40)"))
+            session.commit()
+            logger.info("Added git_commit column to pipeline_runs")
+        else:
+            logger.info("git_commit column already exists (skipped)")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -700,6 +728,7 @@ MIGRATIONS = [
     CreateDeadLetterQueueMigration(),
     AddQualityRatingMigration(),
     AddChannelContentProfileMigration(),
+    AddPipelineRunGitCommitMigration(),
 ]
 
 

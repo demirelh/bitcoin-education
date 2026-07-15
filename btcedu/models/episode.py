@@ -5,6 +5,7 @@ from sqlalchemy import DateTime, Enum, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from btcedu.db import Base
+from btcedu.version import get_git_commit
 
 
 class EpisodeStatus(str, enum.Enum):
@@ -129,6 +130,10 @@ class PipelineRun(Base):
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     estimated_cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Git commit SHA of the code that executed this stage (traceability).
+    git_commit: Mapped[str | None] = mapped_column(
+        String(40), nullable=True, default=lambda: get_git_commit()
+    )
 
     episode: Mapped["Episode"] = relationship(back_populates="pipeline_runs")
 

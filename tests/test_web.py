@@ -314,6 +314,28 @@ class TestWorkflowFiles:
         assert present["images"] is False
 
 
+class TestPipelineRunGitCommit:
+    """Every PipelineRun records the git commit it executed with (traceability)."""
+
+    def test_new_run_populates_git_commit(self, app):
+        from btcedu.models.episode import PipelineRun, PipelineStage, RunStatus
+        from btcedu.version import get_git_commit
+        from btcedu.web.api import _get_session
+
+        with app.app_context():
+            session = _get_session()
+            run = PipelineRun(
+                episode_id="ep002",
+                stage=PipelineStage.DOWNLOAD,
+                status=RunStatus.SUCCESS,
+            )
+            session.add(run)
+            session.flush()
+            assert run.git_commit == get_git_commit()
+            assert run.git_commit and run.git_commit != "unknown"
+            session.rollback()
+
+
 # ---------------------------------------------------------------------------
 # Pipeline action endpoints (now return 202 + job_id)
 # ---------------------------------------------------------------------------

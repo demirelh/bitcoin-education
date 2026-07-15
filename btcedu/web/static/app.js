@@ -234,7 +234,8 @@
       const cost = stage.cost_usd != null && stage.cost_usd > 0
         ? `$${stage.cost_usd.toFixed(3)}`
         : "";
-      const tooltip = [stage.label, dur, cost, "Click for details"].filter(Boolean).join(" \u00b7 ");
+      const commit = stage.git_commit ? `commit ${stage.git_commit}` : "";
+      const tooltip = [stage.label, dur, cost, commit, "Click for details"].filter(Boolean).join(" \u00b7 ");
 
       html += `
         <div class="ps-stage ps-clickable${gateClass} ${stateClass}"
@@ -246,7 +247,10 @@
         </div>`;
     });
     html += "</div>";
-    html += `<div class="ps-summary">${sp.completed_count}/${sp.total_count} stages complete</div>`;
+    const commitBadge = sp.git_commit
+      ? ` &middot; <span class="ps-commit" title="Git commit this run executed with">commit ${esc(sp.git_commit)}</span>`
+      : "";
+    html += `<div class="ps-summary">${sp.completed_count}/${sp.total_count} stages complete${commitBadge}</div>`;
     return html;
   }
 
@@ -1276,6 +1280,7 @@
         <tr><td>Started</td><td>${latest.started_at ? new Date(latest.started_at).toLocaleString() : "\u2014"}</td></tr>
         <tr><td>Completed</td><td>${latest.completed_at ? new Date(latest.completed_at).toLocaleString() : "\u2014"}</td></tr>
         <tr><td>Duration</td><td>${latest.duration_seconds != null ? formatDuration(latest.duration_seconds) : "\u2014"}</td></tr>
+        <tr><td>Commit</td><td>${latest.git_commit ? `<code>${esc(latest.git_commit)}</code>` : "\u2014"}</td></tr>
       </table>
     </div>`;
 
@@ -1312,7 +1317,7 @@
       html += `<div class="stage-detail-section">
         <h4>Run History</h4>
         <table class="stage-history-table">
-          <thead><tr><th>Run</th><th>Status</th><th>Started</th><th>Duration</th><th>Cost</th><th>Error</th></tr></thead>
+          <thead><tr><th>Run</th><th>Status</th><th>Started</th><th>Duration</th><th>Cost</th><th>Commit</th><th>Error</th></tr></thead>
           <tbody>`;
 
       // Latest first
@@ -1327,6 +1332,7 @@
           <td>${run.started_at ? new Date(run.started_at).toLocaleString() : "\u2014"}</td>
           <td>${run.duration_seconds != null ? formatDuration(run.duration_seconds) : "\u2014"}</td>
           <td>${run.estimated_cost_usd > 0 ? "$" + run.estimated_cost_usd.toFixed(4) : "\u2014"}</td>
+          <td>${run.git_commit ? `<code>${esc(run.git_commit)}</code>` : "\u2014"}</td>
           <td>${run.error_message ? esc(trunc(run.error_message, 80)) : "\u2014"}</td>
         </tr>`;
       });

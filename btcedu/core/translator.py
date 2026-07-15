@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
 from btcedu.core.prompt_registry import TEMPLATES_DIR, PromptRegistry
+from btcedu.core.translation_glossary import fix_translation_glossary
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import (
     Episode,
@@ -291,7 +292,7 @@ def translate_transcript(
                     max_tokens=_effective_max or None,
                 )
 
-                translated_segments.append(response.text)
+                translated_segments.append(fix_translation_glossary(response.text))
                 total_input_tokens += response.input_tokens
                 total_output_tokens += response.output_tokens
                 total_cost += response.cost_usd
@@ -647,8 +648,8 @@ def _translate_per_story(
 
         # Build translated story dict
         story_dict = story.model_dump(mode="json")
-        headline_tr = headline_response.text.strip()
-        text_tr = body_response.text.strip()
+        headline_tr = fix_translation_glossary(headline_response.text.strip())
+        text_tr = fix_translation_glossary(body_response.text.strip())
 
         # Apply deterministic regex cleaning for intro/outro stories
         if is_intro_outro and clean_moderator:

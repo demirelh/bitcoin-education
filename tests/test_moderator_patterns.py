@@ -5,6 +5,7 @@ from btcedu.core.moderator_patterns import (
     MODERATOR_NAMES,
     clean_moderator_names,
     has_moderator_content,
+    strip_broadcast_transitions,
 )
 
 
@@ -118,3 +119,38 @@ class TestHasModeratorContent:
 
     def test_detects_morgen_begruesst(self):
         assert has_moderator_content("Morgen begrüßt Sie dann Susanne Daubner")
+
+
+class TestStripBroadcastTransitions:
+    def test_sport_transition_removed(self):
+        out = strip_broadcast_transitions(
+            "Şimdi spora geçiyoruz. İspanya, Dünya Kupası yarı finaline yükseldi."
+        )
+        assert out.startswith("İspanya")
+        assert "geçiyoruz" not in out
+
+    def test_weather_opener_rewritten(self):
+        out = strip_broadcast_transitions(
+            "Şimdi yarınki hava durumu tahmini, 12 Temmuz Pazar günü. Yaz havası hakim."
+        )
+        assert out.startswith("12 Temmuz Pazar günü için hava tahmini şöyle:")
+        assert "Yaz havası hakim." in out
+        assert "Şimdi" not in out
+
+    def test_program_hint_and_goodbye_removed(self):
+        out = strip_broadcast_transitions(
+            "Saat 21.45'te güncel haberlerle devam edeceğiz: demiryolu yangınları "
+            "ve Münih'te Kore popu. İyi akşamlar dileriz."
+        )
+        assert out == ""
+
+    def test_trailing_goodbye_removed_keeps_content(self):
+        out = strip_broadcast_transitions("Haberin son cümlesi. İyi akşamlar dileriz.")
+        assert out == "Haberin son cümlesi."
+
+    def test_plain_news_unchanged(self):
+        text = "Bakan bugün açıklama yaptı ve yeni önlemleri duyurdu."
+        assert strip_broadcast_transitions(text) == text
+
+    def test_empty(self):
+        assert strip_broadcast_transitions("") == ""

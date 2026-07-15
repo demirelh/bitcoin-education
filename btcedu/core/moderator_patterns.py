@@ -101,3 +101,61 @@ def has_moderator_content(text_de: str) -> bool:
         if pattern.search(text_de):
             return True
     return any(name in text_de for name in MODERATOR_NAMES)
+
+
+# --- Neutral broadcast flow: remove anchor transitions, program hints, sign-offs ---
+
+# Program/Tagesthemen preview hint (Turkish), spanning to the end of the text —
+# includes any teaser list and trailing good-bye. Matches e.g.
+# "Saat 21.45'te güncel haberlerle devam edeceğiz: … İyi akşamlar dileriz."
+_PROGRAM_HINT_RE = re.compile(
+    r"\s*Saat\s+\d{1,2}[.:]\d{2}['’´`]?\w*\s+güncel\s+haberlerle.*$",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# Leading topic transition into sport: "Şimdi spora geçiyoruz."
+_SPORT_TRANSITION_RE = re.compile(
+    r"^\s*Şimdi\s+spor[a-zçğıöşü]*\s+geçiyoruz[.!]?\s*",
+    re.IGNORECASE,
+)
+
+# Trailing good-bye: "İyi akşamlar dileriz." / "İyi akşamlar."
+_GOODBYE_RE = re.compile(
+    r"\s*İyi\s+akşamlar(?:\s+dileriz)?[.!]?\s*$",
+    re.IGNORECASE,
+)
+
+# Weather transition opener -> neutral opener. Captures the date part so
+# "Şimdi yarınki hava durumu tahmini, 12 Temmuz Pazar günü." becomes
+# "12 Temmuz Pazar günü için hava tahmini şöyle: …".
+_WEATHER_OPENER_RE = re.compile(
+    r"^\s*Şimdi\s+(?:yarınki\s+)?hava\s+durumu(?:\s+tahmini)?\s*,?\s*(.+?)\s*[.:]\s*",
+    re.IGNORECASE,
+)
+
+
+def strip_broadcast_transitions(text: str) -> str:
+    """Remove anchor moderation transitions, program hints and sign-offs.
+
+    Used for fully neutral output: strips leading topic transitions, the
+    Tagesthemen program hint (with teasers) and the closing good-bye, and
+    rewrites the weather transition into a neutral opener. Only matches highly
+    stereotyped broadcast phrases, so it is safe to apply to any story body.
+    """
+    if not text:
+        return text
+
+    result = text
+
+    # Rewrite the weather transition into a neutral opener (if present at start).
+    m = _WEATHER_OPENER_RE.match(result)
+    if m:
+        date_part = m.group(1).strip()
+        result = f"{date_part} için hava tahmini şöyle: " + result[m.end():]
+
+    result = _SPORT_TRANSITION_RE.sub("", result)
+    result = _PROGRAM_HINT_RE.sub("", result)
+    result = _GOODBYE_RE.sub("", result)
+
+    result = re.sub(r"  +", " ", result).strip()
+    return result

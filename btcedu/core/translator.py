@@ -651,14 +651,21 @@ def _translate_per_story(
         headline_tr = fix_translation_glossary(headline_response.text.strip())
         text_tr = fix_translation_glossary(body_response.text.strip())
 
-        # Apply deterministic regex cleaning for intro/outro stories
-        if is_intro_outro and clean_moderator:
-            from btcedu.core.moderator_patterns import clean_moderator_names
+        # Apply deterministic regex cleaning
+        if clean_moderator:
+            from btcedu.core.moderator_patterns import (
+                clean_moderator_names,
+                strip_broadcast_transitions,
+            )
 
-            headline_tr = clean_moderator_names(headline_tr)
-            text_tr = clean_moderator_names(text_tr)
+            if is_intro_outro:
+                headline_tr = clean_moderator_names(headline_tr)
+                text_tr = clean_moderator_names(text_tr)
+            # Neutral flow: drop anchor transitions, program hints and sign-offs
+            # from every story body (safe: only stereotyped phrases match).
+            text_tr = strip_broadcast_transitions(text_tr)
             logger.info(
-                "Applied moderator name cleaning to story %s (%s)",
+                "Applied moderator/transition cleaning to story %s (%s)",
                 story.story_id,
                 story.story_type,
             )

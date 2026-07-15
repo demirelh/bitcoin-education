@@ -24,15 +24,15 @@ Transformiere den deutschen Intro/Outro-Text in einen **neutralen türkischen Na
 3. **BEGRÜSSUNGSFORMELN**: Deutsche Begrüßungen werden durch neutrale türkische Nachrichtenformeln ersetzt oder weggelassen.
 4. **VERABSCHIEDUNGEN**: Deutsche Verabschiedungen werden durch neutrale türkische Abschlussformeln ersetzt oder weggelassen.
 5. **KOLLEGENVERWEIS**: "Morgen begrüßt Sie dann [Name]", "Mein Kollege [Name]" → komplett entfernen.
+6. **FOLGESENDUNGS-HINWEIS**: Programm-/Sendungshinweise auf eine spätere Sendung (z. B. „die tagesthemen um 21.45 Uhr", „mit aktuellen Nachrichten", inkl. Vorschau-Teaser darauf) werden KOMPLETT entfernt — auch die Uhrzeit. Kein „…saat 21.45'te devam edeceğiz".
+7. **VERABSCHIEDUNG KOMPLETT**: Schlussformeln wie „Ich wünsche Ihnen einen schönen Abend" / „İyi akşamlar dileriz" werden KOMPLETT weggelassen — KEINE Abschiedsformel im Output.
 
 ### BEIBEHALTEN (PFLICHT)
 
 1. **THEMENVORSCHAU**: Wenn das Intro Nachrichtenthemen aufzählt, MÜSSEN diese Themen übersetzt und beibehalten werden. Nichts aus der Themenvorschau weglassen oder zusammenfassen.
 2. **NACHRICHTENAKTEURE**: Politiker, Experten, Institutionen, die inhaltlich erwähnt werden, MÜSSEN erhalten bleiben. Beispiel: "Bundeskanzler Scholz" → "Başbakan Scholz" bleibt.
 3. **DATUMSBEZÜGE**: Tages- und Zeitangaben beibehalten.
-4. **INHALTLICHE INFORMATIONEN**: Alles, was über die reine Begrüßung/Verabschiedung hinausgeht, muss erhalten bleiben. Übersetze vollständig — kürze keine inhaltlichen Sätze weg.
-5. **FOLGESENDUNGS-UHRZEIT**: Wird auf eine spätere Sendung mit Uhrzeit verwiesen ("die tagesthemen um 21.45 Uhr"), behalte die UHRZEIT als neutrale Ankündigung, aber OHNE Sendungsname. Beispiel: "die tagesthemen um 21.45 Uhr" → "Güncel haberlerle saat 21.45'te devam edeceğiz." (kein "tagesthemen").
-6. **NEUTRALE ABSCHIEDSFORMEL**: Am Ende der Sendung eine kurze, neutrale türkische Abschiedsformel behalten (z. B. "İyi akşamlar dileriz."), aber ohne Moderatorname und ohne Sendername.
+4. **INHALTLICHE INFORMATIONEN**: Alles, was über die reine Begrüßung/Verabschiedung/Programmhinweise hinausgeht, muss erhalten bleiben. Übersetze vollständig — kürze keine inhaltlichen Sätze weg. Hinweis: Ein Outro, das NUR aus Programmhinweis + Verabschiedung besteht, ergibt nach dem Entfernen einen LEEREN Text (leerer String) — das ist korrekt.
 
 ## ERSETZUNGSMUSTER
 
@@ -50,12 +50,12 @@ Transformiere den deutschen Intro/Outro-Text in einen **neutralen türkischen Na
 
 | Deutsch | Türkisch |
 |---------|----------|
-| "Das war die tagesschau" | "Haberler sona erdi" |
-| "Ich wünsche Ihnen einen schönen Abend" | "İyi akşamlar dileriz." |
+| "Das war die tagesschau" | (weglassen) |
+| "Ich wünsche Ihnen einen schönen Abend" | (weglassen) |
 | "Morgen begrüßt Sie dann [Name]" | (weglassen) |
-| "Das waren die Nachrichten" | "Haberlerin sonu" |
+| "Das waren die Nachrichten" | (weglassen) |
 | "Bleiben Sie bei uns" | (weglassen) |
-| "die tagesthemen um 21.45 Uhr" | "Güncel haberlerle saat 21.45'te devam edeceğiz." |
+| "die tagesthemen um 21.45 Uhr" | (weglassen) |
 
 ## REGISTER
 

@@ -1058,6 +1058,31 @@ def run_pending(
     since: datetime | None = None,
     profile: str | None = None,
 ) -> list[PipelineReport]:
+    """Process all pending episodes, guarded by the exclusive pipeline lock.
+
+    Skips (returns an empty list) when another pipeline run is already active,
+    so overlapping invocations (e.g. the autostart timer firing while a long
+    run is in progress) do not collide on the SQLite write lock.
+    """
+    from btcedu.core.runlock import PipelineBusyError, pipeline_lock
+
+    try:
+        with pipeline_lock(settings):
+            return _run_pending_locked(
+                session, settings, max_episodes=max_episodes, since=since, profile=profile
+            )
+    except PipelineBusyError:
+        logger.warning("run_pending skipped: another pipeline run is already active.")
+        return []
+
+
+def _run_pending_locked(
+    session: Session,
+    settings: Settings,
+    max_episodes: int | None = None,
+    since: datetime | None = None,
+    profile: str | None = None,
+) -> list[PipelineReport]:
     """Process all pending episodes through the pipeline.
 
     Queries episodes with status in (NEW, DOWNLOADED, TRANSCRIBED,
@@ -1130,6 +1155,30 @@ def run_pending(
 
 
 def run_latest(
+    session: Session,
+    settings: Settings,
+    profile: str | None = None,
+    detect_all: bool = False,
+) -> PipelineReport | None:
+    """Detect + process the newest pending episode, guarded by the run lock.
+
+    Returns None when another pipeline run is already active, so the autostart
+    timer does not start an overlapping run that would collide on the SQLite
+    write lock.
+    """
+    from btcedu.core.runlock import PipelineBusyError, pipeline_lock
+
+    try:
+        with pipeline_lock(settings):
+            return _run_latest_locked(
+                session, settings, profile=profile, detect_all=detect_all
+            )
+    except PipelineBusyError:
+        logger.warning("run_latest skipped: another pipeline run is already active.")
+        return None
+
+
+def _run_latest_locked(
     session: Session,
     settings: Settings,
     profile: str | None = None,

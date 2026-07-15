@@ -265,7 +265,14 @@ class JobManager:
                 handler = _action_map.get(job.action)
                 if handler is None:
                     raise ValueError(f"Unknown action: {job.action}")
-                handler(job, session, settings)
+
+                # Serialize with any other pipeline run (e.g. the autostart
+                # timer) to avoid concurrent SQLite writers deadlocking on the
+                # database write lock during long stages like translate/render.
+                from btcedu.core.runlock import pipeline_lock
+
+                with pipeline_lock(settings):
+                    handler(job, session, settings)
 
                 self._update(job, state="success", stage="done")
                 self._log(job, "Job completed successfully")
@@ -844,6 +851,26 @@ class JobManager:
             settings = app.config["settings"]
             session = session_factory()
 
+            # Serialize the whole batch with any other pipeline run (autostart
+            # timer, single web jobs) so concurrent SQLite writers don't
+            # deadlock on the database write lock.
+            from btcedu.core.runlock import PipelineBusyError, pipeline_lock
+
+            try:
+                _batch_lock = pipeline_lock(settings)
+                _batch_lock.__enter__()
+            except PipelineBusyError:
+                self._update_batch(
+                    batch_job,
+                    state="error",
+                    message="Another pipeline run is active. Batch skipped; try again later.",
+                )
+                logger.warning(
+                    "Batch job %s skipped: another pipeline run is active", batch_job.batch_id
+                )
+                session.close()
+                return
+
             self._update_batch(batch_job, state="running")
             logger.info("Batch job %s started", batch_job.batch_id)
 
@@ -1117,4 +1144,7 @@ class JobManager:
                     },
                 )
             finally:
-                session.close()
+                try:
+                    _batch_lock.__exit__(None, None, None)
+                finally:
+                    session.close()

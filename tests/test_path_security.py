@@ -23,7 +23,6 @@ def test_settings(tmp_path):
         database_url="sqlite:///:memory:",
         raw_data_dir=str(tmp_path / "raw"),
         transcripts_dir=str(tmp_path / "transcripts"),
-        chunks_dir=str(tmp_path / "chunks"),
         outputs_dir=str(tmp_path / "outputs"),
         reports_dir=str(tmp_path / "reports"),
         logs_dir=str(tmp_path / "logs"),

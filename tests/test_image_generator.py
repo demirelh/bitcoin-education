@@ -511,25 +511,6 @@ class TestGenerateImagesValidation:
 
             generate_images(db_session, "nonexistent", settings)
 
-    def test_rejects_v1_episode(self, db_session):
-        ep = Episode(
-            episode_id="ep_v1",
-            source="youtube_rss",
-            title="V1 Episode",
-            url="https://youtube.com/watch?v=v1",
-            status=EpisodeStatus.CHAPTERIZED,
-            pipeline_version=1,
-        )
-        db_session.add(ep)
-        db_session.commit()
-
-        from btcedu.config import Settings
-        from btcedu.core.image_generator import generate_images
-
-        settings = Settings(anthropic_api_key="test")
-        with pytest.raises(ValueError, match="v1 pipeline"):
-            generate_images(db_session, "ep_v1", settings)
-
     def test_rejects_wrong_status(self, db_session):
         ep = Episode(
             episode_id="ep_wrong",

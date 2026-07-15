@@ -52,11 +52,6 @@ class Settings(BaseSettings):
     whisper_model: str = "whisper-1"
     whisper_language: str = "de"
 
-    # Chunking
-    chunks_dir: str = "data/chunks"
-    chunk_size: int = 1500  # chars (~350 tokens)
-    chunk_overlap: float = 0.15  # 15% overlap
-
     # Content Generation
     llm_provider: str = "anthropic"  # "anthropic" | "openai" | "github_models" | "copilot_cli"
     claude_model: str = "claude-sonnet-4-20250514"
@@ -77,7 +72,7 @@ class Settings(BaseSettings):
     dry_run: bool = False
 
     # Pipeline Version Control
-    pipeline_version: int = 2  # 1 = legacy (chunk->generate->refine), 2 = v2 pipeline
+    pipeline_version: int = 2  # v2 pipeline (v1 legacy removed)
     profiles_dir: str = "btcedu/profiles"
     default_content_profile: str = "bitcoin_podcast"
     max_episode_cost_usd: float = 15.0  # per-episode cost safety cap (raised for anchor)

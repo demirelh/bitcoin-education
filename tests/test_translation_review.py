@@ -311,7 +311,7 @@ class TestComputeTranslationDiff:
 
 
 # ---------------------------------------------------------------------------
-# 2. _get_stages for tagesschau includes review_gate_translate
+# 2. _get_stages for tagesschau includes segmentation
 # ---------------------------------------------------------------------------
 
 
@@ -319,39 +319,39 @@ class TestGetStagesTagesschau:
     def test_tagesschau_has_review_gate_translate(
         self, db_session, tagesschau_episode, settings_with_profiles
     ):
-        """tagesschau_tr episode: has review_gate_translate, not review_gate_2, not adapt."""
+        """tagesschau_tr episode adds segment while retaining shared v2 gates."""
         from btcedu.core.pipeline import _get_stages
 
         stages = _get_stages(settings_with_profiles, tagesschau_episode)
         stage_names = [n for n, _ in stages]
 
-        assert "review_gate_translate" in stage_names
-        assert "review_gate_2" not in stage_names
-        assert "adapt" not in stage_names
+        assert "segment" in stage_names
+        assert "review_gate_2" in stage_names
+        assert "adapt" in stage_names
 
-    def test_tagesschau_review_gate_translate_requires_translated(
+    def test_tagesschau_segment_requires_corrected(
         self, db_session, tagesschau_episode, settings_with_profiles
     ):
-        """review_gate_translate gate requires TRANSLATED status."""
+        """segment stage requires CORRECTED status."""
         from btcedu.core.pipeline import _get_stages
 
         stages = _get_stages(settings_with_profiles, tagesschau_episode)
-        rgt_stage = next(((n, s) for n, s in stages if n == "review_gate_translate"), None)
+        rgt_stage = next(((n, s) for n, s in stages if n == "segment"), None)
 
         assert rgt_stage is not None
-        assert rgt_stage[1] == EpisodeStatus.TRANSLATED
+        assert rgt_stage[1] == EpisodeStatus.CORRECTED
 
-    def test_tagesschau_chapterize_requires_translated(
+    def test_tagesschau_chapterize_requires_adapted(
         self, db_session, tagesschau_episode, settings_with_profiles
     ):
-        """chapterize requires TRANSLATED (not ADAPTED) for tagesschau."""
+        """chapterize requires ADAPTED for tagesschau."""
         from btcedu.core.pipeline import _get_stages
 
         stages = _get_stages(settings_with_profiles, tagesschau_episode)
         chap_stage = next(((n, s) for n, s in stages if n == "chapterize"), None)
 
         assert chap_stage is not None
-        assert chap_stage[1] == EpisodeStatus.TRANSLATED
+        assert chap_stage[1] == EpisodeStatus.ADAPTED
 
     def test_bitcoin_podcast_unchanged(self, db_session, bitcoin_episode, settings_with_profiles):
         """bitcoin_podcast still has review_gate_2, adapt, not review_gate_translate."""
@@ -498,32 +498,6 @@ class TestReviewGateTranslateRunStage:
         assert task is not None
         assert task.stage == "translate"
         assert task.status == "approved"
-
-    def test_requires_v2_pipeline(self, db_session, settings_with_profiles, tmp_path):
-        """review_gate_translate raises ValueError for v1 episodes."""
-        from btcedu.core.pipeline import _run_stage
-
-        v1_episode = Episode(
-            episode_id="ep_v1",
-            source="youtube_rss",
-            title="V1 Episode",
-            url="https://youtube.com/watch?v=ep_v1",
-            status=EpisodeStatus.TRANSLATED,
-            pipeline_version=1,
-            content_profile="tagesschau_tr",
-        )
-        db_session.add(v1_episode)
-        db_session.commit()
-
-        with pytest.raises(ValueError, match="requires v2 pipeline"):
-            _run_stage(
-                db_session,
-                v1_episode,
-                settings_with_profiles,
-                "review_gate_translate",
-                force=False,
-            )
-
 
 # ---------------------------------------------------------------------------
 # 4. _assemble_translation_review

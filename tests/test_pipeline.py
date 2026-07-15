@@ -31,9 +31,8 @@ def _make_settings(tmp_path: Path) -> Settings:
         reports_dir=str(tmp_path / "reports"),
         raw_data_dir=str(tmp_path / "raw"),
         transcripts_dir=str(tmp_path / "transcripts"),
-        chunks_dir=str(tmp_path / "chunks"),
         dry_run=True,  # Never call real APIs
-        pipeline_version=1,  # Tests expect v1 behaviour; avoid .env contamination
+        pipeline_version=2,
     )
 
 
@@ -55,15 +54,16 @@ def new_episode(db_session):
 
 @pytest.fixture
 def failed_episode(db_session):
-    """Episode at CHUNKED status with an error (simulating generate failure)."""
+    """Episode at TRANSLATED status with an error (simulating adapt failure)."""
     ep = Episode(
         episode_id="ep_fail",
         source="youtube_rss",
         title="Bitcoin Mining Erklaert",
         url="https://youtube.com/watch?v=ep_fail",
-        status=EpisodeStatus.CHUNKED,
+        status=EpisodeStatus.TRANSLATED,
         published_at=datetime(2025, 5, 15, tzinfo=UTC),
-        error_message="Stage 'generate' failed: API timeout",
+        pipeline_version=2,
+        error_message="Stage 'adapt' failed: API timeout",
         retry_count=1,
     )
     db_session.add(ep)
@@ -84,48 +84,49 @@ class TestRunEpisodePipeline:
 
         assert report.success is True
         assert report.error is None
-        # Should have called all 4 stages (download, transcribe, chunk, generate)
-        # But since mock doesn't actually change status, only download runs then rest skip
-        # because the mock doesn't advance episode status.
-        # With the real mock returning success but not changing DB status,
-        # download runs, then transcribe is "not ready" (still NEW).
-        # So let's verify at least download was attempted.
+        # The mock does not advance status, so only the first ready stage is attempted.
         assert mock_stage.call_count >= 1
         assert report.completed_at is not None
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_skips_completed_stages(self, mock_stage, db_session, tmp_path):
-        """A CHUNKED episode should skip download/transcribe/chunk, run only generate."""
+        """A TRANSLATED episode should skip earlier stages and run adapt."""
         ep = Episode(
-            episode_id="ep_chunked",
+            episode_id="ep_translated",
             source="youtube_rss",
-            title="Test Chunked",
-            url="https://youtube.com/watch?v=ep_chunked",
-            status=EpisodeStatus.CHUNKED,
+            title="Test Translated",
+            url="https://youtube.com/watch?v=ep_translated",
+            status=EpisodeStatus.TRANSLATED,
             published_at=datetime(2025, 6, 1, tzinfo=UTC),
+            pipeline_version=2,
         )
         db_session.add(ep)
         db_session.commit()
 
         mock_stage.return_value = StageResult(
-            "generate",
+            "adapt",
             "success",
             0.5,
-            detail="6 artifacts ($0.0375)",
+            detail="adapted ($0.0375)",
         )
         settings = _make_settings(tmp_path)
 
         report = run_episode_pipeline(db_session, ep, settings)
 
         assert report.success is True
-        # Only generate should have been called via _run_stage
+        # Only adapt should have been called via _run_stage
         assert mock_stage.call_count == 1
         call_args = mock_stage.call_args
-        assert call_args[0][3] == "generate"  # stage_name arg
+        assert call_args[0][3] == "adapt"  # stage_name arg
 
-        # Download, transcribe, chunk, refine should be marked skipped
-        skipped = [s for s in report.stages if s.status == "skipped"]
-        assert len(skipped) == 4
+        skipped_before_adapt = [s.stage for s in report.stages[:5]]
+        assert skipped_before_adapt == [
+            "download",
+            "transcribe",
+            "correct",
+            "review_gate_1",
+            "translate",
+        ]
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_records_failure_and_increments_retry(
@@ -173,10 +174,10 @@ class TestRunEpisodePipeline:
     def test_clears_error_on_success(self, mock_stage, db_session, failed_episode, tmp_path):
         """Successful pipeline run clears previous error_message."""
         mock_stage.return_value = StageResult(
-            "generate",
+            "adapt",
             "success",
             0.5,
-            detail="6 artifacts ($0.0375)",
+            detail="adapted ($0.0375)",
         )
         settings = _make_settings(tmp_path)
 
@@ -277,20 +278,23 @@ class TestRunPending:
         assert mock_run.call_args[0][1].episode_id == "ep_new"
 
     @patch("btcedu.core.pipeline.run_episode_pipeline")
-    def test_includes_generated_episodes(self, mock_run, db_session, tmp_path):
-        """GENERATED episodes are pending (need refine stage)."""
+    def test_includes_adapted_episodes(self, mock_run, db_session, tmp_path):
+        """ADAPTED episodes are pending (need review/chapterize stages)."""
         ep = Episode(
-            episode_id="ep_gen",
+            episode_id="ep_adapted",
             source="youtube_rss",
-            title="Generated",
-            url="https://youtube.com/watch?v=gen",
-            status=EpisodeStatus.GENERATED,
+            title="Adapted",
+            url="https://youtube.com/watch?v=adapted",
+            status=EpisodeStatus.ADAPTED,
+            pipeline_version=2,
             published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
 
-        mock_run.return_value = PipelineReport(episode_id="ep_gen", title="Generated", success=True)
+        mock_run.return_value = PipelineReport(
+            episode_id="ep_adapted", title="Adapted", success=True
+        )
         settings = _make_settings(tmp_path)
         reports = run_pending(db_session, settings)
 
@@ -298,13 +302,14 @@ class TestRunPending:
         mock_run.assert_called_once()
 
     @patch("btcedu.core.pipeline.run_episode_pipeline")
-    def test_skips_refined_episodes(self, mock_run, db_session, tmp_path):
+    def test_skips_published_episodes(self, mock_run, db_session, tmp_path):
         ep = Episode(
             episode_id="ep_done",
             source="youtube_rss",
             title="Done",
             url="https://youtube.com/watch?v=done",
-            status=EpisodeStatus.REFINED,
+            status=EpisodeStatus.PUBLISHED,
+            pipeline_version=2,
             published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
@@ -381,19 +386,19 @@ class TestRunLatest:
 class TestRetryEpisode:
     @patch("btcedu.core.pipeline._run_stage")
     def test_retries_from_failed_stage(self, mock_stage, db_session, failed_episode, tmp_path):
-        """Failed CHUNKED episode should retry from generate stage."""
+        """Failed TRANSLATED episode should retry from adapt stage."""
         mock_stage.return_value = StageResult(
-            "generate",
+            "adapt",
             "success",
             0.5,
-            detail="6 artifacts ($0.0375)",
+            detail="adapted ($0.0375)",
         )
         settings = _make_settings(tmp_path)
 
         report = retry_episode(db_session, "ep_fail", settings)
 
         assert report.success is True
-        # Only generate should run (download/transcribe/chunk skipped)
+        # Only adapt should run (earlier stages skipped)
         assert mock_stage.call_count == 1
 
         db_session.refresh(failed_episode)
@@ -433,7 +438,7 @@ class TestWriteReport:
             total_cost_usd=0.038,
             stages=[
                 StageResult("download", "success", 1.2, detail="/path/audio.m4a"),
-                StageResult("generate", "success", 5.0, detail="6 artifacts ($0.038)"),
+                StageResult("adapt", "success", 5.0, detail="adapted ($0.038)"),
             ],
         )
         report.completed_at = report.started_at
@@ -493,12 +498,11 @@ class TestWriteReport:
 class TestResolvePipelinePlan:
     def test_new_episode_plans_all_stages(self, db_session, new_episode):
         plan = resolve_pipeline_plan(db_session, new_episode)
-        assert len(plan) == 5
+        assert len(plan) == 16
         assert plan[0] == StagePlan("download", "run", "status=new")
         assert plan[1] == StagePlan("transcribe", "pending", "after prior stages")
-        assert plan[2] == StagePlan("chunk", "pending", "after prior stages")
-        assert plan[3] == StagePlan("generate", "pending", "after prior stages")
-        assert plan[4] == StagePlan("refine", "pending", "after prior stages")
+        assert plan[2] == StagePlan("correct", "pending", "after prior stages")
+        assert plan[-1] == StagePlan("publish", "pending", "after prior stages")
 
     def test_downloaded_skips_download(self, db_session):
         ep = Episode(
@@ -517,15 +521,16 @@ class TestResolvePipelinePlan:
         assert plan[1].decision == "run"
         assert plan[2].decision == "pending"
         assert plan[3].decision == "pending"
-        assert plan[4].decision == "pending"
+        assert plan[-1].decision == "pending"
 
-    def test_chunked_skips_three(self, db_session):
+    def test_translated_runs_adapt(self, db_session):
         ep = Episode(
-            episode_id="ep_ch",
+            episode_id="ep_tr",
             source="youtube_rss",
-            title="Chunked",
-            url="https://youtube.com/watch?v=ch",
-            status=EpisodeStatus.CHUNKED,
+            title="Translated",
+            url="https://youtube.com/watch?v=tr",
+            status=EpisodeStatus.TRANSLATED,
+            pipeline_version=2,
             published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
@@ -533,35 +538,37 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep)
         skipped = [p for p in plan if p.decision == "skip"]
-        assert len(skipped) == 3
-        assert plan[3] == StagePlan("generate", "run", "status=chunked")
-        assert plan[4] == StagePlan("refine", "pending", "after prior stages")
+        assert len(skipped) == 5
+        assert plan[5] == StagePlan("adapt", "run", "status=translated")
+        assert plan[6] == StagePlan("review_gate_2", "pending", "after prior stages")
 
-    def test_generated_runs_refine(self, db_session):
+    def test_adapted_runs_review_gate_and_chapterize(self, db_session):
         ep = Episode(
-            episode_id="ep_gen",
+            episode_id="ep_adapted",
             source="youtube_rss",
-            title="Generated",
-            url="https://youtube.com/watch?v=gen",
-            status=EpisodeStatus.GENERATED,
+            title="Adapted",
+            url="https://youtube.com/watch?v=adapted",
+            status=EpisodeStatus.ADAPTED,
+            pipeline_version=2,
             published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
 
         plan = resolve_pipeline_plan(db_session, ep)
-        # download/transcribe/chunk/generate skipped, refine runs
         skipped = [p for p in plan if p.decision == "skip"]
-        assert len(skipped) == 4
-        assert plan[4] == StagePlan("refine", "run", "status=generated")
+        assert len(skipped) == 6
+        assert plan[6] == StagePlan("review_gate_2", "run", "status=adapted")
+        assert plan[7] == StagePlan("chapterize", "run", "status=adapted")
 
-    def test_refined_skips_all(self, db_session):
+    def test_published_skips_all(self, db_session):
         ep = Episode(
             episode_id="ep_ref",
             source="youtube_rss",
             title="Refined",
             url="https://youtube.com/watch?v=ref",
-            status=EpisodeStatus.REFINED,
+            status=EpisodeStatus.PUBLISHED,
+            pipeline_version=2,
             published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
@@ -576,7 +583,8 @@ class TestResolvePipelinePlan:
             source="youtube_rss",
             title="Force",
             url="https://youtube.com/watch?v=force",
-            status=EpisodeStatus.REFINED,
+            status=EpisodeStatus.PUBLISHED,
+            pipeline_version=2,
             published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
@@ -584,21 +592,19 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep, force=True)
         assert all(p.decision == "run" for p in plan)
-        assert len(plan) == 5
+        assert len(plan) == 16
         assert plan[0].reason == "forced"
-        assert plan[4].reason == "forced"
+        assert plan[-1].reason == "forced"
 
     def test_plan_with_error_still_resolves(self, db_session, failed_episode):
         """Pipeline plan ignores error_message — only looks at status."""
         plan = resolve_pipeline_plan(db_session, failed_episode)
-        # failed_episode is CHUNKED, so download/transcribe/chunk skip,
-        # generate runs, refine pending
         skipped = [p for p in plan if p.decision == "skip"]
-        assert len(skipped) == 3
-        assert plan[3].decision == "run"
-        assert plan[3].stage == "generate"
-        assert plan[4].decision == "pending"
-        assert plan[4].stage == "refine"
+        assert len(skipped) == 5
+        assert plan[5].decision == "run"
+        assert plan[5].stage == "adapt"
+        assert plan[6].decision == "pending"
+        assert plan[6].stage == "review_gate_2"
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_stage_callback_invoked(self, mock_stage, db_session, tmp_path):
@@ -608,17 +614,18 @@ class TestResolvePipelinePlan:
             source="youtube_rss",
             title="Callback",
             url="https://youtube.com/watch?v=cb",
-            status=EpisodeStatus.CHUNKED,
+            status=EpisodeStatus.TRANSLATED,
+            pipeline_version=2,
             published_at=datetime(2025, 6, 1, tzinfo=UTC),
         )
         db_session.add(ep)
         db_session.commit()
 
         mock_stage.return_value = StageResult(
-            "generate",
+            "adapt",
             "success",
             0.5,
-            detail="6 artifacts ($0.0375)",
+            detail="adapted ($0.0375)",
         )
         settings = _make_settings(tmp_path)
         called_stages = []
@@ -628,7 +635,7 @@ class TestResolvePipelinePlan:
             settings,
             stage_callback=lambda s: called_stages.append(s),
         )
-        assert called_stages == ["generate"]
+        assert called_stages == ["adapt"]
 
 
 # ── V2 Pipeline End-to-End ───────────────────────────────────────

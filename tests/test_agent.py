@@ -214,7 +214,11 @@ class TestExecutor:
         session.flush()
 
         settings = Settings(agent_github_repo="test/repo")
-        result = execute_suggestions([suggestion], settings, session, run.id, dry_run=False)
+        with (
+            patch("btcedu.agent.executor.check_gh_available", return_value=(True, "ok")),
+            patch("btcedu.agent.executor._get_open_issue_titles", return_value=set()),
+        ):
+            result = execute_suggestions([suggestion], settings, session, run.id, dry_run=False)
         assert result.skipped == 1
 
     def test_no_repo_configured(self):

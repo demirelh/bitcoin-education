@@ -309,20 +309,6 @@ class TestGenerateAnchorsErrors:
         with pytest.raises(ValueError, match="Episode not found"):
             generate_anchors(session, "nonexistent", settings)
 
-    def test_v1_pipeline_rejected(self, session, settings):
-        ep = Episode(
-            episode_id="ep_v1",
-            title="V1 Episode",
-            url="https://example.com",
-            status=EpisodeStatus.TTS_DONE,
-            pipeline_version=1,
-        )
-        session.add(ep)
-        session.commit()
-
-        with pytest.raises(ValueError, match="v1 pipeline"):
-            generate_anchors(session, "ep_v1", settings)
-
     def test_wrong_status_rejected(self, session, settings):
         ep = Episode(
             episode_id="ep_wrong",

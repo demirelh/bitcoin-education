@@ -1,4 +1,4 @@
-"""Core logic for transcription and chunking pipeline stages."""
+"""Core logic for the transcription pipeline stage."""
 
 import logging
 from pathlib import Path
@@ -6,8 +6,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
-from btcedu.core.chunker import chunk_text, persist_chunks, write_chunks_jsonl
-from btcedu.models.episode import Chunk, Episode, EpisodeStatus
+from btcedu.models.episode import Episode, EpisodeStatus
 
 logger = logging.getLogger(__name__)
 
@@ -85,64 +84,3 @@ def transcribe_episode(
     session.commit()
 
     return str(clean_path)
-
-
-def chunk_episode(
-    session: Session,
-    episode_id: str,
-    settings: Settings,
-    force: bool = False,
-) -> int:
-    """Chunk a transcript and persist to DB + JSONL.
-
-    Returns:
-        Number of chunks created.
-
-    Raises:
-        ValueError: If episode not found or not in TRANSCRIBED state.
-    """
-    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
-    if not episode:
-        raise ValueError(f"Episode not found: {episode_id}")
-
-    if episode.status not in (EpisodeStatus.TRANSCRIBED, EpisodeStatus.CHUNKED) and not force:
-        raise ValueError(
-            f"Episode {episode_id} is in status '{episode.status.value}', "
-            "expected 'transcribed'. Use --force to override."
-        )
-
-    chunks_dir = Path(settings.chunks_dir) / episode_id
-    jsonl_path = chunks_dir / "chunks.jsonl"
-
-    # Skip if already chunked
-    if jsonl_path.exists() and not force:
-        logger.info("Chunks exist: %s (use --force to re-chunk)", jsonl_path)
-        if episode.status == EpisodeStatus.TRANSCRIBED:
-            episode.status = EpisodeStatus.CHUNKED
-            session.commit()
-        return session.query(Chunk).filter_by(episode_id=episode_id).count()
-
-    if not episode.transcript_path:
-        raise ValueError(f"No transcript for episode {episode_id}")
-
-    transcript_text = Path(episode.transcript_path).read_text(encoding="utf-8")
-
-    # Chunk the text
-    chunks = chunk_text(
-        text=transcript_text,
-        episode_id=episode_id,
-        chunk_size=settings.chunk_size,
-        overlap_ratio=settings.chunk_overlap,
-    )
-
-    # Write JSONL
-    write_chunks_jsonl(chunks, str(chunks_dir))
-
-    # Persist to DB + FTS
-    count = persist_chunks(session, chunks, episode_id)
-
-    # Update episode status
-    episode.status = EpisodeStatus.CHUNKED
-    session.commit()
-
-    return count

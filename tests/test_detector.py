@@ -697,7 +697,7 @@ class TestBackfillEpisodes:
             source="youtube_rss",
             title="Original Title",
             url="https://youtube.com/watch?v=vid001",
-            status=EpisodeStatus.GENERATED,
+            status=EpisodeStatus.PUBLISHED,
         )
         db_session.add(existing)
         db_session.commit()
@@ -727,7 +727,7 @@ class TestBackfillEpisodes:
         ep1 = db_session.query(Episode).filter(Episode.episode_id == "vid001").first()
         assert ep1.title == "Original Title"
         assert ep1.source == "youtube_rss"
-        assert ep1.status == EpisodeStatus.GENERATED
+        assert ep1.status == EpisodeStatus.PUBLISHED
 
     @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
     def test_no_channel_id_raises(self, mock_fetch, db_session):

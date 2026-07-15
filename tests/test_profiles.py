@@ -36,7 +36,7 @@ class TestContentProfile:
         assert p.prompt_namespace is None
 
     def test_invalid_pipeline_version(self):
-        with pytest.raises(ValueError, match="pipeline_version must be 1 or 2"):
+        with pytest.raises(ValueError, match="pipeline_version must be 2"):
             ContentProfile(
                 name="test",
                 display_name="Test",

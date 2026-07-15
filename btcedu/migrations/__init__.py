@@ -715,6 +715,43 @@ class AddPipelineRunGitCommitMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class DropV1ChunksTableMigration(Migration):
+    """Migration 013: Drop legacy v1 chunks + chunks_fts tables.
+
+    The v1 pipeline (chunk/generate/refine) has been fully removed. The
+    ``chunks`` table and its ``chunks_fts`` FTS5 mirror are no longer used by
+    any code path, so drop them to keep the schema clean.
+    """
+
+    @property
+    def version(self) -> str:
+        return "013_drop_v1_chunks_table"
+
+    @property
+    def description(self) -> str:
+        return "Drop legacy v1 chunks and chunks_fts tables (v1 pipeline removed)"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(
+            text("SELECT name FROM sqlite_master WHERE type IN ('table','view')")
+        )
+        existing = {row[0] for row in result.fetchall()}
+
+        # Drop FTS mirror first (it references the chunks content table)
+        for tbl in ("chunks_fts", "chunks"):
+            if tbl in existing:
+                session.execute(text(f"DROP TABLE IF EXISTS {tbl}"))
+                logger.info("Dropped table %s", tbl)
+            else:
+                logger.info("Table %s does not exist (skipped)", tbl)
+        session.commit()
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -729,6 +766,7 @@ MIGRATIONS = [
     AddQualityRatingMigration(),
     AddChannelContentProfileMigration(),
     AddPipelineRunGitCommitMigration(),
+    DropV1ChunksTableMigration(),
 ]
 
 

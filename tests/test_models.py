@@ -8,12 +8,8 @@ from btcedu.models.episode import (
     RunStatus,
 )
 from btcedu.models.schemas import (
-    Citation,
-    ContentPackage,
     EpisodeInfo,
     PipelineStatus,
-    RetrievedChunk,
-    TranscriptChunk,
 )
 
 
@@ -124,41 +120,6 @@ class TestPydanticSchemas:
         )
         assert info.episode_id == "abc123"
         assert info.source == "youtube_rss"
-
-    def test_transcript_chunk(self):
-        chunk = TranscriptChunk(
-            chunk_index=0,
-            text="Bitcoin ist eine dezentrale Waehrung.",
-            word_count=5,
-            start_sentence=0,
-            end_sentence=1,
-            episode_video_id="abc123",
-        )
-        assert chunk.chunk_index == 0
-        assert chunk.word_count == 5
-
-    def test_retrieved_chunk(self):
-        chunk = RetrievedChunk(
-            chunk_index=3,
-            text="Some text",
-            score=0.85,
-        )
-        assert chunk.score == 0.85
-        assert chunk.metadata == {}
-
-    def test_citation(self):
-        citation = Citation(
-            output_file="02_script_tr.md",
-            section="Bolum 1",
-            cited_text_de="Bitcoin Mining verbraucht...",
-            chunk_index=5,
-        )
-        assert citation.chunk_index == 5
-
-    def test_content_package_defaults(self):
-        pkg = ContentPackage(episode_video_id="abc123")
-        assert pkg.outline == ""
-        assert pkg.citations == []
 
     def test_pipeline_status(self):
         now = datetime.now(UTC)

@@ -247,16 +247,16 @@ class TestTranslatePerStoryIntroOutro:
         # Check which system_prompt was used for each call
         calls = mock_claude.call_args_list
 
-        # s01 (intro) headline: should use intro prompt
-        assert calls[0].kwargs["system_prompt"] == "INTRO_SYSTEM_PROMPT"
+        # Headlines always use the standard prompt.
+        assert calls[0].kwargs["system_prompt"] == "STANDARD_SYSTEM"
         # s01 (intro) body: should use intro prompt
         assert calls[1].kwargs["system_prompt"] == "INTRO_SYSTEM_PROMPT"
         # s02 (regular) headline: should use standard prompt
         assert calls[2].kwargs["system_prompt"] == "STANDARD_SYSTEM"
         # s02 (regular) body: should use standard prompt
         assert calls[3].kwargs["system_prompt"] == "STANDARD_SYSTEM"
-        # s03 (outro) headline: should use intro prompt
-        assert calls[4].kwargs["system_prompt"] == "INTRO_SYSTEM_PROMPT"
+        # s03 (outro) headline: should use standard prompt
+        assert calls[4].kwargs["system_prompt"] == "STANDARD_SYSTEM"
         # s03 (outro) body: should use intro prompt
         assert calls[5].kwargs["system_prompt"] == "INTRO_SYSTEM_PROMPT"
 

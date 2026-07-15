@@ -236,33 +236,6 @@ def transcribe(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) ->
     "--episode-id",
     "episode_ids",
     multiple=True,
-    required=True,
-    help="Episode ID(s) to chunk (repeatable).",
-)
-@click.option("--force", is_flag=True, default=False, help="Re-chunk even if file exists.")
-@click.pass_context
-def chunk(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
-    """Chunk transcripts for specified episodes."""
-    from btcedu.core.transcriber import chunk_episode
-
-    settings = ctx.obj["settings"]
-    session = ctx.obj["session_factory"]()
-    try:
-        for eid in episode_ids:
-            try:
-                count = chunk_episode(session, eid, settings, force=force)
-                click.echo(f"[OK] {eid} -> {count} chunks")
-            except Exception as e:
-                click.echo(f"[FAIL] {eid}: {e}", err=True)
-    finally:
-        session.close()
-
-
-@cli.command()
-@click.option(
-    "--episode-id",
-    "episode_ids",
-    multiple=True,
     help="Episode ID(s) to process (repeatable). If omitted, processes all pending episodes.",
 )
 @click.option("--force", is_flag=True, default=False, help="Force re-run of completed stages.")
@@ -290,8 +263,15 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: 
                             EpisodeStatus.NEW,
                             EpisodeStatus.DOWNLOADED,
                             EpisodeStatus.TRANSCRIBED,
-                            EpisodeStatus.CHUNKED,
-                            EpisodeStatus.GENERATED,
+                            EpisodeStatus.CORRECTED,
+                            EpisodeStatus.SEGMENTED,
+                            EpisodeStatus.TRANSLATED,
+                            EpisodeStatus.ADAPTED,
+                            EpisodeStatus.CHAPTERIZED,
+                            EpisodeStatus.IMAGES_GENERATED,
+                            EpisodeStatus.TTS_DONE,
+                            EpisodeStatus.RENDERED,
+                            EpisodeStatus.APPROVED,
                         ]
                     )
                 )
@@ -543,67 +523,6 @@ def status(ctx: click.Context) -> None:
             if ep.error_message:
                 err = f"  !! {ep.error_message[:40]}"
             click.echo(f"  [{ep.status.value:<12}] {ep.episode_id}  {pub}  {ep.title[:50]}{err}")
-    finally:
-        session.close()
-
-
-@cli.command()
-@click.option(
-    "--episode-id",
-    "episode_ids",
-    multiple=True,
-    required=True,
-    help="Episode ID(s) to generate content for (repeatable).",
-)
-@click.option("--force", is_flag=True, default=False, help="Regenerate even if outputs exist.")
-@click.option("--top-k", type=int, default=16, help="Number of chunks to retrieve for context.")
-@click.pass_context
-def generate(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, top_k: int) -> None:
-    """Generate Turkish content package for CHUNKED episodes."""
-    from btcedu.core.generator import generate_content
-
-    settings = ctx.obj["settings"]
-    session = ctx.obj["session_factory"]()
-    try:
-        for eid in episode_ids:
-            try:
-                result = generate_content(session, eid, settings, force=force, top_k=top_k)
-                click.echo(
-                    f"[OK] {eid} -> {len(result.artifacts)} artifacts "
-                    f"(${result.total_cost_usd:.4f})"
-                )
-            except Exception as e:
-                click.echo(f"[FAIL] {eid}: {e}", err=True)
-    finally:
-        session.close()
-
-
-@cli.command()
-@click.option(
-    "--episode-id",
-    "episode_ids",
-    multiple=True,
-    required=True,
-    help="Episode ID(s) to refine (repeatable).",
-)
-@click.option("--force", is_flag=True, default=False, help="Re-refine even if v2 outputs exist.")
-@click.pass_context
-def refine(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) -> None:
-    """Refine generated content using QA feedback (v1 -> v2)."""
-    from btcedu.core.generator import refine_content
-
-    settings = ctx.obj["settings"]
-    session = ctx.obj["session_factory"]()
-    try:
-        for eid in episode_ids:
-            try:
-                result = refine_content(session, eid, settings, force=force)
-                click.echo(
-                    f"[OK] {eid} -> {len(result.artifacts)} artifacts "
-                    f"(${result.total_cost_usd:.4f})"
-                )
-            except Exception as e:
-                click.echo(f"[FAIL] {eid}: {e}", err=True)
     finally:
         session.close()
 

@@ -443,22 +443,6 @@ def test_render_video_missing_episode(db_session, settings):
         render_video(db_session, "nonexistent", settings)
 
 
-def test_render_video_v1_pipeline(db_session, settings):
-    """Test render rejects v1 pipeline episodes."""
-    episode = Episode(
-        episode_id="ep001",
-        title="Test",
-        url="https://example.com",
-        status=EpisodeStatus.TTS_DONE,
-        pipeline_version=1,
-    )
-    db_session.add(episode)
-    db_session.commit()
-
-    with pytest.raises(ValueError, match="v1 pipeline"):
-        render_video(db_session, "ep001", settings)
-
-
 def test_render_video_wrong_status(db_session, settings):
     """Test render rejects wrong episode status."""
     episode = Episode(

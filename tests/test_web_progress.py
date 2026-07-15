@@ -35,28 +35,10 @@ def test_settings(tmp_path):
         database_url="sqlite:///:memory:",
         raw_data_dir=str(tmp_path / "raw"),
         transcripts_dir=str(tmp_path / "transcripts"),
-        chunks_dir=str(tmp_path / "chunks"),
         outputs_dir=str(tmp_path / "outputs"),
         reports_dir=str(tmp_path / "reports"),
         logs_dir=str(tmp_path / "logs"),
         pipeline_version=2,
-    )
-
-
-@pytest.fixture
-def test_settings_v1(tmp_path):
-    """Settings with pipeline_version=1."""
-    return Settings(
-        anthropic_api_key="test-key",
-        openai_api_key="test-key",
-        database_url="sqlite:///:memory:",
-        raw_data_dir=str(tmp_path / "raw"),
-        transcripts_dir=str(tmp_path / "transcripts"),
-        chunks_dir=str(tmp_path / "chunks"),
-        outputs_dir=str(tmp_path / "outputs"),
-        reports_dir=str(tmp_path / "reports"),
-        logs_dir=str(tmp_path / "logs"),
-        pipeline_version=1,
     )
 
 
@@ -128,16 +110,23 @@ def seeded_db(test_db):
         status=EpisodeStatus.PUBLISHED,
         pipeline_version=2,
     )
-    ep_v1 = Episode(
-        episode_id="ep_v1",
+    ep_v2_new = Episode(
+        episode_id="ep_v2_new",
         source="youtube_rss",
-        title="V1 Episode",
-        url="https://youtube.com/watch?v=ep_v1",
+        title="V2 New Episode",
+        url="https://youtube.com/watch?v=ep_v2_new",
         status=EpisodeStatus.NEW,
-        pipeline_version=1,
+        pipeline_version=2,
     )
 
-    session.add_all([ep_new, ep_corrected, ep_corrected_approved, ep_failed, ep_published, ep_v1])
+    session.add_all([
+        ep_new,
+        ep_corrected,
+        ep_corrected_approved,
+        ep_failed,
+        ep_published,
+        ep_v2_new,
+    ])
     session.commit()
 
     # Pending review for ep_corrected
@@ -387,33 +376,12 @@ class TestBuildStageProgressV2:
         assert sp["total_count"] == len(sp["stages"])
 
 
-class TestBuildStageProgressV1:
-    def test_v1_stage_progress_five_stages(self, seeded_db, test_settings_v1):
-        """v1 episode (pipeline_version=1) returns 5 stages."""
-        _, factory = seeded_db
-        session = factory()
-        ep = session.query(Episode).filter(Episode.episode_id == "ep_v1").first()
-
-        sp = _build_stage_progress(session, ep, test_settings_v1, review_context=None)
-        session.close()
-
-        assert sp is not None
-        stage_names = [s["name"] for s in sp["stages"]]
-        expected = ["download", "transcribe", "chunk", "generate", "refine"]
-        assert stage_names == expected
-        assert sp["total_count"] == 5
-        assert sp["pipeline_version"] == 1
-
-
 class TestStageLabelConstants:
     def test_stage_labels_dict_complete(self):
         """_STAGE_LABELS covers all expected stages."""
         expected_keys = {
             "download",
             "transcribe",
-            "chunk",
-            "generate",
-            "refine",
             "correct",
             "review_gate_1",
             "segment",
@@ -498,26 +466,8 @@ class TestEpisodeListIncludesStageProgress:
             assert "stage_progress" in ep, f"Episode {ep['episode_id']} missing stage_progress"
             assert ep["stage_progress"] is not None
 
-    def test_stage_progress_pipeline_version_respected(self, client, seeded_db, test_settings_v1):
-        """v1 episode with v1 settings gets 5 stages; v2 episode with v2 settings gets 14.
-
-        Note: _get_stages uses max(settings.pipeline_version, episode.pipeline_version),
-        so a v1 episode with v2 settings will still use v2 stages. To test v1 stage
-        counts we need v1 settings paired with a v1 episode.
-        """
-        from btcedu.web.app import create_app
-
-        _, factory = seeded_db
-        app_v1 = create_app(settings=test_settings_v1)
-        app_v1.config["session_factory"] = factory
-        app_v1.config["TESTING"] = True
-
-        with app_v1.test_client() as c_v1:
-            data = c_v1.get("/api/episodes").get_json()
-            ep_v1 = next(e for e in data if e["episode_id"] == "ep_v1")
-            assert ep_v1["stage_progress"]["total_count"] == 5
-
-        # v2 episode with v2 app
+    def test_stage_progress_uses_v2_stages(self, client):
+        """Episodes use the v2 stage list."""
         data2 = client.get("/api/episodes").get_json()
         ep_v2 = next(e for e in data2 if e["episode_id"] == "ep_new")
         assert ep_v2["stage_progress"]["total_count"] == 16

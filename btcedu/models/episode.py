@@ -9,16 +9,11 @@ from btcedu.version import get_git_commit
 
 
 class EpisodeStatus(str, enum.Enum):
-    # Existing (v1 pipeline)
     NEW = "new"
     DOWNLOADED = "downloaded"
     TRANSCRIBED = "transcribed"
-    CHUNKED = "chunked"
-    GENERATED = "generated"
-    REFINED = "refined"
-    COMPLETED = "completed"
     FAILED = "failed"
-    # New (v2 pipeline)
+    # v2 pipeline
     CORRECTED = "corrected"
     SEGMENTED = "segmented"  # After story segmentation (news profiles)
     TRANSLATED = "translated"
@@ -35,15 +30,10 @@ class EpisodeStatus(str, enum.Enum):
 
 
 class PipelineStage(str, enum.Enum):
-    # Existing (v1)
     DETECT = "detect"
     DOWNLOAD = "download"
     TRANSCRIBE = "transcribe"
-    CHUNK = "chunk"
-    GENERATE = "generate"
-    REFINE = "refine"
-    COMPLETE = "complete"
-    # New (v2)
+    # v2 pipeline
     CORRECT = "correct"
     SEGMENT = "segment"  # Story segmentation (news profiles)
     TRANSLATE = "translate"
@@ -141,19 +131,3 @@ class PipelineRun(Base):
         return (
             f"<PipelineRun(id={self.id}, stage='{self.stage.value}', status='{self.status.value}')>"
         )
-
-
-class Chunk(Base):
-    __tablename__ = "chunks"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    chunk_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
-    episode_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    text: Mapped[str] = mapped_column(Text, nullable=False)
-    token_estimate: Mapped[int] = mapped_column(Integer, nullable=False)
-    start_char: Mapped[int] = mapped_column(Integer, nullable=False)
-    end_char: Mapped[int] = mapped_column(Integer, nullable=False)
-
-    def __repr__(self) -> str:
-        return f"<Chunk(chunk_id='{self.chunk_id}', ordinal={self.ordinal})>"

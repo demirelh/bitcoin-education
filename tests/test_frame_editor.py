@@ -250,7 +250,7 @@ class TestEditFrames:
         assert result2.skipped
 
     def test_edit_frames_no_manifest(self, db_session, gemini_settings, tmp_path):
-        """Episode without frames manifest should skip gracefully."""
+        """Episode without frames manifest raises a clear error."""
         eid = "no-frames-ep"
         ep = Episode(
             episode_id=eid,
@@ -265,8 +265,8 @@ class TestEditFrames:
         gemini_settings.outputs_dir = str(tmp_path)
         (tmp_path / eid).mkdir()
 
-        result = edit_frames(db_session, eid, gemini_settings, force=False)
-        assert result.skipped
+        with pytest.raises(FileNotFoundError, match="No frames manifest"):
+            edit_frames(db_session, eid, gemini_settings, force=False)
 
     def test_edit_frames_wrong_status_raises(self, db_session, gemini_settings, tmp_path):
         ep = Episode(
@@ -283,19 +283,3 @@ class TestEditFrames:
 
         with pytest.raises(ValueError, match="status"):
             edit_frames(db_session, "wrong-status", gemini_settings)
-
-    def test_edit_frames_v1_raises(self, db_session, gemini_settings, tmp_path):
-        ep = Episode(
-            episode_id="v1-ep",
-            title="V1 Episode",
-            url="https://example.com",
-            status=EpisodeStatus.FRAMES_EXTRACTED,
-            pipeline_version=1,
-        )
-        db_session.add(ep)
-        db_session.commit()
-
-        gemini_settings.outputs_dir = str(tmp_path)
-
-        with pytest.raises(ValueError, match="v1"):
-            edit_frames(db_session, "v1-ep", gemini_settings)

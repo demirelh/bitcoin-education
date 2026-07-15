@@ -25,7 +25,6 @@ def test_settings(tmp_path):
         database_url="sqlite:///:memory:",
         raw_data_dir=str(tmp_path / "raw"),
         transcripts_dir=str(tmp_path / "transcripts"),
-        chunks_dir=str(tmp_path / "chunks"),
         outputs_dir=str(tmp_path / "outputs"),
         reports_dir=str(tmp_path / "reports"),
         logs_dir=str(tmp_path / "logs"),
@@ -64,7 +63,8 @@ def seeded_db(test_db):
             source="youtube_rss",
             title="Bitcoin Basics",
             url="https://youtube.com/watch?v=ep001",
-            status=EpisodeStatus.GENERATED,
+            status=EpisodeStatus.ADAPTED,
+            pipeline_version=2,
         ),
         Episode(
             episode_id="ep002",
@@ -78,8 +78,9 @@ def seeded_db(test_db):
             source="youtube_rss",
             title="Mining Deep Dive",
             url="https://youtube.com/watch?v=ep003",
-            status=EpisodeStatus.CHUNKED,
-            error_message="Stage 'generate' failed: API error",
+            status=EpisodeStatus.TRANSLATED,
+            pipeline_version=2,
+            error_message="Stage 'adapt' failed: API error",
             retry_count=1,
         ),
     ]
@@ -89,7 +90,7 @@ def seeded_db(test_db):
     # Add a pipeline run for cost testing
     run = PipelineRun(
         episode_id=episodes[0].id,
-        stage=PipelineStage.GENERATE,
+        stage=PipelineStage.ADAPT,
         status=RunStatus.SUCCESS,
         input_tokens=5000,
         output_tokens=2000,
@@ -208,9 +209,9 @@ class TestEpisodeEndpoints:
         assert files["audio"] is False
         assert files["transcript_raw"] is False
         # v2 file keys should also be present
-        assert "outline_v2" in files
-        assert "script_v2" in files
-        assert "publishing_v2" in files
+        assert "script_adapted" in files
+        assert "chapters" in files
+        assert "video" in files
 
     def test_episode_detail_includes_cost(self, client):
         data = client.get("/api/episodes/ep001").get_json()
@@ -345,7 +346,7 @@ class TestPipelineActions:
     def test_detect_endpoint_sync(self, client):
         """Detect stays synchronous."""
         mock_result = MagicMock(found=5, new=2, total=10)
-        with patch("btcedu.core.detector.detect_episodes", return_value=mock_result):
+        with patch("btcedu.core.detector.detect_all_active_channels", return_value=mock_result):
             r = client.post("/api/detect")
             assert r.status_code == 200
             data = r.get_json()
@@ -364,26 +365,8 @@ class TestPipelineActions:
         assert r.status_code == 202
         assert "job_id" in r.get_json()
 
-    def test_chunk_returns_202(self, client):
-        r = client.post("/api/episodes/ep002/chunk", json={"force": False})
-        assert r.status_code == 202
-        assert "job_id" in r.get_json()
-
-    def test_generate_returns_202(self, client):
-        r = client.post(
-            "/api/episodes/ep003/generate",
-            json={"force": True, "dry_run": False},
-        )
-        assert r.status_code == 202
-        assert "job_id" in r.get_json()
-
     def test_run_returns_202(self, client):
         r = client.post("/api/episodes/ep002/run", json={"force": False})
-        assert r.status_code == 202
-        assert "job_id" in r.get_json()
-
-    def test_refine_returns_202(self, client):
-        r = client.post("/api/episodes/ep001/refine", json={"force": False})
         assert r.status_code == 202
         assert "job_id" in r.get_json()
 
@@ -513,13 +496,13 @@ class TestJobsAndLogs:
         assert r.status_code == 200
         assert len(r.get_json()["lines"]) == 5
 
-    def test_run_all_nothing_to_do_on_refined(self, client, app, seeded_db):
-        """Run All on a REFINED episode completes with 'Nothing to do'."""
-        # Update ep001 to REFINED status so all stages are skipped
+    def test_run_all_nothing_to_do_on_published(self, client, app, seeded_db):
+        """Run All on a PUBLISHED episode completes with 'Nothing to do'."""
+        # Update ep001 to PUBLISHED status so all stages are skipped
         _, factory = seeded_db
         session = factory()
         ep = session.query(Episode).filter_by(episode_id="ep001").first()
-        ep.status = EpisodeStatus.REFINED
+        ep.status = EpisodeStatus.PUBLISHED
         session.commit()
         session.close()
 
@@ -554,9 +537,9 @@ class TestFileViewer:
     def test_file_json_pretty_printed(self, client, test_settings):
         ep_dir = Path(test_settings.outputs_dir) / "ep001"
         ep_dir.mkdir(parents=True)
-        (ep_dir / "qa.json").write_text('{"q":"What?","a":"Yes"}', encoding="utf-8")
+        (ep_dir / "chapters.json").write_text('{"q":"What?","a":"Yes"}', encoding="utf-8")
 
-        r = client.get("/api/episodes/ep001/files/qa")
+        r = client.get("/api/episodes/ep001/files/chapters")
         assert r.status_code == 200
         data = r.get_json()
         # Should be pretty-printed
@@ -661,7 +644,7 @@ class TestBatchJobProgress:
         work = job_manager._calculate_episode_work(EpisodeStatus.NEW, force=False)
         expected = sum(STAGE_WEIGHTS.values())
         assert work == expected
-        assert work == 100  # 5 + 45 + 10 + 35 + 5
+        assert work == 100
 
     def test_calculate_episode_work_downloaded(self, app):
         """DOWNLOADED episode should skip download stage."""
@@ -672,29 +655,36 @@ class TestBatchJobProgress:
         work = job_manager._calculate_episode_work(EpisodeStatus.DOWNLOADED, force=False)
         expected = sum(STAGE_WEIGHTS.values()) - STAGE_WEIGHTS["download"]
         assert work == expected
-        assert work == 95  # 100 - 5
+        assert work == 97
 
-    def test_calculate_episode_work_chunked(self, app):
-        """CHUNKED episode should only need generate + refine."""
+    def test_calculate_episode_work_translated(self, app):
+        """TRANSLATED episode should need all stages after translate."""
         from btcedu.models.episode import EpisodeStatus
         from btcedu.web.jobs import STAGE_WEIGHTS
 
         job_manager = app.config["job_manager"]
-        work = job_manager._calculate_episode_work(EpisodeStatus.CHUNKED, force=False)
-        expected = STAGE_WEIGHTS["generate"] + STAGE_WEIGHTS["refine"]
+        work = job_manager._calculate_episode_work(EpisodeStatus.TRANSLATED, force=False)
+        expected = (
+            STAGE_WEIGHTS["adapt"]
+            + STAGE_WEIGHTS["chapterize"]
+            + STAGE_WEIGHTS["frameextract"]
+            + STAGE_WEIGHTS["imagegen"]
+            + STAGE_WEIGHTS["tts"]
+            + STAGE_WEIGHTS["render"]
+        )
         assert work == expected
-        assert work == 40  # 35 + 5
+        assert work == 50
 
-    def test_calculate_episode_work_generated(self, app):
-        """GENERATED episode should only need refine stage."""
+    def test_calculate_episode_work_images_generated(self, app):
+        """IMAGES_GENERATED episode should only need TTS + render."""
         from btcedu.models.episode import EpisodeStatus
         from btcedu.web.jobs import STAGE_WEIGHTS
 
         job_manager = app.config["job_manager"]
-        work = job_manager._calculate_episode_work(EpisodeStatus.GENERATED, force=False)
-        expected = STAGE_WEIGHTS["refine"]
+        work = job_manager._calculate_episode_work(EpisodeStatus.IMAGES_GENERATED, force=False)
+        expected = STAGE_WEIGHTS["tts"] + STAGE_WEIGHTS["render"]
         assert work == expected
-        assert work == 5
+        assert work == 25
 
     def test_calculate_episode_work_force_mode(self, app):
         """Force mode should include all stages regardless of status."""
@@ -702,7 +692,7 @@ class TestBatchJobProgress:
         from btcedu.web.jobs import STAGE_WEIGHTS
 
         job_manager = app.config["job_manager"]
-        work = job_manager._calculate_episode_work(EpisodeStatus.GENERATED, force=True)
+        work = job_manager._calculate_episode_work(EpisodeStatus.IMAGES_GENERATED, force=True)
         expected = sum(STAGE_WEIGHTS.values())
         assert work == expected
         assert work == 100

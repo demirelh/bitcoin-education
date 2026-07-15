@@ -349,24 +349,6 @@ def test_generate_tts_episode_not_found(db_session, tmp_path):
         generate_tts(db_session, "nonexistent", settings)
 
 
-def test_generate_tts_v1_rejected(db_session, tmp_path):
-    """V1 episode raises ValueError."""
-    episode = Episode(
-        episode_id="ep_v1",
-        source="youtube_rss",
-        title="V1 Episode",
-        url="https://youtube.com/watch?v=ep_v1",
-        status=EpisodeStatus.IMAGES_GENERATED,
-        pipeline_version=1,
-    )
-    db_session.add(episode)
-    db_session.commit()
-
-    settings = _make_settings(tmp_path)
-    with pytest.raises(ValueError, match="v1 pipeline"):
-        generate_tts(db_session, "ep_v1", settings)
-
-
 def test_generate_tts_wrong_status(db_session, tmp_path):
     """Wrong status raises ValueError."""
     episode = Episode(

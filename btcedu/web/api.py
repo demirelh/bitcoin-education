@@ -453,7 +453,6 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
     """Check which output files exist for an episode."""
     raw = Path(settings.raw_data_dir) / episode_id
     trans = Path(settings.transcripts_dir) / episode_id
-    chunks = Path(settings.chunks_dir) / episode_id
     out = Path(settings.outputs_dir) / episode_id
 
     # v2 news-pipeline artifacts (Tagesschau etc.)
@@ -468,16 +467,6 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
         "audio": any(raw.glob("audio.*")) if raw.exists() else False,
         "transcript_raw": (trans / "transcript.de.txt").exists(),
         "transcript_clean": (trans / "transcript.clean.de.txt").exists(),
-        "chunks": (chunks / "chunks.jsonl").exists(),
-        "outline": (out / "outline.tr.md").exists(),
-        "script": (out / "script.long.tr.md").exists(),
-        "shorts": (out / "shorts.tr.json").exists(),
-        "visuals": (out / "visuals.json").exists(),
-        "qa": (out / "qa.json").exists(),
-        "publishing": (out / "publishing_pack.json").exists(),
-        "outline_v2": (out / "outline.tr.v2.md").exists(),
-        "script_v2": (out / "script.long.tr.v2.md").exists(),
-        "publishing_v2": (out / "publishing_pack.v2.json").exists(),
         "stories": (out / "stories.json").exists(),
         "stories_translated": (out / "stories_translated.json").exists(),
         # v2 news-pipeline artifacts
@@ -498,11 +487,9 @@ _STAGE_WORKFLOW_KEY = {
     "download": "audio",
     "transcribe": "transcript_raw",
     "correct": "transcript_clean",
-    "chunk": "chunks",
     "segment": "stories",
     "translate": "translation",
     "adapt": "script_adapted",
-    "generate": "script",
     "chapterize": "chapters",
     "imagegen": "images",
     "tts": "tts",
@@ -513,11 +500,9 @@ _WORKFLOW_LABELS = {
     "audio": "Audio",
     "transcript_raw": "Transcript DE",
     "transcript_clean": "Transcript Clean",
-    "chunks": "Chunks",
     "stories": "Stories DE",
     "translation": "Translation TR",
     "script_adapted": "Script (adapted)",
-    "script": "Script TR",
     "chapters": "Chapters",
     "images": "Images",
     "tts": "TTS Audio",
@@ -748,13 +733,8 @@ def _compute_pipeline_state(status: str, review_context: dict | None) -> str:
 # ---------------------------------------------------------------------------
 
 _STAGE_LABELS = {
-    # v1
     "download": "Download",
     "transcribe": "Transcribe",
-    "chunk": "Chunk",
-    "generate": "Generate",
-    "refine": "Refine",
-    # v2
     "correct": "Correct",
     "review_gate_1": "Review 1",
     "segment": "Segment",
@@ -776,9 +756,6 @@ _STAGE_LABELS = {
 _STAGE_TO_PIPELINE_STAGE = {
     "download": PipelineStage.DOWNLOAD,
     "transcribe": PipelineStage.TRANSCRIBE,
-    "chunk": PipelineStage.CHUNK,
-    "generate": PipelineStage.GENERATE,
-    "refine": PipelineStage.REFINE,
     "correct": PipelineStage.CORRECT,
     "translate": PipelineStage.TRANSLATE,
     "adapt": PipelineStage.ADAPT,
@@ -1203,105 +1180,15 @@ def transcribe_episode(episode_id: str):
     return _submit_job("transcribe", episode_id, force=body.get("force", False))
 
 
-@api_bp.route("/episodes/<episode_id>/chunk", methods=["POST"])
-def chunk_episode(episode_id: str):
-    body = request.get_json(silent=True) or {}
-    return _submit_job("chunk", episode_id, force=body.get("force", False))
-
-
-@api_bp.route("/episodes/<episode_id>/generate", methods=["POST"])
-def generate_episode(episode_id: str):
-    body = request.get_json(silent=True) or {}
-    return _submit_job(
-        "generate",
-        episode_id,
-        force=body.get("force", False),
-        dry_run=body.get("dry_run", False),
-        top_k=body.get("top_k", 16),
-    )
-
-
 @api_bp.route("/episodes/<episode_id>/run", methods=["POST"])
 def run_episode(episode_id: str):
     body = request.get_json(silent=True) or {}
     return _submit_job("run", episode_id, force=body.get("force", False))
 
 
-@api_bp.route("/episodes/<episode_id>/refine", methods=["POST"])
-def refine_episode(episode_id: str):
-    body = request.get_json(silent=True) or {}
-    return _submit_job("refine", episode_id, force=body.get("force", False))
-
-
 @api_bp.route("/episodes/<episode_id>/retry", methods=["POST"])
 def retry_episode(episode_id: str):
     return _submit_job("retry", episode_id)
-
-
-@api_bp.route("/episodes/<episode_id>/reset-v2", methods=["POST"])
-def reset_episode_v2(episode_id: str):
-    """Reset episode to TRANSCRIBED so the v2 pipeline can run from correct stage.
-
-    Only allowed for episodes with a completed transcript.
-    Resets status to TRANSCRIBED and pipeline_version to 2.
-    """
-    session = _get_session()
-    try:
-        ep = session.query(Episode).filter(Episode.episode_id == episode_id).first()
-        if not ep:
-            return jsonify({"error": f"Episode not found: {episode_id}"}), 404
-
-        # Must have at least been transcribed
-        resettable = {
-            EpisodeStatus.TRANSCRIBED,
-            EpisodeStatus.CHUNKED,
-            EpisodeStatus.GENERATED,
-            EpisodeStatus.REFINED,
-            EpisodeStatus.COMPLETED,
-            EpisodeStatus.FAILED,
-            # v2 statuses
-            EpisodeStatus.CORRECTED,
-            EpisodeStatus.TRANSLATED,
-            EpisodeStatus.ADAPTED,
-            EpisodeStatus.CHAPTERIZED,
-            EpisodeStatus.IMAGES_GENERATED,
-            EpisodeStatus.TTS_DONE,
-            EpisodeStatus.RENDERED,
-            EpisodeStatus.APPROVED,
-        }
-        if ep.status not in resettable:
-            return jsonify(
-                {
-                    "error": f"Cannot reset: episode is {ep.status.value}. "
-                    "Must be at least TRANSCRIBED."
-                }
-            ), 400
-
-        old_status = ep.status.value
-        ep.status = EpisodeStatus.TRANSCRIBED
-        ep.pipeline_version = 2
-        ep.error_message = None
-        session.commit()
-
-        logger.info(
-            "Reset episode %s from %s to TRANSCRIBED (v2)",
-            episode_id,
-            old_status,
-        )
-        return jsonify(
-            {
-                "success": True,
-                "episode_id": episode_id,
-                "old_status": old_status,
-                "new_status": "TRANSCRIBED",
-                "pipeline_version": 2,
-            }
-        )
-    except Exception as e:
-        logger.exception("Reset-v2 failed for %s", episode_id)
-        return jsonify({"error": str(e)}), 500
-    finally:
-        session.close()
 
 
 # ---------------------------------------------------------------------------
@@ -1378,15 +1265,7 @@ def episode_action_log(episode_id: str):
 _FILE_MAP = {
     "transcript_raw": ("transcripts_dir", "{eid}/transcript.de.txt"),
     "transcript_clean": ("transcripts_dir", "{eid}/transcript.clean.de.txt"),
-    "outline": ("outputs_dir", "{eid}/outline.tr.md"),
-    "script": ("outputs_dir", "{eid}/script.long.tr.md"),
-    "shorts": ("outputs_dir", "{eid}/shorts.tr.json"),
-    "visuals": ("outputs_dir", "{eid}/visuals.json"),
-    "qa": ("outputs_dir", "{eid}/qa.json"),
-    "publishing": ("outputs_dir", "{eid}/publishing_pack.json"),
-    "outline_v2": ("outputs_dir", "{eid}/outline.tr.v2.md"),
-    "script_v2": ("outputs_dir", "{eid}/script.long.tr.v2.md"),
-    "publishing_v2": ("outputs_dir", "{eid}/publishing_pack.v2.json"),
+    "script_adapted": ("outputs_dir", "{eid}/script.adapted.tr.md"),
     "chapters": ("outputs_dir", "{eid}/chapters.json"),
     "stories": ("outputs_dir", "{eid}/stories.json"),
     "stories_translated": ("outputs_dir", "{eid}/stories_translated.json"),
@@ -1671,9 +1550,7 @@ def whats_new():
                 Episode.status.notin_(
                     [
                         EpisodeStatus.NEW,
-                        EpisodeStatus.GENERATED,
-                        EpisodeStatus.REFINED,
-                        EpisodeStatus.COMPLETED,
+                        EpisodeStatus.PUBLISHED,
                     ]
                 )
             )
@@ -1690,22 +1567,13 @@ def whats_new():
                         "missing": "transcript",
                     }
                 )
-            elif ep.status == EpisodeStatus.TRANSCRIBED and not files.get("chunks"):
+            elif ep.status == EpisodeStatus.TRANSCRIBED and not files.get("transcript_clean"):
                 incomplete.append(
                     {
                         "episode_id": ep.episode_id,
                         "title": ep.title,
                         "status": ep.status.value,
-                        "missing": "chunks",
-                    }
-                )
-            elif ep.status == EpisodeStatus.CHUNKED and not files.get("outline"):
-                incomplete.append(
-                    {
-                        "episode_id": ep.episode_id,
-                        "title": ep.title,
-                        "status": ep.status.value,
-                        "missing": "generated content",
+                        "missing": "corrected transcript",
                     }
                 )
 
@@ -2844,8 +2712,6 @@ _ALLOWED_STAGE_ACTIONS = frozenset({
     "download", "transcribe", "correct", "segment", "translate", "adapt",
     "chapterize", "frameextract", "imagegen", "tts", "anchorgen", "render",
     "publish",
-    # v1 stages
-    "chunk", "generate", "refine",
 })
 
 

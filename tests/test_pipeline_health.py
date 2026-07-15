@@ -21,7 +21,6 @@ def test_settings(tmp_path):
         database_url="sqlite:///:memory:",
         raw_data_dir=str(tmp_path / "raw"),
         transcripts_dir=str(tmp_path / "transcripts"),
-        chunks_dir=str(tmp_path / "chunks"),
         outputs_dir=str(tmp_path / "outputs"),
         reports_dir=str(tmp_path / "reports"),
         logs_dir=str(tmp_path / "logs"),
@@ -62,7 +61,7 @@ def seeded_db(test_db):
         source="youtube_rss",
         title="Bitcoin Basics",
         url="https://youtube.com/watch?v=ep001",
-        status=EpisodeStatus.GENERATED,
+        status=EpisodeStatus.ADAPTED,
     )
     ep2 = Episode(
         episode_id="ep002",
@@ -96,7 +95,7 @@ def seeded_db(test_db):
         ),
         PipelineRun(
             episode_id=ep1.id,
-            stage=PipelineStage.GENERATE,
+            stage=PipelineStage.ADAPT,
             status=RunStatus.FAILED,
             started_at=now - timedelta(hours=1),
             completed_at=now - timedelta(minutes=55),
@@ -110,7 +109,7 @@ def seeded_db(test_db):
     # Create DLQ entry
     dlq = DeadLetterEntry(
         episode_id="ep001",
-        stage="generate",
+        stage="adapt",
         error_category="auth_error",
         error_message="401 Unauthorized",
         suggestion="Check .env for correct API keys.",
@@ -195,7 +194,7 @@ class TestPipelineHealth:
         assert dlq["pending"] == 1
         assert len(dlq["entries"]) == 1
         assert dlq["entries"][0]["episode_id"] == "ep001"
-        assert dlq["entries"][0]["stage"] == "generate"
+        assert dlq["entries"][0]["stage"] == "adapt"
         assert dlq["entries"][0]["error_category"] == "auth_error"
 
     def test_episodes_summary(self, client):

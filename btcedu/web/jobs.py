@@ -21,11 +21,16 @@ logger = logging.getLogger(__name__)
 # Stage weights for progress calculation (percentages)
 # These weights represent the relative time/effort for each stage
 STAGE_WEIGHTS = {
-    "download": 5,
-    "transcribe": 45,
-    "chunk": 10,
-    "generate": 35,
-    "refine": 5,
+    "download": 3,
+    "transcribe": 20,
+    "correct": 7,
+    "translate": 20,
+    "adapt": 10,
+    "chapterize": 5,
+    "frameextract": 3,
+    "imagegen": 7,
+    "tts": 10,
+    "render": 15,
 }
 
 
@@ -243,9 +248,6 @@ class JobManager:
                 _action_map = {
                     "download": self._do_download,
                     "transcribe": self._do_transcribe,
-                    "chunk": self._do_chunk,
-                    "generate": self._do_generate,
-                    "refine": self._do_refine,
                     "correct": self._do_correct,
                     "segment": self._do_segment,
                     "translate": self._do_translate,
@@ -317,73 +319,6 @@ class JobManager:
         path = transcribe_episode(session, job.episode_id, settings, force=job.force)
         self._update(job, result={"success": True, "path": path})
         self._log(job, f"Transcription complete: {path}")
-
-    def _do_chunk(self, job, session, settings):
-        from btcedu.core.transcriber import chunk_episode
-
-        self._update(job, stage="chunking")
-        self._log(job, "Chunking transcript...")
-        count = chunk_episode(session, job.episode_id, settings, force=job.force)
-        self._update(job, result={"success": True, "count": count})
-        self._log(job, f"Chunking complete: {count} chunks")
-
-    def _do_generate(self, job, session, settings):
-        from btcedu.core.generator import generate_content
-
-        self._update(job, stage="generating")
-        self._log(job, "Generating content...")
-        original_dry_run = settings.dry_run
-        settings.dry_run = job.dry_run
-        try:
-            result = generate_content(
-                session,
-                job.episode_id,
-                settings,
-                force=job.force,
-                top_k=job.top_k,
-            )
-        finally:
-            settings.dry_run = original_dry_run
-        self._update(
-            job,
-            result={
-                "success": True,
-                "artifacts": len(result.artifacts),
-                "cost_usd": result.total_cost_usd,
-                "input_tokens": result.total_input_tokens,
-                "output_tokens": result.total_output_tokens,
-            },
-        )
-        self._log(
-            job,
-            f"Generation complete: {len(result.artifacts)} artifacts, ${result.total_cost_usd:.4f}",
-        )
-
-    def _do_refine(self, job, session, settings):
-        from btcedu.core.generator import refine_content
-
-        self._update(job, stage="refining")
-        self._log(job, "Refining content (v1 -> v2)...")
-        result = refine_content(
-            session,
-            job.episode_id,
-            settings,
-            force=job.force,
-        )
-        self._update(
-            job,
-            result={
-                "success": True,
-                "artifacts": len(result.artifacts),
-                "cost_usd": result.total_cost_usd,
-                "input_tokens": result.total_input_tokens,
-                "output_tokens": result.total_output_tokens,
-            },
-        )
-        self._log(
-            job,
-            f"Refinement complete: {len(result.artifacts)} artifacts, ${result.total_cost_usd:.4f}",
-        )
 
     def _do_correct(self, job, session, settings):
         from btcedu.core.corrector import correct_transcript
@@ -829,10 +764,68 @@ class JobManager:
             EpisodeStatus.NEW: [],
             EpisodeStatus.DOWNLOADED: ["download"],
             EpisodeStatus.TRANSCRIBED: ["download", "transcribe"],
-            EpisodeStatus.CHUNKED: ["download", "transcribe", "chunk"],
-            EpisodeStatus.GENERATED: ["download", "transcribe", "chunk", "generate"],
-            EpisodeStatus.REFINED: ["download", "transcribe", "chunk", "generate", "refine"],
-            EpisodeStatus.COMPLETED: ["download", "transcribe", "chunk", "generate", "refine"],
+            EpisodeStatus.CORRECTED: ["download", "transcribe", "correct"],
+            EpisodeStatus.SEGMENTED: ["download", "transcribe", "correct"],
+            EpisodeStatus.TRANSLATED: ["download", "transcribe", "correct", "translate"],
+            EpisodeStatus.ADAPTED: [
+                "download",
+                "transcribe",
+                "correct",
+                "translate",
+                "adapt",
+            ],
+            EpisodeStatus.CHAPTERIZED: [
+                "download",
+                "transcribe",
+                "correct",
+                "translate",
+                "adapt",
+                "chapterize",
+            ],
+            EpisodeStatus.FRAMES_EXTRACTED: [
+                "download",
+                "transcribe",
+                "correct",
+                "translate",
+                "adapt",
+                "chapterize",
+                "frameextract",
+            ],
+            EpisodeStatus.IMAGES_GENERATED: [
+                "download",
+                "transcribe",
+                "correct",
+                "translate",
+                "adapt",
+                "chapterize",
+                "frameextract",
+                "imagegen",
+            ],
+            EpisodeStatus.TTS_DONE: [
+                "download",
+                "transcribe",
+                "correct",
+                "translate",
+                "adapt",
+                "chapterize",
+                "frameextract",
+                "imagegen",
+                "tts",
+            ],
+            EpisodeStatus.ANCHOR_GENERATED: [
+                "download",
+                "transcribe",
+                "correct",
+                "translate",
+                "adapt",
+                "chapterize",
+                "frameextract",
+                "imagegen",
+                "tts",
+            ],
+            EpisodeStatus.RENDERED: list(STAGE_WEIGHTS.keys()),
+            EpisodeStatus.APPROVED: list(STAGE_WEIGHTS.keys()),
+            EpisodeStatus.PUBLISHED: list(STAGE_WEIGHTS.keys()),
         }
 
         completed_stages = status_to_stages.get(episode_status, [])
@@ -864,8 +857,15 @@ class JobManager:
                             EpisodeStatus.NEW,
                             EpisodeStatus.DOWNLOADED,
                             EpisodeStatus.TRANSCRIBED,
-                            EpisodeStatus.CHUNKED,
-                            EpisodeStatus.GENERATED,
+                            EpisodeStatus.CORRECTED,
+                            EpisodeStatus.SEGMENTED,
+                            EpisodeStatus.TRANSLATED,
+                            EpisodeStatus.ADAPTED,
+                            EpisodeStatus.CHAPTERIZED,
+                            EpisodeStatus.IMAGES_GENERATED,
+                            EpisodeStatus.TTS_DONE,
+                            EpisodeStatus.RENDERED,
+                            EpisodeStatus.APPROVED,
                         ]
                     )
                 )

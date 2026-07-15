@@ -30,7 +30,6 @@ def app(db_engine, tmp_path):
             "raw_data_dir": str(tmp_path / "raw"),
             "transcripts_dir": str(tmp_path / "transcripts"),
             "outputs_dir": str(tmp_path / "outputs"),
-            "chunks_dir": str(tmp_path / "chunks"),
             "reports_dir": str(tmp_path / "reports"),
             "logs_dir": str(tmp_path / "logs"),
         },

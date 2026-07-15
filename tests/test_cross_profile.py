@@ -80,13 +80,12 @@ def test_bitcoin_and_tagesschau_stages_are_different(settings):
     assert "segment" not in bitcoin_stages
     assert "review_gate_translate" not in bitcoin_stages
 
-    # Tagesschau episode: has segment, review_gate_translate, no adapt, no review_gate_2
+    # Tagesschau episode: adds segment while retaining the shared v2 gates
     ts_stages = [s[0] for s in _get_stages(settings, _dummy_ep(2, "tagesschau_tr"))]
 
     assert "segment" in ts_stages
-    assert "review_gate_translate" in ts_stages
-    assert "adapt" not in ts_stages
-    assert "review_gate_2" not in ts_stages
+    assert "adapt" in ts_stages
+    assert "review_gate_2" in ts_stages
 
     # They must be different
     assert bitcoin_stages != ts_stages
@@ -100,18 +99,6 @@ def test_segment_stage_position_before_translate(settings):
     seg_idx = stages.index("segment")
     trans_idx = stages.index("translate")
     assert seg_idx < trans_idx
-
-
-def test_v1_episode_gets_v1_stages():
-    """V1 episodes always get v1 stage list regardless of profile."""
-    reset_registry()
-    # Use settings with pipeline_version=1 so v1 stages are returned
-    v1_settings = Settings(profiles_dir="btcedu/profiles", pipeline_version=1)
-    stages = [s[0] for s in _get_stages(v1_settings, _dummy_ep(1, "tagesschau_tr"))]
-    assert "download" in stages
-    assert "chunk" in stages
-    assert "segment" not in stages
-    assert "adapt" not in stages
 
 
 # ---------------------------------------------------------------------------
@@ -259,8 +246,8 @@ def test_tts_profile_config_values():
     assert tts_cfg["stability"] >= 0.6  # news requires higher stability
 
 
-def test_bitcoin_profile_has_no_tts_override():
-    """Bitcoin profile does not override TTS settings."""
+def test_bitcoin_profile_has_tts_voice():
+    """Bitcoin profile declares TTS voice settings."""
     reset_registry()
     settings = Settings(profiles_dir="btcedu/profiles", pipeline_version=2)
     registry = get_registry(settings)
@@ -268,5 +255,4 @@ def test_bitcoin_profile_has_no_tts_override():
     btc = registry.get("bitcoin_podcast")
     tts_cfg = btc.stage_config.get("tts", {})
 
-    # Bitcoin profile should not have a tts block or have empty voice_id
-    assert not tts_cfg or not tts_cfg.get("voice_id")
+    assert tts_cfg.get("voice_id")

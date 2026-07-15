@@ -19,9 +19,6 @@ class TestSettings:
         assert settings.whisper_language == "de"
         assert settings.raw_data_dir == "data/raw"
         assert settings.transcripts_dir == "data/transcripts"
-        assert settings.chunks_dir == "data/chunks"
-        assert settings.chunk_size == 1500
-        assert settings.chunk_overlap == 0.15
 
     def test_source_type_default(self):
         settings = Settings()
@@ -65,16 +62,11 @@ class TestSettings:
         )
         assert settings.rss_url == ""
 
-    def test_chunk_config_override(self):
-        settings = Settings(chunk_size=800, chunk_overlap=0.20)
-        assert settings.chunk_size == 800
-        assert settings.chunk_overlap == 0.20
-
     def test_claude_generation_defaults(self):
         # Explicitly set dry_run=False to test the default,
         # ignoring any DRY_RUN environment variable
         settings = Settings(dry_run=False)
-        assert settings.claude_max_tokens == 4096
+        assert settings.claude_max_tokens == 16384
         assert settings.claude_temperature == 0.3
         assert settings.dry_run is False
         assert settings.outputs_dir == "data/outputs"

@@ -45,8 +45,8 @@ class ContentProfile(BaseModel):
     @field_validator("pipeline_version")
     @classmethod
     def _validate_pipeline_version(cls, v: int) -> int:
-        if v not in (1, 2):
-            raise ValueError(f"pipeline_version must be 1 or 2, got {v}")
+        if v != 2:
+            raise ValueError(f"pipeline_version must be 2 (v1 removed), got {v}")
         return v
 
     @field_validator("name")

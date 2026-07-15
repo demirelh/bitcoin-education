@@ -183,16 +183,12 @@
 
   // ── Render episode table ─────────────────────────────────────
   const FILE_KEYS = [
-    "audio", "transcript_raw", "transcript_clean", "chunks",
-    "outline", "script", "shorts", "visuals", "qa", "publishing",
-    "outline_v2", "script_v2", "publishing_v2",
+    "audio", "transcript_raw", "transcript_clean",
     "stories", "stories_translated",
     "script_adapted", "chapters", "transcript_tr", "images", "tts", "video"
   ];
   const FILE_LABELS = [
-    "Audio", "Transcript DE", "Transcript Clean", "Chunks",
-    "Outline TR", "Script TR", "Shorts", "Visuals", "QA", "Publishing",
-    "Outline v2", "Script v2", "Publishing v2",
+    "Audio", "Transcript DE", "Transcript Clean",
     "Stories DE", "Stories TR",
     "Script (adapted)", "Chapters", "Transcript TR", "Images", "TTS Audio", "Rendered Video"
   ];
@@ -334,7 +330,6 @@
   function renderGroupedTabs(ep) {
     const f = ep.files || {};
     const isTagesschau = ep.content_profile === "tagesschau_tr";
-    const isV1 = ep.pipeline_version === 1;
 
     function tab(key, label, hasData) {
       const cls = hasData === false ? "tab tab-dim" : "tab";
@@ -356,15 +351,8 @@
     if (isTagesschau) {
       html += tab("stories", "Stories DE", f.stories);
       html += tab("stories_translated", "Stories TR", f.stories_translated);
-    } else if (isV1) {
-      html += tab("outline", "Outline TR", f.outline);
-      html += tab("script", "Script TR", f.script);
-      html += tab("qa", "QA", f.qa);
-      html += tab("publishing", "Publishing", f.publishing);
     } else {
-      html += tab("outline_v2", "Outline v2", f.outline_v2);
-      html += tab("script_v2", "Script v2", f.script_v2);
-      html += tab("publishing_v2", "Publishing v2", f.publishing_v2);
+      html += tab("script_adapted", "Script (adapted)", f.script_adapted);
     }
     html += `</div>`;
 
@@ -467,9 +455,7 @@
       if (ep.files) {
         if (ep.files.audio) fileIcons.push("🎵");
         if (ep.files.transcript_clean || ep.files.transcript_raw) fileIcons.push("📝");
-        if (ep.files.chunks) fileIcons.push("📦");
-        if (ep.files.script || ep.files.script_v2) fileIcons.push("📄");
-        if (ep.files.qa) fileIcons.push("❓");
+        if (ep.files.script_adapted) fileIcons.push("📄");
       }
 
       const retryBadge = ep.retry_count > 0
@@ -568,18 +554,9 @@
             <div class="overflow-menu" id="overflow-menu">
               <button class="overflow-item" onclick="actions.download()">Download</button>
               <button class="overflow-item" onclick="actions.transcribe()">Transcribe</button>
-              ${ep.pipeline_version === 1 ? `
-              <button class="overflow-item" onclick="actions.chunk()">Chunk</button>
-              <button class="overflow-item" onclick="actions.generate()">Generate</button>
-              <button class="overflow-item" onclick="actions.refine()">Refine</button>
-              ` : ""}
               <div class="overflow-divider"></div>
               <label class="overflow-item overflow-toggle"><input type="checkbox" id="chk-force"> Force re-run</label>
               <label class="overflow-item overflow-toggle"><input type="checkbox" id="chk-dryrun"> Dry-run</label>
-              ${ep.pipeline_version === 1 ? `
-              <div class="overflow-divider"></div>
-              <button class="overflow-item overflow-warn" onclick="actions.resetV2()">↻ Reset to v2</button>
-              ` : ""}
             </div>
           </div>
         </div>
@@ -1103,21 +1080,6 @@
       if (!selected) return;
       submitJob("Transcribe", `/episodes/${selected.episode_id}/transcribe`, { force: isForce() });
     },
-    chunk() {
-      if (!selected) return;
-      submitJob("Chunk", `/episodes/${selected.episode_id}/chunk`, { force: isForce() });
-    },
-    generate() {
-      if (!selected) return;
-      submitJob("Generate", `/episodes/${selected.episode_id}/generate`, {
-        force: isForce(),
-        dry_run: isDryRun(),
-      });
-    },
-    refine() {
-      if (!selected) return;
-      submitJob("Refine", `/episodes/${selected.episode_id}/refine`, { force: isForce() });
-    },
     run() {
       if (!selected) return;
       submitJob("Run All", `/episodes/${selected.episode_id}/run`, { force: isForce() });
@@ -1137,16 +1099,6 @@
     publish() {
       if (!selected) return;
       submitJob("Publish", `/episodes/${selected.episode_id}/publish`, { force: isForce() });
-    },
-    async resetV2() {
-      if (!selected) return;
-      if (!confirm(`Episode "${selected.title}" auf v2 zurücksetzen?\n\nStatus wird auf TRANSCRIBED gesetzt, v2-Pipeline startet ab correct.`)) return;
-      try {
-        const r = await POST(`/episodes/${selected.episode_id}/reset-v2`);
-        if (r.error) { showError(r.error); return; }
-        showSuccess(`Reset: ${r.old_status} → TRANSCRIBED (v2)`);
-        refresh();
-      } catch (e) { showError("Reset failed: " + e.message); }
     },
   };
 

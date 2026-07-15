@@ -23,10 +23,6 @@ _STATUS_ORDER = {
     EpisodeStatus.NEW: 0,
     EpisodeStatus.DOWNLOADED: 1,
     EpisodeStatus.TRANSCRIBED: 2,
-    EpisodeStatus.CHUNKED: 3,
-    EpisodeStatus.GENERATED: 4,
-    EpisodeStatus.REFINED: 5,
-    EpisodeStatus.COMPLETED: 6,
     EpisodeStatus.FAILED: -1,
     # v2 pipeline statuses
     EpisodeStatus.CORRECTED: 10,
@@ -44,16 +40,7 @@ _STATUS_ORDER = {
     EpisodeStatus.COST_LIMIT: -2,
 }
 
-# v1 stages in execution order, with the status required to enter each stage
-_V1_STAGES = [
-    ("download", EpisodeStatus.NEW),
-    ("transcribe", EpisodeStatus.DOWNLOADED),
-    ("chunk", EpisodeStatus.TRANSCRIBED),
-    ("generate", EpisodeStatus.CHUNKED),
-    ("refine", EpisodeStatus.GENERATED),
-]
-
-# v2 stages (extends after TRANSCRIBED with CORRECT instead of CHUNK)
+# v2 pipeline stages in execution order, with the status required to enter each.
 _V2_STAGES = [
     ("download", EpisodeStatus.NEW),
     ("transcribe", EpisodeStatus.DOWNLOADED),
@@ -73,30 +60,20 @@ _V2_STAGES = [
     ("publish", EpisodeStatus.APPROVED),  # Sprint 11
 ]
 
-# Keep _STAGES as alias for backward compat
-_STAGES = _V1_STAGES
+_STAGES = _V2_STAGES
 
 
 def _get_stages(
     settings: Settings,
     episode: Episode | None = None,
 ) -> list[tuple[str, EpisodeStatus]]:
-    """Return the appropriate stages list based on pipeline version and profile.
+    """Return the profile-aware v2 stages list.
 
-    Uses ``episode.pipeline_version`` when available (e.g. after a reset-v2),
-    falling back to ``settings.pipeline_version``.
-
-    For v2 episodes, applies profile-aware modifications:
+    Applies profile-aware modifications:
     - Inserts 'segment' stage for news profiles with segment.enabled=True
     - Removes 'adapt' and 'review_gate_2' for profiles with adapt.skip=True
     - Adjusts required statuses accordingly
     """
-    version = settings.pipeline_version
-    if episode is not None and getattr(episode, "pipeline_version", None):
-        version = max(version, episode.pipeline_version)
-    if version < 2:
-        return _V1_STAGES
-
     stages = list(_V2_STAGES)
 
     if episode is None:
@@ -232,7 +209,7 @@ def resolve_pipeline_plan(
     plan: list[StagePlan] = []
     will_advance = False
 
-    stages = _get_stages(settings, episode) if settings else _V1_STAGES
+    stages = _get_stages(settings, episode) if settings else _STAGES
     for stage_name, required_status in stages:
         required_order = _STATUS_ORDER[required_status]
 
@@ -306,37 +283,6 @@ def _run_stage(
             path = transcribe_episode(session, episode.episode_id, settings, force=force)
             elapsed = time.monotonic() - t0
             return StageResult("transcribe", "success", elapsed, detail=path)
-
-        elif stage_name == "chunk":
-            from btcedu.core.transcriber import chunk_episode
-
-            count = chunk_episode(session, episode.episode_id, settings, force=force)
-            elapsed = time.monotonic() - t0
-            return StageResult("chunk", "success", elapsed, detail=f"{count} chunks")
-
-        elif stage_name == "generate":
-            from btcedu.core.generator import generate_content
-
-            result = generate_content(session, episode.episode_id, settings, force=force)
-            elapsed = time.monotonic() - t0
-            return StageResult(
-                "generate",
-                "success",
-                elapsed,
-                detail=f"{len(result.artifacts)} artifacts (${result.total_cost_usd:.4f})",
-            )
-
-        elif stage_name == "refine":
-            from btcedu.core.generator import refine_content
-
-            result = refine_content(session, episode.episode_id, settings, force=force)
-            elapsed = time.monotonic() - t0
-            return StageResult(
-                "refine",
-                "success",
-                elapsed,
-                detail=f"{len(result.artifacts)} artifacts (${result.total_cost_usd:.4f})",
-            )
 
         elif stage_name == "correct":
             from btcedu.core.corrector import correct_transcript
@@ -945,7 +891,8 @@ def run_episode_pipeline(
 ) -> PipelineReport:
     """Run the full pipeline for a single episode.
 
-    Chains: download -> transcribe -> chunk -> generate -> refine.
+    Chains the v2 stages: download -> transcribe -> correct -> translate ->
+    adapt -> chapterize -> imagegen -> tts -> render -> publish (with review gates).
     Each stage is skipped if the episode has already passed it.
     On failure: records error, increments retry_count, stops processing.
 
@@ -1079,8 +1026,6 @@ def run_episode_pipeline(
     # Calculate total cost from stage results that report costs
     for sr in report.stages:
         success_stages = (
-            "generate",
-            "refine",
             "correct",
             "segment",
             "translate",
@@ -1115,9 +1060,9 @@ def run_pending(
 ) -> list[PipelineReport]:
     """Process all pending episodes through the pipeline.
 
-    Queries episodes with status in (NEW, DOWNLOADED, TRANSCRIBED, CHUNKED,
-    GENERATED, CORRECTED, TRANSLATED, ADAPTED, CHAPTERIZED, IMAGES_GENERATED,
-    TTS_DONE, RENDERED), ordered by published_at ASC (oldest first).
+    Queries episodes with status in (NEW, DOWNLOADED, TRANSCRIBED,
+    CORRECTED, SEGMENTED, TRANSLATED, ADAPTED, CHAPTERIZED, IMAGES_GENERATED,
+    TTS_DONE, RENDERED, APPROVED), ordered by published_at ASC (oldest first).
 
     Args:
         session: DB session.
@@ -1137,8 +1082,6 @@ def run_pending(
                     EpisodeStatus.NEW,
                     EpisodeStatus.DOWNLOADED,
                     EpisodeStatus.TRANSCRIBED,
-                    EpisodeStatus.CHUNKED,
-                    EpisodeStatus.GENERATED,
                     # v2 pipeline statuses
                     EpisodeStatus.CORRECTED,
                     EpisodeStatus.SEGMENTED,  # news profiles
@@ -1194,8 +1137,8 @@ def run_latest(
 ) -> PipelineReport | None:
     """Detect new episodes and process the newest pending one.
 
-    Calls detect first, then finds the newest episode
-    with status < GENERATED and runs the pipeline.
+    Calls detect first, then finds the newest pending episode
+    and runs the pipeline.
 
     Args:
         profile: If given, only consider episodes with this content_profile.
@@ -1229,8 +1172,6 @@ def run_latest(
                     EpisodeStatus.NEW,
                     EpisodeStatus.DOWNLOADED,
                     EpisodeStatus.TRANSCRIBED,
-                    EpisodeStatus.CHUNKED,
-                    EpisodeStatus.GENERATED,
                     # v2 pipeline statuses
                     EpisodeStatus.CORRECTED,
                     EpisodeStatus.SEGMENTED,  # news profiles

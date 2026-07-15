@@ -333,20 +333,6 @@ class TestPublishVideo:
         with pytest.raises(ValueError, match="not found"):
             publish_video(db_session, "nonexistent_ep", settings)
 
-    def test_raises_when_v1_episode(self, db_session, settings):
-        ep = Episode(
-            episode_id="ep_v1",
-            source="youtube_rss",
-            title="V1",
-            url="https://x.com",
-            status=EpisodeStatus.APPROVED,
-            pipeline_version=1,
-        )
-        db_session.add(ep)
-        db_session.commit()
-        with pytest.raises(ValueError, match="v1 pipeline"):
-            publish_video(db_session, "ep_v1", settings)
-
     def test_raises_when_not_approved(self, db_session, settings):
         ep = Episode(
             episode_id="ep_rendered",

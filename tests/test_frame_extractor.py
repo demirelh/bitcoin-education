@@ -407,21 +407,6 @@ class TestExtractFrames:
         assert result.skipped is False
         mock_extract.assert_called_once()
 
-    def test_v1_episode_raises(self, session, settings, setup_files):
-        ep = Episode(
-            episode_id="ep_v1",
-            source="youtube_rss",
-            title="V1 Episode",
-            url="https://example.com",
-            status=EpisodeStatus.CHAPTERIZED,
-            pipeline_version=1,
-        )
-        session.add(ep)
-        session.commit()
-
-        with pytest.raises(ValueError, match="v1 pipeline"):
-            extract_frames(session, "ep_v1", settings)
-
     def test_wrong_status_raises(self, session, settings, setup_files):
         ep = Episode(
             episode_id="ep_wrong",

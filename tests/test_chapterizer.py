@@ -10,14 +10,83 @@ import pytest
 from btcedu.core.chapterizer import (
     ChapterizationResult,
     _compute_duration_estimate,
+    _fix_chapter_data,
     _is_chapterization_current,
     _parse_json_response,
     _segment_script,
     _split_prompt,
     chapterize_script,
 )
+from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.models.review import ReviewStatus, ReviewTask
+
+
+def _minimal_chapter(chapter_id="ch01", order=1, title="Test", with_visual=True, with_trans=True):
+    ch = {
+        "chapter_id": chapter_id,
+        "title": title,
+        "order": order,
+        "narration": {"text": "Bir haber metni.", "word_count": 3, "estimated_duration_seconds": 2},
+    }
+    if with_visual:
+        ch["visual"] = {"type": "b_roll", "description": "x", "image_prompt": "x"}
+    if with_trans:
+        ch["transitions"] = {"in": "fade", "out": "fade"}
+    return ch
+
+
+class TestFixChapterDataBackfill:
+    def test_backfills_missing_visual_and_transitions(self):
+        data = {
+            "schema_version": "1.0",
+            "episode_id": "ep1",
+            "title": "T",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 2,
+            "chapters": [
+                _minimal_chapter(
+                    chapter_id="ch01", order=1, title="Hava Durumu",
+                    with_visual=False, with_trans=False,
+                )
+            ],
+        }
+        fixed = _fix_chapter_data(data, "ep1")
+        # Must now validate cleanly
+        doc = ChapterDocument.model_validate(fixed)
+        ch = doc.chapters[0]
+        assert ch.visual.type.value == "diagram"  # weather -> diagram
+        assert ch.visual.image_prompt  # diagram requires prompt
+        assert ch.transitions.in_transition.value == "fade"
+
+    def test_backfills_missing_image_prompt_for_broll(self):
+        data = {
+            "schema_version": "1.0",
+            "episode_id": "ep1",
+            "title": "T",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 2,
+            "chapters": [_minimal_chapter(title="Spor")],
+        }
+        data["chapters"][0]["visual"] = {"type": "b_roll", "description": "Futbol"}
+        fixed = _fix_chapter_data(data, "ep1")
+        doc = ChapterDocument.model_validate(fixed)
+        assert doc.chapters[0].visual.image_prompt == "Futbol"
+
+    def test_preserves_complete_chapter(self):
+        ch = _minimal_chapter()
+        data = {
+            "schema_version": "1.0",
+            "episode_id": "ep1",
+            "title": "T",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 2,
+            "chapters": [ch],
+        }
+        fixed = _fix_chapter_data(data, "ep1")
+        assert fixed["chapters"][0]["visual"]["image_prompt"] == "x"
+        assert fixed["chapters"][0]["transitions"] == {"in": "fade", "out": "fade"}
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

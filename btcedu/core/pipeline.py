@@ -1190,21 +1190,29 @@ def run_latest(
     session: Session,
     settings: Settings,
     profile: str | None = None,
+    detect_all: bool = False,
 ) -> PipelineReport | None:
     """Detect new episodes and process the newest pending one.
 
-    Calls detect_episodes first, then finds the newest episode
+    Calls detect first, then finds the newest episode
     with status < GENERATED and runs the pipeline.
 
     Args:
         profile: If given, only consider episodes with this content_profile.
+        detect_all: If True, detect from every active channel using each
+            channel's own profile (applies per-profile title filters, e.g.
+            the tagesschau 20:00 Uhr broadcast) instead of the single default
+            feed.
 
     Returns:
         PipelineReport for the processed episode, or None if nothing to do.
     """
-    from btcedu.core.detector import detect_episodes
+    from btcedu.core.detector import detect_all_active_channels, detect_episodes
 
-    detect_result = detect_episodes(session, settings)
+    if detect_all:
+        detect_result = detect_all_active_channels(session, settings)
+    else:
+        detect_result = detect_episodes(session, settings)
     logger.info(
         "Detection: found=%d, new=%d, total=%d",
         detect_result.found,

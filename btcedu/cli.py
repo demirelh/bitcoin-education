@@ -84,10 +84,20 @@ def _check_pending_migrations(session_factory):
     default=None,
     help="Channel name from DB to detect from (uses that channel's RSS URL).",
 )
+@click.option(
+    "--all-channels",
+    "all_channels",
+    is_flag=True,
+    default=False,
+    help="Detect from every active channel using each channel's own profile "
+    "and title filter.",
+)
 @click.pass_context
-def detect(ctx: click.Context, profile: str | None, channel_name: str | None) -> None:
+def detect(
+    ctx: click.Context, profile: str | None, channel_name: str | None, all_channels: bool
+) -> None:
     """Check feed for new episodes and insert into DB."""
-    from btcedu.core.detector import detect_episodes
+    from btcedu.core.detector import detect_all_active_channels, detect_episodes
     from btcedu.models.channel import Channel
 
     settings = ctx.obj["settings"]
@@ -96,6 +106,10 @@ def detect(ctx: click.Context, profile: str | None, channel_name: str | None) ->
         settings = settings.model_copy(update={"default_content_profile": profile})
     session = ctx.obj["session_factory"]()
     try:
+        if all_channels:
+            result = detect_all_active_channels(session, settings)
+            click.echo(f"Found: {result.found}  New: {result.new}  Total in DB: {result.total}")
+            return
         feed_url_override = None
         if channel_name:
             ch = session.query(Channel).filter(Channel.name == channel_name).first()
@@ -321,15 +335,23 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: 
     default=None,
     help="Only process episodes with this content profile.",
 )
+@click.option(
+    "--all-channels",
+    "all_channels",
+    is_flag=True,
+    default=False,
+    help="Detect from every active channel (per-channel profile + title filter) "
+    "instead of the single default feed.",
+)
 @click.pass_context
-def run_latest_cmd(ctx: click.Context, profile: str | None) -> None:
+def run_latest_cmd(ctx: click.Context, profile: str | None, all_channels: bool) -> None:
     """Detect new episodes, then process the newest pending one."""
     from btcedu.core.pipeline import run_latest, write_report
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
     try:
-        report = run_latest(session, settings, profile=profile)
+        report = run_latest(session, settings, profile=profile, detect_all=all_channels)
 
         if report is None:
             click.echo("No pending episodes to process.")

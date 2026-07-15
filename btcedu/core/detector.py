@@ -165,6 +165,46 @@ def detect_episodes(
     return result
 
 
+def detect_all_active_channels(session: Session, settings: Settings) -> DetectResult:
+    """Detect new episodes from every active channel using its own profile.
+
+    Iterates all ``is_active`` channels, running :func:`detect_episodes` for
+    each with the channel's configured ``content_profile`` (which applies that
+    profile's title-include filter — e.g. the tagesschau 20:00 Uhr broadcast).
+    Also detects from the default ``settings.rss_url`` when it is not already
+    covered by a channel. Aggregates the per-channel counts.
+    """
+    from btcedu.models.channel import Channel
+
+    combined = DetectResult()
+    channels = session.query(Channel).filter(Channel.is_active.is_(True)).all()
+    for ch in channels:
+        if not ch.rss_url:
+            continue
+        profile = ch.content_profile or settings.default_content_profile
+        ch_settings = settings.model_copy(update={"default_content_profile": profile})
+        try:
+            result = detect_episodes(
+                session,
+                ch_settings,
+                channel_id=ch.channel_id,
+                feed_url=ch.rss_url,
+            )
+            combined.found += result.found
+            combined.new += result.new
+        except Exception:
+            logger.exception("Detect failed for channel %s", ch.name)
+
+    covered_urls = {ch.rss_url for ch in channels if ch.rss_url}
+    if settings.rss_url and settings.rss_url not in covered_urls:
+        result = detect_episodes(session, settings)
+        combined.found += result.found
+        combined.new += result.new
+
+    combined.total = session.query(Episode).count()
+    return combined
+
+
 def detect_from_content(
     session: Session, feed_content: str, source_type: str, *, channel_id: str | None = None
 ) -> DetectResult:

@@ -199,6 +199,103 @@ class TestDetectFromContent:
         assert result.total == 4
 
 
+# ── Detection: multi-channel (autostart) ───────────────────────────
+
+
+class TestDetectAllActiveChannels:
+    """detect_all_active_channels iterates active channels with their own
+    profile so the tagesschau 20:00 Uhr title filter is applied per-channel."""
+
+    def _settings(self):
+        from btcedu.config import Settings
+
+        # rss_url points at the tagesschau channel so the "default feed" branch
+        # is a no-op (covered by a channel) and detection is purely per-channel.
+        return Settings(
+            podcast_rss_url="https://feeds.example/tagesschau",
+            default_content_profile="bitcoin_podcast",
+            profiles_dir="btcedu/profiles",
+        )
+
+    def _make_channel(self, db_session, channel_id, rss_url, profile, active=True):
+        from btcedu.models.channel import Channel
+
+        ch = Channel(
+            channel_id=channel_id,
+            name=channel_id,
+            rss_url=rss_url,
+            content_profile=profile,
+            is_active=active,
+        )
+        db_session.add(ch)
+        db_session.commit()
+        return ch
+
+    _TAGESSCHAU_FEED = """<?xml version="1.0"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015">
+  <entry>
+    <id>yt:video:news2000</id><yt:videoId>news2000</yt:videoId>
+    <title>tagesschau 20:00 Uhr, 14.07.2026</title>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=news2000"/>
+    <published>2026-07-14T18:55:00+00:00</published>
+  </entry>
+  <entry>
+    <id>yt:video:shortclip</id><yt:videoId>shortclip</yt:videoId>
+    <title>"Birdman" in Nairobi #tagesschau</title>
+    <link rel="alternate" href="https://www.youtube.com/watch?v=shortclip"/>
+    <published>2026-07-14T09:00:00+00:00</published>
+  </entry>
+</feed>"""
+
+    def test_applies_tagesschau_title_filter_per_channel(self, db_session):
+        from btcedu.core.detector import detect_all_active_channels
+
+        settings = self._settings()
+        self._make_channel(
+            db_session, "tagesschau", "https://feeds.example/tagesschau", "tagesschau_tr"
+        )
+
+        with patch(
+            "btcedu.core.detector.fetch_feed", return_value=self._TAGESSCHAU_FEED
+        ):
+            result = detect_all_active_channels(db_session, settings)
+
+        # Only the 20:00 Uhr broadcast passes the profile title filter.
+        assert result.new == 1
+        eps = db_session.query(Episode).all()
+        assert [e.episode_id for e in eps] == ["news2000"]
+        assert eps[0].content_profile == "tagesschau_tr"
+        assert eps[0].channel_id == "tagesschau"
+
+    def test_skips_inactive_channels(self, db_session):
+        from btcedu.config import Settings
+        from btcedu.core.detector import detect_all_active_channels
+
+        # No default feed configured, so only active channels are considered.
+        settings = Settings(
+            podcast_rss_url="",
+            podcast_youtube_channel_id="",
+            default_content_profile="bitcoin_podcast",
+            profiles_dir="btcedu/profiles",
+        )
+        self._make_channel(
+            db_session,
+            "tagesschau",
+            "https://feeds.example/tagesschau",
+            "tagesschau_tr",
+            active=False,
+        )
+
+        with patch(
+            "btcedu.core.detector.fetch_feed", return_value=self._TAGESSCHAU_FEED
+        ) as mock_fetch:
+            result = detect_all_active_channels(db_session, settings)
+
+        mock_fetch.assert_not_called()
+        assert result.new == 0
+        assert db_session.query(Episode).count() == 0
+
+
 # ── Download: correct path + force flag ────────────────────────────
 
 

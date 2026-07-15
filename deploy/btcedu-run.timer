@@ -1,10 +1,12 @@
 [Unit]
-Description=Process pending episodes daily at 02:00
+Description=Check every 10 minutes for a new tagesschau 20:00 Uhr episode and process it
 
 [Timer]
-OnCalendar=*-*-* 02:00:00
+# Fire every 10 minutes (on the clock). Overlapping runs are prevented by
+# systemd: while btcedu-run.service is still active a new trigger is skipped.
+OnCalendar=*:0/10
 Persistent=true
-RandomizedDelaySec=600
+RandomizedDelaySec=30
 
 [Install]
 WantedBy=timers.target

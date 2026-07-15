@@ -1170,47 +1170,18 @@ def get_episode(episode_id: str):
 @api_bp.route("/detect", methods=["POST"])
 def detect():
     """Detect new episodes from all active channels."""
-    from btcedu.core.detector import detect_episodes
-    from btcedu.models.channel import Channel
+    from btcedu.core.detector import detect_all_active_channels
 
     session = _get_session()
     settings = _get_settings()
     try:
-        total_found = 0
-        total_new = 0
-
-        # Detect from all active channels
-        channels = session.query(Channel).filter(Channel.is_active.is_(True)).all()
-        for ch in channels:
-            if not ch.rss_url:
-                continue
-            # Use the channel's configured content_profile
-            profile = ch.content_profile or settings.default_content_profile
-            ch_settings = settings.model_copy(update={"default_content_profile": profile})
-            try:
-                result = detect_episodes(
-                    session, ch_settings,
-                    channel_id=ch.channel_id, feed_url=ch.rss_url,
-                )
-                total_found += result.found
-                total_new += result.new
-            except Exception:
-                logger.exception("Detect failed for channel %s", ch.name)
-
-        # Also detect from default settings.rss_url if no channels matched it
-        default_urls = {ch.rss_url for ch in channels if ch.rss_url}
-        if settings.rss_url and settings.rss_url not in default_urls:
-            result = detect_episodes(session, settings)
-            total_found += result.found
-            total_new += result.new
-
-        total = session.query(Episode).count()
+        result = detect_all_active_channels(session, settings)
         return jsonify(
             {
                 "success": True,
-                "found": total_found,
-                "new": total_new,
-                "total": total,
+                "found": result.found,
+                "new": result.new,
+                "total": result.total,
             }
         )
     except Exception as e:

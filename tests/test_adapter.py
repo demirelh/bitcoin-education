@@ -7,8 +7,10 @@ from unittest.mock import patch
 import pytest
 
 from btcedu.core.adapter import (
+    AdaptationRefusedError,
     _classify_adaptation,
     _is_adaptation_current,
+    _looks_like_refusal,
     _segment_text,
     _split_prompt,
     adapt_script,
@@ -738,3 +740,98 @@ def test_compute_adaptation_diff_has_item_id():
     for a in adaptations:
         assert "item_id" in a
         assert a["item_id"].startswith("adap-")
+
+
+# ---------------------------------------------------------------------------
+# Refusal detection (prevents silently dropping source stories)
+# ---------------------------------------------------------------------------
+
+
+def test_looks_like_refusal_detects_decline():
+    """A model refusal is detected regardless of casing."""
+    refusal = (
+        "I appreciate you providing the detailed instructions, but I need to "
+        "respectfully decline this task. As the GitHub Copilot CLI, my purpose "
+        "is to assist with code development."
+    )
+    assert _looks_like_refusal(refusal) is True
+
+
+def test_looks_like_refusal_passes_normal_turkish():
+    """Legitimate adapted Turkish narration is not flagged as a refusal."""
+    text = (
+        "Bugün İtalya'da Morandi Köprüsü davasında kararlar açıklandı. "
+        "43 kişi hayatını kaybetmişti. Baş sanık on iki yıl hapis cezasına çarptırıldı."
+    )
+    assert _looks_like_refusal(text) is False
+
+
+@patch("btcedu.core.adapter.call_claude")
+def test_adapt_script_raises_on_persistent_refusal(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+):
+    """If the model refuses twice, adaptation fails loudly instead of dropping content."""
+    mock_settings.dry_run = False
+    refusal = {
+        "text": "I need to respectfully decline this task. As the GitHub Copilot CLI...",
+        "input_tokens": 50,
+        "output_tokens": 30,
+        "cost_usd": 0.001,
+    }
+    mock_call_claude.return_value = type("Response", (), refusal)
+
+    with pytest.raises(AdaptationRefusedError):
+        adapt_script(db_session, "ep_test", mock_settings, force=False)
+
+    # Episode must be marked failed, not silently ADAPTED.
+    db_session.refresh(translated_episode)
+    assert translated_episode.status == EpisodeStatus.TRANSLATED
+    assert translated_episode.error_message is not None
+
+    # The refusal output must never be written to disk.
+    adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
+    assert not adapted_path.exists()
+
+
+@patch("btcedu.core.adapter.call_claude")
+def test_adapt_script_retries_refusal_then_succeeds(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+):
+    """A stochastic refusal on the first attempt is recovered by the retry."""
+    mock_settings.dry_run = False
+    refusal = type(
+        "Response",
+        (),
+        {
+            "text": "I must decline this task.",
+            "input_tokens": 50,
+            "output_tokens": 30,
+            "cost_usd": 0.001,
+        },
+    )
+    good = type(
+        "Response",
+        (),
+        {
+            "text": "Bugün Bitcoin hakkında konuşacağız. Bir Bitcoin 30.000 Euro değerinde.",
+            "input_tokens": 200,
+            "output_tokens": 150,
+            "cost_usd": 0.005,
+        },
+    )
+    mock_call_claude.side_effect = [refusal, good]
+
+    result = adapt_script(db_session, "ep_test", mock_settings, force=False)
+
+    assert result.skipped is False
+    db_session.refresh(translated_episode)
+    assert translated_episode.status == EpisodeStatus.ADAPTED
+    adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
+    assert adapted_path.exists()
+    assert "decline" not in adapted_path.read_text(encoding="utf-8").lower()

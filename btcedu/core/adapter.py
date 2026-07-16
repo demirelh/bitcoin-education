@@ -28,6 +28,39 @@ logger = logging.getLogger(__name__)
 # Texts longer than this (in characters) are split into segments
 SEGMENT_CHAR_LIMIT = 8_000
 
+# High-signal phrases that indicate the model refused the adaptation task
+# instead of returning adapted Turkish text. A refused segment must never be
+# accepted, otherwise the source content for that segment is silently dropped.
+_REFUSAL_MARKERS = (
+    "respectfully decline",
+    "i need to decline",
+    "i must decline",
+    "i cannot assist with",
+    "i can't assist with",
+    "i cannot help with",
+    "i can't help with",
+    "as the github copilot cli",
+    "i'm not designed for",
+    "i am not designed for",
+    "unrelated to software development",
+    "is there something related to the bitcoin-education repository",
+    "i appreciate you providing the detailed instructions",
+)
+
+
+class AdaptationRefusedError(RuntimeError):
+    """Raised when the model refuses to adapt a segment instead of returning text."""
+
+
+def _looks_like_refusal(text: str) -> bool:
+    """Detect a model refusal so refused segments are never treated as output.
+
+    Adapted output is Turkish news narration; the English meta-refusal phrases
+    below do not occur in legitimate adaptations, so a single match is decisive.
+    """
+    lowered = text.lower()
+    return any(marker in lowered for marker in _REFUSAL_MARKERS)
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -285,6 +318,29 @@ def adapt_script(
                 dry_run_path=dry_run_path,
                 max_tokens=_effective_max or None,
             )
+
+            # A refusal must never be accepted as adapted output — that silently
+            # drops every source story in this segment. Retry once (refusals are
+            # stochastic); if it still refuses, fail loudly so no content is lost.
+            if not settings.dry_run and _looks_like_refusal(response.text):
+                logger.warning(
+                    "Segment %d/%d: model refused adaptation, retrying once",
+                    i + 1,
+                    len(segments),
+                )
+                response = call_claude(
+                    system_prompt=system_prompt,
+                    user_message=user_message,
+                    settings=settings,
+                    dry_run_path=dry_run_path,
+                    max_tokens=_effective_max or None,
+                )
+                if _looks_like_refusal(response.text):
+                    raise AdaptationRefusedError(
+                        f"Model refused to adapt segment {i + 1}/{len(segments)} "
+                        f"twice; aborting to avoid dropping source stories. "
+                        f"Refusal preview: {response.text.strip()[:200]!r}"
+                    )
 
             adapted_segments.append(response.text)
             total_input_tokens += response.input_tokens

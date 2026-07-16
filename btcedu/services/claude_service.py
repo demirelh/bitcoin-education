@@ -18,6 +18,14 @@ GPT4O_INPUT_PRICE_PER_M = 2.50
 GPT4O_OUTPUT_PRICE_PER_M = 10.0
 
 
+class ModelRefusalError(RuntimeError):
+    """Raised when the LLM refuses the task on every attempt (incl. fallback).
+
+    Returning a refusal as if it were real output silently corrupts the
+    pipeline (dropped/omitted content), so callers must fail loudly instead.
+    """
+
+
 @dataclass
 class ClaudeResponse:
     """Parsed response from LLM API (name kept for backward compat)."""
@@ -145,7 +153,16 @@ def call_claude(
                 try:
                     return _call_anthropic(system_prompt, user_message, settings, max_tokens=max_tokens)
                 except Exception as exc:
-                    logger.error("Anthropic fallback failed: %s. Returning last Copilot response.", exc)
+                    logger.error("Anthropic fallback failed: %s.", exc)
+            # If every attempt (Copilot + coding-frame + Anthropic) still refuses,
+            # fail loudly rather than returning the refusal as pipeline content.
+            if _is_copilot_refusal(response.text):
+                raise ModelRefusalError(
+                    "LLM refused the task on all attempts (Copilot CLI, coding-frame "
+                    "retry"
+                    + (", Anthropic fallback" if getattr(settings, "anthropic_api_key", "") else "")
+                    + f"). Refusal preview: {response.text.strip()[:200]!r}"
+                )
         return response
     if provider == "github_models":
         return _call_github_models(
@@ -353,17 +370,37 @@ def _is_copilot_refusal(text: str) -> bool:
     """
     if not text:
         return True  # empty = failure
-    head = text[:400].lower()
-    # Refusal phrases (both DE and EN variants observed in production)
+    # Scan a generous head window: refusals sometimes open with a polite
+    # preface ("I appreciate the detailed instructions, but...") before the
+    # self-identification, pushing the tell-tale phrase past 400 chars.
+    head = text[:800].lower()
+    # Refusal phrases (DE + EN variants observed in production). These are
+    # high-signal: legitimate Turkish/German news output never contains them.
     refusal_markers = [
         "i'm the github copilot cli",
         "i'm github copilot cli",
+        "i am the github copilot cli",
+        "as the github copilot cli",
         "ich bin der github copilot cli",
         "ich bin github copilot cli",
         "terminal assistant",
         "entwicklungsassistent für code",
         "not designed for translation",
         "not configured for translation",
+        "i'm not designed for",
+        "i am not designed for",
+        "i'm designed to help with",
+        "i am designed to help with",
+        "respectfully decline",
+        "i need to decline",
+        "i must decline",
+        "i cannot assist with",
+        "i can't assist with",
+        "i cannot help with",
+        "i can't help with",
+        "unrelated to software development",
+        "unrelated to the bitcoin-education repository",
+        "is there something related to the bitcoin-education repository",
         "übersetzungsaufgaben gehören nicht",
         "übersetzungsaufgaben sind nicht",
         "gehört nicht zu meinem funktionsbereich",

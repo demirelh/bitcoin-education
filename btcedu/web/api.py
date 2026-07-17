@@ -2838,6 +2838,18 @@ def get_qa_review(episode_id: str):
     return jsonify({"episode_id": episode_id, "qa_review": qa_review})
 
 
+@api_bp.route("/episodes/<episode_id>/qa-rerun", methods=["POST"])
+def qa_rerun(episode_id: str):
+    """Re-run translate + adapt (+ QA) so the QA feedback is applied. Stops after QA."""
+    return _submit_job("qa_rerun", episode_id)
+
+
+@api_bp.route("/episodes/<episode_id>/qa-rerun-all", methods=["POST"])
+def qa_rerun_all(episode_id: str):
+    """Re-run translate + adapt + QA, then continue the pipeline through render."""
+    return _submit_job("qa_rerun_all", episode_id)
+
+
 @api_bp.route("/episodes/<episode_id>/stage/<stage_name>", methods=["POST"])
 def run_single_stage(episode_id: str, stage_name: str):
     """Restart a single pipeline stage for an episode."""

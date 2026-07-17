@@ -375,6 +375,26 @@ class TestPipelineActions:
         assert r.status_code == 202
         assert "job_id" in r.get_json()
 
+    def test_qa_rerun_returns_202(self, client):
+        r = client.post("/api/episodes/ep002/qa-rerun")
+        assert r.status_code == 202
+        data = r.get_json()
+        assert "job_id" in data
+        assert data["state"] in ("queued", "running")
+
+    def test_qa_rerun_all_returns_202(self, client):
+        r = client.post("/api/episodes/ep002/qa-rerun-all")
+        assert r.status_code == 202
+        assert "job_id" in r.get_json()
+
+    def test_qa_rerun_actions_registered(self):
+        """The job manager must dispatch the new QA re-run actions."""
+        from btcedu.web.jobs import JobManager
+
+        mgr = JobManager.__new__(JobManager)
+        assert hasattr(mgr, "_do_qa_rerun")
+        assert hasattr(mgr, "_do_qa_rerun_all")
+
 
 # ---------------------------------------------------------------------------
 # Job lifecycle and logs

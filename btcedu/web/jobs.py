@@ -261,6 +261,8 @@ class JobManager:
                     "publish": self._do_publish,
                     "run": self._do_full_pipeline,
                     "retry": self._do_retry,
+                    "qa_rerun": self._do_qa_rerun,
+                    "qa_rerun_all": self._do_qa_rerun_all,
                 }
                 handler = _action_map.get(job.action)
                 if handler is None:
@@ -691,6 +693,85 @@ class JobManager:
                 },
             )
             self._log(job, f"Pipeline complete: ${report.total_cost_usd:.4f}")
+        else:
+            raise RuntimeError(report.error or "Pipeline failed")
+
+    def _do_qa_rerun(self, job, session, settings):
+        """Re-run translate + adapt so the QA second opinion feeds back into
+        the prompts, then regenerate a fresh QA critique. Stops after QA.
+
+        The translate and adapt stages read the previous ``qa_review.json`` and
+        inject its findings via the ``{{ reviewer_feedback }}`` placeholder, so
+        this closes the QA correction loop.
+        """
+        from btcedu.core.adapter import adapt_script
+        from btcedu.core.qa_reviewer import generate_qa_review
+        from btcedu.core.translator import translate_transcript
+
+        self._update(job, stage="translate")
+        self._log(job, "QA-Re-Run: Übersetzung (QA-Feedback wird angewendet)...")
+        translate_transcript(session, job.episode_id, settings, force=True)
+
+        self._update(job, stage="adapt")
+        self._log(job, "QA-Re-Run: Adaption (QA-Feedback wird angewendet)...")
+        adapt_script(session, job.episode_id, settings, force=True)
+
+        self._update(job, stage="qa")
+        self._log(job, "QA-Re-Run: neue QA-Zweitmeinung...")
+        qa = generate_qa_review(session, job.episode_id, settings, force=True)
+        score = getattr(qa, "overall_score", None)
+        self._update(job, result={"success": True, "qa_score": score})
+        self._log(job, f"QA-Re-Run abgeschlossen (Score={score})")
+
+    def _do_qa_rerun_all(self, job, session, settings):
+        """Re-run translate + adapt + QA, then continue the pipeline through
+        the remaining stages (chapterize -> images -> tts -> render ...).
+
+        First applies the QA correction loop (translate+adapt+QA), then resumes
+        the pipeline from the adapt point so downstream artifacts are rebuilt
+        from the corrected script.
+        """
+        from btcedu.core.pipeline import run_episode_pipeline, write_report
+        from btcedu.models.episode import Episode
+
+        # Step 1: translate + adapt + fresh QA (QA feedback applied).
+        self._do_qa_rerun(job, session, settings)
+
+        # Step 2: resume the pipeline (chapterize onward) with the corrected
+        # script. Episode status is ADAPTED after adapt, so this rebuilds the
+        # downstream stages via cascade invalidation.
+        episode = (
+            session.query(Episode).filter(Episode.episode_id == job.episode_id).first()
+        )
+        if not episode:
+            raise ValueError(f"Episode not found: {job.episode_id}")
+
+        def on_stage(stage_name):
+            self._update(job, stage=stage_name)
+            self._log(job, f"Running: {stage_name}")
+
+        self._log(job, "QA-Re-Run: Pipeline wird bis Render fortgesetzt...")
+        report = run_episode_pipeline(
+            session,
+            episode,
+            settings,
+            force=False,
+            stage_callback=on_stage,
+        )
+        write_report(report, settings.reports_dir)
+
+        if report.success:
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "cost_usd": report.total_cost_usd,
+                    "stages_run": [
+                        sr.stage for sr in report.stages if sr.status == "success"
+                    ],
+                },
+            )
+            self._log(job, f"QA-Re-Run (alles) abgeschlossen: ${report.total_cost_usd:.4f}")
         else:
             raise RuntimeError(report.error or "Pipeline failed")
 

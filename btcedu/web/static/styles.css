@@ -2495,6 +2495,12 @@ body {
     padding: 12px 14px;
     margin: 12px 0;
 }
+.qa-rerun-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 4px 0 14px;
+}
 .qa-review-head {
     display: flex;
     align-items: center;

@@ -1110,6 +1110,14 @@
       if (!selected) return;
       submitJob("Publish", `/episodes/${selected.episode_id}/publish`, { force: isForce() });
     },
+    qaRerun() {
+      if (!selected) return;
+      submitJob("QA Re-Run (Translate+Adapt)", `/episodes/${selected.episode_id}/qa-rerun`);
+    },
+    qaRerunAll() {
+      if (!selected) return;
+      submitJob("QA Re-Run (All)", `/episodes/${selected.episode_id}/qa-rerun-all`);
+    },
   };
 
   function isForce() {
@@ -1277,6 +1285,20 @@
     return h;
   }
 
+  function qaRerunButtons() {
+    return `
+      <div class="qa-rerun-actions">
+        <button class="btn btn-sm btn-primary" onclick="actions.qaRerun()"
+          title="Übersetzung + Adaption neu ausführen und dabei die QA-Findings anwenden. Stoppt nach der QA.">
+          ↻ Restart Translate + Adapt (QA anwenden)
+        </button>
+        <button class="btn btn-sm btn-success" onclick="actions.qaRerunAll()"
+          title="Übersetzung + Adaption + QA neu, danach Pipeline bis Render (Chapterize, Images, TTS, Render).">
+          ⏩ Restart All (Translate → Render, QA anwenden)
+        </button>
+      </div>`;
+  }
+
   async function loadQaPanel() {
     if (!selected) return;
     const viewer = document.getElementById("viewer");
@@ -1284,6 +1306,7 @@
     if (!data || data.error || !data.qa_review) {
       viewer.innerHTML = `
         <div class="qa-review-panel">
+          ${qaRerunButtons()}
           <div class="qa-summary">${esc((data && data.error) || "Noch keine QA-Zweitmeinung für diese Episode.")}</div>
           <p style="color:#888;margin-top:0.5em">
             Die QA-Zweitmeinung wird nach der Adaption (Review Gate 2) automatisch erstellt.
@@ -1291,7 +1314,7 @@
         </div>`;
       return;
     }
-    viewer.innerHTML = renderQaReview(data.qa_review);
+    viewer.innerHTML = qaRerunButtons() + renderQaReview(data.qa_review);
   }
 
   function renderStageDetailHTML(stageName, data) {

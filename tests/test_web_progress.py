@@ -611,3 +611,39 @@ class TestWriteRenderProgress:
         data = json.loads((render_dir / "progress.json").read_text())
         assert data["stage"] == "done"
         assert data["progress_pct"] == 100
+
+
+class TestQaEndpoint:
+    def test_qa_endpoint_404_when_absent(self, client):
+        r = client.get("/api/episodes/ep_new/qa")
+        assert r.status_code == 404
+        assert "QA" in r.get_json()["error"]
+
+    def test_qa_endpoint_returns_review(self, client, test_settings):
+        import json as _json
+        from pathlib import Path as _Path
+
+        qa_dir = _Path(test_settings.outputs_dir) / "ep_new"
+        qa_dir.mkdir(parents=True, exist_ok=True)
+        (qa_dir / "qa_review.json").write_text(
+            _json.dumps(
+                {
+                    "overall_score": 7.8,
+                    "summary": "Solide",
+                    "model": "gpt-5.6-sol",
+                    "stories": [],
+                    "missing_content": [],
+                    "hallucinations": ["erfundene Aussage"],
+                    "neutralization_gaps": [],
+                    "top_fixes": ["Wettersatz korrigieren"],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        r = client.get("/api/episodes/ep_new/qa")
+        assert r.status_code == 200
+        qa = r.get_json()["qa_review"]
+        assert qa["overall_score"] == 7.8
+        assert qa["model"] == "gpt-5.6-sol"
+        assert "Wettersatz korrigieren" in qa["top_fixes"]

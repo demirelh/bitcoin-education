@@ -2823,6 +2823,21 @@ def get_stage_runs(episode_id: str):
         session.close()
 
 
+@api_bp.route("/episodes/<episode_id>/qa")
+def get_qa_review(episode_id: str):
+    """Return the independent QA second-opinion critique for an episode."""
+    settings = _get_settings()
+    try:
+        from btcedu.core.qa_reviewer import load_qa_review
+
+        qa_review = load_qa_review(settings, episode_id)
+    except Exception:
+        qa_review = None
+    if not qa_review:
+        return jsonify({"error": "Noch keine QA-Zweitmeinung für diese Episode."}), 404
+    return jsonify({"episode_id": episode_id, "qa_review": qa_review})
+
+
 @api_bp.route("/episodes/<episode_id>/stage/<stage_name>", methods=["POST"])
 def run_single_stage(episode_id: str, stage_name: str):
     """Restart a single pipeline stage for an episode."""

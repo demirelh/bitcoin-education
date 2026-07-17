@@ -369,6 +369,9 @@
     // Group: Meta
     html += `<div class="tab-group">`;
     html += `<span class="tab-group-label">Meta</span>`;
+    if (isTagesschau) {
+      html += tab("qa", "QA", true);
+    }
     html += tab("report", "Report", true);
     html += tab("logs", "Logs", true);
     html += `</div>`;
@@ -641,6 +644,13 @@
       viewer.classList.remove("log-viewer");
       viewer.innerHTML = "Loading video...";
       await loadVideoPanel();
+      return;
+    }
+
+    if (type === "qa") {
+      viewer.classList.remove("log-viewer");
+      viewer.innerHTML = "Lade QA-Zweitmeinung...";
+      await loadQaPanel();
       return;
     }
 
@@ -1265,6 +1275,23 @@
     }
     h += `</div>`;
     return h;
+  }
+
+  async function loadQaPanel() {
+    if (!selected) return;
+    const viewer = document.getElementById("viewer");
+    const data = await GET(`/episodes/${selected.episode_id}/qa`);
+    if (!data || data.error || !data.qa_review) {
+      viewer.innerHTML = `
+        <div class="qa-review-panel">
+          <div class="qa-summary">${esc((data && data.error) || "Noch keine QA-Zweitmeinung für diese Episode.")}</div>
+          <p style="color:#888;margin-top:0.5em">
+            Die QA-Zweitmeinung wird nach der Adaption (Review Gate 2) automatisch erstellt.
+          </p>
+        </div>`;
+      return;
+    }
+    viewer.innerHTML = renderQaReview(data.qa_review);
   }
 
   function renderStageDetailHTML(stageName, data) {

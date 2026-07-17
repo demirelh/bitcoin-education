@@ -835,3 +835,42 @@ def test_adapt_script_retries_refusal_then_succeeds(
     adapted_path = Path(mock_settings.outputs_dir) / "ep_test" / "script.adapted.tr.md"
     assert adapted_path.exists()
     assert "decline" not in adapted_path.read_text(encoding="utf-8").lower()
+
+
+@patch("btcedu.core.adapter.call_claude")
+def test_adapt_injects_qa_feedback(
+    mock_call_claude,
+    translated_episode,
+    mock_settings,
+    db_session,
+    mock_claude_adapt_response,
+):
+    """QA critique from a prior run is injected into the adapt prompt."""
+    import json as _json
+
+    mock_call_claude.return_value = type("Response", (), mock_claude_adapt_response)
+    mock_settings.qa_review_enabled = True
+
+    qa_dir = Path(mock_settings.outputs_dir) / "ep_test"
+    qa_dir.mkdir(parents=True, exist_ok=True)
+    (qa_dir / "qa_review.json").write_text(
+        _json.dumps(
+            {
+                "overall_score": 6.0,
+                "summary": "",
+                "stories": [],
+                "missing_content": [],
+                "hallucinations": ["getötete Ermittler erfunden"],
+                "neutralization_gaps": [],
+                "top_fixes": ["Wettersatz korrigieren"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    adapt_script(db_session, "ep_test", mock_settings, force=True)
+
+    sent = " ".join(str(v) for v in mock_call_claude.call_args.kwargs.values())
+    assert "QA-Zweitmeinung des vorherigen Laufs" in sent
+    assert "Wettersatz korrigieren" in sent

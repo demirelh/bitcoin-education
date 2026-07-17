@@ -258,16 +258,23 @@ def adapt_script(
         from btcedu.core.reviewer import get_latest_reviewer_feedback
 
         reviewer_feedback = get_latest_reviewer_feedback(session, episode_id, "adapt")
+        feedback_parts: list[str] = []
         if reviewer_feedback:
-            feedback_block = (
+            feedback_parts.append(
                 "## Revisor Geri Bildirimi (lütfen bu düzeltmeleri uygulayın)\n\n"
                 f"{reviewer_feedback}\n\n"
                 "Önemli: Bu geri bildirimi çıktıda aynen aktarmayın, "
                 "yalnızca düzeltme kılavuzu olarak kullanın."
             )
-            template_body = template_body.replace("{{ reviewer_feedback }}", feedback_block)
-        else:
-            template_body = template_body.replace("{{ reviewer_feedback }}", "")
+        if getattr(settings, "qa_review_enabled", False):
+            from btcedu.core.qa_reviewer import format_qa_feedback
+
+            qa_feedback = format_qa_feedback(settings, episode_id)
+            if qa_feedback:
+                feedback_parts.append(qa_feedback)
+        template_body = template_body.replace(
+            "{{ reviewer_feedback }}", "\n\n".join(feedback_parts)
+        )
 
         # Split prompt template into system and user parts
         system_prompt, user_template = _split_prompt(template_body)

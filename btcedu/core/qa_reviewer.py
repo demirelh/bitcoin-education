@@ -148,6 +148,83 @@ def _count_issues(data: dict) -> int:
     return count
 
 
+def format_qa_feedback(
+    settings: Settings,
+    episode_id: str,
+    *,
+    max_story_issues: int = 2,
+) -> str | None:
+    """Format the latest QA critique as an actionable correction block.
+
+    Reads ``qa_review.json`` (written by a prior pipeline pass) and turns the
+    critical findings into a compact German instruction block that can be
+    injected into the ``{{ reviewer_feedback }}`` placeholder of the translate
+    and adapt prompts. This closes the loop: the QA second opinion from the
+    previous run becomes correction guidance for the re-run.
+
+    Returns ``None`` when no QA report exists or it contains nothing
+    actionable.
+    """
+    data = load_qa_review(settings, episode_id)
+    if not data:
+        return None
+
+    model = data.get("model") or getattr(settings, "qa_model", "")
+    score = data.get("overall_score")
+    score_str = f"{score}/10" if isinstance(score, (int, float)) else "—"
+
+    sections: list[str] = []
+
+    top_fixes = [str(x).strip() for x in (data.get("top_fixes") or []) if str(x).strip()]
+    if top_fixes:
+        sections.append(
+            "WICHTIGSTE KORREKTUREN:\n" + "\n".join(f"- {x}" for x in top_fixes)
+        )
+
+    halluc = [str(x).strip() for x in (data.get("hallucinations") or []) if str(x).strip()]
+    if halluc:
+        sections.append(
+            "ERFUNDENE FAKTEN (entfernen oder vorsichtig neutralisieren, "
+            "niemals eigene Fakten ergänzen):\n" + "\n".join(f"- {x}" for x in halluc)
+        )
+
+    missing = [str(x).strip() for x in (data.get("missing_content") or []) if str(x).strip()]
+    if missing:
+        sections.append(
+            "FEHLENDE INHALTE (müssen wenigstens zusammengefasst enthalten sein):\n"
+            + "\n".join(f"- {x}" for x in missing)
+        )
+
+    neut = [str(x).strip() for x in (data.get("neutralization_gaps") or []) if str(x).strip()]
+    if neut:
+        sections.append(
+            "NEUTRALISIERUNG (entfernen: Moderatorennamen, Sendungsname, "
+            "Verabschiedung, Programmhinweise):\n" + "\n".join(f"- {x}" for x in neut)
+        )
+
+    story_lines: list[str] = []
+    for st in data.get("stories") or []:
+        issues = [str(x).strip() for x in (st.get("issues") or []) if str(x).strip()]
+        if not issues:
+            continue
+        title = str(st.get("title", "?")).strip() or "?"
+        for issue in issues[:max_story_issues]:
+            story_lines.append(f"- [{title}] {issue}")
+    if story_lines:
+        sections.append("WEITERE HINWEISE PRO ABSCHNITT:\n" + "\n".join(story_lines))
+
+    if not sections:
+        return None
+
+    header = (
+        f"## QA-Zweitmeinung des vorherigen Laufs (Modell: {model}, Score: {score_str})\n"
+        "Ein unabhängiges Modell hat die vorherige Fassung geprüft. Korrigiere gezielt "
+        "die unten genannten Punkte. Ändere Passagen, die nicht bemängelt wurden, nicht. "
+        "Erfinde keine Fakten und übernimm diesen Hinweistext nicht wörtlich in die Ausgabe."
+    )
+    return header + "\n\n" + "\n\n".join(sections)
+
+
 def generate_qa_review(
     session: Session,
     episode_id: str,

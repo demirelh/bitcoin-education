@@ -214,16 +214,23 @@ def translate_transcript(
         from btcedu.core.reviewer import get_latest_reviewer_feedback
 
         reviewer_feedback = get_latest_reviewer_feedback(session, episode_id, "translate")
+        feedback_parts: list[str] = []
         if reviewer_feedback:
-            feedback_block = (
+            feedback_parts.append(
                 "## Reviewer Feedback (please apply these corrections)\n\n"
                 f"{reviewer_feedback}\n\n"
                 "Important: Treat this feedback as correction guidance. "
                 "Do not include the feedback text verbatim in your output."
             )
-            template_body = template_body.replace("{{ reviewer_feedback }}", feedback_block)
-        else:
-            template_body = template_body.replace("{{ reviewer_feedback }}", "")
+        if getattr(settings, "qa_review_enabled", False):
+            from btcedu.core.qa_reviewer import format_qa_feedback
+
+            qa_feedback = format_qa_feedback(settings, episode_id)
+            if qa_feedback:
+                feedback_parts.append(qa_feedback)
+        template_body = template_body.replace(
+            "{{ reviewer_feedback }}", "\n\n".join(feedback_parts)
+        )
 
         # Split prompt template into system and user parts
         system_prompt, user_template = _split_prompt(template_body)

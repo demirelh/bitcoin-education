@@ -9,6 +9,7 @@ import pytest
 from btcedu.core.qa_reviewer import (
     _count_issues,
     _render_markdown,
+    format_qa_feedback,
     generate_qa_review,
     load_qa_review,
 )
@@ -190,3 +191,61 @@ def test_render_markdown_and_count():
     assert "Gesamtscore: 9.1/10" in md
     assert "Wettersatz korrigieren" in md
     assert _count_issues(data) == 4
+
+
+def _write_qa_json(settings, episode_id, payload):
+    base = Path(settings.outputs_dir) / episode_id
+    base.mkdir(parents=True, exist_ok=True)
+    (base / "qa_review.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_format_qa_feedback_absent(qa_settings):
+    assert format_qa_feedback(qa_settings, "no_qa_here") is None
+
+
+def test_format_qa_feedback_builds_block(qa_settings):
+    _write_qa_json(qa_settings, "ep_qa", json.loads(VALID_QA))
+    block = format_qa_feedback(qa_settings, "ep_qa")
+    assert block is not None
+    assert "QA-Zweitmeinung des vorherigen Laufs" in block
+    assert "gpt-5.6-sol" in block
+    assert "WICHTIGSTE KORREKTUREN" in block
+    assert "Wettersatz korrigieren" in block
+    assert "ERFUNDENE FAKTEN" in block
+    assert "getötete Ermittler erfunden" in block
+    assert "NEUTRALISIERUNG" in block
+    assert "[Wetter]" in block
+
+
+def test_format_qa_feedback_caps_story_issues(qa_settings):
+    payload = {
+        "overall_score": 7.0,
+        "summary": "",
+        "stories": [
+            {"title": "A", "score": 7, "issues": ["i1", "i2", "i3", "i4"]},
+        ],
+        "missing_content": [],
+        "hallucinations": [],
+        "neutralization_gaps": [],
+        "top_fixes": [],
+    }
+    _write_qa_json(qa_settings, "ep_qa", payload)
+    block = format_qa_feedback(qa_settings, "ep_qa", max_story_issues=2)
+    assert "i1" in block and "i2" in block
+    assert "i3" not in block and "i4" not in block
+
+
+def test_format_qa_feedback_empty_when_no_issues(qa_settings):
+    payload = {
+        "overall_score": 10.0,
+        "summary": "perfekt",
+        "stories": [],
+        "missing_content": [],
+        "hallucinations": [],
+        "neutralization_gaps": [],
+        "top_fixes": [],
+    }
+    _write_qa_json(qa_settings, "ep_qa", payload)
+    assert format_qa_feedback(qa_settings, "ep_qa") is None

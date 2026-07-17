@@ -41,11 +41,13 @@ Bu geçiş ifadelerini tespit et ve **komple çıkar** — Türk spikeri tek ba�
 
 **D. O-TON (RÖPORTAJ SESİ) MUTLAKA `„..."` ile İŞARETLENİR:**
 Kaynakta bir politikacı, uzman, protestocu veya işçi kısa bir cümle söylüyorsa (O-Ton), Türkçe metinde:
-1. Kim konuştuğu ANLATIM cümlesiyle tanıtılır: „Sağlık Bakanı Warken açıkladı:"
+1. Kim konuştuğu ANLATIM cümlesiyle tanıtılır — **ANCAK yalnızca kaynak o kişiyi/kurumu açıkça belirtiyorsa**: „Sağlık Bakanı Warken açıkladı:"
 2. Cümlenin kendisi `„..."` içinde ve wörtlich çevrilmiş kalır
 3. Sonrasında spikerin ANLATIMI devam eder
 - ÖRNEK ÖNCE (DE, karışık ses): „Die Debatte ist emotional. Effizienz und Evidenz. Wir wollen mit dem Geld auskommen, das wir haben."
 - ÖRNEK SONRA (TR anchor + quote): „Tartışma sertti. Sağlık Bakanı Warken tasarıyı savundu: `„Verimlilik ve kanıt. Elimizdeki parayla yetinmek istiyoruz."`"
+
+**D-YASAK. UYDURMA KONUŞMACI ATIFI YASAK:** Kaynak konuşan kişiyi/kurumu ADIYLA belirtmiyorsa, ASLA uydurma bir atıf ekleme — „yetkililer açıkladı", „bir parti yetkilisi belirtti", „gözlemciler değerlendirdi", „uzmanlara göre" gibi ifadeler kaynakta yoksa KULLANILMAZ. Bu durumda bilgiyi doğrudan ve sade ver (örn. „…karar açıklandı." yerine olguyu doğrudan: „…paket 26 maddeden oluşuyor."). Duygusal niteleme de ekleme („duygu dolu", „heyecanla") — kaynakta yoksa yok.
 
 **E. Ç. VERGLEICHS-BEISPIEL (kompletter Fluss):**
 
@@ -74,6 +76,8 @@ Almanya'da yaşayan Türkiye kökenli izleyici için:
 ## KESİN YASAKLAR
 
 - ❌ **Kaynağa eklenmeyen bilgi yok**: Almanca orijinalde geçmeyen hiçbir olay/rakam/isim ekleme.
+- ❌ **Uydurma konuşmacı/kaynak atfı yok**: Kaynakta olmayan „yetkililer açıkladı", „gözlemciler değerlendirdi", „bir parti yetkilisi belirtti" gibi atıflar EKLENMEZ.
+- ❌ **Hasarlı kaynaktan olgu uydurma yok**: Almanca cümle bozuk/eksik/yarım ise ondan yeni olgu (ölüm, sayı, neden) TÜRETME; yalnızca kesin olan kısmı aktar, belirsizi yumuşat veya çıkar.
 - ❌ **Türkiye hukuku uydurma**: Türk düzenlemeleri hakkında spesifik iddia sadece kaynakta varsa geçebilir.
 - ❌ **Siyasi yorum yok**: "malesef", "endişe verici", "sevindirici" gibi değerlendirme ekleme.
 - ❌ **Kripto/Bitcoin terimleri yok**: Bu haber yayınıdır, kripto sözlüğü uygulama.

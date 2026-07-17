@@ -2802,12 +2802,22 @@ def get_stage_runs(episode_id: str):
             except OSError:
                 pass
 
+        # Independent QA second opinion (shown in the Adapt stage detail)
+        qa_review = None
+        try:
+            from btcedu.core.qa_reviewer import load_qa_review
+
+            qa_review = load_qa_review(settings, episode_id)
+        except Exception:
+            qa_review = None
+
         return jsonify({
             "stages": stages,
             "log_lines": log_lines,
             "episode_id": episode_id,
             "status": ep.status.value,
             "error_message": ep.error_message,
+            "qa_review": qa_review,
         })
     finally:
         session.close()

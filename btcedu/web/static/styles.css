@@ -2485,3 +2485,56 @@ body {
 .tab-dim:hover {
     opacity: 0.7;
 }
+
+/* --- QA second-opinion panel --- */
+.qa-review-panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--purple);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    margin: 12px 0;
+}
+.qa-review-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+.qa-review-head strong { color: var(--text); }
+.qa-model {
+    font-size: 11px;
+    color: var(--text-dim);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 1px 6px;
+}
+.qa-score {
+    margin-left: auto;
+    font-weight: 700;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 13px;
+}
+.qa-score-good { background: #3fb95022; color: var(--green); }
+.qa-score-mid { background: #d2992222; color: var(--yellow); }
+.qa-score-bad { background: #f8514922; color: var(--red); }
+.qa-score-na { background: var(--bg); color: var(--text-dim); }
+.qa-summary { color: var(--text-dim); font-size: 13px; margin-bottom: 10px; line-height: 1.5; }
+.qa-block { margin: 8px 0; }
+.qa-block-title { font-size: 12px; font-weight: 600; color: var(--text); margin-bottom: 4px; }
+.qa-block ul { margin: 0 0 0 18px; }
+.qa-block li { font-size: 12px; color: var(--text-dim); margin: 2px 0; line-height: 1.45; }
+.qa-block.qa-halluc .qa-block-title { color: var(--red); }
+.qa-block.qa-missing .qa-block-title { color: var(--orange); }
+.qa-block.qa-neut .qa-block-title { color: var(--yellow); }
+.qa-block.qa-top .qa-block-title { color: var(--accent); }
+.qa-stories, .qa-raw { margin-top: 8px; }
+.qa-stories summary, .qa-raw summary { cursor: pointer; font-size: 12px; color: var(--accent); }
+.qa-story { margin: 8px 0 8px 4px; }
+.qa-story-head { font-size: 12px; font-weight: 600; color: var(--text); }
+.qa-story-score { color: var(--text-dim); font-weight: 400; }
+.qa-story ul { margin: 2px 0 0 18px; }
+.qa-story li { font-size: 12px; color: var(--text-dim); margin: 2px 0; }
+.qa-raw pre { font-size: 11px; white-space: pre-wrap; color: var(--text-dim); margin-top: 6px; }

@@ -1221,6 +1221,52 @@
     );
   };
 
+  function renderQaReview(qa) {
+    if (!qa) return "";
+    const score = (typeof qa.overall_score === "number") ? qa.overall_score : null;
+    const scoreStr = score != null ? `${score}/10` : "\u2014";
+    const scoreClass = score == null ? "qa-score-na"
+                     : score >= 8 ? "qa-score-good"
+                     : score >= 6 ? "qa-score-mid"
+                     : "qa-score-bad";
+    let h = `<div class="qa-review-panel">
+      <div class="qa-review-head">
+        <strong>QA-Zweitmeinung</strong>
+        <span class="qa-model">${esc(qa.model || "")}</span>
+        <span class="qa-score ${scoreClass}">${scoreStr}</span>
+      </div>`;
+    if (qa.summary) h += `<div class="qa-summary">${esc(qa.summary)}</div>`;
+
+    const listBlock = (title, items, cls) => {
+      if (!items || items.length === 0) return "";
+      const lis = items.map(x => `<li>${esc(typeof x === "string" ? x : JSON.stringify(x))}</li>`).join("");
+      return `<div class="qa-block ${cls || ""}"><div class="qa-block-title">${esc(title)}</div><ul>${lis}</ul></div>`;
+    };
+
+    h += listBlock("Wichtigste Korrekturen", qa.top_fixes, "qa-top");
+    h += listBlock("Fehlende Inhalte", qa.missing_content, "qa-missing");
+    h += listBlock("Halluzinationen / erfundene Fakten", qa.hallucinations, "qa-halluc");
+    h += listBlock("Neutralisierungslücken", qa.neutralization_gaps, "qa-neut");
+
+    if (Array.isArray(qa.stories) && qa.stories.length > 0) {
+      const rows = qa.stories.map(st => {
+        const s = (typeof st.score === "number") ? `${st.score}/10` : "\u2014";
+        const issues = (st.issues || []).map(i => `<li>${esc(i)}</li>`).join("");
+        return `<div class="qa-story">
+          <div class="qa-story-head">${esc(st.title || "?")} <span class="qa-story-score">${s}</span></div>
+          ${issues ? `<ul>${issues}</ul>` : ""}
+        </div>`;
+      }).join("");
+      h += `<details class="qa-stories"><summary>Bewertung pro Abschnitt (${qa.stories.length})</summary>${rows}</details>`;
+    }
+
+    if (qa.raw_response) {
+      h += `<details class="qa-raw"><summary>Roh-Antwort (kein gültiges JSON)</summary><pre>${esc(qa.raw_response)}</pre></details>`;
+    }
+    h += `</div>`;
+    return h;
+  }
+
   function renderStageDetailHTML(stageName, data) {
     const stageData = data.stages[stageName];
     const isGate = _REVIEW_GATES.has(stageName);
@@ -1230,6 +1276,11 @@
 
     let html = `<div class="stage-detail-panel">`;
     html += `<h3 class="stage-detail-title">${esc(label)}</h3>`;
+
+    // Independent QA second opinion (shown on the Adapt stage).
+    if (stageName === "adapt" && data.qa_review) {
+      html += renderQaReview(data.qa_review);
+    }
 
     // Live render progress (populated by polling for the render stage).
     if (stageName === "render") {
@@ -2178,6 +2229,11 @@
         ${data.reviewed_at ? " &middot; Reviewed: " + new Date(data.reviewed_at).toLocaleString() : ""}
       </div>
     </div>`;
+
+    // Independent QA second opinion (adapt reviews)
+    if (data.qa_review) {
+      html += renderQaReview(data.qa_review);
+    }
 
     // Video player for render reviews (Sprint 10)
     if (data.stage === "render" && data.video_url) {

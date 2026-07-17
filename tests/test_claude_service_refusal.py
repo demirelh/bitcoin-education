@@ -99,3 +99,25 @@ def test_call_claude_recovers_when_reframe_succeeds(mock_copilot):
 
     assert result.text == LEGIT_TURKISH
     assert mock_copilot.call_count == 2
+
+
+@patch("btcedu.services.claude_service._call_copilot_cli")
+def test_call_claude_threads_model_override(mock_copilot):
+    """model_override is forwarded to the Copilot CLI call (QA second opinion)."""
+    mock_copilot.return_value = ClaudeResponse(
+        text=LEGIT_TURKISH,
+        input_tokens=10,
+        output_tokens=20,
+        cost_usd=0.0,
+        model="copilot/gpt-5.6",
+    )
+    settings = Settings(
+        llm_provider="copilot_cli",
+        anthropic_api_key="",
+        openai_api_key="",
+        dry_run=False,
+    )
+
+    call_claude("system", "review this", settings, model_override="gpt-5.6")
+
+    assert mock_copilot.call_args.kwargs["model_override"] == "gpt-5.6"

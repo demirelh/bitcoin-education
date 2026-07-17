@@ -659,6 +659,17 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         compression_ratio = diff_data.get("summary", {}).get("compression_ratio")
         translation_warnings = diff_data.get("warnings", [])
 
+    # Independent QA second opinion (loaded for adapt-stage reviews)
+    qa_review = None
+    if episode:
+        try:
+            from btcedu.core.qa_reviewer import load_qa_review
+
+            settings = _get_runtime_settings()
+            qa_review = load_qa_review(settings, episode.episode_id)
+        except Exception:
+            qa_review = None
+
     return {
         "id": task.id,
         "episode_id": task.episode_id,
@@ -683,6 +694,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         "stories": bilingual_stories,  # Phase 3: bilingual story pairs
         "compression_ratio": compression_ratio,  # Phase 3: TR/DE word ratio
         "translation_warnings": translation_warnings,  # Phase 3: anomaly warnings
+        "qa_review": qa_review,  # QA: independent second-opinion critique
     }
 
 

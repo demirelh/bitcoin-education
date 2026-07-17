@@ -90,6 +90,7 @@ def call_claude(
     dry_run_path: Path | None = None,
     max_tokens: int | None = None,
     json_mode: bool = False,
+    model_override: str | None = None,
 ) -> ClaudeResponse:
     """Call LLM API (Anthropic or OpenAI fallback).
 
@@ -104,6 +105,9 @@ def call_claude(
         dry_run_path: If settings.dry_run, write payload here instead of calling API.
         max_tokens: Override settings.claude_max_tokens for this call.
         json_mode: If True, request JSON output from the API (OpenAI response_format).
+        model_override: If set (copilot_cli provider), use this model instead of
+            settings.copilot_cli_model for this call. Enables an independent QA
+            second opinion with a different model than the translation.
 
     Returns:
         ClaudeResponse with text, token counts, and cost.
@@ -120,6 +124,7 @@ def call_claude(
             settings,
             max_tokens=max_tokens,
             json_mode=json_mode,
+            model_override=model_override,
         )
         # Copilot CLI occasionally refuses non-coding tasks with a boilerplate
         # "I'm the GitHub Copilot CLI, a terminal assistant..." message. Detect
@@ -146,6 +151,7 @@ def call_claude(
                 settings,
                 max_tokens=max_tokens,
                 json_mode=json_mode,
+                model_override=model_override,
             )
             # Retry #2 fallback: Anthropic direct (only if key valid and coding-frame also failed)
             if _is_copilot_refusal(response.text) and getattr(settings, "anthropic_api_key", ""):
@@ -239,6 +245,7 @@ def _call_copilot_cli(
     settings,
     max_tokens: int | None = None,
     json_mode: bool = False,
+    model_override: str | None = None,
 ) -> ClaudeResponse:
     """Bridge to GitHub Copilot CLI via `copilot -p` subprocess.
 
@@ -254,7 +261,7 @@ def _call_copilot_cli(
     import tempfile
     import time as _time
 
-    model = getattr(settings, "copilot_cli_model", "claude-sonnet-4.5")
+    model = model_override or getattr(settings, "copilot_cli_model", "claude-sonnet-4.5")
     binary = getattr(settings, "copilot_cli_binary", "copilot")
 
     # Copilot CLI treats obvious system/user framing as prompt injection.

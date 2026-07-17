@@ -62,6 +62,12 @@ class Settings(BaseSettings):
     copilot_cli_model: str = "claude-sonnet-4.5"  # e.g. "claude-sonnet-4.5", "claude-opus-4.6"
     copilot_cli_binary: str = "copilot"
     copilot_cli_timeout: int = 900  # seconds per call
+
+    # Independent second-opinion QA of the adapted script (after adapt, before
+    # Review Gate 2). Uses a DIFFERENT model than the translation/adaptation so
+    # the critique is genuinely independent. Advisory only — never blocks.
+    qa_review_enabled: bool = True
+    qa_model: str = "gpt-5.6-sol"  # Copilot CLI model id for the QA second opinion
     claude_max_tokens: int = 16384
     claude_temperature: float = 0.3
     max_retries: int = 3

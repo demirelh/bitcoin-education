@@ -494,6 +494,28 @@ def _run_stage(
                 has_pending_review,
             )
 
+            # Independent second-opinion QA of the adapted script (advisory).
+            # Runs regardless of auto-approve so the critique is always produced
+            # and surfaced in the dashboard. Never blocks the pipeline.
+            if getattr(settings, "qa_review_enabled", False):
+                try:
+                    from btcedu.core.qa_reviewer import generate_qa_review
+
+                    qa = generate_qa_review(session, episode.episode_id, settings)
+                    if not qa.skipped:
+                        logger.info(
+                            "  QA second opinion (%s): score=%s, %d issue(s)",
+                            qa.model,
+                            qa.overall_score,
+                            qa.issue_count,
+                        )
+                except Exception as qa_exc:  # noqa: BLE001
+                    logger.warning(
+                        "QA second opinion failed for %s (non-fatal): %s",
+                        episode.episode_id,
+                        qa_exc,
+                    )
+
             # Check if already approved
             auto_approve, _ = _profile_pipeline_flags(settings, episode)
             if auto_approve or has_approved_review(session, episode.episode_id, "adapt"):
@@ -527,12 +549,17 @@ def _run_stage(
             diff_path = (
                 Path(settings.outputs_dir) / episode.episode_id / "review" / "adaptation_diff.json"
             )
+            qa_md_path = Path(settings.outputs_dir) / episode.episode_id / "qa_review.md"
+
+            artifact_paths = [str(adapted_path)]
+            if qa_md_path.exists():
+                artifact_paths.append(str(qa_md_path))
 
             create_review_task(
                 session,
                 episode.episode_id,
                 stage="adapt",
-                artifact_paths=[str(adapted_path)],
+                artifact_paths=artifact_paths,
                 diff_path=str(diff_path) if diff_path.exists() else None,
             )
             elapsed = time.monotonic() - t0

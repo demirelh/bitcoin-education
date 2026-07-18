@@ -136,7 +136,8 @@ def _get_stages(
 
     # Skip 'adapt' for profiles with adapt.skip=True; replace review_gate_2 with
     # review_gate_translate so news translations get a dedicated human review gate.
-    if stage_config.get("adapt", {}).get("skip"):
+    adapt_config = stage_config.get("adapt", {})
+    if adapt_config.get("skip") or adapt_config.get("mode") == "disabled":
         # Replace review_gate_2 with review_gate_translate (don't remove the gate)
         stages = [
             ("review_gate_translate", EpisodeStatus.TRANSLATED) if n == "review_gate_2" else (n, s)

@@ -95,10 +95,21 @@ def _make_stories_json(tmp_path, stories=None):
     return stories_path
 
 
-def _mock_claude_response(text):
+def _mock_claude_response(story_id, headline, text):
     """Create a mock ClaudeResponse."""
     mock = MagicMock()
-    mock.text = text
+    mock.text = json.dumps(
+        {
+            "story_id": story_id,
+            "source_segment_ids": [],
+            "translated_headline": headline,
+            "translated_text": text,
+            "translator_flags": [],
+            "omitted_uncertain_details": [],
+            "glossary_terms_used": [],
+        },
+        ensure_ascii=False,
+    )
     mock.input_tokens = 100
     mock.output_tokens = 50
     mock.cost_usd = 0.001
@@ -125,24 +136,21 @@ class TestTranslatePerStoryIntroOutro:
 
         # Mock LLM responses — simulate that LLM still leaves some names
         responses = [
-            # s01 intro headline
-            _mock_claude_response("İyi akşamlar, tagesschau'ya hoş geldiniz"),
-            # s01 intro body
             _mock_claude_response(
+                "s01",
+                "İyi akşamlar, tagesschau'ya hoş geldiniz",
                 "İyi akşamlar, ben Jens Riewa. "
-                "Gündemdeki konular: Berlin'de iklim zirvesi, Ukrayna krizi ve federal bütçe."
+                "Gündemdeki konular: Berlin'de iklim zirvesi, Ukrayna krizi ve federal bütçe.",
             ),
-            # s02 headline (regular story)
-            _mock_claude_response("İklim Zirvesi: Yeni Kararlar"),
-            # s02 body
             _mock_claude_response(
-                "Başbakan Scholz, Berlin'deki iklim zirvesinde yeni önlemler açıkladı."
+                "s02",
+                "İklim Zirvesi: Yeni Kararlar",
+                "Başbakan Scholz, Berlin'deki iklim zirvesinde yeni önlemler açıkladı.",
             ),
-            # s03 outro headline
-            _mock_claude_response("Veda"),
-            # s03 outro body
             _mock_claude_response(
-                "tagesschau sona erdi. İyi akşamlar. Yarın Susanne Daubner ile görüşmek üzere."
+                "s03",
+                "Veda",
+                "tagesschau sona erdi. İyi akşamlar. Yarın Susanne Daubner ile görüşmek üzere.",
             ),
         ]
         mock_claude.side_effect = responses
@@ -192,9 +200,19 @@ class TestTranslatePerStoryIntroOutro:
         translated_path = tmp_path / "transcripts" / "ep_test" / "transcript.tr.txt"
         translated_path.parent.mkdir(parents=True, exist_ok=True)
 
-        mock_claude.return_value = _mock_claude_response(
-            "Ben Jens Riewa, tagesschau haberlerine hoş geldiniz"
-        )
+        def response_for_story(**kwargs):
+            story_id = next(
+                sid
+                for sid in ("s01", "s02", "s03")
+                if f'"story_id": "{sid}"' in kwargs["user_message"]
+            )
+            return _mock_claude_response(
+                story_id,
+                "tagesschau",
+                "Ben Jens Riewa, tagesschau haberlerine hoş geldiniz",
+            )
+
+        mock_claude.side_effect = response_for_story
 
         _translate_per_story(
             stories_path=stories_path,
@@ -230,7 +248,16 @@ class TestTranslatePerStoryIntroOutro:
             "INTRO_SYSTEM_PROMPT",
             "INTRO_USER: {{ transcript }}",
         )
-        mock_claude.return_value = _mock_claude_response("Günün haberleri")
+
+        def response_for_story(**kwargs):
+            story_id = next(
+                sid
+                for sid in ("s01", "s02", "s03")
+                if f'"story_id": "{sid}"' in kwargs["user_message"]
+            )
+            return _mock_claude_response(story_id, "Başlık", "Günün haberleri")
+
+        mock_claude.side_effect = response_for_story
 
         _translate_per_story(
             stories_path=stories_path,
@@ -247,18 +274,9 @@ class TestTranslatePerStoryIntroOutro:
         # Check which system_prompt was used for each call
         calls = mock_claude.call_args_list
 
-        # Headlines always use the standard prompt.
-        assert calls[0].kwargs["system_prompt"] == "STANDARD_SYSTEM"
-        # s01 (intro) body: should use intro prompt
-        assert calls[1].kwargs["system_prompt"] == "INTRO_SYSTEM_PROMPT"
-        # s02 (regular) headline: should use standard prompt
-        assert calls[2].kwargs["system_prompt"] == "STANDARD_SYSTEM"
-        # s02 (regular) body: should use standard prompt
-        assert calls[3].kwargs["system_prompt"] == "STANDARD_SYSTEM"
-        # s03 (outro) headline: should use standard prompt
-        assert calls[4].kwargs["system_prompt"] == "STANDARD_SYSTEM"
-        # s03 (outro) body: should use intro prompt
-        assert calls[5].kwargs["system_prompt"] == "INTRO_SYSTEM_PROMPT"
+        assert calls[0].kwargs["system_prompt"] == "INTRO_SYSTEM_PROMPT"
+        assert calls[1].kwargs["system_prompt"] == "STANDARD_SYSTEM"
+        assert calls[2].kwargs["system_prompt"] == "INTRO_SYSTEM_PROMPT"
 
     @patch("btcedu.core.translator.call_claude")
     @patch("btcedu.core.translator._load_intro_outro_prompt", return_value=None)
@@ -270,7 +288,15 @@ class TestTranslatePerStoryIntroOutro:
         translated_path = tmp_path / "transcripts" / "ep_test" / "transcript.tr.txt"
         translated_path.parent.mkdir(parents=True, exist_ok=True)
 
-        mock_claude.return_value = _mock_claude_response("Haberlere hoş geldiniz")
+        def response_for_story(**kwargs):
+            story_id = next(
+                sid
+                for sid in ("s01", "s02", "s03")
+                if f'"story_id": "{sid}"' in kwargs["user_message"]
+            )
+            return _mock_claude_response(story_id, "Başlık", "Haberlere hoş geldiniz")
+
+        mock_claude.side_effect = response_for_story
 
         _translate_per_story(
             stories_path=stories_path,

@@ -70,4 +70,20 @@ Formelles Nachrichtentürkisch (haber spikeri dili):
 
 # Ausgabeformat
 
-Gib NUR den türkischen Text zurück. Keine Erklärungen, keine Kommentare, keine Markierungen. Wenn der Input nur eine Begrüßungsfloskel ohne konkrete Themenvorschau ist, gib einen LEEREN String zurück (keinen generischen Opener wie „İşte günün haberleri").
+Gib ausschließlich valides JSON im selben Story-Format wie die normale
+Übersetzung zurück. `story_id` und `source_segment_ids` bleiben unverändert.
+Wenn nur Begrüßung, Verabschiedung oder Programmhinweise übrig bleiben, setze
+`translated_text` auf den leeren String. Nachrichtentatsachen und Themenvorschauen
+dürfen nicht entfernt werden.
+
+```json
+{
+  "story_id": "unverändert aus dem Input",
+  "source_segment_ids": ["unverändert aus dem Input"],
+  "translated_headline": "",
+  "translated_text": "",
+  "translator_flags": ["broadcast_frame_removed"],
+  "omitted_uncertain_details": [],
+  "glossary_terms_used": []
+}
+```

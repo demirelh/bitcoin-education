@@ -29,7 +29,16 @@ stage_config:
     enabled: true
   adapt:
     skip: false
+    mode: conditional
     tiers: [anchor_unify, local_relevance]
+    allowed_operations:
+      - anchor_unify
+      - institution_explanation
+      - local_relevance
+      - register_polish
+    preserve_facts: true
+    preserve_numbers: true
+    preserve_story_ids: true
   imagegen:
     provider: generative
     fallback_provider: ideogram

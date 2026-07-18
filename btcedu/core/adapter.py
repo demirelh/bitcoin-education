@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -170,6 +171,8 @@ def adapt_script(
     provenance_path = (
         Path(settings.outputs_dir) / episode_id / "provenance" / "adapt_provenance.json"
     )
+    stories_translated_path = Path(settings.outputs_dir) / episode_id / "stories_translated.json"
+    stories_adapted_path = Path(settings.outputs_dir) / episode_id / "stories_adapted.json"
 
     # Resolve profile namespace so news/podcast pick up their own adapt prompt
     content_profile = getattr(episode, "content_profile", None)
@@ -187,6 +190,21 @@ def adapt_script(
     except Exception:  # noqa: BLE001
         profile_namespace = None
         adapt_cfg = {}
+
+    adapt_mode = adapt_cfg.get("mode")
+    if adapt_mode is None:
+        adapt_mode = "disabled" if adapt_cfg.get("skip") else "full"
+    if adapt_mode not in {"disabled", "conditional", "full"}:
+        raise ValueError(f"Unsupported adapt.mode: {adapt_mode!r}")
+    if adapt_mode == "disabled":
+        logger.info("Adaptation disabled by profile for %s", episode_id)
+        return AdaptationResult(
+            episode_id=episode_id,
+            adapted_path="",
+            diff_path="",
+            provenance_path="",
+            skipped=True,
+        )
 
     # Load and register prompt via PromptRegistry (profile-namespaced fallback)
     registry = PromptRegistry(session)
@@ -207,7 +225,11 @@ def adapt_script(
     translation_text = translation_path.read_text(encoding="utf-8")
     german_text = corrected_path.read_text(encoding="utf-8")
 
-    translation_hash = hashlib.sha256(translation_text.encode("utf-8")).hexdigest()
+    use_story_mode = stories_translated_path.exists()
+    translation_input_bytes = (
+        stories_translated_path.read_bytes() if use_story_mode else translation_text.encode("utf-8")
+    )
+    translation_hash = hashlib.sha256(translation_input_bytes).hexdigest()
     german_hash = hashlib.sha256(german_text.encode("utf-8")).hexdigest()
 
     # Idempotency check
@@ -279,95 +301,41 @@ def adapt_script(
         # Split prompt template into system and user parts
         system_prompt, user_template = _split_prompt(template_body)
 
-        # Segment text if needed
-        segments = _segment_text(translation_text)
-
-        # Slice the German reference proportionally so each Turkish segment only
-        # sees the corresponding German portion. Without this, the model tends to
-        # re-adapt earlier German content on every segment, duplicating stories.
-        german_slices = _slice_german_by_segments(german_text, translation_text, segments)
-
-        # Process each segment
-        total_input_tokens = 0
-        total_output_tokens = 0
-        total_cost = 0.0
-        adapted_segments: list[str] = []
-
-        for i, segment in enumerate(segments):
-            german_ref = german_slices[i] if i < len(german_slices) else ""
-            # Segment-scoping instruction prevents the model from generating
-            # content for parts of the German reference that fall outside this
-            # segment's Turkish slice.
-            scoped_translation = (
-                segment
-                + "\n\n<!-- SEGMENT_SCOPE: Only adapt content that appears in "
-                "THIS Turkish segment above. If the German reference mentions "
-                "topics not present in this Turkish text, IGNORE them — they "
-                "belong to a different segment and will be adapted separately. -->"
-            )
-            user_message = user_template.replace("{{ translation }}", scoped_translation).replace(
-                "{{ original_german }}", german_ref
-            )
-
-            # Dry-run path
-            dry_run_path = (
-                Path(settings.outputs_dir) / episode_id / f"dry_run_adapt_{i}.json"
-                if settings.dry_run
-                else None
-            )
-
-            _template_max = getattr(prompt_version, "max_tokens", None) or 0
-            _effective_max = max(int(_template_max or 0), int(settings.claude_max_tokens or 0))
-            response: ClaudeResponse = call_claude(
+        if use_story_mode:
+            (
+                adapted_text,
+                diff_data,
+                total_input_tokens,
+                total_output_tokens,
+                total_cost,
+                segments_processed,
+            ) = _adapt_per_story(
+                stories_translated_path=stories_translated_path,
+                stories_adapted_path=stories_adapted_path,
+                episode_id=episode_id,
                 system_prompt=system_prompt,
-                user_message=user_message,
+                user_template=user_template,
                 settings=settings,
-                dry_run_path=dry_run_path,
-                max_tokens=_effective_max or None,
+                mode=adapt_mode,
+                allowed_operations=adapt_cfg.get("allowed_operations") or tiers_list,
             )
-
-            # A refusal must never be accepted as adapted output — that silently
-            # drops every source story in this segment. Retry once (refusals are
-            # stochastic); if it still refuses, fail loudly so no content is lost.
-            if not settings.dry_run and _looks_like_refusal(response.text):
-                logger.warning(
-                    "Segment %d/%d: model refused adaptation, retrying once",
-                    i + 1,
-                    len(segments),
-                )
-                response = call_claude(
-                    system_prompt=system_prompt,
-                    user_message=user_message,
-                    settings=settings,
-                    dry_run_path=dry_run_path,
-                    max_tokens=_effective_max or None,
-                )
-                if _looks_like_refusal(response.text):
-                    raise AdaptationRefusedError(
-                        f"Model refused to adapt segment {i + 1}/{len(segments)} "
-                        f"twice; aborting to avoid dropping source stories. "
-                        f"Refusal preview: {response.text.strip()[:200]!r}"
-                    )
-
-            adapted_segments.append(response.text)
-            total_input_tokens += response.input_tokens
-            total_output_tokens += response.output_tokens
-            total_cost += response.cost_usd
-
-            logger.info(
-                "Segment %d/%d: %d in, %d out, $%.4f",
-                i + 1,
-                len(segments),
-                response.input_tokens,
-                response.output_tokens,
-                response.cost_usd,
+        else:
+            (
+                adapted_text,
+                total_input_tokens,
+                total_output_tokens,
+                total_cost,
+                segments_processed,
+            ) = _adapt_legacy_text(
+                translation_text=translation_text,
+                german_text=german_text,
+                episode_id=episode_id,
+                system_prompt=system_prompt,
+                user_template=user_template,
+                prompt_version=prompt_version,
+                settings=settings,
             )
-
-        # Reassemble adapted text
-        adapted_text = "\n\n".join(adapted_segments)
-
-        # Compute adaptation diff
-        diff_data = compute_adaptation_diff(translation_text, adapted_text, episode_id)
+            diff_data = compute_adaptation_diff(translation_text, adapted_text, episode_id)
 
         adaptation_count = diff_data["summary"]["total_adaptations"]
         tier1_count = diff_data["summary"]["tier1_count"]
@@ -408,17 +376,26 @@ def adapt_script(
                 "temperature": settings.claude_temperature,
                 "max_tokens": settings.claude_max_tokens,
             },
-            "input_files": [str(translation_path), str(corrected_path)],
+            "input_files": [
+                str(stories_translated_path if use_story_mode else translation_path),
+                str(corrected_path),
+            ],
             "input_content_hashes": {
                 "translation": translation_hash,
                 "german": german_hash,
             },
-            "output_files": [str(adapted_path), str(diff_path)],
+            "output_files": [
+                str(adapted_path),
+                str(diff_path),
+                *([str(stories_adapted_path)] if use_story_mode else []),
+            ],
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
             "cost_usd": total_cost,
             "duration_seconds": round(elapsed, 2),
-            "segments_processed": len(segments),
+            "segments_processed": segments_processed,
+            "mode": adapt_mode,
+            "per_story_mode": use_story_mode,
             "adaptation_summary": {
                 "total_adaptations": adaptation_count,
                 "tier1_count": tier1_count,
@@ -488,7 +465,7 @@ def adapt_script(
             adaptation_count=adaptation_count,
             tier1_count=tier1_count,
             tier2_count=tier2_count,
-            segments_processed=len(segments),
+            segments_processed=segments_processed,
             skipped=False,
         )
 
@@ -500,6 +477,318 @@ def adapt_script(
         session.commit()
         logger.error("Adaptation failed for %s: %s", episode_id, e)
         raise
+
+
+def _adapt_legacy_text(
+    translation_text: str,
+    german_text: str,
+    episode_id: str,
+    system_prompt: str,
+    user_template: str,
+    prompt_version,
+    settings: Settings,
+) -> tuple[str, int, int, float, int]:
+    """Preserve the existing full-text adapter for profiles without stories."""
+    segments = _segment_text(translation_text)
+    german_slices = _slice_german_by_segments(german_text, translation_text, segments)
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_cost = 0.0
+    adapted_segments: list[str] = []
+
+    for i, segment in enumerate(segments):
+        german_ref = german_slices[i] if i < len(german_slices) else ""
+        scoped_translation = (
+            segment + "\n\n<!-- SEGMENT_SCOPE: Only adapt content that appears in "
+            "THIS Turkish segment above. If the German reference mentions "
+            "topics not present in this Turkish text, IGNORE them. -->"
+        )
+        user_message = user_template.replace("{{ translation }}", scoped_translation).replace(
+            "{{ original_german }}", german_ref
+        )
+        dry_run_path = (
+            Path(settings.outputs_dir) / episode_id / f"dry_run_adapt_{i}.json"
+            if settings.dry_run
+            else None
+        )
+        template_max = getattr(prompt_version, "max_tokens", None) or 0
+        effective_max = max(int(template_max or 0), int(settings.claude_max_tokens or 0))
+        response = _call_adaptation_with_refusal_retry(
+            system_prompt,
+            user_message,
+            settings,
+            dry_run_path,
+            effective_max or None,
+            f"segment {i + 1}/{len(segments)}",
+            json_mode=False,
+        )
+        adapted_segments.append(response.text)
+        total_input_tokens += response.input_tokens
+        total_output_tokens += response.output_tokens
+        total_cost += response.cost_usd
+
+    return (
+        "\n\n".join(adapted_segments),
+        total_input_tokens,
+        total_output_tokens,
+        total_cost,
+        len(segments),
+    )
+
+
+def _adapt_per_story(
+    stories_translated_path: Path,
+    stories_adapted_path: Path,
+    episode_id: str,
+    system_prompt: str,
+    user_template: str,
+    settings: Settings,
+    mode: str,
+    allowed_operations: list[str],
+) -> tuple[str, dict, int, int, float, int]:
+    """Adapt only stories with a concrete need and preserve their identity."""
+    from btcedu.models.story_schema import StoryAdaptationOutput, StoryDocument
+
+    story_doc = StoryDocument.model_validate_json(
+        stories_translated_path.read_text(encoding="utf-8")
+    )
+    total_input_tokens = 0
+    total_output_tokens = 0
+    total_cost = 0.0
+    processed = 0
+    adaptations: list[dict] = []
+    adapted_stories: list[dict] = []
+
+    for story in story_doc.stories:
+        source_text = story.text_tr or ""
+        needed = _needed_adaptation_operations(story, source_text, allowed_operations)
+        if mode == "conditional" and not needed:
+            output = StoryAdaptationOutput(
+                story_id=story.story_id,
+                adapted_text=source_text,
+                operations_applied=[],
+            )
+        else:
+            requested = needed if mode == "conditional" else allowed_operations
+            payload = {
+                "story_id": story.story_id,
+                "source_segment_ids": story.source_segment_ids,
+                "translated_text": source_text,
+                "original_german": story.source_text or story.text_de,
+                "source_flags": story.source_flags,
+                "allowed_operations": requested,
+            }
+            user_message = user_template.replace(
+                "{{ translation }}",
+                json.dumps(payload, ensure_ascii=False, indent=2),
+            ).replace("{{ original_german }}", story.source_text or story.text_de)
+            dry_run_path = (
+                Path(settings.outputs_dir) / episode_id / f"dry_run_adapt_{story.story_id}.json"
+                if settings.dry_run
+                else None
+            )
+            response = _call_adaptation_with_refusal_retry(
+                system_prompt,
+                user_message,
+                settings,
+                dry_run_path,
+                None,
+                f"story {story.story_id}",
+                json_mode=True,
+            )
+            processed += 1
+            total_input_tokens += response.input_tokens
+            total_output_tokens += response.output_tokens
+            total_cost += response.cost_usd
+            output = StoryAdaptationOutput.model_validate(
+                _parse_structured_adaptation(response.text)
+            )
+            if output.story_id != story.story_id:
+                raise ValueError(
+                    f"Adaptation returned story_id {output.story_id!r}, expected {story.story_id!r}"
+                )
+            disallowed = sorted(set(output.operations_applied) - set(requested))
+            if disallowed:
+                raise ValueError(
+                    f"Story {story.story_id} used disallowed adaptation operations: {disallowed}"
+                )
+            risks = _adaptation_fidelity_risks(
+                source_text,
+                output.adapted_text,
+                allow_anchor_unify="anchor_unify" in output.operations_applied,
+                removable_names=[story.reporter] if story.reporter else [],
+            )
+            if risks:
+                raise ValueError(
+                    f"Story {story.story_id} adaptation changed protected facts: {risks}"
+                )
+
+        story_data = story.model_dump(mode="json")
+        story_data["text_adapted_tr"] = output.adapted_text
+        story_data["adaptation_operations"] = output.operations_applied
+        story_data["narration_sha256"] = hashlib.sha256(
+            output.adapted_text.encode("utf-8")
+        ).hexdigest()
+        adapted_stories.append(story_data)
+        for operation in output.operations_applied:
+            adaptations.append(
+                {
+                    "item_id": f"adapt-{story.story_id}-{len(adaptations) + 1:03d}",
+                    "story_id": story.story_id,
+                    "tier": "T1",
+                    "category": operation,
+                    "original": source_text,
+                    "adapted": output.adapted_text,
+                    "context": output.adapted_text[:200],
+                    "position": {"start": 0, "end": len(output.adapted_text)},
+                }
+            )
+
+    document_data = story_doc.model_dump(mode="json")
+    document_data["stories"] = adapted_stories
+    stories_adapted_path.write_text(
+        json.dumps(document_data, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    adapted_text = "\n\n".join(
+        story["text_adapted_tr"] for story in adapted_stories if story["text_adapted_tr"]
+    )
+    diff = {
+        "episode_id": episode_id,
+        "original_length": sum(len(story.text_tr or "") for story in story_doc.stories),
+        "adapted_length": len(adapted_text),
+        "adaptations": adaptations,
+        "summary": {
+            "total_adaptations": len(adaptations),
+            "tier1_count": len(adaptations),
+            "tier2_count": 0,
+            "by_category": {
+                operation: sum(item["category"] == operation for item in adaptations)
+                for operation in sorted({item["category"] for item in adaptations})
+            },
+        },
+    }
+    return (
+        adapted_text,
+        diff,
+        total_input_tokens,
+        total_output_tokens,
+        total_cost,
+        processed,
+    )
+
+
+def _call_adaptation_with_refusal_retry(
+    system_prompt: str,
+    user_message: str,
+    settings: Settings,
+    dry_run_path: Path | None,
+    max_tokens: int | None,
+    label: str,
+    json_mode: bool,
+) -> ClaudeResponse:
+    """Retry one refusal and never accept it as successful output."""
+    response = call_claude(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        settings=settings,
+        dry_run_path=dry_run_path,
+        max_tokens=max_tokens,
+        json_mode=json_mode,
+    )
+    if not settings.dry_run and _looks_like_refusal(response.text):
+        logger.warning("%s: model refused adaptation, retrying once", label)
+        response = call_claude(
+            system_prompt=system_prompt,
+            user_message=user_message,
+            settings=settings,
+            dry_run_path=dry_run_path,
+            max_tokens=max_tokens,
+            json_mode=json_mode,
+        )
+        if _looks_like_refusal(response.text):
+            raise AdaptationRefusedError(
+                f"Model refused to adapt {label} twice; aborting to avoid content loss. "
+                f"Refusal preview: {response.text.strip()[:200]!r}"
+            )
+    return response
+
+
+def _parse_structured_adaptation(response_text: str) -> dict:
+    text = response_text.strip()
+    if text.startswith("```json"):
+        text = text[7:].strip()
+    elif text.startswith("```"):
+        text = text[3:].strip()
+    if text.endswith("```"):
+        text = text[:-3].strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        raise ValueError("Adaptation response did not contain a JSON object")
+    return json.loads(text[start : end + 1])
+
+
+def _needed_adaptation_operations(story, text: str, allowed_operations: list[str]) -> list[str]:
+    """Return only operations justified by concrete markers in this story."""
+    needed: list[str] = []
+    lowered = text.casefold()
+    if "anchor_unify" in allowed_operations and (
+        story.story_type == "interview"
+        or story.reporter
+        or re.search(r"\b(ben|biz|bizim|bize)\b", lowered)
+        or re.search(r"\b(muhabirimiz|meslektaşımız|teşekkürler)\b", lowered)
+    ):
+        needed.append("anchor_unify")
+    if "institution_explanation" in allowed_operations and re.search(
+        r"\b(Bundestag|Bundesrat|BaFin|AfD)\b(?!\s*\()", text
+    ):
+        needed.append("institution_explanation")
+    if "local_relevance" in allowed_operations and re.search(
+        r"\b(Türkiye|Türk|göç|çifte vatandaşlık)\b", text, re.IGNORECASE
+    ):
+        needed.append("local_relevance")
+    return needed
+
+
+_ADAPT_NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,:%-]\d+)*(?!\w)")
+_ADAPT_NAME_RE = re.compile(r"(?<![.!?]\s)\b[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'-]{2,}\b")
+
+
+def _adaptation_fidelity_risks(
+    source_text: str,
+    adapted_text: str,
+    *,
+    allow_anchor_unify: bool = False,
+    removable_names: list[str] | None = None,
+) -> list[str]:
+    """Protect exact factual tokens during same-language adaptation."""
+    risks: list[str] = []
+    if Counter(_ADAPT_NUMBER_RE.findall(source_text)) != Counter(
+        _ADAPT_NUMBER_RE.findall(adapted_text)
+    ):
+        risks.append("numbers_dates_or_scores")
+    name_source_text = (
+        _strip_anchor_handoff_text(source_text) if allow_anchor_unify else source_text
+    )
+    source_names = set(_ADAPT_NAME_RE.findall(name_source_text))
+    for removable_name in removable_names or []:
+        source_names.difference_update(_ADAPT_NAME_RE.findall(removable_name))
+    adapted_names = set(_ADAPT_NAME_RE.findall(adapted_text))
+    missing_names = sorted(source_names - adapted_names)
+    if missing_names:
+        risks.append("names:" + ",".join(missing_names))
+    return risks
+
+
+def _strip_anchor_handoff_text(text: str) -> str:
+    """Remove only sentences that anchor_unify is explicitly allowed to drop."""
+    removable = re.compile(
+        r"[^.!?]*(?:teşekkürler|muhabirimiz|meslektaşımız|"
+        r"şimdi sözü|sözü .* bırakıyoruz)[^.!?]*[.!?]?",
+        re.IGNORECASE,
+    )
+    return removable.sub("", text)
 
 
 def _is_adaptation_current(

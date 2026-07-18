@@ -3,7 +3,9 @@
 import hashlib
 import json
 import logging
+import re
 import time
+from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -176,7 +178,10 @@ def translate_transcript(
 
     # Compute input content hash for idempotency
     corrected_text = corrected_path.read_text(encoding="utf-8")
-    input_content_hash = hashlib.sha256(corrected_text.encode("utf-8")).hexdigest()
+    story_bytes = stories_path.read_bytes() if use_per_story else b""
+    input_content_hash = hashlib.sha256(
+        corrected_text.encode("utf-8") + b"\0" + story_bytes
+    ).hexdigest()
 
     # Idempotency check
     if not force and _is_translation_current(
@@ -317,7 +322,10 @@ def translate_transcript(
                 "Translation fidelity LOW: %s TR/DE char ratio=%.2f "
                 "(DE=%d chars → TR=%d chars). Model may be summarizing instead of translating. "
                 "Consider smaller SEGMENT_CHAR_LIMIT, higher max_tokens, or stronger prompt.",
-                episode_id, _ratio, len(corrected_text), len(translated_text),
+                episode_id,
+                _ratio,
+                len(corrected_text),
+                len(translated_text),
             )
 
         # Mark downstream adaptation as stale if it exists (cascade invalidation)
@@ -349,7 +357,14 @@ def translate_transcript(
             },
             "input_files": [str(corrected_path)],
             "input_content_hash": input_content_hash,
-            "output_files": [str(translated_path)],
+            "output_files": [
+                str(translated_path),
+                *(
+                    [str(Path(settings.outputs_dir) / episode_id / "stories_translated.json")]
+                    if use_per_story
+                    else []
+                ),
+            ],
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
             "cost_usd": total_cost,
@@ -612,51 +627,39 @@ def _translate_per_story(
         else:
             active_system, active_user_tpl = system_prompt, user_template
 
-        # Translate headline
-        # NOTE: Headlines are always translated with the STANDARD prompt, even
-        # for intro/outro stories. The intro/outro prompt is tuned for full
-        # broadcast greetings (strips moderator names, replaces sign-offs) and
-        # produces garbage or refusals when applied to a 3-word headline like
-        # "Begrüßung und Themenüberblick".
-        headline_user = user_template.replace("{{ transcript }}", story.headline_de)
-        dry_run_path = (
-            Path(settings.outputs_dir) / episode_id / f"dry_run_translate_s{i:02d}_head.json"
-            if settings.dry_run
-            else None
+        story_payload = {
+            "story_id": story.story_id,
+            "headline_de": story.headline_de,
+            "source_segment_ids": story.source_segment_ids,
+            "source_text": story.source_text or story.text_de,
+            "source_confidence": story.source_confidence,
+            "source_flags": story.source_flags,
+        }
+        body_user = active_user_tpl.replace(
+            "{{ transcript }}",
+            json.dumps(story_payload, ensure_ascii=False, indent=2),
         )
-        headline_response: ClaudeResponse = call_claude(
-            system_prompt=system_prompt,
-            user_message=headline_user,
-            settings=settings,
-            dry_run_path=dry_run_path,
-        )
-        total_input_tokens += headline_response.input_tokens
-        total_output_tokens += headline_response.output_tokens
-        total_cost += headline_response.cost_usd
-        segments_processed += 1
-
-        # Translate story body
-        body_user = active_user_tpl.replace("{{ transcript }}", story.text_de)
         dry_run_path = (
             Path(settings.outputs_dir) / episode_id / f"dry_run_translate_s{i:02d}_body.json"
             if settings.dry_run
             else None
         )
-        body_response: ClaudeResponse = call_claude(
+        translation, responses = _call_story_translation(
+            story=story,
             system_prompt=active_system,
             user_message=body_user,
             settings=settings,
             dry_run_path=dry_run_path,
         )
-        total_input_tokens += body_response.input_tokens
-        total_output_tokens += body_response.output_tokens
-        total_cost += body_response.cost_usd
-        segments_processed += 1
+        total_input_tokens += sum(response.input_tokens for response in responses)
+        total_output_tokens += sum(response.output_tokens for response in responses)
+        total_cost += sum(response.cost_usd for response in responses)
+        segments_processed += len(responses)
 
         # Build translated story dict
         story_dict = story.model_dump(mode="json")
-        headline_tr = fix_translation_glossary(headline_response.text.strip())
-        text_tr = fix_translation_glossary(body_response.text.strip())
+        headline_tr = fix_translation_glossary(translation.translated_headline.strip())
+        text_tr = fix_translation_glossary(translation.translated_text.strip())
 
         # Apply deterministic regex cleaning
         if clean_moderator:
@@ -679,6 +682,12 @@ def _translate_per_story(
 
         story_dict["headline_tr"] = headline_tr
         story_dict["text_tr"] = text_tr
+        story_dict["translator_flags"] = sorted(
+            {*story.source_flags, *translation.translator_flags}
+        )
+        story_dict["omitted_uncertain_details"] = translation.omitted_uncertain_details
+        story_dict["glossary_terms_used"] = translation.glossary_terms_used
+        story_dict["narration_sha256"] = hashlib.sha256(text_tr.encode("utf-8")).hexdigest()
         translated_stories.append(story_dict)
 
         logger.info(
@@ -686,7 +695,7 @@ def _translate_per_story(
             i + 1,
             len(story_doc.stories),
             story.story_id,
-            body_response.cost_usd,
+            sum(response.cost_usd for response in responses),
         )
 
     # Build translated StoryDocument
@@ -720,6 +729,123 @@ def _translate_per_story(
         total_output_tokens,
         total_cost,
     )
+
+
+def _call_story_translation(
+    story,
+    system_prompt: str,
+    user_message: str,
+    settings: "Settings",
+    dry_run_path: "Path | None",
+):
+    """Request and validate one structured story translation, retrying factual mismatches."""
+    from btcedu.models.story_schema import StoryTranslationOutput
+
+    responses: list[ClaudeResponse] = []
+    active_message = user_message
+    last_error: Exception | None = None
+    for attempt in range(2):
+        response: ClaudeResponse = call_claude(
+            system_prompt=system_prompt,
+            user_message=active_message,
+            settings=settings,
+            dry_run_path=dry_run_path,
+            json_mode=True,
+        )
+        responses.append(response)
+        try:
+            data = _parse_structured_response(response.text)
+            translation = StoryTranslationOutput.model_validate(data)
+            if translation.story_id != story.story_id:
+                raise ValueError(
+                    f"Translation returned story_id {translation.story_id!r}, "
+                    f"expected {story.story_id!r}"
+                )
+            if translation.source_segment_ids != story.source_segment_ids:
+                raise ValueError("Translation changed source_segment_ids")
+            if story.story_type not in {"intro", "outro"} and not (
+                translation.translated_headline.strip()
+            ):
+                raise ValueError("Translation omitted the story headline")
+            risks = _translation_fidelity_risks(
+                story.source_text or story.text_de,
+                translation.translated_text,
+            )
+            if risks:
+                raise ValueError(f"Translation changed protected facts: {', '.join(risks)}")
+            return translation, responses
+        except (ValueError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if attempt == 0:
+                active_message = (
+                    user_message
+                    + "\n\nThe previous output was invalid: "
+                    + str(exc)
+                    + "\nReturn corrected JSON only. Preserve every protected fact."
+                )
+    raise ValueError(f"Story translation failed validation after retry: {last_error}")
+
+
+def _parse_structured_response(response_text: str) -> dict:
+    """Parse a JSON object while tolerating a surrounding markdown fence."""
+    text = response_text.strip()
+    if text.startswith("```json"):
+        text = text[7:].strip()
+    elif text.startswith("```"):
+        text = text[3:].strip()
+    if text.endswith("```"):
+        text = text[:-3].strip()
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end <= start:
+        raise json.JSONDecodeError("No JSON object found", text, 0)
+    return json.loads(text[start : end + 1])
+
+
+_NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,:]\d+)*(?!\w)")
+_TRANSLATION_TERMS = {
+    "fussball-wm": ("dünya kupası",),
+    "weltmeisterschaft": ("dünya kupası",),
+    "europameisterschaft": ("avrupa şampiyonası",),
+    "titelverteidiger": ("son şampiyon",),
+    "nachspielzeit": ("uzatma dakikaları", "hakemin eklediği dakikalar"),
+    "tausend waffen": ("bin silah",),
+    "juli": ("temmuz",),
+}
+
+
+def _translation_fidelity_risks(source_text: str, translated_text: str) -> list[str]:
+    """Detect high-confidence factual regressions without judging semantic style."""
+    risks: list[str] = []
+    source_numbers = Counter(_NUMBER_RE.findall(source_text.casefold()))
+    translated_numbers = Counter(_NUMBER_RE.findall(translated_text.casefold()))
+    if source_numbers != translated_numbers:
+        risks.append("numbers")
+
+    source_lower = source_text.casefold()
+    translated_lower = translated_text.casefold()
+    for source_term, allowed_targets in _TRANSLATION_TERMS.items():
+        if source_term in source_lower and not any(
+            target in translated_lower for target in allowed_targets
+        ):
+            risks.append(source_term)
+
+    if "nachspielzeit" in source_lower and "uzatma devre" in translated_lower:
+        risks.append("nachspielzeit_as_extra_time")
+    if "tausend waffen" in source_lower and "binlerce silah" in translated_lower:
+        risks.append("tausend_as_thousands")
+    source_casualty_terms = ("tot", "getötet", "starb", "opfer", "todes")
+    translated_casualty_terms = (
+        "hayatını kaybet",
+        "öldü",
+        "öldürüldü",
+        "can kaybı",
+    )
+    if not any(term in source_lower for term in source_casualty_terms) and any(
+        term in translated_lower for term in translated_casualty_terms
+    ):
+        risks.append("invented_casualty")
+    return sorted(set(risks))
 
 
 def _load_intro_outro_prompt(

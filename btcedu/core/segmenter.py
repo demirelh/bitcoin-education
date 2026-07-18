@@ -21,7 +21,8 @@ from btcedu.models.episode import (
     PipelineStage,
     RunStatus,
 )
-from btcedu.models.story_schema import StoryDocument
+from btcedu.models.story_schema import Story, StoryDocument
+from btcedu.models.transcript_schema import CorrectedTranscriptDocument
 from btcedu.services.claude_service import ClaudeResponse, call_claude
 
 logger = logging.getLogger(__name__)
@@ -142,9 +143,18 @@ def segment_broadcast(
     _, template_body = prompt_registry.load_template(template_file)
     prompt_content_hash = prompt_registry.compute_hash(template_body)
 
+    structured_corrected_path = (
+        Path(settings.transcripts_dir) / episode_id / "transcript.corrected.structured.de.json"
+    )
+
     # Compute input content hash for idempotency
     corrected_text = corrected_path.read_text(encoding="utf-8")
-    input_content_hash = hashlib.sha256(corrected_text.encode("utf-8")).hexdigest()
+    structured_bytes = (
+        structured_corrected_path.read_bytes() if structured_corrected_path.exists() else b""
+    )
+    input_content_hash = hashlib.sha256(
+        corrected_text.encode("utf-8") + b"\0" + structured_bytes
+    ).hexdigest()
 
     # Idempotency check
     if not force and _is_segmentation_current(
@@ -179,8 +189,9 @@ def segment_broadcast(
         # Split template body into system and user parts
         system_prompt, user_template = _split_prompt(template_body)
 
-        # Render user message with transcript
-        user_message = user_template.replace("{{ transcript }}", corrected_text)
+        corrected_doc = _load_corrected_document(structured_corrected_path, episode_id)
+        prompt_transcript = _render_segment_input(corrected_text, corrected_doc)
+        user_message = user_template.replace("{{ transcript }}", prompt_transcript)
 
         # Dry-run path
         dry_run_path = (
@@ -210,6 +221,7 @@ def segment_broadcast(
         # Validate with Pydantic
         try:
             story_doc = StoryDocument.model_validate(story_data)
+            story_doc = _normalize_story_inventory(story_doc, corrected_doc)
         except ValidationError as e:
             logger.warning("Segmentation output failed validation: %s", e)
             raise ValueError(f"Story segmentation output failed Pydantic validation: {e}") from e
@@ -249,7 +261,9 @@ def segment_broadcast(
                 "temperature": settings.claude_temperature,
                 "max_tokens": 16384,
             },
-            "input_files": [str(corrected_path)],
+            "input_files": [
+                str(path) for path in (corrected_path, structured_corrected_path) if path.exists()
+            ],
             "input_content_hash": input_content_hash,
             "output_files": [str(stories_path)],
             "input_tokens": response.input_tokens,
@@ -408,3 +422,112 @@ def _parse_json_response(response_text: str, episode_id: str) -> dict:
             logger.error("Failed to parse JSON response for %s: %s", episode_id, e)
             logger.error("Response text (first 500 chars): %s", response_text[:500])
             raise
+
+
+def _load_corrected_document(
+    structured_path: Path,
+    episode_id: str,
+) -> CorrectedTranscriptDocument | None:
+    """Load the structured correction when available; legacy text remains supported."""
+    if not structured_path.exists():
+        return None
+    document = CorrectedTranscriptDocument.model_validate_json(
+        structured_path.read_text(encoding="utf-8")
+    )
+    if document.episode_id != episode_id:
+        raise ValueError(
+            f"Structured corrected transcript belongs to {document.episode_id}, "
+            f"expected {episode_id}"
+        )
+    return document
+
+
+def _render_segment_input(
+    corrected_text: str,
+    corrected_doc: CorrectedTranscriptDocument | None,
+) -> str:
+    """Give the model exact segment boundaries instead of asking it to reconstruct them."""
+    if corrected_doc is None:
+        return corrected_text
+    payload = {
+        "schema_version": 1,
+        "episode_id": corrected_doc.episode_id,
+        "segments": [
+            {
+                "segment_id": segment.segment_id,
+                "start_seconds": segment.start_seconds,
+                "end_seconds": segment.end_seconds,
+                "text": segment.corrected_text,
+                "status": segment.status,
+                "severity": segment.severity,
+                "flags": segment.flags,
+            }
+            for segment in corrected_doc.segments
+        ],
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _normalize_story_inventory(
+    story_doc: StoryDocument,
+    corrected_doc: CorrectedTranscriptDocument | None,
+) -> StoryDocument:
+    """Assign stable IDs and derive source fields from authoritative transcript segments."""
+    for index, story in enumerate(story_doc.stories, start=1):
+        story.story_id = f"s{index:02d}"
+        story.order = index
+
+    if corrected_doc is None:
+        return story_doc
+
+    segment_by_id = {segment.segment_id: segment for segment in corrected_doc.segments}
+    referenced_ids: list[str] = []
+    normalized_stories: list[Story] = []
+    for story in story_doc.stories:
+        if not story.source_segment_ids:
+            raise ValueError(
+                f"Story {story.story_id} must include source_segment_ids when a structured "
+                "corrected transcript is available"
+            )
+        unknown = [sid for sid in story.source_segment_ids if sid not in segment_by_id]
+        if unknown:
+            raise ValueError(f"Story {story.story_id} references unknown segments: {unknown}")
+
+        segments = [segment_by_id[sid] for sid in story.source_segment_ids]
+        referenced_ids.extend(story.source_segment_ids)
+        story.source_text = " ".join(segment.corrected_text.strip() for segment in segments)
+        story.text_de = story.source_text
+        story.source_start_seconds = segments[0].start_seconds
+        story.source_end_seconds = segments[-1].end_seconds
+        story.source_flags = sorted(
+            {
+                flag
+                for segment in segments
+                for flag in (
+                    [segment.status, segment.severity, *segment.flags]
+                    if segment.status in {"uncertain", "unresolved"}
+                    else segment.flags
+                )
+            }
+        )
+        if any(segment.status == "unresolved" for segment in segments):
+            story.source_confidence = "low"
+        elif any(segment.status == "uncertain" for segment in segments):
+            story.source_confidence = "medium"
+        else:
+            story.source_confidence = "high"
+        story.word_count = len(story.source_text.split())
+        normalized_stories.append(story)
+
+    expected_ids = [segment.segment_id for segment in corrected_doc.segments]
+    if referenced_ids != expected_ids:
+        missing = [sid for sid in expected_ids if sid not in referenced_ids]
+        duplicates = sorted({sid for sid in referenced_ids if referenced_ids.count(sid) > 1})
+        raise ValueError(
+            "Story coverage must preserve every transcript segment exactly once "
+            f"in source order; missing={missing}, duplicates={duplicates}"
+        )
+
+    story_doc.stories = normalized_stories
+    story_doc.total_stories = len(normalized_stories)
+    return story_doc

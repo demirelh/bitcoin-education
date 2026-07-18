@@ -86,16 +86,12 @@ Almanya'da yaşayan Türkiye kökenli izleyici için:
 
 ## FORMAT
 
-**Ham Türkçe metin**. Markdown başlıkları koruyabilirsin ama gerekmiyor. Başlık, meta, açıklama YOK.
-
-Sonuna (isteğe bağlı) HTML yorum olarak yerelleştirme notları:
-
-```
-<!-- localization_notes
-- "Bundestag" → parantez içinde "Almanya Federal Meclisi" eklendi (chapter 2)
-- AfD kısaltması ilk geçtiği yerde açıklandı (chapter 4)
--->
-```
+Yalnızca geçerli JSON döndür. Tam yeniden yazım veya özet yasaktır.
+`story_id` değişmez. Sadece input içindeki `allowed_operations` kullanılabilir.
+İsimler, sayılar, tarihler, saatler, sonuçlar ve alıntılar değiştirilemez.
+Tek istisna: `anchor_unify`, yalnızca kaynakta açıkça bir muhabir/moderatör
+teslimi veya teşekkür cümlesi içindeki muhabir/moderatör adını kaldırabilir.
+Haber aktörlerinin adları hiçbir koşulda kaldırılamaz.
 
 {{ reviewer_feedback }}
 
@@ -111,4 +107,10 @@ Sonuna (isteğe bağlı) HTML yorum olarak yerelleştirme notları:
 
 # Output
 
-Yerelleştirilmiş Türkçe haber metnini döndür. Sadece metin. Etiket yok.
+```json
+{
+  "story_id": "input ile aynı",
+  "adapted_text": "...",
+  "operations_applied": ["yalnızca izin verilen işlemler"]
+}
+```

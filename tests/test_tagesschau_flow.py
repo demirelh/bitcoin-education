@@ -207,15 +207,30 @@ class TestTranslatorPerStoryMode:
         db_session.add(review)
         db_session.commit()
 
-        mock_resp = MagicMock()
-        mock_resp.text = "Çeviri metni"
-        mock_resp.input_tokens = 50
-        mock_resp.output_tokens = 20
-        mock_resp.cost_usd = 0.001
+        def translate_story(**kwargs):
+            story_id = "s01" if '"story_id": "s01"' in kwargs["user_message"] else "s02"
+            story_number = int(story_id[1:])
+            mock_resp = MagicMock()
+            mock_resp.text = json.dumps(
+                {
+                    "story_id": story_id,
+                    "source_segment_ids": [],
+                    "translated_headline": f"Başlık {story_id}",
+                    "translated_text": (f"Bundestag, {story_number} numaralı haberi kabul etti."),
+                    "translator_flags": [],
+                    "omitted_uncertain_details": [],
+                    "glossary_terms_used": ["Bundestag"],
+                },
+                ensure_ascii=False,
+            )
+            mock_resp.input_tokens = 50
+            mock_resp.output_tokens = 20
+            mock_resp.cost_usd = 0.001
+            return mock_resp
 
         from btcedu.core.translator import translate_transcript
 
-        with patch("btcedu.core.translator.call_claude", return_value=mock_resp):
+        with patch("btcedu.core.translator.call_claude", side_effect=translate_story):
             result = translate_transcript(db_session, "ep_ts", settings_with_profiles, force=False)
 
         assert result.skipped is False

@@ -60,9 +60,9 @@ türkische YouTube-Videos umwandeln.
 | 6  | **transcript_qa**  | –    | Deterministische Regeln                  | Bewertet dauerhaft Namen-, Zahlen-, Datums-, Negations-, Opferzahl-, Ergebnis- und Rollenunsicherheiten als GREEN/YELLOW/RED |
 | 7  | review_gate_transcript_qa | – | –                                     | Setzt bei kritischen oder zu vielen schweren Findings einen blockierenden ReviewTask; Freigabe oder Änderungen anfordern |
 | 8  | review_gate_1      | –    | –                                        | Korrektur-Review; für das Profil regulär Auto-approve |
-| 9  | **segment**        | ✅   | **Claude Sonnet 4.5**                    | Zerlegt die Sendung in einzelne News-Beiträge (StoryDocument) |
-| 10 | **translate**      | ✅   | **Claude Sonnet 4.5**                    | Pro-Beitrag DE→TR, `formal_news`-Register, entfernt Moderator/Intro/Outro, Glossar |
-| 11 | **adapt**          | ✅   | **Claude Sonnet 4.5**                    | Kulturelle Adaption (Tiers `anchor_unify`, `local_relevance`), Neutralisierung |
+| 9  | **segment**        | ✅   | **Claude Sonnet 4.5**                    | Zerlegt die Sendung ohne Zusammenfassung in ein StoryDocument; jede Story verweist vollständig auf stabile Transkript-Segment-IDs und übernimmt Zeitstempel/Unsicherheit |
+| 10 | **translate**      | ✅   | **Claude Sonnet 4.5**                    | Strukturierte DE→TR-Ausgabe pro Story; IDs/Reihenfolge bleiben stabil, Zahlen/Daten/Sportergebnisse werden deterministisch geschützt, Auslassungen unsicherer Details werden protokolliert |
+| 11 | **adapt**          | ✅   | **Claude Sonnet 4.5**                    | `conditional`: nur Stories mit konkretem Bedarf werden adaptiert; erlaubte Operationen sind begrenzt und Namen/Zahlen/Daten/Story-IDs bleiben geschützt |
 | 12 | review_gate_2      | ✅   | **GPT-5.6 Sol** (via Copilot CLI)        | **QA-Zweitmeinung** — unabhängige Qualitätsprüfung TR vs. DE-Quelle (beratend). Findings fließen beim Re-Run in translate/adapt zurück |
 | 13 | **chapterize**     | ✅   | **Claude Sonnet 4.5**                    | Erzeugt ChapterDocument: Kapitel, Narrationstext, Visual-Vorgaben, Overlays |
 | 14 | **frameextract**   | –    | ffmpeg                                   | Keyframes aus dem Quellvideo |
@@ -119,6 +119,24 @@ türkische YouTube-Videos umwandeln.
 - **Transcript-QA-Gate:** `transcript_qa.json` bleibt als Audit-Artefakt erhalten.
   Kritische ungeklärte Fakten blockieren vor Segmentierung/Übersetzung und sind
   im CLI, QA-Reiter und bestehenden Review-Workflow prüfbar.
+- **Story-Inventar:** `stories.json` enthält weiterhin die bisherigen Felder und
+  zusätzlich `source_segment_ids`, Quelltext, Start-/Endzeit,
+  `source_confidence` und `source_flags`. Bei strukturiertem Transkript muss
+  jedes Segment genau einmal und in Quellreihenfolge abgedeckt sein. Alte
+  Story-Dateien ohne diese Felder bleiben lesbar.
+- **Strukturierte Übersetzung:** `stories_translated.json` führt Story-ID,
+  Segment-IDs, Übersetzer-Flags, ausgelassene unsichere Details und verwendete
+  Glossarbegriffe fort. `transcript.tr.txt` bleibt als Legacy-Artefakt bestehen.
+- **Begrenzte Adaption:** Für `tagesschau_tr` ist Adaption nicht deaktiviert,
+  sondern bewusst auf `mode: conditional` gesetzt. Nur konkret benötigte
+  Operationen (`anchor_unify`, Institutionserklärung, lokale Relevanz,
+  Registerpolitur) sind erlaubt. `stories_adapted.json` erhält pro Story den
+  adaptierten Text und die tatsächlich angewandten Operationen;
+  `script.adapted.tr.md` bleibt für bestehende Downstream-Stages erhalten.
+- **Narration-Lock-Vorbereitung:** Übersetzte und adaptierte Stories tragen
+  einen SHA-256-Hash des jeweiligen Narrationstexts (`narration_sha256`). Der
+  spätere Translation-QA-Gate kann diesen Hash sperren; in dieser Phase wird
+  noch keine Freigabe oder Sperrlogik erzwungen.
 - **QA-Feedback-Loop:** Die QA-Findings von Stage 12 werden beim nächsten Lauf in
   translate/adapt als Korrekturvorgabe injiziert → iterative Selbstkorrektur.
   Auslösbar über zwei Buttons im QA-Reiter der Web-UI
@@ -137,3 +155,7 @@ deterministisch über klar messbare Abweichungen. Freie semantische
 Umformulierungen, einzelne Eigennamen und komplexe Rollenwechsel können deshalb
 weiterhin eine menschliche Prüfung benötigen. Die Übersetzungs-QA (Stage 12) prüft das
 türkische Skript weiterhin gegen das **korrigierte deutsche Transkript**.
+Die neuen Übersetzungs- und Adaptionsguards erkennen absichtlich nur
+hochkonfidente Änderungen (z. B. Zahlen, Datumswerte, zentrale Sportbegriffe
+und entfernte Eigennamen); sie ersetzen keine vollständige semantische
+Translation-QA.

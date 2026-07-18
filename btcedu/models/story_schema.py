@@ -1,6 +1,7 @@
 """Pydantic models for story JSON schema validation (Tagesschau news broadcast)."""
 
 from enum import Enum
+from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -48,6 +49,41 @@ class Story(BaseModel):
         None, description="Turkish headline (filled during translation)"
     )
     text_tr: str | None = Field(None, description="Turkish translation (filled during translation)")
+    source_segment_ids: list[str] = Field(
+        default_factory=list,
+        description="Corrected transcript segments that make up this story",
+    )
+    source_text: str | None = Field(
+        None,
+        description="Exact corrected source text assembled from source_segment_ids",
+    )
+    source_start_seconds: float | None = Field(None, ge=0)
+    source_end_seconds: float | None = Field(None, ge=0)
+    source_confidence: Literal["high", "medium", "low"] = "high"
+    source_flags: list[str] = Field(default_factory=list)
+    translator_flags: list[str] = Field(default_factory=list)
+    omitted_uncertain_details: list[str] = Field(default_factory=list)
+    glossary_terms_used: list[str] = Field(default_factory=list)
+    text_adapted_tr: str | None = None
+    adaptation_operations: list[str] = Field(default_factory=list)
+    narration_sha256: str | None = Field(
+        None,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Hash reserved for a later narration lock gate",
+    )
+
+    @model_validator(mode="after")
+    def populate_source_defaults(self) -> "Story":
+        """Keep legacy story files readable while exposing the new source contract."""
+        if self.source_text is None:
+            self.source_text = self.text_de
+        if (
+            self.source_start_seconds is not None
+            and self.source_end_seconds is not None
+            and self.source_end_seconds < self.source_start_seconds
+        ):
+            raise ValueError("source_end_seconds must be >= source_start_seconds")
+        return self
 
 
 class StoryDocument(BaseModel):
@@ -86,3 +122,23 @@ class StoryDocument(BaseModel):
                 )
 
         return self
+
+
+class StoryTranslationOutput(BaseModel):
+    """Strict per-story output returned by the translation model."""
+
+    story_id: str = Field(..., min_length=1)
+    source_segment_ids: list[str] = Field(default_factory=list)
+    translated_headline: str = ""
+    translated_text: str
+    translator_flags: list[str] = Field(default_factory=list)
+    omitted_uncertain_details: list[str] = Field(default_factory=list)
+    glossary_terms_used: list[str] = Field(default_factory=list)
+
+
+class StoryAdaptationOutput(BaseModel):
+    """Strict per-story output returned by the adaptation model."""
+
+    story_id: str = Field(..., min_length=1)
+    adapted_text: str
+    operations_applied: list[str] = Field(default_factory=list)

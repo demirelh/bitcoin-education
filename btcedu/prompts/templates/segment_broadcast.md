@@ -17,6 +17,11 @@ Du bist ein erfahrener Redakteur für deutsche Nachrichtensendungen, spezialisie
 3. **KEINE ERFUNDENEN SCHLAGZEILEN**: Leite Schlagzeilen aus der Moderation ab, die das Thema einführt.
 4. **KURZMELDUNGEN**: Können zu einem Beitrag zusammengefasst werden, wenn sie jeweils unter 30 Sekunden dauern und klar als Meldungsblock präsentiert werden.
 5. **REPORTERBEITRÄGE**: Der vollständige Text des Reporters gehört zum übergeordneten Beitrag (gleiche story_id).
+6. **SEGMENT-ABDECKUNG**: Wenn der Input strukturierte Segmente enthält, muss jede
+   `segment_id` genau einmal und in unveränderter Reihenfolge einer Story zugeordnet
+   werden. Keine Segment-ID erfinden, auslassen, duplizieren oder umsortieren.
+7. **UNSICHERHEIT ERHALTEN**: Unsichere oder ungeklärte Segmente bleiben Teil der
+   Story. Übernimm ihre Flags; rekonstruiere keine fehlenden Informationen.
 
 ## SEGMENTIERUNGSLOGIK
 
@@ -78,6 +83,12 @@ Gib ein valides JSON-Objekt zurück, das dem StoryDocument-Schema entspricht:
       "category": "meta",
       "story_type": "intro",
       "text_de": "...(exakter Transkripttext)...",
+      "source_segment_ids": ["seg-0001", "seg-0002"],
+      "source_text": "...(exakter Text dieser Segmente)...",
+      "source_start_seconds": 0.0,
+      "source_end_seconds": 12.5,
+      "source_confidence": "high",
+      "source_flags": [],
       "word_count": N,
       "estimated_duration_seconds": N,
       "reporter": null,
@@ -92,6 +103,10 @@ Gib ein valides JSON-Objekt zurück, das dem StoryDocument-Schema entspricht:
 
 WICHTIG:
 - `text_de` muss den exakten Transkripttext enthalten (keine Zusammenfassung)
+- `source_segment_ids` muss bei strukturiertem Input alle zugehörigen Segment-IDs
+  in Quellreihenfolge enthalten
+- Intro, Outro und reine Programminhalte werden als `intro`/`outro` markiert, nicht
+  mit Nachrichtenthemen vermischt
 - `word_count` = Anzahl der Wörter in `text_de`
 - `estimated_duration_seconds` = Schätzung basierend auf Leserate (~120 Wörter/Minute für Nachrichtensprecher)
 - `total_stories` muss exakt der Länge des `stories`-Arrays entsprechen

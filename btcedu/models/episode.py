@@ -34,6 +34,7 @@ class PipelineStage(str, enum.Enum):
     DOWNLOAD = "download"
     TRANSCRIBE = "transcribe"
     TRANSCRIPT_ANALYZE = "transcript_analyze"
+    TRANSCRIPT_VERIFY = "transcript_verify"
     # v2 pipeline
     CORRECT = "correct"
     SEGMENT = "segment"  # Story segmentation (news profiles)

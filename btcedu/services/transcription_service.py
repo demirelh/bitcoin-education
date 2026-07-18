@@ -48,6 +48,7 @@ class ResolvedTranscriptionConfig:
     secondary: SecondaryTranscriptionSpec
     suspicious_segment_context_seconds: float
     max_secondary_audio_seconds: float
+    max_secondary_clips: int
 
 
 @dataclass(frozen=True)
@@ -204,6 +205,12 @@ def resolve_transcription_config(
             config.get(
                 "max_secondary_audio_seconds",
                 getattr(settings, "transcription_max_secondary_audio_seconds", 300),
+            )
+        ),
+        max_secondary_clips=int(
+            config.get(
+                "max_secondary_clips",
+                getattr(settings, "transcription_max_secondary_clips", 10),
             )
         ),
     )

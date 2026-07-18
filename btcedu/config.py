@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     transcription_secondary_mode: str = "suspicious_segments_only"
     transcription_suspicious_segment_context_seconds: float = 15.0
     transcription_max_secondary_audio_seconds: float = 300.0
+    transcription_max_secondary_clips: int = 10
     transcription_openai_cost_per_minute_usd: float = 0.006
 
     # Content Generation

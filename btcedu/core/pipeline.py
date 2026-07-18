@@ -51,6 +51,7 @@ _V2_STAGES = [
     ("download", EpisodeStatus.NEW),
     ("transcribe", EpisodeStatus.DOWNLOADED),
     ("transcript_analyze", EpisodeStatus.TRANSCRIBED),
+    ("transcript_verify", EpisodeStatus.TRANSCRIBED),
     ("correct", EpisodeStatus.TRANSCRIBED),
     ("review_gate_1", EpisodeStatus.CORRECTED),
     ("translate", EpisodeStatus.CORRECTED),  # after review approved
@@ -89,7 +90,11 @@ def _get_stages(
     # Preserve the repository's current v1 behavior exactly: the newly added
     # v2-only side stage must not become the first failure for legacy episodes.
     if episode.pipeline_version != 2:
-        return [(name, status) for name, status in stages if name != "transcript_analyze"]
+        return [
+            (name, status)
+            for name, status in stages
+            if name not in {"transcript_analyze", "transcript_verify"}
+        ]
 
     # Load profile for profile-aware stage modifications
     try:
@@ -251,6 +256,7 @@ _STAGE_NAME_TO_PIPELINE_STAGE = {
     "download": PipelineStage.DOWNLOAD,
     "transcribe": PipelineStage.TRANSCRIBE,
     "transcript_analyze": PipelineStage.TRANSCRIPT_ANALYZE,
+    "transcript_verify": PipelineStage.TRANSCRIPT_VERIFY,
     "correct": PipelineStage.CORRECT,
     "segment": PipelineStage.SEGMENT,
     "translate": PipelineStage.TRANSLATE,
@@ -335,6 +341,7 @@ def _run_stage(
     _V2_ONLY_STAGES = {
         "correct",
         "transcript_analyze",
+        "transcript_verify",
         "review_gate_1",
         "segment",
         "translate",
@@ -397,6 +404,33 @@ def _run_stage(
                 detail=(
                     f"{result.suspicious_count}/{result.segment_count} suspicious "
                     f"({result.critical_count} critical)"
+                ),
+            )
+
+        elif stage_name == "transcript_verify":
+            from btcedu.core.transcript_verifier import verify_transcript
+
+            result = verify_transcript(
+                session,
+                episode.episode_id,
+                settings,
+                force=force,
+            )
+            elapsed = time.monotonic() - t0
+            if result.skipped:
+                return StageResult(
+                    "transcript_verify",
+                    "skipped",
+                    elapsed,
+                    detail=result.reason,
+                )
+            return StageResult(
+                "transcript_verify",
+                "success",
+                elapsed,
+                detail=(
+                    f"{result.regions_checked} regions "
+                    f"({result.critical_count} critical, ${result.cost_usd:.4f})"
                 ),
             )
 
@@ -1159,6 +1193,7 @@ def run_episode_pipeline(
     for sr in report.stages:
         success_stages = (
             "correct",
+            "transcript_verify",
             "segment",
             "translate",
             "adapt",

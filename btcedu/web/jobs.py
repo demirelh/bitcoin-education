@@ -22,8 +22,9 @@ logger = logging.getLogger(__name__)
 # These weights represent the relative time/effort for each stage
 STAGE_WEIGHTS = {
     "download": 3,
-    "transcribe": 19,
+    "transcribe": 17,
     "transcript_analyze": 1,
+    "transcript_verify": 2,
     "correct": 7,
     "translate": 20,
     "adapt": 10,
@@ -250,6 +251,7 @@ class JobManager:
                     "download": self._do_download,
                     "transcribe": self._do_transcribe,
                     "transcript_analyze": self._do_transcript_analyze,
+                    "transcript_verify": self._do_transcript_verify,
                     "correct": self._do_correct,
                     "segment": self._do_segment,
                     "translate": self._do_translate,
@@ -353,6 +355,34 @@ class JobManager:
         self._log(
             job,
             f"Transcript analysis complete: {result.suspicious_count} suspicious",
+        )
+
+    def _do_transcript_verify(self, job, session, settings):
+        from btcedu.core.transcript_verifier import verify_transcript
+
+        self._update(job, stage="transcript_verify")
+        self._log(job, "Verifying selected transcript regions...")
+        result = verify_transcript(
+            session,
+            job.episode_id,
+            settings,
+            force=job.force,
+        )
+        self._update(
+            job,
+            result={
+                "success": True,
+                "regions_checked": result.regions_checked,
+                "critical_count": result.critical_count,
+                "cost_usd": result.cost_usd,
+                "skipped": result.skipped,
+                "reason": result.reason,
+            },
+        )
+        self._log(
+            job,
+            f"Verification complete: {result.regions_checked} regions, "
+            f"{result.critical_count} critical",
         )
 
     def _do_correct(self, job, session, settings):
@@ -944,7 +974,11 @@ class JobManager:
             EpisodeStatus.DOWNLOADED,
             EpisodeStatus.TRANSCRIBED,
         ):
-            completed_stages = [*completed_stages, "transcript_analyze"]
+            completed_stages = [
+                *completed_stages,
+                "transcript_analyze",
+                "transcript_verify",
+            ]
         remaining_work = 0.0
 
         for stage, weight in STAGE_WEIGHTS.items():

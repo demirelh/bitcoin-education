@@ -55,21 +55,22 @@ türkische YouTube-Videos umwandeln.
 | 1  | **download**       | –    | –                                        | yt-dlp lädt Quellvideo + Audio |
 | 2  | **transcribe**     | ✅   | **OpenAI Whisper `whisper-1`** (DE, konfigurierbar) | Audio → strukturiertes Transkript mit Segmenten, Zeitstempeln und Legacy-Textdateien |
 | 3  | **transcript_analyze** | – | Deterministische Heuristiken              | Markiert konservativ verdächtige ASR-Segmente; keine externe API |
-| 4  | **correct**        | ✅   | **Claude Sonnet 4.5** (via Copilot CLI)  | ASR-/Tippfehler-Korrektur des Transkripts |
-| 5  | review_gate_1      | –    | –                                        | Auto-approve (`auto_approve_reviews: true`) |
-| 6  | **segment**        | ✅   | **Claude Sonnet 4.5**                    | Zerlegt die Sendung in einzelne News-Beiträge (StoryDocument) |
-| 7  | **translate**      | ✅   | **Claude Sonnet 4.5**                    | Pro-Beitrag DE→TR, `formal_news`-Register, entfernt Moderator/Intro/Outro, Glossar |
-| 8  | **adapt**          | ✅   | **Claude Sonnet 4.5**                    | Kulturelle Adaption (Tiers `anchor_unify`, `local_relevance`), Neutralisierung |
-| 9  | review_gate_2      | ✅   | **GPT-5.6 Sol** (via Copilot CLI)        | **QA-Zweitmeinung** — unabhängige Qualitätsprüfung TR vs. DE-Quelle (beratend). Findings fließen beim Re-Run in translate/adapt zurück |
-| 10 | **chapterize**     | ✅   | **Claude Sonnet 4.5**                    | Erzeugt ChapterDocument: Kapitel, Narrationstext, Visual-Vorgaben, Overlays |
-| 11 | **frameextract**   | –    | ffmpeg                                   | Keyframes aus dem Quellvideo |
-| 12 | **imagegen**       | ✅   | **Ideogram + Flux + DALL-E 3** (Routing) | Pro Kapitel ein Bild: Ideogram (Text/Karten/Infografik), Flux (photoreal b_roll), DALL-E 3 (Fallback) |
-| 13 | review_gate_stock  | –    | –                                        | Auto-approve |
-| 14 | **tts**            | ✅   | **ElevenLabs `eleven_turbo_v2_5`**, Stimme „Irem" | Türkische Sprachsynthese pro Kapitel |
-| 15 | **anchorgen**      | (✅) | **D-ID** (Talking-Head)                  | Avatar-Video — **aktuell No-Op** (kein D-ID-Key gesetzt) |
-| 16 | **render**         | –    | ffmpeg                                   | Video-Zusammenbau (Bilder + TTS + Ticker + Musik). Pi = Software-Encoding |
-| 17 | review_gate_3      | –    | –                                        | Auto-approve |
-| 18 | **publish**        | –    | YouTube API                              | `auto_publish: false` → **stoppt vor dem Upload** (manuelle Endkontrolle) |
+| 4  | **transcript_verify** | ✅ | **OpenAI `gpt-4o-mini-transcribe`** (konfigurierbar) | Transkribiert nur verdächtige, zusammengeführte Audioausschnitte erneut und vergleicht kritische Fakten deterministisch |
+| 5  | **correct**        | ✅   | **Claude Sonnet 4.5** (via Copilot CLI)  | ASR-/Tippfehler-Korrektur des Transkripts |
+| 6  | review_gate_1      | –    | –                                        | Auto-approve (`auto_approve_reviews: true`) |
+| 7  | **segment**        | ✅   | **Claude Sonnet 4.5**                    | Zerlegt die Sendung in einzelne News-Beiträge (StoryDocument) |
+| 8  | **translate**      | ✅   | **Claude Sonnet 4.5**                    | Pro-Beitrag DE→TR, `formal_news`-Register, entfernt Moderator/Intro/Outro, Glossar |
+| 9  | **adapt**          | ✅   | **Claude Sonnet 4.5**                    | Kulturelle Adaption (Tiers `anchor_unify`, `local_relevance`), Neutralisierung |
+| 10 | review_gate_2      | ✅   | **GPT-5.6 Sol** (via Copilot CLI)        | **QA-Zweitmeinung** — unabhängige Qualitätsprüfung TR vs. DE-Quelle (beratend). Findings fließen beim Re-Run in translate/adapt zurück |
+| 11 | **chapterize**     | ✅   | **Claude Sonnet 4.5**                    | Erzeugt ChapterDocument: Kapitel, Narrationstext, Visual-Vorgaben, Overlays |
+| 12 | **frameextract**   | –    | ffmpeg                                   | Keyframes aus dem Quellvideo |
+| 13 | **imagegen**       | ✅   | **Ideogram + Flux + DALL-E 3** (Routing) | Pro Kapitel ein Bild: Ideogram (Text/Karten/Infografik), Flux (photoreal b_roll), DALL-E 3 (Fallback) |
+| 14 | review_gate_stock  | –    | –                                        | Auto-approve |
+| 15 | **tts**            | ✅   | **ElevenLabs `eleven_turbo_v2_5`**, Stimme „Irem" | Türkische Sprachsynthese pro Kapitel |
+| 16 | **anchorgen**      | (✅) | **D-ID** (Talking-Head)                  | Avatar-Video — **aktuell No-Op** (kein D-ID-Key gesetzt) |
+| 17 | **render**         | –    | ffmpeg                                   | Video-Zusammenbau (Bilder + TTS + Ticker + Musik). Pi = Software-Encoding |
+| 18 | review_gate_3      | –    | –                                        | Auto-approve |
+| 19 | **publish**        | –    | YouTube API                              | `auto_publish: false` → **stoppt vor dem Upload** (manuelle Endkontrolle) |
 
 ---
 
@@ -78,15 +79,17 @@ türkische YouTube-Videos umwandeln.
 - **OpenAI Whisper `whisper-1`** → Transkription (Stage 2; Provider und Modell
   sind konfigurierbar)
 - **Deterministische Heuristiken** → Transkriptanalyse (Stage 3, keine KI/API)
+- **OpenAI `gpt-4o-mini-transcribe`** → selektive Zweittranskription
+  verdächtiger Audioausschnitte (Stage 4)
 - **Claude Sonnet 4.5** (über Copilot CLI, `llm_provider=copilot_cli`) →
-  correct, segment, translate, adapt, chapterize (Stages 4, 6, 7, 8, 10) —
+  correct, segment, translate, adapt, chapterize (Stages 5, 7, 8, 9, 11) —
   das **inhaltliche Kernmodell**
-- **GPT-5.6 Sol** (über Copilot CLI) → QA-Zweitmeinung (Stage 9) — bewusst ein
+- **GPT-5.6 Sol** (über Copilot CLI) → QA-Zweitmeinung (Stage 10) — bewusst ein
   **anderes** Modell als der Produzent, damit es dessen systematische Fehler
   unabhängig erkennt (Cross-Check)
-- **Ideogram / Flux / DALL-E 3** → Bildgenerierung (Stage 12)
-- **ElevenLabs turbo v2.5** (Stimme „Irem") → TTS (Stage 14)
-- **D-ID** → Avatar (Stage 15, deaktiviert)
+- **Ideogram / Flux / DALL-E 3** → Bildgenerierung (Stage 13)
+- **ElevenLabs turbo v2.5** (Stimme „Irem") → TTS (Stage 15)
+- **D-ID** → Avatar (Stage 16, deaktiviert)
 
 ---
 
@@ -104,7 +107,7 @@ türkische YouTube-Videos umwandeln.
 - **Idempotenz:** Jede Stage hat SHA-256-Provenance; unveränderte Inputs werden
   übersprungen. Upstream-Änderungen setzen `.stale`-Marker
   (Cascade-Invalidierung).
-- **QA-Feedback-Loop:** Die QA-Findings von Stage 8 werden beim nächsten Lauf in
+- **QA-Feedback-Loop:** Die QA-Findings von Stage 10 werden beim nächsten Lauf in
   translate/adapt als Korrekturvorgabe injiziert → iterative Selbstkorrektur.
   Auslösbar über zwei Buttons im QA-Reiter der Web-UI
   („Restart Translate + Adapt" bzw. „Restart All").
@@ -115,8 +118,8 @@ türkische YouTube-Videos umwandeln.
 
 ## Bekannte Limitierung
 
-Die neue Transkriptanalyse markiert auffällige Segmente nur heuristisch; sie
-verifiziert sie noch nicht mit einem zweiten ASR-Modell oder gegen das
-Original-Audio. Die QA (Stage 9) prüft weiterhin nur das türkische Skript gegen
-das **korrigierte deutsche Transkript**. Eine providerbasierte
-`transcript_verify`-Stage ist der nächste geplante Ausbauschritt.
+Die Zweittranskription prüft nur markierte Ausschnitte und entscheidet
+deterministisch über klar messbare Abweichungen. Freie semantische
+Umformulierungen, einzelne Eigennamen und komplexe Rollenwechsel können deshalb
+weiterhin eine menschliche Prüfung benötigen. Die QA (Stage 10) prüft das
+türkische Skript weiterhin gegen das **korrigierte deutsche Transkript**.

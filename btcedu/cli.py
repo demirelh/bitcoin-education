@@ -278,6 +278,61 @@ def transcript_analyze(
         session.close()
 
 
+@cli.command(name="transcript-verify")
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) whose suspicious transcript regions should be verified.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-verify even if the verification artifact is current.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Resolve regions and limits without ffmpeg or external API calls.",
+)
+@click.pass_context
+def transcript_verify(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+    dry_run: bool,
+) -> None:
+    """Verify selected transcript regions with the secondary ASR provider."""
+    from btcedu.core.transcript_verifier import verify_transcript
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        for episode_id in episode_ids:
+            try:
+                result = verify_transcript(
+                    session,
+                    episode_id,
+                    settings,
+                    force=force,
+                    dry_run=dry_run,
+                )
+                if result.skipped:
+                    click.echo(f"[SKIP] {episode_id} -> {result.reason}")
+                else:
+                    click.echo(
+                        f"[OK] {episode_id} -> {result.regions_checked} regions "
+                        f"({result.critical_count} critical, ${result.cost_usd:.4f})"
+                    )
+            except Exception as exc:
+                click.echo(f"[FAIL] {episode_id}: {exc}", err=True)
+    finally:
+        session.close()
+
+
 @cli.command()
 @click.option(
     "--episode-id",

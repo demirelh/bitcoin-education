@@ -17,6 +17,7 @@ stage_config:
       mode: suspicious_segments_only
     suspicious_segment_context_seconds: 15
     max_secondary_audio_seconds: 300
+    max_secondary_clips: 10
   transcript_analyze:
     enabled: true
   segment:

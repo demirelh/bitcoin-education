@@ -258,6 +258,7 @@ def _transcription_config_hash(config) -> str:
             },
             "suspicious_segment_context_seconds": (config.suspicious_segment_context_seconds),
             "max_secondary_audio_seconds": config.max_secondary_audio_seconds,
+            "max_secondary_clips": config.max_secondary_clips,
         },
         sort_keys=True,
     )

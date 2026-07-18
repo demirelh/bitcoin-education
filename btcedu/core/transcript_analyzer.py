@@ -231,6 +231,7 @@ def analyze_transcript(
             json.dumps(analysis.model_dump(mode="json"), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        _mark_verification_stale(settings, episode_id)
 
         elapsed = time.monotonic() - started
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
@@ -434,6 +435,27 @@ def _is_analysis_current(
     return (
         provenance.get("input_content_hash") == input_hash
         and provenance.get("ruleset_hash") == ruleset_hash
+    )
+
+
+def _mark_verification_stale(settings: Settings, episode_id: str) -> None:
+    verification_path = (
+        Path(settings.outputs_dir) / episode_id / "transcript" / "transcript_verification.json"
+    )
+    if not verification_path.exists():
+        return
+    stale_path = verification_path.with_name(verification_path.name + ".stale")
+    stale_path.write_text(
+        json.dumps(
+            {
+                "stale": True,
+                "reason": "transcript analysis changed",
+                "invalidated_by": "transcript_analyze",
+                "at": _utcnow().isoformat(),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
     )
 
 

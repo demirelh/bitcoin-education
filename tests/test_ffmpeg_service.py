@@ -15,6 +15,7 @@ from btcedu.services.ffmpeg_service import (
     _escape_drawtext,
     concatenate_segments,
     create_segment,
+    extract_audio_clip,
     find_font_path,
     get_ffmpeg_version,
     probe_media,
@@ -37,6 +38,29 @@ def test_get_ffmpeg_version_not_found():
     with patch("subprocess.run", side_effect=FileNotFoundError):
         version = get_ffmpeg_version()
         assert version == "unknown"
+
+
+def test_extract_audio_clip_uses_bounded_range(tmp_path):
+    input_path = tmp_path / "source.m4a"
+    output_path = tmp_path / "clip.mp3"
+    input_path.write_bytes(b"audio")
+
+    def _run(command, timeout):
+        output_path.write_bytes(b"clip")
+        return 0, ""
+
+    with patch("btcedu.services.ffmpeg_service._run_ffmpeg", side_effect=_run) as run:
+        result = extract_audio_clip(
+            str(input_path),
+            str(output_path),
+            start_seconds=2.5,
+            end_seconds=7.75,
+        )
+
+    assert result == str(output_path)
+    command = run.call_args.args[0]
+    assert command[command.index("-ss") + 1] == "2.500"
+    assert command[command.index("-t") + 1] == "5.250"
 
 
 def test_find_font_path_returns_name_when_not_found():

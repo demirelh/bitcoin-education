@@ -1253,6 +1253,53 @@ def probe_media(file_path: str) -> MediaInfo:
     )
 
 
+def extract_audio_clip(
+    input_path: str,
+    output_path: str,
+    *,
+    start_seconds: float,
+    end_seconds: float,
+    timeout: int = 120,
+) -> str:
+    """Extract a bounded MP3 clip for selective transcription."""
+    if not Path(input_path).exists():
+        raise FileNotFoundError(f"Media file not found: {input_path}")
+    if start_seconds < 0:
+        raise ValueError("start_seconds must be non-negative")
+    if end_seconds <= start_seconds:
+        raise ValueError("end_seconds must be greater than start_seconds")
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-v",
+        "error",
+        "-ss",
+        f"{start_seconds:.3f}",
+        "-i",
+        input_path,
+        "-t",
+        f"{end_seconds - start_seconds:.3f}",
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-codec:a",
+        "libmp3lame",
+        "-b:a",
+        "64k",
+        "-y",
+        output_path,
+    ]
+    returncode, stderr = _run_ffmpeg(cmd, timeout)
+    if returncode != 0:
+        raise RuntimeError(f"ffmpeg audio clip extraction failed: {stderr}")
+    if not Path(output_path).exists():
+        raise RuntimeError(f"ffmpeg did not create audio clip: {output_path}")
+    return output_path
+
+
 def generate_test_video(
     output_path: str,
     duration: float = 2.0,

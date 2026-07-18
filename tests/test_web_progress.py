@@ -176,7 +176,7 @@ def client(app):
 
 class TestBuildStageProgressV2:
     def test_v2_stage_progress_all_stages_present(self, seeded_db, test_settings):
-        """v2 episode returns all 14 stages in correct order."""
+        """v2 episode returns all 18 stages in correct order."""
         _, factory = seeded_db
         session = factory()
         ep = session.query(Episode).filter(Episode.episode_id == "ep_new").first()
@@ -190,6 +190,7 @@ class TestBuildStageProgressV2:
             "download",
             "transcribe",
             "transcript_analyze",
+            "transcript_verify",
             "correct",
             "review_gate_1",
             "translate",
@@ -206,7 +207,7 @@ class TestBuildStageProgressV2:
             "publish",
         ]
         assert stage_names == expected_order
-        assert sp["total_count"] == 17
+        assert sp["total_count"] == 18
         assert sp["pipeline_version"] == 2
 
     def test_new_episode_all_pending_except_first(self, seeded_db, test_settings):
@@ -386,6 +387,7 @@ class TestStageLabelConstants:
             "download",
             "transcribe",
             "transcript_analyze",
+            "transcript_verify",
             "correct",
             "review_gate_1",
             "segment",
@@ -474,7 +476,7 @@ class TestEpisodeListIncludesStageProgress:
         """Episodes use the v2 stage list."""
         data2 = client.get("/api/episodes").get_json()
         ep_v2 = next(e for e in data2 if e["episode_id"] == "ep_new")
-        assert ep_v2["stage_progress"]["total_count"] == 17
+        assert ep_v2["stage_progress"]["total_count"] == 18
 
     def test_paused_review_reflected_in_stage_progress(self, client):
         """Paused episode has review gate showing 'paused' in stage_progress."""

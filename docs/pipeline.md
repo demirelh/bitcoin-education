@@ -63,7 +63,7 @@ türkische YouTube-Videos umwandeln.
 | 9  | **segment**        | ✅   | **Claude Sonnet 4.5**                    | Zerlegt die Sendung ohne Zusammenfassung in ein StoryDocument; jede Story verweist vollständig auf stabile Transkript-Segment-IDs und übernimmt Zeitstempel/Unsicherheit |
 | 10 | **translate**      | ✅   | **Claude Sonnet 4.5**                    | Strukturierte DE→TR-Ausgabe pro Story; IDs/Reihenfolge bleiben stabil, Zahlen/Daten/Sportergebnisse werden deterministisch geschützt, Auslassungen unsicherer Details werden protokolliert |
 | 11 | **adapt**          | ✅   | **Claude Sonnet 4.5**                    | `conditional`: nur Stories mit konkretem Bedarf werden adaptiert; erlaubte Operationen sind begrenzt und Namen/Zahlen/Daten/Story-IDs bleiben geschützt |
-| 12 | review_gate_2      | ✅   | **GPT-5.6 Sol** (via Copilot CLI)        | **QA-Zweitmeinung** — unabhängige Qualitätsprüfung TR vs. DE-Quelle (beratend). Findings fließen beim Re-Run in translate/adapt zurück |
+| 12 | review_gate_2      | ✅   | Python-Prüfer, danach **GPT-5.6 Sol** (via Copilot CLI) | Zuerst deterministische Translation-QA ohne API-Kosten; danach unabhängige LLM-Zweitmeinung TR vs. DE-Quelle. Findings fließen beim Re-Run in translate/adapt zurück |
 | 13 | **chapterize**     | ✅   | **Claude Sonnet 4.5**                    | Erzeugt ChapterDocument: Kapitel, Narrationstext, Visual-Vorgaben, Overlays |
 | 14 | **frameextract**   | –    | ffmpeg                                   | Keyframes aus dem Quellvideo |
 | 15 | **imagegen**       | ✅   | **Ideogram + Flux + DALL-E 3** (Routing) | Pro Kapitel ein Bild: Ideogram (Text/Karten/Infografik), Flux (photoreal b_roll), DALL-E 3 (Fallback) |
@@ -127,6 +127,17 @@ türkische YouTube-Videos umwandeln.
 - **Strukturierte Übersetzung:** `stories_translated.json` führt Story-ID,
   Segment-IDs, Übersetzer-Flags, ausgelassene unsichere Details und verwendete
   Glossarbegriffe fort. `transcript.tr.txt` bleibt als Legacy-Artefakt bestehen.
+- **Deterministische Translation-QA:** `translation_qa.json` vergleicht vor der
+  LLM-QA pro Story die Vollständigkeit und Reihenfolge sowie Zahlen, Daten,
+  Uhrzeiten, Ergebnisse, Geld, Temperaturen, Opfer-/Verletztenzahlen,
+  geschützte Glossarbegriffe, konservative Entitäten, Negationen, Chronologie
+  und Wetterregion-Zuordnungen. Das gemeinsame Finding-Schema enthält
+  `qa-NNNN`, Story-/Segmentbezug, Severity, Quell-/Zielauszug, erforderliche
+  Aktion und Bearbeitungsstatus. Kosten und PipelineRun-Kosten sind immer 0.
+- **QA-Reihenfolge:** `btcedu translation-qa --episode-id ID` führt nur die
+  deterministischen Prüfer aus. `generate_qa_review()` startet das externe
+  QA-Modell erst, nachdem diese Vorprüfung erfolgreich ausgeführt oder wegen
+  fehlender Story-Artefakte explizit übersprungen wurde.
 - **Begrenzte Adaption:** Für `tagesschau_tr` ist Adaption nicht deaktiviert,
   sondern bewusst auf `mode: conditional` gesetzt. Nur konkret benötigte
   Operationen (`anchor_unify`, Institutionserklärung, lokale Relevanz,

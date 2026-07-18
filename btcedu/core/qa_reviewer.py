@@ -270,6 +270,23 @@ def generate_qa_review(
     if not episode:
         return _skip(f"episode not found: {episode_id}")
 
+    # Deterministic checks must complete before any model-based second opinion.
+    from btcedu.core.translation_qa import load_translation_qa, run_translation_qa
+
+    deterministic_result = run_translation_qa(
+        session,
+        episode_id,
+        settings,
+        force=force,
+    )
+    deterministic_qa = load_translation_qa(settings, episode_id)
+    allowed_skip_reasons = {
+        "story-based source or target artifact missing",
+        "translation QA disabled by profile",
+    }
+    if deterministic_qa is None and deterministic_result.reason not in allowed_skip_reasons:
+        raise RuntimeError("Deterministic translation QA did not produce its artifact")
+
     turkish_text = adapted_path.read_text(encoding="utf-8")
     german_text = corrected_path.read_text(encoding="utf-8")
 
@@ -300,8 +317,14 @@ def generate_qa_review(
     # Idempotency: skip if inputs + model + prompt unchanged
     german_hash = hashlib.sha256(german_text.encode("utf-8")).hexdigest()
     turkish_hash = hashlib.sha256(turkish_text.encode("utf-8")).hexdigest()
+    deterministic_hash = hashlib.sha256(
+        json.dumps(deterministic_qa or {}, sort_keys=True, default=str).encode()
+    ).hexdigest()
     fingerprint = hashlib.sha256(
-        f"{german_hash}:{turkish_hash}:{qa_model}:{prompt_content_hash}".encode()
+        (
+            f"{german_hash}:{turkish_hash}:{qa_model}:{prompt_content_hash}:"
+            f"{deterministic_hash}"
+        ).encode()
     ).hexdigest()
 
     if not force and json_path.exists() and prov_path.exists():
@@ -330,6 +353,13 @@ def generate_qa_review(
     user_message = user_template.replace("{{ german_source }}", german_text).replace(
         "{{ turkish_final }}", turkish_text
     )
+    if deterministic_qa:
+        user_message += (
+            "\n\n# Deterministische Vorprüfung\n\n"
+            "Die folgenden Python-Findings sind objektive Vorprüfungen. Prüfe ihre "
+            "Bedeutung im Kontext und widersprich nur mit konkreter Begründung:\n\n"
+            + json.dumps(deterministic_qa, ensure_ascii=False, indent=2, default=str)
+        )
 
     _template_max = getattr(prompt_version, "max_tokens", None) or 0
     _effective_max = max(int(_template_max or 0), 4000)
@@ -387,6 +417,10 @@ def generate_qa_review(
                     "fingerprint": fingerprint,
                     "model": qa_model,
                     "prompt_content_hash": prompt_content_hash,
+                    "deterministic_qa_hash": deterministic_hash,
+                    "deterministic_qa_path": (
+                        deterministic_result.qa_path if deterministic_qa else None
+                    ),
                     "input_tokens": response.input_tokens,
                     "output_tokens": response.output_tokens,
                     "cost_usd": response.cost_usd,

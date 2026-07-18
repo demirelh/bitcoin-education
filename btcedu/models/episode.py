@@ -40,6 +40,7 @@ class PipelineStage(str, enum.Enum):
     TRANSCRIPT_QA = "transcript_qa"
     SEGMENT = "segment"  # Story segmentation (news profiles)
     TRANSLATE = "translate"
+    TRANSLATION_QA = "translation_qa"
     ADAPT = "adapt"
     CHAPTERIZE = "chapterize"
     FRAMEEXTRACT = "frameextract"

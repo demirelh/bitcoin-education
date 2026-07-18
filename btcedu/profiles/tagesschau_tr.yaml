@@ -25,6 +25,8 @@ stage_config:
     block_on_critical: true
     max_major_findings: 3
     auto_continue_below_threshold: true
+  translation_qa:
+    enabled: true
   segment:
     enabled: true
   adapt:

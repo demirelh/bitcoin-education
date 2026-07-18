@@ -83,6 +83,26 @@ terms:
   türkisch: "Türk"
   Erdoğan: "Erdoğan"
 
+protected_terms:
+  Fußball-WM:
+    allowed_targets:
+      - Futbol Dünya Kupası
+      - Dünya Kupası
+  Bundesrechnungshof:
+    allowed_targets:
+      - Federal Sayıştay
+  Nachspielzeit:
+    allowed_targets:
+      - duraklama dakikaları
+      - uzatma dakikaları
+      - hakemin eklediği dakikalar
+  Titelverteidiger:
+    allowed_targets:
+      - son şampiyon
+  tausend Waffen:
+    allowed_targets:
+      - bin silah
+
 # Feste Redewendungen (Nachrichten-Standard)
 phrases:
   "laut Angaben": "yetkililerin verdiği bilgiye göre"

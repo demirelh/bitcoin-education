@@ -397,6 +397,66 @@ def transcript_qa(
         session.close()
 
 
+@cli.command(name="translation-qa")
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) whose story translation should be checked.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-evaluate even if the deterministic translation QA artifact is current.",
+)
+@click.pass_context
+def translation_qa(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+) -> None:
+    """Run zero-cost deterministic translation quality checks."""
+    from btcedu.core.translation_qa import load_translation_qa, run_translation_qa
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        for episode_id in episode_ids:
+            try:
+                result = run_translation_qa(
+                    session,
+                    episode_id,
+                    settings,
+                    force=force,
+                )
+                document = load_translation_qa(settings, episode_id)
+                if result.skipped and not document:
+                    click.echo(f"[SKIP] {episode_id} -> {result.reason}")
+                    continue
+                summary = (document or {}).get("summary", {})
+                click.echo(
+                    f"[{'RED' if result.status == 'red' else 'OK'}] {episode_id} -> "
+                    f"{result.status.upper()} "
+                    f"(critical={summary.get('critical_count', 0)}, "
+                    f"major={summary.get('major_count', 0)}, "
+                    f"minor={summary.get('minor_count', 0)}, "
+                    f"info={summary.get('info_count', 0)}, cost=$0.0000)"
+                )
+                for finding in (document or {}).get("findings", []):
+                    click.echo(
+                        f"  - {finding.get('severity', '').upper()} "
+                        f"{finding.get('category')} "
+                        f"[{finding.get('story_id') or 'document'}]: "
+                        f"{finding.get('explanation', '')}"
+                    )
+            except Exception as exc:
+                click.echo(f"[FAIL] {episode_id}: {exc}", err=True)
+    finally:
+        session.close()
+
+
 @cli.command()
 @click.option(
     "--episode-id",

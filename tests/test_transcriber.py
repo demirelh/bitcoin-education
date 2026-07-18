@@ -4,8 +4,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from btcedu.config import Settings
-from btcedu.core.transcriber import transcribe_episode
-from btcedu.models.episode import Episode, EpisodeStatus
+from btcedu.core.transcriber import load_transcript_document, transcribe_episode
+from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage
+from btcedu.models.transcript_schema import (
+    TranscriptDocument,
+    TranscriptSegment,
+    TranscriptUsage,
+)
 
 
 def _make_settings(tmp_path: Path) -> Settings:
@@ -37,44 +42,69 @@ def _seed_downloaded_episode(db_session, tmp_path, episode_id="ep001"):
     return ep
 
 
+def _structured_transcript(episode_id: str, text: str) -> TranscriptDocument:
+    return TranscriptDocument(
+        episode_id=episode_id,
+        provider="openai",
+        model="whisper-1",
+        language="de",
+        text=text,
+        segments=[
+            TranscriptSegment(
+                segment_id="seg-0001",
+                start_seconds=0,
+                end_seconds=2.5,
+                text=text,
+                confidence=0.9,
+            )
+        ],
+        usage=TranscriptUsage(audio_seconds=2.5, cost_usd=0.00025),
+    )
+
+
 class TestTranscribeEpisode:
-    @patch("btcedu.services.transcription_service.transcribe_audio")
+    @patch("btcedu.services.transcription_service.transcribe_audio_structured")
     def test_creates_transcript_files(self, mock_whisper, db_session, tmp_path):
         settings = _make_settings(tmp_path)
         _seed_downloaded_episode(db_session, tmp_path)
-        mock_whisper.return_value = "Bitcoin ist eine dezentrale Waehrung."
+        mock_whisper.return_value = _structured_transcript(
+            "ep001", "Bitcoin ist eine dezentrale Waehrung."
+        )
 
         path = transcribe_episode(db_session, "ep001", settings)
 
         transcript_dir = tmp_path / "transcripts" / "ep001"
         assert (transcript_dir / "transcript.de.txt").exists()
         assert (transcript_dir / "transcript.clean.de.txt").exists()
+        assert (transcript_dir / "transcript.structured.de.json").exists()
         assert path == str(transcript_dir / "transcript.clean.de.txt")
 
-    @patch("btcedu.services.transcription_service.transcribe_audio")
+    @patch("btcedu.services.transcription_service.transcribe_audio_structured")
     def test_updates_status_to_transcribed(self, mock_whisper, db_session, tmp_path):
         settings = _make_settings(tmp_path)
         _seed_downloaded_episode(db_session, tmp_path)
-        mock_whisper.return_value = "Test transcript text."
+        mock_whisper.return_value = _structured_transcript("ep001", "Test transcript text.")
 
         transcribe_episode(db_session, "ep001", settings)
 
         ep = db_session.query(Episode).filter_by(episode_id="ep001").first()
         assert ep.status == EpisodeStatus.TRANSCRIBED
         assert ep.transcript_path is not None
+        run = db_session.query(PipelineRun).filter_by(stage=PipelineStage.TRANSCRIBE).one()
+        assert run.estimated_cost_usd == 0.00025
 
-    @patch("btcedu.services.transcription_service.transcribe_audio")
+    @patch("btcedu.services.transcription_service.transcribe_audio_structured")
     def test_stores_transcript_path_in_db(self, mock_whisper, db_session, tmp_path):
         settings = _make_settings(tmp_path)
         _seed_downloaded_episode(db_session, tmp_path)
-        mock_whisper.return_value = "Some text."
+        mock_whisper.return_value = _structured_transcript("ep001", "Some text.")
 
         transcribe_episode(db_session, "ep001", settings)
 
         ep = db_session.query(Episode).filter_by(episode_id="ep001").first()
         assert "transcript.clean.de.txt" in ep.transcript_path
 
-    @patch("btcedu.services.transcription_service.transcribe_audio")
+    @patch("btcedu.services.transcription_service.transcribe_audio_structured")
     def test_skips_if_transcript_exists(self, mock_whisper, db_session, tmp_path):
         settings = _make_settings(tmp_path)
         _seed_downloaded_episode(db_session, tmp_path)
@@ -89,11 +119,11 @@ class TestTranscribeEpisode:
         mock_whisper.assert_not_called()
         assert path == str(transcript_dir / "transcript.clean.de.txt")
 
-    @patch("btcedu.services.transcription_service.transcribe_audio")
+    @patch("btcedu.services.transcription_service.transcribe_audio_structured")
     def test_force_retranscribes(self, mock_whisper, db_session, tmp_path):
         settings = _make_settings(tmp_path)
         _seed_downloaded_episode(db_session, tmp_path)
-        mock_whisper.return_value = "New transcript."
+        mock_whisper.return_value = _structured_transcript("ep001", "New transcript.")
 
         # Pre-create transcript
         transcript_dir = tmp_path / "transcripts" / "ep001"
@@ -105,6 +135,24 @@ class TestTranscribeEpisode:
         mock_whisper.assert_called_once()
         content = (transcript_dir / "transcript.clean.de.txt").read_text()
         assert content == "New transcript."
+
+    def test_loads_legacy_text_without_structured_artifact(self, tmp_path):
+        settings = _make_settings(tmp_path)
+        transcript_dir = tmp_path / "transcripts" / "legacy"
+        transcript_dir.mkdir(parents=True)
+        (transcript_dir / "transcript.clean.de.txt").write_text(
+            "Erster Satz. Zweiter Satz!",
+            encoding="utf-8",
+        )
+
+        document = load_transcript_document(settings, "legacy")
+
+        assert document.provider == "legacy"
+        assert document.text == "Erster Satz. Zweiter Satz!"
+        assert [segment.segment_id for segment in document.segments] == [
+            "seg-0001",
+            "seg-0002",
+        ]
 
     def test_raises_for_unknown_episode(self, db_session, tmp_path):
         import pytest
@@ -141,5 +189,5 @@ class TestTranscribeEpisode:
         )
         _seed_downloaded_episode(db_session, tmp_path)
 
-        with pytest.raises(ValueError, match="No Whisper API key"):
+        with pytest.raises(ValueError, match="No OpenAI transcription key"):
             transcribe_episode(db_session, "ep001", settings)

@@ -50,6 +50,7 @@ _STATUS_ORDER = {
 _V2_STAGES = [
     ("download", EpisodeStatus.NEW),
     ("transcribe", EpisodeStatus.DOWNLOADED),
+    ("transcript_analyze", EpisodeStatus.TRANSCRIBED),
     ("correct", EpisodeStatus.TRANSCRIBED),
     ("review_gate_1", EpisodeStatus.CORRECTED),
     ("translate", EpisodeStatus.CORRECTED),  # after review approved
@@ -85,6 +86,11 @@ def _get_stages(
     if episode is None:
         return stages
 
+    # Preserve the repository's current v1 behavior exactly: the newly added
+    # v2-only side stage must not become the first failure for legacy episodes.
+    if episode.pipeline_version != 2:
+        return [(name, status) for name, status in stages if name != "transcript_analyze"]
+
     # Load profile for profile-aware stage modifications
     try:
         from btcedu.profiles import get_registry
@@ -96,6 +102,9 @@ def _get_stages(
     except Exception:
         # If profile lookup fails, return default v2 stages
         return stages
+
+    if not stage_config.get("transcript_analyze", {}).get("enabled", True):
+        stages = [(name, status) for name, status in stages if name != "transcript_analyze"]
 
     # Insert 'segment' stage for news profiles
     if stage_config.get("segment", {}).get("enabled"):
@@ -138,9 +147,7 @@ def _profile_pipeline_flags(settings: Settings, episode: Episode) -> tuple[bool,
     try:
         from btcedu.profiles import get_registry
 
-        profile = get_registry(settings).get(
-            getattr(episode, "content_profile", "bitcoin_podcast")
-        )
+        profile = get_registry(settings).get(getattr(episode, "content_profile", "bitcoin_podcast"))
         return bool(profile.auto_approve_reviews), bool(profile.auto_publish)
     except Exception:
         return False, True
@@ -155,9 +162,7 @@ def _imagegen_provider(settings: Settings, episode: Episode) -> str:
     try:
         from btcedu.profiles import get_registry
 
-        profile = get_registry(settings).get(
-            getattr(episode, "content_profile", "bitcoin_podcast")
-        )
+        profile = get_registry(settings).get(getattr(episode, "content_profile", "bitcoin_podcast"))
         imagegen_cfg = profile.stage_config.get("imagegen", {}) or {}
         return str(imagegen_cfg.get("provider", "") or "").lower()
     except Exception:
@@ -245,6 +250,7 @@ def resolve_pipeline_plan(
 _STAGE_NAME_TO_PIPELINE_STAGE = {
     "download": PipelineStage.DOWNLOAD,
     "transcribe": PipelineStage.TRANSCRIBE,
+    "transcript_analyze": PipelineStage.TRANSCRIPT_ANALYZE,
     "correct": PipelineStage.CORRECT,
     "segment": PipelineStage.SEGMENT,
     "translate": PipelineStage.TRANSLATE,
@@ -328,6 +334,7 @@ def _run_stage(
 
     _V2_ONLY_STAGES = {
         "correct",
+        "transcript_analyze",
         "review_gate_1",
         "segment",
         "translate",
@@ -366,6 +373,33 @@ def _run_stage(
             elapsed = time.monotonic() - t0
             return StageResult("transcribe", "success", elapsed, detail=path)
 
+        elif stage_name == "transcript_analyze":
+            from btcedu.core.transcript_analyzer import analyze_transcript
+
+            result = analyze_transcript(
+                session,
+                episode.episode_id,
+                settings,
+                force=force,
+            )
+            elapsed = time.monotonic() - t0
+            if result.skipped:
+                return StageResult(
+                    "transcript_analyze",
+                    "skipped",
+                    elapsed,
+                    detail=result.reason,
+                )
+            return StageResult(
+                "transcript_analyze",
+                "success",
+                elapsed,
+                detail=(
+                    f"{result.suspicious_count}/{result.segment_count} suspicious "
+                    f"({result.critical_count} critical)"
+                ),
+            )
+
         elif stage_name == "correct":
             from btcedu.core.corrector import correct_transcript
 
@@ -395,9 +429,7 @@ def _run_stage(
                         / episode.episode_id
                         / "transcript.corrected.de.txt"
                     )
-                    auto_approve_stage(
-                        session, episode.episode_id, "correct", [str(corrected)]
-                    )
+                    auto_approve_stage(session, episode.episode_id, "correct", [str(corrected)])
                 elapsed = time.monotonic() - t0
                 return StageResult("review_gate_1", "success", elapsed, detail="review approved")
 
@@ -521,9 +553,7 @@ def _run_stage(
             if auto_approve or has_approved_review(session, episode.episode_id, "adapt"):
                 if auto_approve:
                     adapted = (
-                        Path(settings.outputs_dir)
-                        / episode.episode_id
-                        / "script.adapted.tr.md"
+                        Path(settings.outputs_dir) / episode.episode_id / "script.adapted.tr.md"
                     )
                     auto_approve_stage(session, episode.episode_id, "adapt", [str(adapted)])
                 elapsed = time.monotonic() - t0
@@ -583,13 +613,9 @@ def _run_stage(
             if auto_approve or has_approved_review(session, episode.episode_id, "translate"):
                 if auto_approve:
                     stories = (
-                        Path(settings.outputs_dir)
-                        / episode.episode_id
-                        / "stories_translated.json"
+                        Path(settings.outputs_dir) / episode.episode_id / "stories_translated.json"
                     )
-                    auto_approve_stage(
-                        session, episode.episode_id, "translate", [str(stories)]
-                    )
+                    auto_approve_stage(session, episode.episode_id, "translate", [str(stories)])
                 elapsed = time.monotonic() - t0
                 return StageResult(
                     "review_gate_translate",
@@ -729,9 +755,7 @@ def _run_stage(
                 from btcedu.core.stock_images import rank_candidates, search_stock_images
 
                 search_stock_images(session, episode.episode_id, settings, force=force)
-                rank_result = rank_candidates(
-                    session, episode.episode_id, settings, force=force
-                )
+                rank_result = rank_candidates(session, episode.episode_id, settings, force=force)
                 elapsed = time.monotonic() - t0
 
                 return StageResult(
@@ -893,12 +917,7 @@ def _run_stage(
 
             if auto_approve or has_approved_review(session, episode.episode_id, "render"):
                 if auto_approve:
-                    draft = (
-                        Path(settings.outputs_dir)
-                        / episode.episode_id
-                        / "render"
-                        / "draft.mp4"
-                    )
+                    draft = Path(settings.outputs_dir) / episode.episode_id / "render" / "draft.mp4"
                     auto_approve_stage(session, episode.episode_id, "render", [str(draft)])
                 # Set episode status to APPROVED (final state before publish)
                 episode.status = EpisodeStatus.APPROVED
@@ -1104,9 +1123,7 @@ def run_episode_pipeline(
                         stage=stage_name,
                         error_category=category.value,
                         error_message=error_str[:2000],
-                        suggestion=ERROR_SUGGESTIONS.get(
-                            category, "Check logs for details."
-                        ),
+                        suggestion=ERROR_SUGGESTIONS.get(category, "Check logs for details."),
                         retry_count=episode.retry_count,
                     )
                     session.add(dlq_entry)
@@ -1285,9 +1302,7 @@ def run_latest(
 
     try:
         with pipeline_lock(settings):
-            return _run_latest_locked(
-                session, settings, profile=profile, detect_all=detect_all
-            )
+            return _run_latest_locked(session, settings, profile=profile, detect_all=detect_all)
     except PipelineBusyError:
         logger.warning("run_latest skipped: another pipeline run is already active.")
         return None

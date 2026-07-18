@@ -119,14 +119,16 @@ def seeded_db(test_db):
         pipeline_version=2,
     )
 
-    session.add_all([
-        ep_new,
-        ep_corrected,
-        ep_corrected_approved,
-        ep_failed,
-        ep_published,
-        ep_v2_new,
-    ])
+    session.add_all(
+        [
+            ep_new,
+            ep_corrected,
+            ep_corrected_approved,
+            ep_failed,
+            ep_published,
+            ep_v2_new,
+        ]
+    )
     session.commit()
 
     # Pending review for ep_corrected
@@ -187,6 +189,7 @@ class TestBuildStageProgressV2:
         expected_order = [
             "download",
             "transcribe",
+            "transcript_analyze",
             "correct",
             "review_gate_1",
             "translate",
@@ -203,7 +206,7 @@ class TestBuildStageProgressV2:
             "publish",
         ]
         assert stage_names == expected_order
-        assert sp["total_count"] == 16
+        assert sp["total_count"] == 17
         assert sp["pipeline_version"] == 2
 
     def test_new_episode_all_pending_except_first(self, seeded_db, test_settings):
@@ -382,6 +385,7 @@ class TestStageLabelConstants:
         expected_keys = {
             "download",
             "transcribe",
+            "transcript_analyze",
             "correct",
             "review_gate_1",
             "segment",
@@ -470,7 +474,7 @@ class TestEpisodeListIncludesStageProgress:
         """Episodes use the v2 stage list."""
         data2 = client.get("/api/episodes").get_json()
         ep_v2 = next(e for e in data2 if e["episode_id"] == "ep_new")
-        assert ep_v2["stage_progress"]["total_count"] == 16
+        assert ep_v2["stage_progress"]["total_count"] == 17
 
     def test_paused_review_reflected_in_stage_progress(self, client):
         """Paused episode has review gate showing 'paused' in stage_progress."""

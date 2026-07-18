@@ -195,6 +195,16 @@ class TestProfileRegistry:
         assert bp.target_language == "tr"
         assert bp.domain == "cryptocurrency"
         assert bp.pipeline_version == 2
+        assert bp.stage_config["transcript_analyze"]["enabled"] is True
+
+        news = profiles["tagesschau_tr"]
+        transcription = news.stage_config["transcription"]
+        assert transcription["primary"] == {
+            "provider": "openai",
+            "model": "whisper-1",
+        }
+        assert transcription["secondary"]["enabled"] is True
+        assert transcription["secondary"]["mode"] == "suspicious_segments_only"
 
 
 # -----------------------------------------------------------------------

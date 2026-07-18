@@ -6,6 +6,19 @@ domain: news
 pipeline_version: 2
 stages_enabled: all
 stage_config:
+  transcription:
+    primary:
+      provider: openai
+      model: whisper-1
+    secondary:
+      enabled: true
+      provider: openai
+      model: gpt-4o-mini-transcribe
+      mode: suspicious_segments_only
+    suspicious_segment_context_seconds: 15
+    max_secondary_audio_seconds: 300
+  transcript_analyze:
+    enabled: true
   segment:
     enabled: true
   adapt:

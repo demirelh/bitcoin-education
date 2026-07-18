@@ -134,16 +134,12 @@ def pipeline_health():
             session.query(
                 PipelineRun.stage,
                 func.count().label("total"),
-                func.sum(
-                    case(
-                        (PipelineRun.status == RunStatus.SUCCESS, 1), else_=0
-                    )
-                ).label("successes"),
-                func.sum(
-                    case(
-                        (PipelineRun.status == RunStatus.FAILED, 1), else_=0
-                    )
-                ).label("failures"),
+                func.sum(case((PipelineRun.status == RunStatus.SUCCESS, 1), else_=0)).label(
+                    "successes"
+                ),
+                func.sum(case((PipelineRun.status == RunStatus.FAILED, 1), else_=0)).label(
+                    "failures"
+                ),
                 func.avg(
                     func.julianday(PipelineRun.completed_at)
                     - func.julianday(PipelineRun.started_at)
@@ -159,16 +155,12 @@ def pipeline_health():
             session.query(
                 PipelineRun.stage,
                 func.count().label("total"),
-                func.sum(
-                    case(
-                        (PipelineRun.status == RunStatus.SUCCESS, 1), else_=0
-                    )
-                ).label("successes"),
-                func.sum(
-                    case(
-                        (PipelineRun.status == RunStatus.FAILED, 1), else_=0
-                    )
-                ).label("failures"),
+                func.sum(case((PipelineRun.status == RunStatus.SUCCESS, 1), else_=0)).label(
+                    "successes"
+                ),
+                func.sum(case((PipelineRun.status == RunStatus.FAILED, 1), else_=0)).label(
+                    "failures"
+                ),
             )
             .filter(PipelineRun.started_at >= t_24h)
             .group_by(PipelineRun.stage)
@@ -199,9 +191,7 @@ def pipeline_health():
                 "success_rate_24h": (
                     round(successes_24h / total_24h, 3) if total_24h > 0 else None
                 ),
-                "success_rate_7d": (
-                    round(successes_7d / total_7d, 3) if total_7d > 0 else None
-                ),
+                "success_rate_7d": (round(successes_7d / total_7d, 3) if total_7d > 0 else None),
                 "avg_duration_seconds": round(avg_seconds, 1),
                 "total_runs_24h": total_24h,
                 "total_runs_7d": total_7d,
@@ -232,9 +222,7 @@ def pipeline_health():
             trend_counter[(date_str, category)] += 1
 
         for (date_str, category), count in sorted(trend_counter.items()):
-            error_trends.append(
-                {"date": date_str, "category": category, "count": count}
-            )
+            error_trends.append({"date": date_str, "category": category, "count": count})
 
         # --- Dead-letter queue ---
         dlq_data = {"pending": 0, "resolved_24h": 0, "entries": []}
@@ -282,9 +270,7 @@ def pipeline_health():
         # --- Episode summary ---
         total_episodes = session.query(func.count(Episode.id)).scalar() or 0
         failed_episodes = (
-            session.query(func.count(Episode.id))
-            .filter(Episode.error_message.isnot(None))
-            .scalar()
+            session.query(func.count(Episode.id)).filter(Episode.error_message.isnot(None)).scalar()
         ) or 0
         stuck_threshold = 3
         stuck_episodes_q = (
@@ -543,8 +529,7 @@ def _workflow_files(ep, settings) -> list[dict] | None:
             # News uses per-story stories_translated.json; other profiles write
             # a plain transcript.tr.txt. Either counts as translated.
             present = bool(
-                presence.get("stories_translated")
-                or (trans / "transcript.tr.txt").exists()
+                presence.get("stories_translated") or (trans / "transcript.tr.txt").exists()
             )
         else:
             present = bool(presence.get(key, False))
@@ -735,6 +720,7 @@ def _compute_pipeline_state(status: str, review_context: dict | None) -> str:
 _STAGE_LABELS = {
     "download": "Download",
     "transcribe": "Transcribe",
+    "transcript_analyze": "Transcript Analysis",
     "correct": "Correct",
     "review_gate_1": "Review 1",
     "segment": "Segment",
@@ -756,6 +742,7 @@ _STAGE_LABELS = {
 _STAGE_TO_PIPELINE_STAGE = {
     "download": PipelineStage.DOWNLOAD,
     "transcribe": PipelineStage.TRANSCRIBE,
+    "transcript_analyze": PipelineStage.TRANSCRIPT_ANALYZE,
     "correct": PipelineStage.CORRECT,
     "translate": PipelineStage.TRANSLATE,
     "adapt": PipelineStage.ADAPT,
@@ -2043,9 +2030,7 @@ def reject_review_route(review_id: int):
         if rating is not None:
             rating = int(rating)
         try:
-            decision = reject_review(
-                session, review_id, notes=notes or None, quality_rating=rating
-            )
+            decision = reject_review(session, review_id, notes=notes or None, quality_rating=rating)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
@@ -2076,9 +2061,7 @@ def request_changes_route(review_id: int):
             rating = int(rating)
 
         try:
-            decision = request_changes(
-                session, review_id, notes=notes, quality_rating=rating
-            )
+            decision = request_changes(session, review_id, notes=notes, quality_rating=rating)
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
 
@@ -2738,11 +2721,24 @@ def get_publish_status(episode_id: str):
 # Per-stage detail + restart (Jenkins-style)
 # ---------------------------------------------------------------------------
 
-_ALLOWED_STAGE_ACTIONS = frozenset({
-    "download", "transcribe", "correct", "segment", "translate", "adapt",
-    "chapterize", "frameextract", "imagegen", "tts", "anchorgen", "render",
-    "publish",
-})
+_ALLOWED_STAGE_ACTIONS = frozenset(
+    {
+        "download",
+        "transcribe",
+        "transcript_analyze",
+        "correct",
+        "segment",
+        "translate",
+        "adapt",
+        "chapterize",
+        "frameextract",
+        "imagegen",
+        "tts",
+        "anchorgen",
+        "render",
+        "publish",
+    }
+)
 
 
 @api_bp.route("/episodes/<episode_id>/stage-runs")
@@ -2811,14 +2807,16 @@ def get_stage_runs(episode_id: str):
         except Exception:
             qa_review = None
 
-        return jsonify({
-            "stages": stages,
-            "log_lines": log_lines,
-            "episode_id": episode_id,
-            "status": ep.status.value,
-            "error_message": ep.error_message,
-            "qa_review": qa_review,
-        })
+        return jsonify(
+            {
+                "stages": stages,
+                "log_lines": log_lines,
+                "episode_id": episode_id,
+                "status": ep.status.value,
+                "error_message": ep.error_message,
+                "qa_review": qa_review,
+            }
+        )
     finally:
         session.close()
 
@@ -2883,9 +2881,7 @@ def update_channel(channel_id):
                 return jsonify({"error": "Channel name cannot be empty"}), 400
             channel.name = name
         if "content_profile" in data:
-            channel.content_profile = (
-                (data.get("content_profile") or "bitcoin_podcast").strip()
-            )
+            channel.content_profile = (data.get("content_profile") or "bitcoin_podcast").strip()
 
         session.commit()
         return jsonify(
@@ -2937,7 +2933,9 @@ def get_credits():
     session_factory = current_app.config["session_factory"]
     with session_factory() as session:
         statuses = get_all_credits(session, settings)
-    return jsonify({
-        "credits": [to_dict(s) for s in statuses],
-        "generated_at": statuses[0].fetched_at if statuses else None,
-    })
+    return jsonify(
+        {
+            "credits": [to_dict(s) for s in statuses],
+            "generated_at": statuses[0].fetched_at if statuses else None,
+        }
+    )

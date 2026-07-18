@@ -6,6 +6,8 @@ domain: cryptocurrency
 pipeline_version: 2
 stages_enabled: all
 stage_config:
+  transcript_analyze:
+    enabled: true
   adapt:
     skip: false
     tiers: [cultural, technical, examples_turkey, local_regulation]

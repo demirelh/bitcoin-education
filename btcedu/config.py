@@ -51,13 +51,24 @@ class Settings(BaseSettings):
     transcripts_dir: str = "data/transcripts"
     whisper_model: str = "whisper-1"
     whisper_language: str = "de"
+    transcription_primary_provider: str = "openai"
+    transcription_primary_model: str = ""  # empty keeps whisper_model as the legacy default
+    transcription_secondary_enabled: bool = False
+    transcription_secondary_provider: str = "openai"
+    transcription_secondary_model: str = ""
+    transcription_secondary_mode: str = "suspicious_segments_only"
+    transcription_suspicious_segment_context_seconds: float = 15.0
+    transcription_max_secondary_audio_seconds: float = 300.0
+    transcription_openai_cost_per_minute_usd: float = 0.006
 
     # Content Generation
     llm_provider: str = "anthropic"  # "anthropic" | "openai" | "github_models" | "copilot_cli"
     claude_model: str = "claude-sonnet-4-20250514"
     openai_llm_model: str = "gpt-4o"  # fallback model when using openai provider
     github_token: str = ""  # PAT with models:read scope
-    github_models_model: str = "openai/gpt-4.1"  # e.g. "openai/gpt-4.1", "anthropic/claude-sonnet-4.5"
+    github_models_model: str = (
+        "openai/gpt-4.1"  # e.g. "openai/gpt-4.1", "anthropic/claude-sonnet-4.5"
+    )
     github_models_endpoint: str = "https://models.github.ai/inference"
     copilot_cli_model: str = "claude-sonnet-4.5"  # e.g. "claude-sonnet-4.5", "claude-opus-4.6"
     copilot_cli_binary: str = "copilot"

@@ -22,7 +22,8 @@ logger = logging.getLogger(__name__)
 # These weights represent the relative time/effort for each stage
 STAGE_WEIGHTS = {
     "download": 3,
-    "transcribe": 20,
+    "transcribe": 19,
+    "transcript_analyze": 1,
     "correct": 7,
     "translate": 20,
     "adapt": 10,
@@ -248,6 +249,7 @@ class JobManager:
                 _action_map = {
                     "download": self._do_download,
                     "transcribe": self._do_transcribe,
+                    "transcript_analyze": self._do_transcript_analyze,
                     "correct": self._do_correct,
                     "segment": self._do_segment,
                     "translate": self._do_translate,
@@ -328,6 +330,30 @@ class JobManager:
         path = transcribe_episode(session, job.episode_id, settings, force=job.force)
         self._update(job, result={"success": True, "path": path})
         self._log(job, f"Transcription complete: {path}")
+
+    def _do_transcript_analyze(self, job, session, settings):
+        from btcedu.core.transcript_analyzer import analyze_transcript
+
+        self._update(job, stage="transcript_analyze")
+        self._log(job, "Analyzing transcript segments...")
+        result = analyze_transcript(
+            session,
+            job.episode_id,
+            settings,
+            force=job.force,
+        )
+        self._update(
+            job,
+            result={
+                "success": True,
+                "suspicious_count": result.suspicious_count,
+                "critical_count": result.critical_count,
+            },
+        )
+        self._log(
+            job,
+            f"Transcript analysis complete: {result.suspicious_count} suspicious",
+        )
 
     def _do_correct(self, job, session, settings):
         from btcedu.core.corrector import correct_transcript
@@ -740,9 +766,7 @@ class JobManager:
         # Step 2: resume the pipeline (chapterize onward) with the corrected
         # script. Episode status is ADAPTED after adapt, so this rebuilds the
         # downstream stages via cascade invalidation.
-        episode = (
-            session.query(Episode).filter(Episode.episode_id == job.episode_id).first()
-        )
+        episode = session.query(Episode).filter(Episode.episode_id == job.episode_id).first()
         if not episode:
             raise ValueError(f"Episode not found: {job.episode_id}")
 
@@ -766,9 +790,7 @@ class JobManager:
                 result={
                     "success": True,
                     "cost_usd": report.total_cost_usd,
-                    "stages_run": [
-                        sr.stage for sr in report.stages if sr.status == "success"
-                    ],
+                    "stages_run": [sr.stage for sr in report.stages if sr.status == "success"],
                 },
             )
             self._log(job, f"QA-Re-Run (alles) abgeschlossen: ${report.total_cost_usd:.4f}")
@@ -917,6 +939,12 @@ class JobManager:
         }
 
         completed_stages = status_to_stages.get(episode_status, [])
+        if episode_status not in (
+            EpisodeStatus.NEW,
+            EpisodeStatus.DOWNLOADED,
+            EpisodeStatus.TRANSCRIBED,
+        ):
+            completed_stages = [*completed_stages, "transcript_analyze"]
         remaining_work = 0.0
 
         for stage, weight in STAGE_WEIGHTS.items():

@@ -119,10 +119,11 @@ class TestRunEpisodePipeline:
         call_args = mock_stage.call_args
         assert call_args[0][3] == "adapt"  # stage_name arg
 
-        skipped_before_adapt = [s.stage for s in report.stages[:5]]
+        skipped_before_adapt = [s.stage for s in report.stages[:6]]
         assert skipped_before_adapt == [
             "download",
             "transcribe",
+            "transcript_analyze",
             "correct",
             "review_gate_1",
             "translate",
@@ -259,9 +260,7 @@ class TestEnsureStagePipelineRun:
         _ensure_stage_pipeline_run(db_session, new_episode, "review_gate_1", 0.1, _pu())
 
         assert (
-            db_session.query(PipelineRun)
-            .filter(PipelineRun.episode_id == new_episode.id)
-            .count()
+            db_session.query(PipelineRun).filter(PipelineRun.episode_id == new_episode.id).count()
             == 0
         )
 
@@ -573,10 +572,11 @@ class TestWriteReport:
 class TestResolvePipelinePlan:
     def test_new_episode_plans_all_stages(self, db_session, new_episode):
         plan = resolve_pipeline_plan(db_session, new_episode)
-        assert len(plan) == 16
+        assert len(plan) == 17
         assert plan[0] == StagePlan("download", "run", "status=new")
         assert plan[1] == StagePlan("transcribe", "pending", "after prior stages")
-        assert plan[2] == StagePlan("correct", "pending", "after prior stages")
+        assert plan[2] == StagePlan("transcript_analyze", "pending", "after prior stages")
+        assert plan[3] == StagePlan("correct", "pending", "after prior stages")
         assert plan[-1] == StagePlan("publish", "pending", "after prior stages")
 
     def test_downloaded_skips_download(self, db_session):
@@ -613,9 +613,9 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep)
         skipped = [p for p in plan if p.decision == "skip"]
-        assert len(skipped) == 5
-        assert plan[5] == StagePlan("adapt", "run", "status=translated")
-        assert plan[6] == StagePlan("review_gate_2", "pending", "after prior stages")
+        assert len(skipped) == 6
+        assert plan[6] == StagePlan("adapt", "run", "status=translated")
+        assert plan[7] == StagePlan("review_gate_2", "pending", "after prior stages")
 
     def test_adapted_runs_review_gate_and_chapterize(self, db_session):
         ep = Episode(
@@ -632,9 +632,9 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep)
         skipped = [p for p in plan if p.decision == "skip"]
-        assert len(skipped) == 6
-        assert plan[6] == StagePlan("review_gate_2", "run", "status=adapted")
-        assert plan[7] == StagePlan("chapterize", "run", "status=adapted")
+        assert len(skipped) == 7
+        assert plan[7] == StagePlan("review_gate_2", "run", "status=adapted")
+        assert plan[8] == StagePlan("chapterize", "run", "status=adapted")
 
     def test_published_skips_all(self, db_session):
         ep = Episode(
@@ -667,7 +667,7 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep, force=True)
         assert all(p.decision == "run" for p in plan)
-        assert len(plan) == 16
+        assert len(plan) == 17
         assert plan[0].reason == "forced"
         assert plan[-1].reason == "forced"
 
@@ -675,11 +675,11 @@ class TestResolvePipelinePlan:
         """Pipeline plan ignores error_message — only looks at status."""
         plan = resolve_pipeline_plan(db_session, failed_episode)
         skipped = [p for p in plan if p.decision == "skip"]
-        assert len(skipped) == 5
-        assert plan[5].decision == "run"
-        assert plan[5].stage == "adapt"
-        assert plan[6].decision == "pending"
-        assert plan[6].stage == "review_gate_2"
+        assert len(skipped) == 6
+        assert plan[6].decision == "run"
+        assert plan[6].stage == "adapt"
+        assert plan[7].decision == "pending"
+        assert plan[7].stage == "review_gate_2"
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_stage_callback_invoked(self, mock_stage, db_session, tmp_path):
@@ -933,14 +933,15 @@ class TestV2PipelineE2E:
         assert stage_statuses.get("publish") == "success"
 
     @patch("btcedu.core.pipeline._run_stage")
-    def test_v2_plan_shows_all_16_stages(self, mock_stage, db_session, v2_episode, v2_settings):
-        """resolve_pipeline_plan returns all 16 v2 stages."""
+    def test_v2_plan_shows_all_17_stages(self, mock_stage, db_session, v2_episode, v2_settings):
+        """resolve_pipeline_plan returns all 17 v2 stages."""
         plan = resolve_pipeline_plan(db_session, v2_episode, settings=v2_settings)
-        assert len(plan) == 16
+        assert len(plan) == 17
         stage_names = [p.stage for p in plan]
         assert stage_names == [
             "download",
             "transcribe",
+            "transcript_analyze",
             "correct",
             "review_gate_1",
             "translate",
@@ -956,6 +957,32 @@ class TestV2PipelineE2E:
             "review_gate_3",
             "publish",
         ]
+
+    def test_v1_plan_is_unchanged_by_transcript_analysis(
+        self,
+        db_session,
+        v2_settings,
+    ):
+        episode = Episode(
+            episode_id="ep_v1_compat",
+            source="youtube_rss",
+            title="Legacy",
+            url="https://example.com/v1",
+            status=EpisodeStatus.TRANSCRIBED,
+            pipeline_version=1,
+        )
+        db_session.add(episode)
+        db_session.commit()
+
+        plan = resolve_pipeline_plan(
+            db_session,
+            episode,
+            settings=v2_settings,
+        )
+
+        assert "transcript_analyze" not in [item.stage for item in plan]
+        correct = next(item for item in plan if item.stage == "correct")
+        assert correct.decision == "run"
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_v2_cost_accumulation(self, mock_stage, db_session, v2_settings, tmp_path):

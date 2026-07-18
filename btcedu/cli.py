@@ -89,8 +89,7 @@ def _check_pending_migrations(session_factory):
     "all_channels",
     is_flag=True,
     default=False,
-    help="Detect from every active channel using each channel's own profile "
-    "and title filter.",
+    help="Detect from every active channel using each channel's own profile and title filter.",
 )
 @click.pass_context
 def detect(
@@ -227,6 +226,54 @@ def transcribe(ctx: click.Context, episode_ids: tuple[str, ...], force: bool) ->
                 click.echo(f"[OK] {eid} -> {path}")
             except Exception as e:
                 click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
+@cli.command(name="transcript-analyze")
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) whose transcript should be analyzed (repeatable).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-analyze even if the deterministic artifact is current.",
+)
+@click.pass_context
+def transcript_analyze(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+) -> None:
+    """Flag suspicious transcript segments without external API calls."""
+    from btcedu.core.transcript_analyzer import analyze_transcript
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        for episode_id in episode_ids:
+            try:
+                result = analyze_transcript(
+                    session,
+                    episode_id,
+                    settings,
+                    force=force,
+                )
+                if result.skipped:
+                    click.echo(f"[SKIP] {episode_id} -> {result.reason}")
+                else:
+                    click.echo(
+                        f"[OK] {episode_id} -> "
+                        f"{result.suspicious_count}/{result.segment_count} suspicious "
+                        f"({result.critical_count} critical)"
+                    )
+            except Exception as exc:
+                click.echo(f"[FAIL] {episode_id}: {exc}", err=True)
     finally:
         session.close()
 
@@ -1041,9 +1088,7 @@ def reject(ctx: click.Context, review_id: int, notes: str | None, rating: int | 
 @click.option("--notes", required=True, help="Feedback describing changes needed.")
 @click.option("--rating", type=click.IntRange(1, 5), default=None, help="Quality rating 1-5.")
 @click.pass_context
-def request_changes_cmd(
-    ctx: click.Context, review_id: int, notes: str, rating: int | None
-) -> None:
+def request_changes_cmd(ctx: click.Context, review_id: int, notes: str, rating: int | None) -> None:
     """Request changes on a review task (reverts episode and marks artifacts stale)."""
     from btcedu.core.reviewer import request_changes
 
@@ -1051,9 +1096,7 @@ def request_changes_cmd(
     try:
         decision = request_changes(session, review_id, notes=notes, quality_rating=rating)
         stars = f" ({'\u2605' * rating}{'\u2606' * (5 - rating)})" if rating else ""
-        click.echo(
-            f"[OK] Changes requested on review {review_id}{stars} (decision {decision.id})"
-        )
+        click.echo(f"[OK] Changes requested on review {review_id}{stars} (decision {decision.id})")
     except ValueError as e:
         click.echo(f"[FAIL] {e}", err=True)
     finally:
@@ -1065,9 +1108,7 @@ def request_changes_cmd(
 @click.option("--profile", default=None, help="Filter by content profile.")
 @click.option("--json-output", "json_out", is_flag=True, help="Output as JSON.")
 @click.pass_context
-def feedback(
-    ctx: click.Context, stage: str | None, profile: str | None, json_out: bool
-) -> None:
+def feedback(ctx: click.Context, stage: str | None, profile: str | None, json_out: bool) -> None:
     """Export all review feedback (ratings + notes) for analysis."""
     import json
 
@@ -2022,7 +2063,9 @@ def credits_cmd(ctx: click.Context, as_json: bool) -> None:
     def _emoji(status: str) -> str:
         return {"ok": "🟢", "warn": "🟡", "critical": "🔴", "unknown": "⚪"}.get(status, "⚪")
 
-    click.echo(f"\n=== 💳 API Credits & Usage (as of {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}) ===\n")
+    click.echo(
+        f"\n=== 💳 API Credits & Usage (as of {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}) ===\n"
+    )
     for s in statuses:
         icon = _emoji(s.status)
         click.echo(f"{icon} {s.display_name}")
@@ -2032,7 +2075,9 @@ def credits_cmd(ctx: click.Context, as_json: bool) -> None:
             if s.chars_limit is not None:
                 remaining = (s.chars_limit or 0) - (s.chars_used or 0)
                 pct = 100.0 * (s.chars_used or 0) / max(s.chars_limit, 1)
-                click.echo(f"    Characters: {s.chars_used:,} / {s.chars_limit:,}  ({pct:.0f}% used, {remaining:,} left)")
+                click.echo(
+                    f"    Characters: {s.chars_used:,} / {s.chars_limit:,}  ({pct:.0f}% used, {remaining:,} left)"
+                )
             if s.tier:
                 click.echo(f"    Tier: {s.tier}")
         else:  # usage_tracking

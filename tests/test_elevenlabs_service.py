@@ -48,6 +48,21 @@ def test_compute_cost_large():
     assert _compute_cost(10000) == pytest.approx(ELEVENLABS_COST_PER_1K_CHARS * 10)
 
 
+def test_later_chunk_failure_reports_already_incurred_cost():
+    service = ElevenLabsService(api_key="key", default_voice_id="voice")
+    text = ("Ein vollständiger Satz. " * 400).strip()
+    chunks = _chunk_text(text, MAX_CHARS_PER_REQUEST)
+    assert len(chunks) > 1
+    service._call_with_retry = MagicMock(
+        side_effect=[b"first chunk audio", RuntimeError("second chunk failed")]
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        service.synthesize(TTSRequest(text=text, voice_id=None))
+
+    assert exc_info.value.cost_usd == pytest.approx(_compute_cost(len(chunks[0])))
+
+
 # ---------------------------------------------------------------------------
 # _chunk_text
 # ---------------------------------------------------------------------------

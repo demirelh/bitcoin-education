@@ -19,8 +19,8 @@ from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
 from btcedu.models.media_asset import MediaAsset, MediaAssetType
 from btcedu.services.claude_service import call_claude
+from btcedu.services.errors import ErrorCategory, PipelineError
 from btcedu.services.image_gen_service import (
-    DallE3ImageService,
     ImageGenRequest,
     ImageGenResponse,
 )
@@ -118,6 +118,122 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+# Exact-data visual categories that must NOT be produced by a generative model
+# (they carry precise numbers/labels/boundaries that a model would hallucinate).
+_EXACT_DATA_KEYWORDS = {
+    "weather": ("hava durumu", "hava tahmini", "wetter", "weather", "sıcaklık", "derece"),
+    "chart": ("chart", "grafik", "diagram", "diyagram", "istatistik", "statistik"),
+    "table": ("table", "tablo", "tabelle"),
+    "map": ("harita", "karte", " map "),
+    "election": ("seçim", "wahl", "election", "sandık", "oy oranı", "stimmen"),
+    "timeline": ("timeline", "zaman çizelgesi", "zeitleiste", "kronoloji"),
+}
+
+
+def _visual_deterministic_spec(visual) -> dict | None:
+    """Return the explicit deterministic asset spec on a visual, if any."""
+    spec = getattr(visual, "deterministic", None)
+    if isinstance(spec, dict) and spec:
+        return spec
+    return None
+
+
+def _detect_exact_data_category(visual) -> str | None:
+    """Best-effort exact-data category from an explicit spec or description keywords."""
+    spec = _visual_deterministic_spec(visual)
+    if spec:
+        return str(spec.get("category") or "generic").strip().lower() or "generic"
+    haystack = " ".join(
+        str(getattr(visual, attr, "") or "") for attr in ("description", "image_prompt")
+    ).lower()
+    for category, keywords in _EXACT_DATA_KEYWORDS.items():
+        if any(kw in haystack for kw in keywords):
+            return category
+    return None
+
+
+def _should_render_deterministic(visual, imagegen_cfg: dict) -> bool:
+    """Route exact-data visuals to the local deterministic renderer.
+
+    Always when an explicit ``deterministic`` spec is attached (unambiguous
+    opt-in). Otherwise only when the profile enables ``deterministic_exact_data``
+    AND a known exact-data category is detected — so provider routing for every
+    other chapter is untouched and there are no surprise provider switches.
+    """
+    if _visual_deterministic_spec(visual):
+        return True
+    if imagegen_cfg.get("deterministic_exact_data"):
+        return _detect_exact_data_category(visual) is not None
+    return False
+
+
+def _load_existing_image_entries(manifest_path: Path) -> dict[str, dict]:
+    """Load {chapter_id: entry} from an existing image manifest, or {}."""
+    if not manifest_path.exists():
+        return {}
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        return {entry["chapter_id"]: entry for entry in manifest.get("images", [])}
+    except (json.JSONDecodeError, KeyError, OSError):
+        return {}
+
+
+def _image_inputs_unchanged(provenance_path: Path, chapters_hash: str, prompt_hash: str) -> bool:
+    """True when the recorded imagegen inputs match the current chapters/prompt."""
+    if not provenance_path.exists():
+        return False
+    try:
+        prov = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return (
+        prov.get("input_content_hash") == chapters_hash and prov.get("prompt_hash") == prompt_hash
+    )
+
+
+def _chapters_needing_regen(
+    existing_entries: dict[str, dict], chapters_doc, output_dir: Path
+) -> set[str]:
+    """Chapter ids whose image entry is missing, failed, or has no file on disk."""
+    base_dir = output_dir.parent  # outputs/{episode_id}/
+    need: set[str] = set()
+    for ch in chapters_doc.chapters:
+        entry = existing_entries.get(ch.chapter_id)
+        if entry is None or entry.get("generation_method") == "failed":
+            need.add(ch.chapter_id)
+            continue
+        file_path = entry.get("file_path")
+        if not file_path or not (base_dir / file_path).exists():
+            need.add(ch.chapter_id)
+    return need
+
+
+def _clear_stale_marker(marker: Path) -> None:
+    """Remove a consumed .stale marker so it doesn't force endless regeneration."""
+    try:
+        if marker.exists():
+            marker.unlink()
+    except OSError as e:  # pragma: no cover - defensive
+        logger.warning("Could not remove stale marker %s: %s", marker, e)
+
+
+def _failed_image_entry(chapter, error: str) -> "ImageEntry":
+    """A per-chapter failed entry. Image failures never block narration/pipeline."""
+    return ImageEntry(
+        chapter_id=chapter.chapter_id,
+        chapter_title=chapter.title,
+        visual_type=chapter.visual.type,
+        file_path=f"images/{chapter.chapter_id}_failed.png",
+        prompt=None,
+        generation_method="failed",
+        model=None,
+        size="0x0",
+        mime_type="image/png",
+        size_bytes=0,
+        metadata={"error": error},
+    )
+
+
 @dataclass
 class ImageEntry:
     """Metadata for a single generated or placeholder image."""
@@ -146,6 +262,7 @@ class ImageGenResult:
     image_count: int = 0
     generated_count: int = 0  # Actually generated via API
     template_count: int = 0  # Placeholders created
+    deterministic_count: int = 0  # Rendered locally from exact data (no generative model)
     failed_count: int = 0  # Failed generations
     input_tokens: int = 0  # From LLM prompt generation
     output_tokens: int = 0
@@ -256,13 +373,22 @@ def generate_images(
     prompt_content_hash = registry.compute_hash(template_body)
 
     # Idempotency check (skip if not force and not chapter-specific and output is current)
+    recover_ids: set[str] | None = None
     if not force and chapter_id is None:
         if _is_image_gen_current(
-            manifest_path, provenance_path, chapters_hash, prompt_content_hash
+            manifest_path,
+            provenance_path,
+            chapters_hash,
+            prompt_content_hash,
+            {chapter.chapter_id for chapter in chapters_doc.chapters},
         ):
             logger.info(
                 "Image generation is current for %s (use --force to regenerate)", episode_id
             )
+            if episode.status != EpisodeStatus.IMAGES_GENERATED:
+                episode.status = EpisodeStatus.IMAGES_GENERATED
+                episode.error_message = None
+                session.commit()
             existing_provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
             return ImageGenResult(
                 episode_id=episode_id,
@@ -278,10 +404,27 @@ def generate_images(
                 cost_usd=existing_provenance.get("cost_usd", 0.0),
                 skipped=True,
             )
+        # Not fully current. When the inputs are unchanged and there is no stale
+        # marker, the only reason is previously-failed or missing chapters — retry
+        # just those (chapter recovery) instead of regenerating everything.
+        stale_marker = manifest_path.with_suffix(".json.stale")
+        if not stale_marker.exists() and _image_inputs_unchanged(
+            provenance_path, chapters_hash, prompt_content_hash
+        ):
+            _existing = _load_existing_image_entries(manifest_path)
+            if _existing:
+                recover_ids = _chapters_needing_regen(_existing, chapters_doc, output_dir)
+                if recover_ids:
+                    logger.info(
+                        "Recovering %d failed/missing image chapters for %s: %s",
+                        len(recover_ids),
+                        episode_id,
+                        sorted(recover_ids),
+                    )
 
     # Create PipelineRun record
     pipeline_run = PipelineRun(
-        episode_id=episode_id,
+        episode_id=episode.id,
         stage="imagegen",
         status=RunStatus.RUNNING.value,
         started_at=_utcnow(),
@@ -302,15 +445,11 @@ def generate_images(
             if not chapters_to_process:
                 raise ValueError(f"Chapter {chapter_id} not found in chapters.json")
 
-        # Load existing manifest if doing partial regeneration
+        # Load existing manifest for partial regeneration / chapter recovery
         existing_entries = {}
-        if chapter_id and manifest_path.exists():
-            try:
-                existing_manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-                existing_entries = {
-                    entry["chapter_id"]: entry for entry in existing_manifest.get("images", [])
-                }
-            except (json.JSONDecodeError, KeyError):
+        if (chapter_id or recover_ids is not None) and manifest_path.exists():
+            existing_entries = _load_existing_image_entries(manifest_path)
+            if not existing_entries:
                 logger.warning(
                     f"Could not load existing manifest from {manifest_path}, will regenerate all"
                 )
@@ -323,6 +462,22 @@ def generate_images(
         generated_count = 0
         template_count = 0
         failed_count = 0
+        deterministic_count = 0
+
+        def _check_cost_limit(*, before_call: bool) -> None:
+            cumulative = _get_episode_total_cost(session, episode_id) + total_cost
+            exceeded = (
+                cumulative >= settings.max_episode_cost_usd
+                if before_call
+                else cumulative > settings.max_episode_cost_usd
+            )
+            if exceeded:
+                relation = ">=" if before_call else ">"
+                raise PipelineError(
+                    f"Episode cost limit reached during image generation: "
+                    f"${cumulative:.4f} {relation} ${settings.max_episode_cost_usd:.4f}",
+                    ErrorCategory.PERMANENT_COST_LIMIT,
+                )
 
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -331,9 +486,7 @@ def generate_images(
         # title cards (via Ideogram) instead of flat template placeholders.
         _profile_provider = str(_imagegen_cfg.get("provider", "") or "").lower()
         _generative_profile = _profile_provider in GENERATIVE_PROVIDERS
-        _smart_routing = (
-            _generative_profile or getattr(settings, "image_gen_smart_routing", False)
-        )
+        _smart_routing = _generative_profile or getattr(settings, "image_gen_smart_routing", False)
 
         for chapter in chapters_to_process:
             # Skip if no visual or processing only a specific chapter
@@ -342,16 +495,44 @@ def generate_images(
                 logger.warning(f"Chapter {chapter.chapter_id} has no visual, skipping")
                 continue
 
-            # If partial regeneration and this chapter isn't being regenerated, keep existing
-            if (
-                chapter_id
-                and chapter.chapter_id != chapter_id
-                and chapter.chapter_id in existing_entries
-            ):
+            # Reuse the existing entry when this chapter is not the target of a
+            # single-chapter regen, or (during recovery) is not one of the
+            # failed/missing chapters being retried.
+            _reuse_existing = chapter.chapter_id in existing_entries and (
+                (chapter_id and chapter.chapter_id != chapter_id)
+                or (recover_ids is not None and chapter.chapter_id not in recover_ids)
+            )
+            if _reuse_existing:
                 existing_entry_dict = existing_entries[chapter.chapter_id]
-                # Convert dict to ImageEntry
                 image_entry = ImageEntry(**existing_entry_dict)
                 image_entries.append(image_entry)
+                if image_entry.generation_method == "deterministic":
+                    deterministic_count += 1
+                elif image_entry.generation_method == "template":
+                    template_count += 1
+                elif image_entry.generation_method != "failed":
+                    generated_count += 1
+                continue
+
+            # Exact-data visuals (maps/charts/tables/weather/election/timelines)
+            # are rendered locally from their exact spec — never a generative
+            # model — so numbers/labels/boundaries are never hallucinated. This
+            # never affects narration and, on error, degrades to a failed entry.
+            if _should_render_deterministic(visual, _imagegen_cfg):
+                try:
+                    image_entry = _render_deterministic_visual(
+                        chapter, output_dir, accent_color=_profile_accent
+                    )
+                    deterministic_count += 1
+                except Exception as e:  # noqa: BLE001 - image failure never blocks narration
+                    logger.error(
+                        f"Deterministic visual failed for chapter {chapter.chapter_id}: {e}"
+                    )
+                    image_entry = _failed_image_entry(chapter, str(e))
+                    failed_count += 1
+                image_entries.append(image_entry)
+                if image_entry.generation_method != "failed":
+                    _create_media_asset_record(session, episode_id, image_entry, prompt_version.id)
                 continue
 
             # Check if generation is needed for this visual type
@@ -359,20 +540,13 @@ def generate_images(
                 _generative_profile and visual.type in GENERATIVE_EXTRA_TYPES
             ):
                 try:
-                    # Check cost limit before generating
-                    episode_total_cost = _get_episode_total_cost(session, episode_id)
-                    if episode_total_cost + total_cost > settings.max_episode_cost_usd:
-                        raise RuntimeError(
-                            f"Episode cost limit exceeded: {episode_total_cost + total_cost:.2f} > "
-                            f"{settings.max_episode_cost_usd}. Stopping image generation."
-                        )
-
                     # Generate or use existing image prompt
                     if visual.image_prompt:
                         # Use prompt from chapter JSON if provided
                         image_prompt = visual.image_prompt
                         prompt_tokens, completion_tokens, prompt_cost = 0, 0, 0.0
                     else:
+                        _check_cost_limit(before_call=True)
                         # Generate prompt via LLM
                         (
                             image_prompt,
@@ -383,8 +557,10 @@ def generate_images(
                         total_input_tokens += prompt_tokens
                         total_output_tokens += completion_tokens
                         total_cost += prompt_cost
+                        _check_cost_limit(before_call=False)
 
                     # Generate image
+                    _check_cost_limit(before_call=True)
                     image_entry = _generate_single_image(
                         chapter,
                         image_prompt,
@@ -395,8 +571,11 @@ def generate_images(
                         smart_routing=_smart_routing,
                     )
                     total_cost += image_entry.metadata.get("cost_usd", 0.0)
+                    _check_cost_limit(before_call=False)
                     generated_count += 1
 
+                except PipelineError:
+                    raise
                 except Exception as e:
                     logger.error(f"Failed to generate image for chapter {chapter.chapter_id}: {e}")
                     # Create failed entry
@@ -458,13 +637,19 @@ def generate_images(
             "image_count": len(image_entries),
             "generated_count": generated_count,
             "template_count": template_count,
+            "deterministic_count": deterministic_count,
             "failed_count": failed_count,
+            "recovered": sorted(recover_ids) if recover_ids else [],
             "cost_usd": total_cost,
         }
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
         provenance_path.write_text(
             json.dumps(provenance_data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
+
+        # This stage is now current: clear any stale marker from cascade
+        # invalidation so a single stale flag doesn't force endless regeneration.
+        _clear_stale_marker(manifest_path.with_suffix(".json.stale"))
 
         # Create ContentArtifact record
         artifact = ContentArtifact(
@@ -477,7 +662,7 @@ def generate_images(
         )
         session.add(artifact)
 
-        # Mark downstream stages stale (TTS, RENDER)
+        # Mark downstream stages stale (RENDER only — images never affect TTS/narration)
         _mark_downstream_stale(episode_id, Path(settings.outputs_dir))
 
         # Update episode status
@@ -495,7 +680,8 @@ def generate_images(
 
         logger.info(
             f"Image generation complete for {episode_id}: {generated_count} generated, "
-            f"{template_count} placeholders, {failed_count} failed (${total_cost:.3f})"
+            f"{deterministic_count} deterministic, {template_count} placeholders, "
+            f"{failed_count} failed (${total_cost:.3f})"
         )
 
         return ImageGenResult(
@@ -506,6 +692,7 @@ def generate_images(
             image_count=len(image_entries),
             generated_count=generated_count,
             template_count=template_count,
+            deterministic_count=deterministic_count,
             failed_count=failed_count,
             input_tokens=total_input_tokens,
             output_tokens=total_output_tokens,
@@ -517,6 +704,11 @@ def generate_images(
         pipeline_run.status = RunStatus.FAILED.value
         pipeline_run.completed_at = _utcnow()
         pipeline_run.error_message = str(e)
+        pipeline_run.input_tokens = locals().get("total_input_tokens", 0)
+        pipeline_run.output_tokens = locals().get("total_output_tokens", 0)
+        pipeline_run.estimated_cost_usd = locals().get("total_cost", 0.0)
+        if isinstance(e, PipelineError) and e.category == ErrorCategory.PERMANENT_COST_LIMIT:
+            episode.status = EpisodeStatus.COST_LIMIT
         episode.error_message = str(e)
         session.commit()
         logger.error(f"Image generation failed for {episode_id}: {e}")
@@ -542,7 +734,15 @@ def _compute_chapters_content_hash(chapters_doc: ChapterDocument) -> str:
                 "chapter_id": ch.chapter_id,
                 "title": ch.title,
                 "visual": (
-                    {"type": ch.visual.type, "description": ch.visual.description}
+                    {
+                        "type": ch.visual.type,
+                        "description": ch.visual.description,
+                        # image_prompt drives the generated image; include it so a
+                        # prompt-only edit (manual or from chapterize) re-runs
+                        # imagegen even when type/description are unchanged.
+                        "image_prompt": ch.visual.image_prompt,
+                        "deterministic": _visual_deterministic_spec(ch.visual),
+                    }
                     if ch.visual
                     else None
                 ),
@@ -559,6 +759,7 @@ def _is_image_gen_current(
     provenance_path: Path,
     chapters_hash: str,
     prompt_hash: str,
+    expected_chapter_ids: set[str] | None = None,
 ) -> bool:
     """Check if image generation is current (idempotency)."""
     # Check files exist
@@ -588,9 +789,18 @@ def _is_image_gen_current(
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         base_dir = manifest_path.parent.parent  # outputs/{ep_id}/
-        for img_entry in manifest.get("images", []):
+        entries = manifest.get("images", [])
+        actual_ids = {entry.get("chapter_id") for entry in entries}
+        if expected_chapter_ids is not None and actual_ids != expected_chapter_ids:
+            logger.info("Image manifest chapter coverage is incomplete or stale")
+            return False
+        for img_entry in entries:
             if img_entry.get("generation_method") == "failed":
-                continue  # Skip failed entries
+                logger.info(
+                    "Image generation previously failed for %s",
+                    img_entry.get("chapter_id"),
+                )
+                return False
             img_path = base_dir / img_entry["file_path"]
             if not img_path.exists():
                 logger.info(f"Image file missing: {img_path}")
@@ -734,7 +944,9 @@ def _generate_single_image(
     )
 
 
-def _create_template_placeholder(chapter, output_dir: Path, accent_color: str = "#F7931A") -> ImageEntry:
+def _create_template_placeholder(
+    chapter, output_dir: Path, accent_color: str = "#F7931A"
+) -> ImageEntry:
     """Create a placeholder image for template types (title_card, talking_head).
 
     Args:
@@ -808,6 +1020,94 @@ def _create_template_placeholder(chapter, output_dir: Path, accent_color: str = 
     )
 
 
+def _render_deterministic_visual(
+    chapter, output_dir: Path, accent_color: str = "#004B87"
+) -> ImageEntry:
+    """Render an exact-data visual locally — never via a generative model.
+
+    Draws a clean, broadcast-style information card using ONLY values/labels that
+    are present in the chapter's deterministic spec (or, absent a spec, the
+    chapter title/description). Numbers, names and boundaries are therefore never
+    invented. When exact cartographic boundaries cannot be drawn safely, this
+    labeled information card is the documented safe fallback (Phase 8 req B).
+    """
+    from PIL import Image, ImageDraw, ImageFont
+
+    def _hex_to_rgb(h: str) -> tuple[int, int, int]:
+        h = h.lstrip("#")
+        if len(h) == 3:
+            h = "".join(c * 2 for c in h)
+        return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+
+    try:
+        accent_rgb = _hex_to_rgb(accent_color)
+    except Exception:  # noqa: BLE001
+        accent_rgb = (0, 75, 135)
+
+    spec = _visual_deterministic_spec(chapter.visual) or {}
+    category = _detect_exact_data_category(chapter.visual) or "generic"
+    title = str(spec.get("title") or chapter.title or category.title())
+    note = str(spec.get("note") or "")
+    items = spec.get("items") if isinstance(spec.get("items"), list) else []
+
+    width, height = 1920, 1080
+    img = Image.new("RGB", (width, height), color=(245, 247, 250))
+    draw = ImageDraw.Draw(img)
+    # Header band in the profile accent colour.
+    draw.rectangle([(0, 0), (width, 160)], fill=accent_rgb)
+
+    def _font(size: int):
+        try:
+            return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", size)
+        except OSError:
+            return ImageFont.load_default()
+
+    draw.text((60, 45), title[:60], fill=(255, 255, 255), font=_font(64))
+
+    # Exact label:value rows straight from the spec — no invented data.
+    y = 240
+    row_font = _font(52)
+    for item in items[:8]:
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label", "")).strip()
+        value = str(item.get("value", "")).strip()
+        line = f"{label}: {value}" if label and value else (label or value)
+        if not line:
+            continue
+        draw.text((80, y), line[:70], fill=(20, 20, 20), font=row_font)
+        y += 90
+
+    if note:
+        draw.text((80, height - 120), note[:90], fill=(90, 90, 90), font=_font(38))
+
+    filename = f"{chapter.chapter_id}_deterministic.png"
+    target_path = output_dir / filename
+    img.save(target_path, "PNG")
+    file_size = target_path.stat().st_size
+
+    return ImageEntry(
+        chapter_id=chapter.chapter_id,
+        chapter_title=chapter.title,
+        visual_type=chapter.visual.type,
+        file_path=f"images/{filename}",
+        prompt=None,
+        generation_method="deterministic",
+        model=None,
+        size="1920x1080",
+        mime_type="image/png",
+        size_bytes=file_size,
+        metadata={
+            "provider": "local_deterministic",
+            "category": category,
+            "cost_usd": 0.0,
+            "source": "deterministic_spec" if spec else "chapter_text",
+            "item_count": len([i for i in items if isinstance(i, dict)]),
+            "generated_at": _utcnow().isoformat(),
+        },
+    )
+
+
 def _create_media_asset_record(
     session: Session,
     episode_id: str,
@@ -846,13 +1146,23 @@ def _mark_downstream_stale(episode_id: str, outputs_dir: Path) -> None:
 
 
 def _get_episode_total_cost(session: Session, episode_id: str) -> float:
-    """Get cumulative cost for all pipeline runs for this episode."""
-    total = (
-        session.query(PipelineRun)
-        .filter(PipelineRun.episode_id == episode_id)
-        .filter(PipelineRun.estimated_cost_usd.isnot(None))
+    """Get cumulative cost for all pipeline runs for this episode.
+
+    ``PipelineRun.episode_id`` is an integer FK to ``episodes.id``; resolve the
+    string ``episode_id`` to that integer so the cost guard counts every prior
+    stage (transcribe/translate/adapt/chapterize/qa/...) rather than nothing.
+    """
+    from sqlalchemy import func
+
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    if episode is None:
+        return 0.0
+    return float(
+        session.query(func.coalesce(func.sum(PipelineRun.estimated_cost_usd), 0.0))
+        .filter(PipelineRun.episode_id == episode.id)
+        .scalar()
+        or 0.0
     )
-    return sum(run.estimated_cost_usd for run in total if run.estimated_cost_usd)
 
 
 def _split_prompt(template_body: str) -> tuple[str, str]:

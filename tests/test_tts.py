@@ -1,6 +1,7 @@
 """Tests for Sprint 8: TTS stage implementation."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,9 +11,12 @@ from sqlalchemy.orm import sessionmaker
 from btcedu.core.tts import (
     _compute_chapters_narration_hash,
     _compute_narration_hash,
+    _compute_tts_content_hash,
     _create_silent_mp3,
     _is_tts_current,
     _mark_downstream_stale,
+    _resolve_tts_config,
+    _voice_config_signature,
     generate_tts,
 )
 from btcedu.db import Base
@@ -143,6 +147,7 @@ def _make_settings(tmp_path):
     settings.elevenlabs_similarity_boost = 0.75
     settings.elevenlabs_style = 0.0
     settings.elevenlabs_use_speaker_boost = True
+    settings.elevenlabs_speed = 1.0
     return settings
 
 
@@ -294,6 +299,25 @@ def test_is_tts_current_all_good(tmp_path):
     provenance.write_text(json.dumps({"input_content_hash": "hash"}))
 
     assert _is_tts_current(manifest, provenance, "hash") is True
+
+
+def test_is_tts_current_rejects_incomplete_chapter_coverage(tmp_path):
+    manifest = tmp_path / "tts" / "manifest.json"
+    provenance = tmp_path / "provenance.json"
+    manifest.parent.mkdir()
+    audio = manifest.parent / "ch01.mp3"
+    audio.write_bytes(b"audio")
+    manifest.write_text(
+        json.dumps({"segments": [{"chapter_id": "ch01", "file_path": "tts/ch01.mp3"}]})
+    )
+    provenance.write_text(json.dumps({"input_content_hash": "hash"}))
+
+    assert not _is_tts_current(
+        manifest,
+        provenance,
+        "hash",
+        {"ch01", "ch02"},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -474,19 +498,62 @@ def test_generate_tts_idempotency(mock_service_cls, db_session, tmp_path):
 
 @patch("btcedu.services.elevenlabs_service.ElevenLabsService")
 def test_generate_tts_single_chapter(mock_service_cls, db_session, tmp_path):
-    """Single chapter regeneration via chapter_id parameter."""
+    """Single chapter generation requires a complete current base manifest."""
     episode = _setup_episode(db_session, tmp_path)
     settings = _make_settings(tmp_path)
     settings.dry_run = True
 
-    result = generate_tts(db_session, episode.episode_id, settings, chapter_id="ch02")
+    with pytest.raises(ValueError, match="manifest entry for ch01 is missing"):
+        generate_tts(db_session, episode.episode_id, settings, chapter_id="ch02")
 
-    assert not result.skipped
-    assert result.segment_count == 1
+
+@patch("btcedu.services.elevenlabs_service.ElevenLabsService")
+def test_generate_tts_single_chapter_preserves_other_manifest_entries(
+    mock_service_cls, db_session, tmp_path
+):
+    episode = _setup_episode(db_session, tmp_path)
+    settings = _make_settings(tmp_path)
+    settings.dry_run = True
+
+    first = generate_tts(db_session, episode.episode_id, settings)
+    original = json.loads(first.manifest_path.read_text())
+    original_ch01 = next(s for s in original["segments"] if s["chapter_id"] == "ch01")
+
+    result = generate_tts(
+        db_session,
+        episode.episode_id,
+        settings,
+        chapter_id="ch02",
+        force=True,
+    )
 
     manifest = json.loads(result.manifest_path.read_text())
-    assert len(manifest["segments"]) == 1
-    assert manifest["segments"][0]["chapter_id"] == "ch02"
+    assert [s["chapter_id"] for s in manifest["segments"]] == ["ch01", "ch02"]
+    assert manifest["segments"][0] == original_ch01
+
+
+@patch("btcedu.services.elevenlabs_service.ElevenLabsService")
+def test_generate_tts_single_chapter_rejects_stale_preserved_audio(
+    mock_service_cls, db_session, tmp_path
+):
+    episode = _setup_episode(db_session, tmp_path)
+    settings = _make_settings(tmp_path)
+    settings.dry_run = True
+    generate_tts(db_session, episode.episode_id, settings)
+
+    chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
+    chapters = json.loads(chapters_path.read_text())
+    chapters["chapters"][0]["narration"]["text"] = "Degismis birinci bolum."
+    chapters_path.write_text(json.dumps(chapters), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="ch01 is stale"):
+        generate_tts(
+            db_session,
+            episode.episode_id,
+            settings,
+            chapter_id="ch02",
+            force=True,
+        )
 
 
 @patch("btcedu.services.elevenlabs_service.ElevenLabsService")
@@ -521,8 +588,13 @@ def test_generate_tts_cost_limit(mock_service_cls, db_session, tmp_path):
     # Since _get_episode_total_cost returns 0 for a fresh episode,
     # and total_cost starts at 0, the first chapter passes.
     # After first chapter, total_cost = 5.0 > 0.001, so second is blocked.
-    with pytest.raises(RuntimeError, match="cost limit exceeded"):
+    from btcedu.services.errors import ErrorCategory, PipelineError
+
+    with pytest.raises(PipelineError) as exc_info:
         generate_tts(db_session, episode.episode_id, settings)
+    assert exc_info.value.category == ErrorCategory.PERMANENT_COST_LIMIT
+    db_session.refresh(episode)
+    assert episode.status == EpisodeStatus.COST_LIMIT
 
 
 # ---------------------------------------------------------------------------
@@ -567,16 +639,29 @@ def test_tts_skipped_advances_status(db_session, tmp_path):
     provenance_path.mkdir()
     prov_file = provenance_path / "tts_provenance.json"
 
-    # Compute real hash so idempotency check passes
-    doc = ChapterDocument(**CHAPTERS_JSON)
-    chapters_hash = _compute_chapters_narration_hash(doc)
-
-    manifest_path.write_text(json.dumps({"segments": []}), encoding="utf-8")
-    prov_file.write_text(json.dumps({"input_content_hash": chapters_hash}), encoding="utf-8")
-
-    settings = MagicMock()
+    settings = _make_settings(tmp_path)
     settings.outputs_dir = str(tmp_path)
     settings.dry_run = False
+
+    # Compute the real content hash the stage will use (narration + voice config)
+    doc = ChapterDocument(**CHAPTERS_JSON)
+    _cfg = _resolve_tts_config(episode, settings)
+    chapters_hash = _compute_tts_content_hash(
+        doc, _cfg["pronunciation_lexicon"], _voice_config_signature(_cfg)
+    )
+
+    segments = []
+    for chapter in doc.chapters:
+        audio_path = tts_dir / f"{chapter.chapter_id}.mp3"
+        audio_path.write_bytes(b"audio")
+        segments.append(
+            {
+                "chapter_id": chapter.chapter_id,
+                "file_path": f"tts/{chapter.chapter_id}.mp3",
+            }
+        )
+    manifest_path.write_text(json.dumps({"segments": segments}), encoding="utf-8")
+    prov_file.write_text(json.dumps({"input_content_hash": chapters_hash}), encoding="utf-8")
 
     result = generate_tts(db_session, "ep_skip_status", settings, force=False)
     assert result.skipped is True

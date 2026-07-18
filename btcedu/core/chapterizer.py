@@ -36,6 +36,108 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+class NarrationLockError(ValueError):
+    """Raised when chapterization alters the approved narration content."""
+
+
+def _narration_lock_diagnostic_path(settings: Settings, episode_id: str) -> Path:
+    return Path(settings.outputs_dir) / episode_id / "provenance" / "chapterize_narration_lock.json"
+
+
+def _write_narration_lock_diagnostic(
+    settings: Settings,
+    episode_id: str,
+    result,
+    approved_sha: str,
+    composed_sha: str,
+) -> None:
+    """Persist a RED diagnostic describing how narration diverged."""
+    path = _narration_lock_diagnostic_path(settings, episode_id)
+    payload = {
+        "stage": "chapterize",
+        "episode_id": episode_id,
+        "status": "red",
+        "check": "narration_lock",
+        "timestamp": _utcnow().isoformat(),
+        "matches": False,
+        "approved_narration_sha256": approved_sha,
+        "composed_narration_sha256": composed_sha,
+        "summary": result.summary(),
+        "first_divergence_index": result.first_divergence_index,
+        "approved_excerpt": result.approved_excerpt,
+        "composed_excerpt": result.composed_excerpt,
+        "added_numbers": result.added_numbers or [],
+        "removed_numbers": result.removed_numbers or [],
+        "added_names": result.added_names or [],
+        "removed_names": result.removed_names or [],
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        logger.warning("Could not write narration lock diagnostic for %s", episode_id)
+
+
+def _enforce_narration_lock(
+    settings: Settings,
+    episode_id: str,
+    final_chapter_doc: ChapterDocument,
+) -> tuple[str | None, str | None]:
+    """Fail closed when chapters are not a faithful partition of approved narration.
+
+    Chapterization may create chapter boundaries, visuals, overlays, prompts and
+    metadata (titles/notes), but the concatenation of chapter narration — in
+    chapter order — must equal the approved narrative after the narrow technical
+    normalizations defined in :mod:`btcedu.core.narration_lock`.
+
+    The lock is only enforced for profiles that carry a translation quality gate
+    (news / story mode). Legacy profiles without a gate (e.g. the Bitcoin podcast
+    hook/intro/outro flow) have no approved-narration artifact and are unaffected.
+
+    Returns ``(approved_sha, composed_sha)`` for provenance. Raises
+    :class:`NarrationLockError` on an unauthorized change; a RED diagnostic is
+    written and the caller must not write chapters or advance status.
+    """
+    import hashlib
+
+    from btcedu.core.narration_lock import (
+        check_narration_lock,
+        compose_chapter_narration,
+        normalize_narration_text,
+    )
+    from btcedu.core.qa_reviewer import canonical_narration, load_quality_gate
+
+    gate = load_quality_gate(settings, episode_id)
+    if gate is None:
+        # No approved-narration lock exists for this profile (legacy). Skip.
+        return None, None
+
+    _, approved_text = canonical_narration(settings, episode_id)
+    if not approved_text.strip():
+        return None, None
+
+    composed_text = compose_chapter_narration(final_chapter_doc.chapters)
+    result = check_narration_lock(approved_text, composed_text)
+
+    approved_sha = hashlib.sha256(
+        normalize_narration_text(approved_text).encode("utf-8")
+    ).hexdigest()
+    composed_sha = hashlib.sha256(
+        normalize_narration_text(composed_text).encode("utf-8")
+    ).hexdigest()
+
+    if not result.matches:
+        _write_narration_lock_diagnostic(settings, episode_id, result, approved_sha, composed_sha)
+        logger.error("Narration lock FAILED for %s: %s", episode_id, result.summary())
+        raise NarrationLockError(
+            f"Episode {episode_id} chapterization altered the approved narration "
+            f"({result.summary()}). No chapters were written."
+        )
+
+    logger.info("Narration lock passed for %s (%s)", episode_id, approved_sha[:12])
+    return approved_sha, composed_sha
+
+
 def _enforce_translation_quality_gate(
     session: Session,
     episode_id: str,
@@ -73,8 +175,7 @@ def _enforce_translation_quality_gate(
         return
     if gate is None:
         raise ValueError(
-            f"Episode {episode_id} requires a valid translation quality gate before "
-            "chapterization."
+            f"Episode {episode_id} requires a valid translation quality gate before chapterization."
         )
 
     from btcedu.core.reviewer import has_approved_review_for_artifacts
@@ -443,6 +544,18 @@ def chapterize_script(
             final_chapter_doc.estimated_duration_seconds,
         )
 
+        # Phase 8 requirement A: prove the chapters are a faithful partition of
+        # the approved narration BEFORE anything is written or status advances.
+        # Raises NarrationLockError (handled by the except below) on any change.
+        approved_narration_sha, composed_narration_sha = _enforce_narration_lock(
+            settings, episode_id, final_chapter_doc
+        )
+
+        # Capture the previous per-component hashes (before overwriting provenance)
+        # so downstream invalidation can be selective (Phase 8 requirement D).
+        previous_components = _load_previous_component_hashes(provenance_path)
+        component_hashes = _chapter_component_hashes(final_chapter_doc)
+
         # Write chapters.json
         chapters_path.parent.mkdir(parents=True, exist_ok=True)
         chapters_json = final_chapter_doc.model_dump(mode="json", by_alias=True)
@@ -474,6 +587,10 @@ def chapterize_script(
             "segments_processed": len(segments),
             "chapter_count": final_chapter_doc.total_chapters,
             "estimated_duration_seconds": final_chapter_doc.estimated_duration_seconds,
+            "approved_narration_sha256": approved_narration_sha,
+            "composed_narration_sha256": composed_narration_sha,
+            "narration_locked": approved_narration_sha is not None,
+            "component_hashes": component_hashes,
             "schema_version": "1.0",
         }
 
@@ -505,8 +622,10 @@ def chapterize_script(
         episode.error_message = None
         session.commit()
 
-        # Mark downstream stages as stale (IMAGE_GEN, TTS if they exist)
-        _mark_downstream_stale(episode_id, settings)
+        # Selectively mark downstream stages stale based on WHAT changed
+        # (Phase 8 requirement D): narration -> TTS+render, visual/prompt ->
+        # images+render, overlay -> render, structure -> images+TTS+render.
+        _mark_downstream_stale(episode_id, settings, previous_components, component_hashes)
 
         logger.info(
             "Chapterized %s (%d chapters, ~%ds, $%.4f)",
@@ -699,11 +818,7 @@ def _merge_short_chapters(chapters: list, min_seconds: int) -> list:
 
     for ch in chapters[1:]:
         prev = merged[-1] if merged else None
-        prev_is_short = (
-            prev is not None
-            and prev.chapter_id != "ch01"
-            and _dur(prev) < min_seconds
-        )
+        prev_is_short = prev is not None and prev.chapter_id != "ch01" and _dur(prev) < min_seconds
         if _dur(ch) < min_seconds and prev_is_short:
             # merge into prev
             prev_text = prev.narration.text.rstrip()
@@ -1155,24 +1270,120 @@ Original input:
     return _parse_json_response(response.text, episode_id, segment, settings)
 
 
-def _mark_downstream_stale(episode_id: str, settings: Settings) -> None:
-    """Mark downstream stages as stale (IMAGE_GEN, TTS).
+def _chapter_component_hashes(doc: ChapterDocument) -> dict:
+    """Per-component SHA-256 hashes of a chapter document.
 
-    Creates .stale marker files in images/ and tts/ directories if they exist.
-
-    Args:
-        episode_id: Episode ID
-        settings: Application settings
+    Splitting the document into narration / visuals / overlays / structure lets
+    chapterization invalidate only the downstream stages actually affected by a
+    change, instead of always regenerating both images and TTS.
     """
-    imagegen_marker_path = Path(settings.outputs_dir) / episode_id / "images" / ".stale"
-    tts_marker_path = Path(settings.outputs_dir) / episode_id / "tts" / ".stale"
 
-    for marker_path in [imagegen_marker_path, tts_marker_path]:
-        if marker_path.parent.exists():
-            stale_data = {
-                "invalidated_at": _utcnow().isoformat(),
-                "invalidated_by": "chapterize",
-                "reason": "chapters_changed",
-            }
-            marker_path.write_text(json.dumps(stale_data, indent=2), encoding="utf-8")
-            logger.info("Marked downstream stage as stale: %s", marker_path.parent.name)
+    def _h(obj) -> str:
+        return hashlib.sha256(
+            json.dumps(obj, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        ).hexdigest()
+
+    def _vtype(visual) -> str:
+        t = getattr(visual, "type", "")
+        return str(getattr(t, "value", t))
+
+    narration = [{"id": ch.chapter_id, "text": ch.narration.text} for ch in doc.chapters]
+    visuals = [
+        {
+            "id": ch.chapter_id,
+            "title": ch.title,
+            "type": _vtype(ch.visual),
+            "description": ch.visual.description,
+            "image_prompt": ch.visual.image_prompt,
+            "deterministic": ch.visual.deterministic,
+        }
+        for ch in doc.chapters
+    ]
+    overlays = [
+        {"id": ch.chapter_id, "overlays": [o.model_dump(mode="json") for o in ch.overlays]}
+        for ch in doc.chapters
+    ]
+    structure = [{"id": ch.chapter_id, "order": ch.order} for ch in doc.chapters]
+    return {
+        "narration": _h(narration),
+        "visuals": _h(visuals),
+        "overlays": _h(overlays),
+        "structure": _h(structure),
+    }
+
+
+def _load_previous_component_hashes(provenance_path: Path) -> dict | None:
+    """Load the previous run's ``component_hashes`` from provenance, or None."""
+    if not provenance_path.exists():
+        return None
+    try:
+        prov = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    components = prov.get("component_hashes")
+    return components if isinstance(components, dict) else None
+
+
+def _mark_downstream_stale(
+    episode_id: str,
+    settings: Settings,
+    previous: dict | None = None,
+    current: dict | None = None,
+) -> None:
+    """Selectively mark downstream stages stale based on what changed.
+
+    Mapping (Phase 8 requirement D):
+      * structure (chapter set/order) -> images + TTS + render
+      * narration text                -> TTS + render (never images)
+      * visual type/description/prompt -> images + render (never TTS)
+      * overlays only                 -> render only
+
+    When no previous component hashes exist (first run / legacy provenance) the
+    behaviour is conservative and marks everything. Markers are written at the
+    exact paths the consuming stages check.
+    """
+    base = Path(settings.outputs_dir) / episode_id
+    images_dir = base / "images"
+    tts_dir = base / "tts"
+    render_draft = base / "render" / "draft.mp4"
+
+    if not previous or not current:
+        invalidate = {"images", "tts", "render"}
+        reason = "chapters_changed"
+    else:
+        invalidate: set[str] = set()
+        if current.get("structure") != previous.get("structure"):
+            invalidate |= {"images", "tts", "render"}
+        if current.get("narration") != previous.get("narration"):
+            invalidate |= {"tts", "render"}
+        if current.get("visuals") != previous.get("visuals"):
+            invalidate |= {"images", "render"}
+        if current.get("overlays") != previous.get("overlays"):
+            invalidate |= {"render"}
+        reason = "chapters_changed_selective"
+
+    stale_data = {
+        "invalidated_at": _utcnow().isoformat(),
+        "invalidated_by": "chapterize",
+        "reason": reason,
+    }
+
+    def _write(marker: Path) -> None:
+        try:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(json.dumps(stale_data, indent=2), encoding="utf-8")
+        except OSError:  # pragma: no cover - defensive
+            logger.warning("Could not write stale marker %s", marker)
+
+    if "images" in invalidate and images_dir.exists():
+        # Cover both image paths: imagegen (manifest.json.stale) and the
+        # tagesschau frame-edit stage (.stale).
+        _write(images_dir / "manifest.json.stale")
+        _write(images_dir / ".stale")
+        logger.info("Marked images stale for %s (%s)", episode_id, reason)
+    if "tts" in invalidate and tts_dir.exists():
+        _write(tts_dir / "manifest.json.stale")
+        logger.info("Marked tts stale for %s (%s)", episode_id, reason)
+    if "render" in invalidate and render_draft.exists():
+        _write(render_draft.with_suffix(".mp4.stale"))
+        logger.info("Marked render stale for %s (%s)", episode_id, reason)

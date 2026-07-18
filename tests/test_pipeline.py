@@ -31,6 +31,7 @@ def _make_settings(tmp_path: Path) -> Settings:
         reports_dir=str(tmp_path / "reports"),
         raw_data_dir=str(tmp_path / "raw"),
         transcripts_dir=str(tmp_path / "transcripts"),
+        database_url=f"sqlite:///{tmp_path / 'pipeline.db'}",
         dry_run=True,  # Never call real APIs
         pipeline_version=2,
     )

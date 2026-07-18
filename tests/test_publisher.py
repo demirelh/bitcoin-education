@@ -329,6 +329,13 @@ class TestBuildYouTubeMetadata:
 
 
 class TestPublishVideo:
+    @pytest.fixture(autouse=True)
+    def _validated_render(self, monkeypatch):
+        monkeypatch.setattr(
+            "btcedu.core.renderer.render_is_current",
+            lambda *_args, **_kwargs: (True, "render is current"),
+        )
+
     def test_raises_when_episode_not_found(self, db_session, settings):
         with pytest.raises(ValueError, match="not found"):
             publish_video(db_session, "nonexistent_ep", settings)

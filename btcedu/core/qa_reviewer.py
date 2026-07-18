@@ -410,9 +410,47 @@ def _downstream_narration(settings: Settings, episode_id: str) -> tuple[Path | N
     return path, path.read_text(encoding="utf-8")
 
 
+def _extract_story_narration(path: Path) -> str:
+    """Ordered spoken narration from a ``stories_*.json`` file.
+
+    Uses the adapted Turkish text when present, else the translated Turkish
+    text, concatenated in story order. Never the raw JSON — that also carries
+    the German source and structural keys, which are not narration. Mirrors the
+    ``adapted_text`` assembled in ``adapter.py`` so the canonical narrative is
+    identical regardless of which artifact carries it.
+    """
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ""
+    parts: list[str] = []
+    for story in data.get("stories") or []:
+        text = story.get("text_adapted_tr") or story.get("text_tr") or ""
+        if text and text.strip():
+            parts.append(text.strip())
+    return "\n\n".join(parts)
+
+
+def canonical_narration(settings: Settings, episode_id: str) -> tuple[Path | None, str]:
+    """Return (path, canonical spoken narration text) downstream must preserve.
+
+    Single source of truth for the *approved narrative*: QA hashes it
+    (:func:`narration_sha256`) and chapterization locks its composed chapters
+    against it. For story mode the ordered ``text_adapted_tr``/``text_tr`` is
+    extracted; for adapted/transcript mode the file text is used verbatim (so
+    those hashes are byte-identical to the legacy behaviour).
+    """
+    path, raw = _downstream_narration(settings, episode_id)
+    if path is None:
+        return None, ""
+    if path.suffix == ".json":
+        return path, _extract_story_narration(path)
+    return path, raw
+
+
 def narration_sha256(settings: Settings, episode_id: str) -> str | None:
-    """SHA-256 of the current downstream narration, or None when absent."""
-    _, text = _downstream_narration(settings, episode_id)
+    """SHA-256 of the current canonical downstream narration, or None."""
+    _, text = canonical_narration(settings, episode_id)
     if not text.strip():
         return None
     return _sha256_text(text)
@@ -1419,7 +1457,10 @@ def generate_qa_review(
         narration_hash = None
         narration_approved = False
         if decision == "green":
-            narration_hash = _sha256_text(turkish_text)
+            # Lock the *canonical* narrative (ordered adapted/translated text),
+            # not the raw turkish_text/JSON — so QA and chapterization agree on
+            # exactly which characters are approved.
+            narration_hash = narration_sha256(settings, episode_id) or _sha256_text(turkish_text)
             narration_approved = True
 
         std_cost_total = sum(c.cost_usd for c in model_calls if c.kind == "standard")

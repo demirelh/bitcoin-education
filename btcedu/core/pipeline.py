@@ -170,7 +170,7 @@ def _profile_pipeline_flags(settings: Settings, episode: Episode) -> tuple[bool,
         profile = get_registry(settings).get(getattr(episode, "content_profile", "bitcoin_podcast"))
         return bool(profile.auto_approve_reviews), bool(profile.auto_publish)
     except Exception:
-        return False, True
+        return False, False
 
 
 def _quality_gate_scoped(settings: Settings, episode: Episode) -> bool:
@@ -1216,12 +1216,40 @@ def _run_stage(
         elif stage_name == "publish":
             _, auto_publish = _profile_pipeline_flags(settings, episode)
             if not auto_publish:
+                # auto_publish disabled (e.g. tagesschau): the pipeline must never
+                # upload, even after the final publish review is approved. Approval
+                # authorizes a later explicit CLI/web publish action only.
+                from btcedu.core.publisher import (
+                    _publish_artifact_paths,
+                    request_publish_review,
+                )
+                from btcedu.core.reviewer import has_approved_review_for_artifacts
+
                 elapsed = time.monotonic() - t0
+                artifacts = _publish_artifact_paths(episode.episode_id, settings)
+                if has_approved_review_for_artifacts(
+                    session, episode.episode_id, "publish", artifacts
+                ):
+                    return StageResult(
+                        "publish",
+                        "skipped",
+                        elapsed,
+                        detail="final publish approved; explicit manual publish required",
+                    )
+
+                try:
+                    request_publish_review(session, episode.episode_id, settings)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.warning(
+                        "Could not create publish review for %s: %s",
+                        episode.episode_id,
+                        exc,
+                    )
                 return StageResult(
                     "publish",
-                    "skipped",
+                    "review_pending",
                     elapsed,
-                    detail="publishing disabled for profile (episode left APPROVED)",
+                    detail="awaiting final publish approval (auto_publish disabled for profile)",
                 )
 
             from btcedu.core.publisher import publish_video

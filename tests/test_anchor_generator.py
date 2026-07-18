@@ -235,7 +235,7 @@ class TestGenerateAnchorsNormal:
         generate_anchors(session, "ep_test_001", settings)
 
         runs = session.query(PipelineRun).filter_by(
-            episode_id="ep_test_001", stage="anchorgen"
+            episode_id=episode.id, stage="anchorgen"
         ).all()
         assert len(runs) == 1
         assert runs[0].status == "success"
@@ -332,7 +332,7 @@ class TestGenerateAnchorsErrors:
 
         # Add a huge existing cost
         run = PipelineRun(
-            episode_id="ep_test_001",
+            episode_id=episode.id,
             stage="tts",
             status="success",
             estimated_cost_usd=14.5,
@@ -345,5 +345,10 @@ class TestGenerateAnchorsErrors:
         # But DryRun has cost 0, so it won't trigger. Test with a lower limit.
         settings.max_episode_cost_usd = 14.0
 
-        with pytest.raises(RuntimeError, match="cost limit exceeded"):
+        from btcedu.services.errors import ErrorCategory, PipelineError
+
+        with pytest.raises(PipelineError) as exc_info:
             generate_anchors(session, "ep_test_001", settings)
+        assert exc_info.value.category == ErrorCategory.PERMANENT_COST_LIMIT
+        session.refresh(episode)
+        assert episode.status == EpisodeStatus.COST_LIMIT

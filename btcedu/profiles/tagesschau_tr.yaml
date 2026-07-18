@@ -69,6 +69,7 @@ stage_config:
   imagegen:
     provider: generative
     fallback_provider: ideogram
+    deterministic_exact_data: true
     prompt_template: imagegen_news.md
     style_prefix: "Photorealistic editorial news illustration in the visual style of a European public-broadcaster newscast (ARD/Tagesschau). Neutral, journalistic tone, clean broadcast composition, restrained blue and white color palette. "
   translate:
@@ -83,6 +84,13 @@ stage_config:
     style: 0.35
     speed: 1.08
     model: eleven_turbo_v2_5
+    # Deterministic display→spoken substitutions applied ONLY to the synthesized
+    # audio; the locked/approved narration text is never modified. Add German
+    # names/tickers a Turkish voice mispronounces, e.g.:
+    #   pronunciation_lexicon:
+    #     "Scholz": "Şolts"
+    #     "Bundeswehr": "Bundesver"
+    pronunciation_lexicon: {}
   render:
     accent_color: "#004B87"
     ticker_enabled: true

@@ -89,6 +89,7 @@ Produce a **valid JSON document** matching this schema exactly:
 
 - **Decompose script:** Break the adapted script into logical chapter segments
 - **Preserve all content:** Do NOT skip, summarize, or paraphrase. Copy the adapted script text verbatim into narration fields.
+- **Exact partition (MANDATORY):** The narration fields, concatenated in chapter order, MUST reproduce the adapted script exactly — every sentence, number, name and result, in the original order. You are only choosing where the chapter boundaries fall; you are NOT rewriting, adding (no new intros/hooks/summaries/CTAs), removing or reordering any spoken content. Titles, notes, visuals and overlays are separate metadata and must never introduce spoken narration that is not in the source.
 - **Natural breaks:** Chapter boundaries should align with topic shifts, pauses, or section headers in the script
 - **Word count:** Count words accurately (split on whitespace)
 - **Duration estimate:** Use **150 words per minute** for Turkish:

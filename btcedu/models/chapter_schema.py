@@ -61,6 +61,17 @@ class Visual(BaseModel):
     image_prompt: str | None = Field(
         None, description="Image generation prompt (null for non-generated types)"
     )
+    deterministic: dict | None = Field(
+        None,
+        description=(
+            "Optional deterministic asset spec for exact-data visuals (maps, "
+            "charts, tables, weather, election results, timelines). When present, "
+            "the image is rendered locally from these exact values instead of a "
+            "generative model, so numbers/labels are never hallucinated. Shape: "
+            "{'category': str, 'title': str?, 'items': [{'label': str, 'value': str}], "
+            "'note': str?}."
+        ),
+    )
 
     @model_validator(mode="after")
     def validate_image_prompt(self) -> "Visual":
@@ -68,7 +79,9 @@ class Visual(BaseModel):
         needs_prompt = self.type in (VisualType.DIAGRAM, VisualType.B_ROLL)
         has_prompt = self.image_prompt is not None and len(self.image_prompt) > 0
 
-        if needs_prompt and not has_prompt:
+        # A deterministic spec satisfies the prompt requirement: the visual is
+        # rendered from exact data, not a generative prompt.
+        if needs_prompt and not has_prompt and not self.deterministic:
             raise ValueError(f"Visual type '{self.type}' requires image_prompt, got null/empty")
 
         if not needs_prompt and has_prompt:

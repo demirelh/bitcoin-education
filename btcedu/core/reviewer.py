@@ -575,7 +575,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
     render_manifest = None
     chapter_script = None
     youtube_metadata = None
-    if task.stage == "render" and episode:
+    if task.stage in ("render", "publish") and episode:
         # Check if draft.mp4 exists
         settings = _get_runtime_settings()
         draft_path = Path(settings.outputs_dir) / episode.episode_id / "render" / "draft.mp4"

@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Protocol
@@ -61,10 +62,12 @@ class ElevenLabsService:
         api_key: str,
         default_voice_id: str = "",
         default_model: str = "eleven_multilingual_v2",
+        before_api_call: Callable[[int, int], None] | None = None,
     ):
         self.api_key = api_key
         self.default_voice_id = default_voice_id
         self.default_model = default_model
+        self.before_api_call = before_api_call
 
     def synthesize(self, request: TTSRequest) -> TTSResponse:
         """Synthesize text to speech.
@@ -101,10 +104,26 @@ class ElevenLabsService:
 
         # Synthesize each chunk
         audio_parts = []
+        sent_chars = 0
         for i, chunk in enumerate(chunks):
             logger.info("Synthesizing chunk %d/%d (%d chars)", i + 1, len(chunks), len(chunk))
-            audio_data = self._call_with_retry(chunk, voice_id, model, voice_settings)
+            try:
+                audio_data = self._call_with_retry(
+                    chunk,
+                    voice_id,
+                    model,
+                    voice_settings,
+                    sent_chars=sent_chars,
+                )
+            except Exception as exc:
+                incurred = _compute_cost(sent_chars)
+                try:
+                    exc.cost_usd = max(float(getattr(exc, "cost_usd", 0.0)), incurred)
+                except (TypeError, ValueError):
+                    exc.cost_usd = incurred
+                raise
             audio_parts.append(audio_data)
+            sent_chars += len(chunk)
 
         # Concatenate if multi-chunk
         if len(audio_parts) == 1:
@@ -143,6 +162,7 @@ class ElevenLabsService:
         model: str,
         voice_settings: dict,
         max_retries: int = 3,
+        sent_chars: int = 0,
     ) -> bytes:
         """Call ElevenLabs API with exponential backoff on rate limits."""
         url = f"{API_BASE}/text-to-speech/{voice_id}"
@@ -159,6 +179,8 @@ class ElevenLabsService:
 
         for attempt in range(max_retries):
             try:
+                if self.before_api_call is not None:
+                    self.before_api_call(sent_chars, len(text))
                 response = requests.post(url, json=payload, headers=headers, timeout=120)
 
                 if response.status_code == 429:

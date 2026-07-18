@@ -3,10 +3,10 @@
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Callable
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -117,9 +117,11 @@ def render_video(
         )
 
     # Check episode status (allow TTS_DONE or RENDERED for idempotency)
-    if episode.status not in (
-        EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED, EpisodeStatus.RENDERED
-    ) and not force:
+    if (
+        episode.status
+        not in (EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED, EpisodeStatus.RENDERED)
+        and not force
+    ):
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'tts_done' or 'rendered'. Use --force to override."
@@ -146,10 +148,16 @@ def render_video(
         return default
 
     # Resolve effective render feature flags (profile overrides globals)
-    _eff_ken_burns = bool(_rc("ken_burns_enabled", getattr(settings, "render_ken_burns_enabled", False)))
-    _eff_lower_thirds = bool(_rc("lower_thirds_animated", getattr(settings, "render_lower_thirds_animated", False)))
+    _eff_ken_burns = bool(
+        _rc("ken_burns_enabled", getattr(settings, "render_ken_burns_enabled", False))
+    )
+    _eff_lower_thirds = bool(
+        _rc("lower_thirds_animated", getattr(settings, "render_lower_thirds_animated", False))
+    )
     _eff_ticker = bool(_rc("ticker_enabled", getattr(settings, "render_ticker_enabled", False)))
-    _eff_intro_show_name = str(_rc("intro_show_name", getattr(settings, "render_intro_show_name", "")))
+    _eff_intro_show_name = str(
+        _rc("intro_show_name", getattr(settings, "render_intro_show_name", ""))
+    )
     _eff_outro_text = str(_rc("outro_text", getattr(settings, "render_outro_text", "")))
     _eff_font = str(_rc("font", getattr(settings, "render_font", "")))
     _eff_music_bed = str(_rc("music_bed", getattr(settings, "render_music_bed", "")))
@@ -204,11 +212,36 @@ def render_video(
             "color_correction": bool(settings.render_color_correction_enabled),
             "font": _eff_font,
             "music_bed": _eff_music_bed,
+            "intro_show_name": _eff_intro_show_name,
+            "outro_text": _eff_outro_text,
+            "accent_color": _accent_color,
+            "resolution": settings.render_resolution,
+            "fps": settings.render_fps,
+            "crf": settings.render_crf,
+            "preset": settings.render_preset,
+            "audio_bitrate": settings.render_audio_bitrate,
+            "transition_duration": settings.render_transition_duration,
+            "ken_burns_zoom_ratio": settings.render_ken_burns_zoom_ratio,
+            "lower_third_slide_duration": settings.render_lower_thirds_slide_duration,
+            "ticker_speed": settings.render_ticker_speed,
+            "ticker_height": settings.render_ticker_height,
+            "ticker_fontsize": settings.render_ticker_fontsize,
+            "intro_duration": settings.render_intro_duration,
+            "intro_bg_color": settings.render_intro_bg_color,
+            "outro_duration": settings.render_outro_duration,
+            "outro_bg_color": settings.render_outro_bg_color,
+            "color_saturation": settings.render_color_saturation,
+            "color_brightness": settings.render_color_brightness,
+            "color_blue_shift": settings.render_color_blue_shift,
+            "episode_title": episode.title,
+            "episode_published_at": str(episode.published_at),
         }
     except (AttributeError, TypeError):
         pass  # settings may lack these attrs (backward compat / mocks)
     content_hash = _compute_render_content_hash(
-        chapters_doc, image_manifest, tts_manifest,
+        chapters_doc,
+        image_manifest,
+        tts_manifest,
         _enh_hash_data if _enh_hash_data else None,
     )
 
@@ -278,7 +311,8 @@ def render_video(
 
         # Enhancement kwargs shared between photo and video segments
         def _enhancement_kwargs(
-            asset_type: str, chapter_idx: int,
+            asset_type: str,
+            chapter_idx: int,
         ) -> dict:
             kwargs: dict = {}
             # Color correction (both photo and video)
@@ -290,9 +324,7 @@ def render_video(
             # Animated lower thirds (both)
             if _eff_lower_thirds:
                 kwargs["animated_lower_thirds"] = True
-                kwargs["lower_third_slide_duration"] = (
-                    settings.render_lower_thirds_slide_duration
-                )
+                kwargs["lower_third_slide_duration"] = settings.render_lower_thirds_slide_duration
                 kwargs["lower_third_accent_color"] = _accent_color
             # Ticker (both)
             if _ticker_text:
@@ -302,13 +334,9 @@ def render_video(
                 kwargs["ticker_fontsize"] = settings.render_ticker_fontsize
             # Ken Burns (photo only)
             if _eff_ken_burns and asset_type == "photo":
-                pattern = KEN_BURNS_PATTERNS[
-                    chapter_idx % len(KEN_BURNS_PATTERNS)
-                ]
+                pattern = KEN_BURNS_PATTERNS[chapter_idx % len(KEN_BURNS_PATTERNS)]
                 kwargs["ken_burns_pattern"] = pattern
-                kwargs["ken_burns_zoom_ratio"] = (
-                    settings.render_ken_burns_zoom_ratio
-                )
+                kwargs["ken_burns_zoom_ratio"] = settings.render_ken_burns_zoom_ratio
             return kwargs
 
         _chapters_total = len(chapters_doc.chapters)
@@ -323,23 +351,30 @@ def render_video(
 
         for _ch_idx, chapter in enumerate(chapters_doc.chapters, start=1):
             # Notify progress at start of each chapter
-            _emit({
-                "stage": "segment_start",
-                "current": _ch_idx,
-                "total": _chapters_total,
-                "chapter_id": chapter.chapter_id,
-                "chapter_title": getattr(chapter, "title", "") or "",
-                "progress_pct": int(100 * (_ch_idx - 1) / max(_chapters_total, 1)),
-            })
+            _emit(
+                {
+                    "stage": "segment_start",
+                    "current": _ch_idx,
+                    "total": _chapters_total,
+                    "chapter_id": chapter.chapter_id,
+                    "chapter_title": getattr(chapter, "title", "") or "",
+                    "progress_pct": int(100 * (_ch_idx - 1) / max(_chapters_total, 1)),
+                }
+            )
             # Resolve media files for this chapter
             try:
                 media_path, audio_path, duration, asset_type = _resolve_chapter_media(
-                    chapter.chapter_id, image_manifest, tts_manifest, base_dir,
+                    chapter.chapter_id,
+                    image_manifest,
+                    tts_manifest,
+                    base_dir,
                     anchor_manifest=anchor_manifest,
                 )
             except ValueError as e:
-                logger.warning("Skipping chapter %s: %s", chapter.chapter_id, e)
-                continue
+                raise ValueError(
+                    f"Cannot render complete episode: chapter {chapter.chapter_id} "
+                    f"has unresolved media: {e}"
+                ) from e
 
             # Convert overlays to OverlaySpec (profile-aware accent color + font)
             overlay_specs = _chapter_to_overlay_specs(
@@ -504,15 +539,17 @@ def render_video(
             total_size += segment_result.size_bytes
 
             # Notify progress at completion of each chapter
-            _emit({
-                "stage": "segment_done",
-                "current": _ch_idx,
-                "total": _chapters_total,
-                "chapter_id": chapter.chapter_id,
-                "chapter_title": getattr(chapter, "title", "") or "",
-                "size_bytes": segment_result.size_bytes,
-                "progress_pct": int(100 * _ch_idx / max(_chapters_total, 1)),
-            })
+            _emit(
+                {
+                    "stage": "segment_done",
+                    "current": _ch_idx,
+                    "total": _chapters_total,
+                    "chapter_id": chapter.chapter_id,
+                    "chapter_title": getattr(chapter, "title", "") or "",
+                    "size_bytes": segment_result.size_bytes,
+                    "progress_pct": int(100 * _ch_idx / max(_chapters_total, 1)),
+                }
+            )
 
         # Concatenate segments
         if not segment_entries:
@@ -572,14 +609,16 @@ def render_video(
 
         logger.info("Concatenating %d segments into draft video", len(segment_abs_paths))
 
-        _emit({
-            "stage": "concat",
-            "current": _chapters_total,
-            "total": _chapters_total,
-            "chapter_id": "concat",
-            "chapter_title": f"Concat {len(segment_abs_paths)} segments",
-            "progress_pct": 99,
-        })
+        _emit(
+            {
+                "stage": "concat",
+                "current": _chapters_total,
+                "total": _chapters_total,
+                "chapter_id": "concat",
+                "chapter_title": f"Concat {len(segment_abs_paths)} segments",
+                "progress_pct": 99,
+            }
+        )
 
         concat_result = concatenate_segments(
             segment_paths=segment_abs_paths,
@@ -677,14 +716,16 @@ def render_video(
             total_size,
         )
 
-        _emit({
-            "stage": "done",
-            "current": _chapters_total,
-            "total": _chapters_total,
-            "chapter_id": "done",
-            "chapter_title": "Render complete",
-            "progress_pct": 100,
-        })
+        _emit(
+            {
+                "stage": "done",
+                "current": _chapters_total,
+                "total": _chapters_total,
+                "chapter_id": "done",
+                "chapter_title": "Render complete",
+                "progress_pct": 100,
+            }
+        )
 
         return RenderResult(
             episode_id=episode_id,
@@ -755,6 +796,7 @@ def _compute_render_content_hash(
         "chapters": [
             {
                 "chapter_id": ch.chapter_id,
+                "title": ch.title,
                 "overlays": [
                     {
                         "type": ov.type.value,
@@ -777,6 +819,8 @@ def _compute_render_content_hash(
                 "file_path": img["file_path"],
                 "generation_method": img.get("generation_method", "unknown"),
                 "asset_type": img.get("asset_type", "photo"),  # Phase 4
+                "content_hash": img.get("content_hash"),
+                "metadata": img.get("metadata"),
             }
             for img in image_manifest.get("images", [])
         ],
@@ -785,13 +829,16 @@ def _compute_render_content_hash(
                 "chapter_id": seg["chapter_id"],
                 "file_path": seg["file_path"],
                 "duration_seconds": seg["duration_seconds"],
+                "text_hash": seg.get("text_hash"),
+                "voice_id": seg.get("voice_id"),
+                "model": seg.get("model"),
             }
             for seg in tts_manifest.get("segments", [])
         ],
     }
     if enhancement_settings:
         relevant_data["enhancements"] = enhancement_settings
-    content_str = json.dumps(relevant_data, sort_keys=True, ensure_ascii=False)
+    content_str = json.dumps(relevant_data, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(content_str.encode("utf-8")).hexdigest()
 
 
@@ -822,6 +869,137 @@ def _is_render_current(
         return False
 
     return True
+
+
+def _current_render_content_hash(session, episode_id: str, settings: Settings) -> str | None:
+    """Recompute the render content hash from the CURRENT inputs, or None.
+
+    Mirrors the enhancement-flag/manifest logic in :func:`render_video` so a
+    caller (e.g. the publisher) can verify the existing draft still matches the
+    current chapters/images/audio without re-rendering.
+    """
+    base = Path(settings.outputs_dir) / episode_id
+    chapters_path = base / "chapters.json"
+    image_manifest_path = base / "images" / "manifest.json"
+    tts_manifest_path = base / "tts" / "manifest.json"
+    if not (chapters_path.exists() and image_manifest_path.exists() and tts_manifest_path.exists()):
+        return None
+
+    chapters_doc = _load_chapters(chapters_path)
+    image_manifest = _load_image_manifest(image_manifest_path)
+    tts_manifest = _load_tts_manifest(tts_manifest_path)
+
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    _render_cfg: dict = {}
+    try:
+        from btcedu.profiles import get_registry as _get_profile_registry
+
+        _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+        _profile = _get_profile_registry(settings).get(_profile_name)
+        _render_cfg = (_profile.stage_config.get("render", {}) if _profile else {}) or {}
+    except Exception:  # noqa: BLE001
+        _render_cfg = {}
+
+    def _rc(key: str, default):
+        if key in _render_cfg and _render_cfg[key] is not None:
+            return _render_cfg[key]
+        return default
+
+    _enh_hash_data: dict = {}
+    try:
+        _enh_hash_data = {
+            "ken_burns": bool(
+                _rc("ken_burns_enabled", getattr(settings, "render_ken_burns_enabled", False))
+            ),
+            "lower_thirds_animated": bool(
+                _rc(
+                    "lower_thirds_animated",
+                    getattr(settings, "render_lower_thirds_animated", False),
+                )
+            ),
+            "ticker": bool(
+                _rc("ticker_enabled", getattr(settings, "render_ticker_enabled", False))
+            ),
+            "intro": bool(settings.render_intro_enabled),
+            "outro": bool(settings.render_outro_enabled),
+            "color_correction": bool(settings.render_color_correction_enabled),
+            "font": str(_rc("font", getattr(settings, "render_font", ""))),
+            "music_bed": str(_rc("music_bed", getattr(settings, "render_music_bed", ""))),
+            "intro_show_name": str(
+                _rc("intro_show_name", getattr(settings, "render_intro_show_name", ""))
+            ),
+            "outro_text": str(_rc("outro_text", getattr(settings, "render_outro_text", ""))),
+            "accent_color": str(_rc("accent_color", "#F7931A")),
+            "resolution": settings.render_resolution,
+            "fps": settings.render_fps,
+            "crf": settings.render_crf,
+            "preset": settings.render_preset,
+            "audio_bitrate": settings.render_audio_bitrate,
+            "transition_duration": settings.render_transition_duration,
+            "ken_burns_zoom_ratio": settings.render_ken_burns_zoom_ratio,
+            "lower_third_slide_duration": settings.render_lower_thirds_slide_duration,
+            "ticker_speed": settings.render_ticker_speed,
+            "ticker_height": settings.render_ticker_height,
+            "ticker_fontsize": settings.render_ticker_fontsize,
+            "intro_duration": settings.render_intro_duration,
+            "intro_bg_color": settings.render_intro_bg_color,
+            "outro_duration": settings.render_outro_duration,
+            "outro_bg_color": settings.render_outro_bg_color,
+            "color_saturation": settings.render_color_saturation,
+            "color_brightness": settings.render_color_brightness,
+            "color_blue_shift": settings.render_color_blue_shift,
+            "episode_title": getattr(episode, "title", None),
+            "episode_published_at": str(getattr(episode, "published_at", None)),
+        }
+    except (AttributeError, TypeError):
+        _enh_hash_data = {}
+
+    return _compute_render_content_hash(
+        chapters_doc,
+        image_manifest,
+        tts_manifest,
+        _enh_hash_data if _enh_hash_data else None,
+    )
+
+
+def render_is_current(session, episode_id: str, settings: Settings) -> tuple[bool, str]:
+    """Public validation helper: is the draft render current & valid to publish?
+
+    Returns ``(ok, reason)``. Checks the draft exists and is non-empty, the
+    manifest/provenance exist, there is no stale marker, and the recomputed input
+    content hash matches what was rendered. Never raises.
+    """
+    base = Path(settings.outputs_dir) / episode_id
+    draft = base / "render" / "draft.mp4"
+    manifest = base / "render" / "render_manifest.json"
+    provenance = base / "provenance" / "render_provenance.json"
+
+    if not draft.exists() or draft.stat().st_size == 0:
+        return False, "draft.mp4 missing or empty"
+    if not manifest.exists() or not provenance.exists():
+        return False, "render manifest/provenance missing"
+    if draft.with_suffix(".mp4.stale").exists():
+        return False, "render marked stale (upstream change)"
+    try:
+        content_hash = _current_render_content_hash(session, episode_id, settings)
+    except Exception as e:  # noqa: BLE001
+        return False, f"could not recompute render hash: {e}"
+    if content_hash is None:
+        return False, "render inputs (chapters/images/tts) missing"
+    if not _is_render_current(manifest, provenance, draft, content_hash):
+        return False, "render inputs changed since last render"
+    try:
+        manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
+        chapters_doc = _load_chapters(base / "chapters.json")
+        expected = {chapter.chapter_id for chapter in chapters_doc.chapters}
+        actual = {
+            segment.get("chapter_id") for segment in manifest_data.get("segments", [])
+        }
+        if actual != expected:
+            return False, "render manifest does not cover every chapter exactly once"
+    except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:
+        return False, f"render manifest coverage validation failed: {exc}"
+    return True, "render is current"
 
 
 def _chapter_to_overlay_specs(chapter, font: str, accent_color: str = "#F7931A") -> list:

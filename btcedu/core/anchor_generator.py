@@ -15,6 +15,7 @@ from btcedu.models.chapter_schema import ChapterDocument, VisualType
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
 from btcedu.models.media_asset import MediaAsset, MediaAssetType
+from btcedu.services.errors import ErrorCategory, PipelineError
 
 logger = logging.getLogger(__name__)
 
@@ -75,15 +76,10 @@ def generate_anchors(
         raise ValueError(f"Episode not found: {episode_id}")
 
     if episode.pipeline_version != 2:
-        raise ValueError(
-            f"Episode {episode_id} is v1 pipeline. Anchor generation requires v2."
-        )
+        raise ValueError(f"Episode {episode_id} is v1 pipeline. Anchor generation requires v2.")
 
     # Allow TTS_DONE or ANCHOR_GENERATED for idempotency
-    if (
-        episode.status not in (EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED)
-        and not force
-    ):
+    if episode.status not in (EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED) and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'tts_done' or 'anchor_generated'. Use --force to override."
@@ -151,7 +147,7 @@ def generate_anchors(
 
     # Create PipelineRun record
     pipeline_run = PipelineRun(
-        episode_id=episode_id,
+        episode_id=episode.id,
         stage="anchorgen",
         status=RunStatus.RUNNING.value,
         started_at=_utcnow(),
@@ -194,9 +190,7 @@ def generate_anchors(
         else:
             from btcedu.services.anchor_service import DIDService
 
-            anchor_service = DIDService(
-                api_key=settings.did_api_key, output_dir=str(anchor_dir)
-            )
+            anchor_service = DIDService(api_key=settings.did_api_key, output_dir=str(anchor_dir))
 
         anchor_dir.mkdir(parents=True, exist_ok=True)
 
@@ -208,18 +202,17 @@ def generate_anchors(
         for chapter in talking_head_chapters:
             # Cost guard
             episode_total_cost = _get_episode_total_cost(session, episode_id)
-            if episode_total_cost + total_cost > settings.max_episode_cost_usd:
-                raise RuntimeError(
-                    f"Episode cost limit exceeded: "
-                    f"{episode_total_cost + total_cost:.2f} > "
-                    f"{settings.max_episode_cost_usd}. Stopping anchor generation."
+            if episode_total_cost + total_cost >= settings.max_episode_cost_usd:
+                raise PipelineError(
+                    f"Episode cost limit reached before anchor generation: "
+                    f"${episode_total_cost + total_cost:.4f} >= "
+                    f"${settings.max_episode_cost_usd:.4f}",
+                    ErrorCategory.PERMANENT_COST_LIMIT,
                 )
 
             tts_segment = tts_segments.get(chapter.chapter_id)
             if not tts_segment:
-                logger.warning(
-                    "No TTS segment for chapter %s, skipping anchor", chapter.chapter_id
-                )
+                logger.warning("No TTS segment for chapter %s, skipping anchor", chapter.chapter_id)
                 continue
 
             audio_path = str(outputs_dir / tts_segment["file_path"])
@@ -354,6 +347,9 @@ def generate_anchors(
         pipeline_run.status = RunStatus.FAILED.value
         pipeline_run.completed_at = _utcnow()
         pipeline_run.error_message = str(e)
+        pipeline_run.estimated_cost_usd = locals().get("total_cost", 0.0)
+        if isinstance(e, PipelineError) and e.category == ErrorCategory.PERMANENT_COST_LIMIT:
+            episode.status = EpisodeStatus.COST_LIMIT
         episode.error_message = str(e)
         session.commit()
         logger.error("Anchor generation failed for %s: %s", episode_id, e)
@@ -383,9 +379,7 @@ def _compute_anchor_hash(chapters_doc: ChapterDocument, settings: Settings) -> s
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def _is_anchor_current(
-    manifest_path: Path, provenance_path: Path, content_hash: str
-) -> bool:
+def _is_anchor_current(manifest_path: Path, provenance_path: Path, content_hash: str) -> bool:
     """Check if anchor output is current (idempotency)."""
     if not manifest_path.exists() or not provenance_path.exists():
         return False
@@ -404,12 +398,20 @@ def _is_anchor_current(
 
 
 def _get_episode_total_cost(session: Session, episode_id: str) -> float:
-    """Get total cost across all pipeline runs for an episode."""
+    """Get total cost across all pipeline runs for an episode.
+
+    ``PipelineRun.episode_id`` is an integer FK to ``episodes.id``; resolve the
+    string ``episode_id`` to that integer so the cost guard counts every prior
+    stage rather than nothing.
+    """
     from sqlalchemy import func
 
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    if episode is None:
+        return 0.0
     result = (
         session.query(func.coalesce(func.sum(PipelineRun.estimated_cost_usd), 0.0))
-        .filter(PipelineRun.episode_id == episode_id)
+        .filter(PipelineRun.episode_id == episode.id)
         .scalar()
     )
     return float(result)

@@ -282,6 +282,24 @@ def test_compute_render_content_hash():
     hash3 = _compute_render_content_hash(chapters_doc_changed, image_manifest, tts_manifest)
     assert hash3 != hash1
 
+    chapters_json["chapters"][0]["overlays"][0]["text"] = "Test"
+    chapters_json["chapters"][0]["title"] = "Changed title"
+    chapters_doc_title_changed = ChapterDocument(**chapters_json)
+    assert (
+        _compute_render_content_hash(chapters_doc_title_changed, image_manifest, tts_manifest)
+        != hash1
+    )
+
+    assert (
+        _compute_render_content_hash(
+            chapters_doc,
+            image_manifest,
+            tts_manifest,
+            {"intro_show_name": "Different show"},
+        )
+        != hash1
+    )
+
 
 def test_is_render_current_no_files(tmp_path):
     """Test idempotency check when files don't exist."""
@@ -863,7 +881,7 @@ def test_render_skips_fresh_segments(db_session, settings, tmp_path):
 def test_render_video_error_rollback(db_session, settings, tmp_path):
     """Test that render failure sets PipelineRun to failed and records error.
 
-    When all chapters have missing media, render raises RuntimeError and
+    When any chapter has missing media, render fails closed and
     the PipelineRun and episode error_message are updated accordingly.
     """
     settings.outputs_dir = str(tmp_path / "outputs")
@@ -962,7 +980,7 @@ def test_render_video_error_rollback(db_session, settings, tmp_path):
             "btcedu.services.ffmpeg_service.get_ffmpeg_version",
             return_value="ffmpeg version 6.0-mock",
         ),
-        pytest.raises(RuntimeError, match="No segments were rendered"),
+        pytest.raises(ValueError, match="Cannot render complete episode"),
     ):
         render_video(db_session, "ep001", settings)
 
@@ -970,9 +988,9 @@ def test_render_video_error_rollback(db_session, settings, tmp_path):
     run = db_session.query(PipelineRun).filter_by(episode_id="ep001", stage="render").first()
     assert run is not None
     assert run.status == "failed"
-    assert "No segments were rendered" in run.error_message
+    assert "Cannot render complete episode" in run.error_message
 
     # Episode error_message should be set
     db_session.refresh(episode)
     assert episode.error_message is not None
-    assert "No segments were rendered" in episode.error_message
+    assert "Cannot render complete episode" in episode.error_message

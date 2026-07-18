@@ -193,6 +193,242 @@ def _check_cost_sanity(session: Session, episode: Episode, settings: Settings) -
     )
 
 
+def _publish_artifact_paths(episode_id: str, settings: Settings) -> list[str]:
+    """The artifacts a final publish approval must be bound to.
+
+    Binding to the final render, the QA quality gate, chapters and the canonical
+    narration source means an approval becomes stale the instant any of them
+    changes — an intermediate render approval can never authorize a later,
+    different cut.
+    """
+    base = Path(settings.outputs_dir) / episode_id
+    paths = [str(base / "render" / "draft.mp4")]
+    for extra in (
+        "translation_quality_gate.json",
+        "chapters.json",
+        "render/youtube_metadata.json",
+        "render/publish_request.json",
+    ):
+        p = base / extra
+        if p.exists():
+            paths.append(str(p))
+    try:
+        from btcedu.core.qa_reviewer import canonical_narration
+
+        narration_path, _ = canonical_narration(settings, episode_id)
+        if narration_path is not None:
+            paths.append(str(narration_path))
+    except Exception:  # noqa: BLE001
+        pass
+    return paths
+
+
+def _write_publish_request_artifact(
+    episode: Episode,
+    settings: Settings,
+    privacy_status: str | None = None,
+) -> Path:
+    """Persist the effective upload settings that a final approval authorizes."""
+    from btcedu.profiles import get_registry
+
+    name = getattr(episode, "content_profile", None) or "bitcoin_podcast"
+    profile = get_registry(settings).get(name)
+    youtube = profile.youtube or {}
+    payload = {
+        "episode_id": episode.episode_id,
+        "content_profile": name,
+        "privacy_status": (
+            privacy_status
+            or youtube.get("default_privacy")
+            or getattr(settings, "youtube_default_privacy", "unlisted")
+        ),
+        "category_id": youtube.get("category_id", "25"),
+        "default_language": youtube.get("default_language", "tr"),
+    }
+    path = Path(settings.outputs_dir) / episode.episode_id / "render" / "publish_request.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def _requires_manual_publish_review(episode: Episode, settings: Settings) -> bool:
+    """True when the profile disables auto-publish (e.g. tagesschau news).
+
+    Such profiles require an explicit, artifact-bound final-publish approval;
+    the Review Gate 3 render approval is intermediate and never sufficient.
+    """
+    try:
+        from btcedu.profiles import get_registry
+
+        name = getattr(episode, "content_profile", None) or "bitcoin_podcast"
+        return not bool(get_registry(settings).get(name).auto_publish)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _requires_publish_qa(episode: Episode, settings: Settings) -> bool:
+    """Whether publishing must have a valid QA gate and approved narration hash."""
+    if _requires_manual_publish_review(episode, settings):
+        return True
+    try:
+        from btcedu.profiles import get_registry
+
+        name = getattr(episode, "content_profile", None) or "bitcoin_podcast"
+        profile = get_registry(settings).get(name)
+        return bool((profile.stage_config.get("translation_qa", {}) or {}).get("enabled", False))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _check_qa_gate(session: Session, episode: Episode, settings: Settings) -> SafetyCheck:
+    """Check 5: QA gate is GREEN for the current narration, or artifact-approved.
+
+    Legacy profiles without QA enabled are unaffected.
+    """
+    from btcedu.core.qa_reviewer import gate_review_artifacts, load_quality_gate
+
+    gate = load_quality_gate(settings, episode.episode_id)
+    if gate is None:
+        if _requires_publish_qa(episode, settings):
+            return SafetyCheck("qa_gate", False, "Required Translation-QA gate is missing")
+        return SafetyCheck("qa_gate", True, "No QA gate for profile — not required")
+
+    decision = gate.get("decision") or gate.get("status")
+    if decision == "green":
+        return SafetyCheck("qa_gate", True, "QA gate is GREEN")
+
+    from btcedu.core.reviewer import has_approved_review_for_artifacts
+
+    artifacts = gate_review_artifacts(settings, episode.episode_id)
+    if has_approved_review_for_artifacts(session, episode.episode_id, "translation_qa", artifacts):
+        return SafetyCheck(
+            "qa_gate",
+            True,
+            f"QA gate '{decision}' overridden by artifact-bound translation_qa review",
+        )
+    return SafetyCheck(
+        "qa_gate",
+        False,
+        f"QA gate is '{decision}' and no artifact-bound QA review is approved",
+    )
+
+
+def _check_no_critical_findings(settings: Settings, episode: Episode) -> SafetyCheck:
+    """Check 6: No unresolved (open) critical QA findings."""
+    from btcedu.core.qa_reviewer import load_quality_gate
+
+    gate = load_quality_gate(settings, episode.episode_id)
+    if gate is None:
+        if _requires_publish_qa(episode, settings):
+            return SafetyCheck(
+                "no_critical_findings", False, "Cannot verify critical findings: QA gate missing"
+            )
+        return SafetyCheck("no_critical_findings", True, "No QA gate — not applicable")
+
+    open_critical = [
+        f
+        for f in (gate.get("findings") or [])
+        if f.get("severity") == "critical" and (f.get("status") or "open") == "open"
+    ]
+    if open_critical:
+        return SafetyCheck(
+            "no_critical_findings",
+            False,
+            f"{len(open_critical)} unresolved critical QA finding(s)",
+        )
+    return SafetyCheck("no_critical_findings", True, "No unresolved critical findings")
+
+
+def _check_narration_current(settings: Settings, episode: Episode) -> SafetyCheck:
+    """Check 7: The approved narration hash still matches the current narration."""
+    from btcedu.core.qa_reviewer import load_quality_gate, narration_sha256
+
+    gate = load_quality_gate(settings, episode.episode_id)
+    if gate is None:
+        if _requires_publish_qa(episode, settings):
+            return SafetyCheck(
+                "narration_current", False, "Cannot verify narration: QA gate missing"
+            )
+        return SafetyCheck("narration_current", True, "No QA gate — not applicable")
+
+    approved = gate.get("narration_sha256")
+    if not approved:
+        return SafetyCheck("narration_current", False, "QA gate has no approved narration hash")
+    current = narration_sha256(settings, episode.episode_id)
+    if current != approved:
+        return SafetyCheck(
+            "narration_current",
+            False,
+            f"Approved narration changed since QA (approved={approved[:12]}…, "
+            f"current={str(current)[:12]}…)",
+        )
+    return SafetyCheck("narration_current", True, "Approved narration hash is current")
+
+
+def _check_render_valid(session: Session, episode: Episode, settings: Settings) -> SafetyCheck:
+    """Check 8: The draft render exists, is non-empty, validated, and current."""
+    base = Path(settings.outputs_dir) / episode.episode_id
+    draft = base / "render" / "draft.mp4"
+    if not draft.exists() or draft.stat().st_size == 0:
+        return SafetyCheck("render_valid", False, "Render draft.mp4 is missing or empty")
+
+    try:
+        from btcedu.core.renderer import render_is_current
+
+        ok, reason = render_is_current(session, episode.episode_id, settings)
+        if not ok:
+            return SafetyCheck("render_valid", False, f"Render not current/validated: {reason}")
+    except Exception as e:  # noqa: BLE001
+        return SafetyCheck("render_valid", False, f"Render validation error: {e}")
+    return SafetyCheck("render_valid", True, "Render draft exists, non-empty and validated")
+
+
+def _check_profile_publish_permitted(episode: Episode, settings: Settings) -> SafetyCheck:
+    """Check 9: The profile permits publishing (not explicitly disabled)."""
+    try:
+        from btcedu.profiles import get_registry
+
+        name = getattr(episode, "content_profile", None) or "bitcoin_podcast"
+        profile = get_registry(settings).get(name)
+        if (profile.youtube or {}).get("publish_enabled") is False:
+            return SafetyCheck(
+                "profile_publish_permitted",
+                False,
+                f"Profile '{name}' has publishing disabled",
+            )
+    except Exception as exc:  # noqa: BLE001
+        return SafetyCheck(
+            "profile_publish_permitted",
+            False,
+            f"Could not resolve publishing profile safely: {exc}",
+        )
+    return SafetyCheck("profile_publish_permitted", True, "Profile permits publishing")
+
+
+def _check_manual_publish_approval(
+    session: Session, episode: Episode, settings: Settings
+) -> SafetyCheck:
+    """Check 10 (auto_publish=False only): explicit final-publish approval exists.
+
+    Requires an APPROVED ReviewTask with ``stage='publish'`` whose artifact hash
+    matches the current final render + QA gate + narration source. The Review
+    Gate 3 render approval is intermediate and does not satisfy this.
+    """
+    from btcedu.core.reviewer import has_approved_review_for_artifacts
+
+    artifacts = _publish_artifact_paths(episode.episode_id, settings)
+    if has_approved_review_for_artifacts(session, episode.episode_id, "publish", artifacts):
+        return SafetyCheck(
+            "manual_publish_approval", True, "Artifact-bound final-publish approval present"
+        )
+    return SafetyCheck(
+        "manual_publish_approval",
+        False,
+        "No approved 'publish' review bound to the current render/gate/narration. "
+        "Create and approve a final-publish review before publishing.",
+    )
+
+
 def _run_all_safety_checks(
     session: Session,
     episode: Episode,
@@ -201,13 +437,26 @@ def _run_all_safety_checks(
     description: str,
     tags: list[str],
 ) -> list[SafetyCheck]:
-    """Run all 4 pre-publish safety checks. Returns list of SafetyCheck."""
+    """Run all pre-publish safety checks. Returns list of SafetyCheck.
+
+    Legacy (auto_publish) profiles keep their original four checks plus the new
+    ones which no-op when no QA gate exists. Profiles with ``auto_publish=False``
+    (e.g. tagesschau) additionally require an explicit, artifact-bound
+    final-publish approval so an intermediate render approval can never publish.
+    """
     checks = [
         _check_approval_gate(session, episode),
         _check_artifact_integrity(session, episode, settings),
         _check_metadata_completeness(title, description, tags),
         _check_cost_sanity(session, episode, settings),
+        _check_qa_gate(session, episode, settings),
+        _check_no_critical_findings(settings, episode),
+        _check_narration_current(settings, episode),
+        _check_render_valid(session, episode, settings),
+        _check_profile_publish_permitted(episode, settings),
     ]
+    if _requires_manual_publish_review(episode, settings):
+        checks.append(_check_manual_publish_approval(session, episode, settings))
     for c in checks:
         status = "PASS" if c.passed else "FAIL"
         logger.info("Safety check [%s] %s: %s", status, c.name, c.message)
@@ -605,6 +854,7 @@ def publish_video(
         or _yt_config.get("default_privacy")
         or getattr(settings, "youtube_default_privacy", "unlisted")
     )
+    _write_publish_request_artifact(episode, settings, effective_privacy)
 
     # Build metadata (pass session for profile-aware tags/category).
     # Prefer the metadata reviewed at Gate 3 so what was approved is published.
@@ -822,3 +1072,36 @@ def get_latest_publish_job(session: Session, episode_id: str) -> PublishJob | No
         .order_by(PublishJob.created_at.desc())
         .first()
     )
+
+
+def request_publish_review(session: Session, episode_id: str, settings: Settings) -> ReviewTask:
+    """Create (or return the pending) artifact-bound final-publish ReviewTask.
+
+    Binds the approval to the current final render + QA gate + narration source so
+    an approval is invalidated the moment any of them changes. Used by the CLI /
+    web / pipeline so a human can authorize the actual YouTube upload for
+    ``auto_publish=False`` profiles (e.g. tagesschau). Idempotent: if a pending
+    publish review already exists it is returned unchanged.
+    """
+    from btcedu.core.reviewer import create_review_task
+
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    if episode is None:
+        raise ValueError(f"Episode {episode_id} not found")
+    _write_publish_request_artifact(episode, settings)
+
+    existing = (
+        session.query(ReviewTask)
+        .filter(
+            ReviewTask.episode_id == episode_id,
+            ReviewTask.stage == "publish",
+            ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]),
+        )
+        .order_by(ReviewTask.created_at.desc())
+        .first()
+    )
+    if existing is not None:
+        return existing
+
+    artifact_paths = _publish_artifact_paths(episode_id, settings)
+    return create_review_task(session, episode_id, stage="publish", artifact_paths=artifact_paths)

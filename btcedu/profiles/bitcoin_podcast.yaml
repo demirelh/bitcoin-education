@@ -6,6 +6,8 @@ domain: cryptocurrency
 pipeline_version: 2
 stages_enabled: all
 stage_config:
+  # Omitted secondary transcription/independent QA blocks inherit Settings
+  # defaults. Add explicit enabled:false blocks when disabling them per profile.
   transcript_analyze:
     enabled: true
   transcript_qa:

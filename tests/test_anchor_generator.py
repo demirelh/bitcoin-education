@@ -142,9 +142,7 @@ def _create_tts_manifest(outputs_dir: Path, episode_id: str):
             },
         ],
     }
-    (tts_dir / "manifest.json").write_text(
-        json.dumps(manifest, indent=2), encoding="utf-8"
-    )
+    (tts_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
 
 class TestGenerateAnchorsDisabled:
@@ -188,9 +186,7 @@ class TestGenerateAnchorsNoTalkingHead:
     """Tests when no TALKING_HEAD chapters exist."""
 
     def test_no_talking_head_skips(self, session, episode, settings, tmp_path):
-        _create_chapters_json(
-            Path(settings.outputs_dir), "ep_test_001", talking_head=False
-        )
+        _create_chapters_json(Path(settings.outputs_dir), "ep_test_001", talking_head=False)
         result = generate_anchors(session, "ep_test_001", settings)
         assert result.skipped is True
         session.refresh(episode)
@@ -234,9 +230,7 @@ class TestGenerateAnchorsNormal:
 
         generate_anchors(session, "ep_test_001", settings)
 
-        runs = session.query(PipelineRun).filter_by(
-            episode_id=episode.id, stage="anchorgen"
-        ).all()
+        runs = session.query(PipelineRun).filter_by(episode_id=episode.id, stage="anchorgen").all()
         assert len(runs) == 1
         assert runs[0].status == "success"
 
@@ -249,9 +243,11 @@ class TestGenerateAnchorsNormal:
 
         generate_anchors(session, "ep_test_001", settings)
 
-        artifacts = session.query(ContentArtifact).filter_by(
-            episode_id="ep_test_001", artifact_type="anchor_video"
-        ).all()
+        artifacts = (
+            session.query(ContentArtifact)
+            .filter_by(episode_id="ep_test_001", artifact_type="anchor_video")
+            .all()
+        )
         assert len(artifacts) == 1
 
     def test_writes_provenance(self, session, episode, settings):

@@ -364,6 +364,8 @@ def test_no_escalation_for_minor_only(db_session, tmp_path):
     assert mock_call.call_count == 1  # no escalation
     gate = load_quality_gate(settings, "ep-gate")
     assert all(c["kind"] == "standard" for c in gate["model_calls"])
+    assert gate["decision"] == "green"
+    assert gate["blocked"] is False
 
 
 # ---------------------------------------------------------------------------

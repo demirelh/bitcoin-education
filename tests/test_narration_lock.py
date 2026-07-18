@@ -42,7 +42,7 @@ def test_normalize_is_nfkc_but_preserves_digits_and_case():
 def test_lock_matches_after_technical_normalization_only():
     approved = "Berlin'de bugün 25 derece. „Hava güzel\u201d dedi."
     # same content, different whitespace + typographic quotes + em dash spacing
-    composed = "Berlin'de bugün 25 derece.\n\n\"Hava güzel\" dedi."
+    composed = 'Berlin\'de bugün 25 derece.\n\n"Hava güzel" dedi.'
     result = check_narration_lock(approved, composed)
     assert result.matches is True
 
@@ -55,9 +55,7 @@ def test_lock_detects_changed_number():
 
 
 def test_lock_detects_dropped_name():
-    result = check_narration_lock(
-        "Merkel ve Scholz konuştu.", "Merkel konuştu."
-    )
+    result = check_narration_lock("Merkel ve Scholz konuştu.", "Merkel konuştu.")
     assert result.matches is False
     assert "Scholz" in (result.removed_names or [])
 
@@ -130,9 +128,7 @@ def test_canonical_narration_story_mode_extracts_ordered_tr_not_raw_json(tmp_pat
     assert text == "Birinci haber.\n\nIkinci haber."
     assert "German" not in text
     # narration_sha256 hashes this canonical text
-    assert narration_sha256(settings, "ep2") == hashlib.sha256(
-        text.encode("utf-8")
-    ).hexdigest()
+    assert narration_sha256(settings, "ep2") == hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def test_narration_sha256_is_stable(tmp_path):
@@ -215,9 +211,7 @@ def _setup_locked_episode(db_session, tmp_path, model_chapters):
         "narration_approved": True,
         "findings": [],
     }
-    (ep_dir / "translation_quality_gate.json").write_text(
-        json.dumps(gate), encoding="utf-8"
-    )
+    (ep_dir / "translation_quality_gate.json").write_text(json.dumps(gate), encoding="utf-8")
 
     episode = Episode(
         episode_id="ep_lock",
@@ -264,7 +258,7 @@ def test_chapterize_passes_when_narration_is_faithful_partition(
         "Ekonomi bakanı 25 milyar euroluk paketi açıkladı.",
         "Hava durumu yarın için yağmur öngörüyor.",
     ]
-    chapters = [_chapter(f"ch0{i+1}", i + 1, p) for i, p in enumerate(parts)]
+    chapters = [_chapter(f"ch0{i + 1}", i + 1, p) for i, p in enumerate(parts)]
     settings, mock_response = _setup_locked_episode(db_session, tmp_path, chapters)
     mock_claude.return_value = mock_response
     _patch_registry(mock_registry)
@@ -281,8 +275,9 @@ def test_chapterize_passes_when_narration_is_faithful_partition(
 
     # Provenance records the locked, matching narration hashes.
     prov = json.loads(
-        (Path(settings.outputs_dir) / "ep_lock" / "provenance" / "chapterize_provenance.json")
-        .read_text()
+        (
+            Path(settings.outputs_dir) / "ep_lock" / "provenance" / "chapterize_provenance.json"
+        ).read_text()
     )
     assert prov["narration_locked"] is True
     assert prov["approved_narration_sha256"] == prov["composed_narration_sha256"]
@@ -327,9 +322,7 @@ def test_chapterize_fails_closed_when_narration_changed(
 
 @patch("btcedu.core.chapterizer.call_claude")
 @patch("btcedu.core.chapterizer.PromptRegistry")
-def test_chapterize_no_lock_without_quality_gate(
-    mock_registry, mock_claude, db_session, tmp_path
-):
+def test_chapterize_no_lock_without_quality_gate(mock_registry, mock_claude, db_session, tmp_path):
     """Legacy profiles without a QA gate keep hook/intro/outro freedom (no lock)."""
     from btcedu.core.chapterizer import chapterize_script
     from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun  # noqa: F401

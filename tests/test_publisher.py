@@ -580,9 +580,7 @@ class TestGenerateMetadataSuggestion:
         from btcedu.core.publisher import generate_metadata_suggestion, save_metadata_edits
 
         generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
-        save_metadata_edits(
-            news_episode.episode_id, settings, {"title": "Elle düzenlenmiş başlık"}
-        )
+        save_metadata_edits(news_episode.episode_id, settings, {"title": "Elle düzenlenmiş başlık"})
         again = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
         assert again["title"] == "Elle düzenlenmiş başlık"
         assert again["source"] == "edited"

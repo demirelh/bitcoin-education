@@ -250,9 +250,9 @@ def test_legacy_v1_episode_keeps_new_qa_stages_out_of_plan(db_session, tmp_path)
 
 
 def test_configuration_precedence_is_documented():
-    runbook = (
-        Path(__file__).parents[1] / "docs" / "runbooks" / "profile-switching.md"
-    ).read_text(encoding="utf-8")
+    runbook = (Path(__file__).parents[1] / "docs" / "runbooks" / "profile-switching.md").read_text(
+        encoding="utf-8"
+    )
 
     assert "Configuration precedence" in runbook
     assert "`Settings` class defaults" in runbook

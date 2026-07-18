@@ -46,8 +46,11 @@ class TestFixChapterDataBackfill:
             "estimated_duration_seconds": 2,
             "chapters": [
                 _minimal_chapter(
-                    chapter_id="ch01", order=1, title="Hava Durumu",
-                    with_visual=False, with_trans=False,
+                    chapter_id="ch01",
+                    order=1,
+                    title="Hava Durumu",
+                    with_visual=False,
+                    with_trans=False,
                 )
             ],
         }

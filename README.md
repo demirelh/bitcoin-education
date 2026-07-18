@@ -9,20 +9,27 @@ Deployed on Raspberry Pi via systemd timers + Caddy reverse proxy.
 
 ## Pipeline
 
-Two pipeline versions coexist (`pipeline_version` config: 1 = v1 legacy, 2 = v2 current).
+New profiles use pipeline v2. Existing database rows with `pipeline_version=1`
+remain readable and can complete through the legacy compatibility path.
 
 **v2 pipeline (current):**
 ```
-NEW → DOWNLOADED → TRANSCRIBED → CORRECTED → [review] →
-TRANSLATED → ADAPTED → [review] → CHAPTERIZED →
-IMAGES_GENERATED → TTS_DONE → RENDERED → [review] → APPROVED → PUBLISHED
+download → transcribe → transcript_analyze → transcript_verify → correct →
+transcript_qa → [transcript review] → segment → translate → adapt →
+translation_qa (deterministic + independent LLM) → [quality gate] →
+chapterize → frameextract → imagegen → tts → anchorgen → render →
+[final review] → publish
 ```
 
-Review gates pause the pipeline and create ReviewTask records.
-Approval (via CLI or web dashboard) resumes processing.
+Transcript and translation QA use structured findings and GREEN/YELLOW/RED
+decisions. Critical findings stop before downstream production. A GREEN
+translation gate stores the approved narration SHA-256; chapterize may split
+the narration but cannot rewrite it. Review gates create artifact-bound
+`ReviewTask` records and resume after approval.
 
-**imagegen dispatch:** tagesschau_tr episodes use Gemini 2.0 Flash frame editing (~$0.003/image);
-all others use Pexels stock images.
+`tagesschau_tr` uses selective secondary transcription only for suspicious
+segments, conditional fact-preserving adaptation, profile-routed image/TTS
+providers, and `auto_publish: false`.
 
 ## Quickstart
 
@@ -62,9 +69,13 @@ btcedu run-latest
 | `btcedu backfill` | Import full channel history via yt-dlp |
 | `btcedu download --episode-id ID` | Download audio |
 | `btcedu transcribe --episode-id ID` | Transcribe via Whisper |
+| `btcedu transcript-analyze --episode-id ID` | Flag suspicious segments deterministically |
+| `btcedu transcript-verify --episode-id ID [--dry-run]` | Re-transcribe suspicious regions |
 | `btcedu correct --episode-id ID` | LLM transcript correction |
+| `btcedu transcript-qa --episode-id ID` | Run the deterministic transcript gate |
 | `btcedu translate --episode-id ID` | German → Turkish translation |
 | `btcedu adapt --episode-id ID` | Cultural adaptation |
+| `btcedu translation-qa --episode-id ID` | Run deterministic per-story translation checks |
 | `btcedu chapterize --episode-id ID` | Production chapter JSON |
 | `btcedu imagegen --episode-id ID` | Generate/select images |
 | `btcedu frame-edit --episode-id ID` | Gemini frame editing (tagesschau) |
@@ -92,9 +103,11 @@ btcedu web                           # localhost:5000
 btcedu web --host 0.0.0.0 --port 5000  # LAN access
 ```
 
-Features: episode table with status badges, per-episode pipeline actions,
-content viewer (transcript, script, chapters, images), review management,
-cost summary, batch processing. Channel management with per-channel content profiles.
+Features: episode status, transcript/translation QA decisions, findings by
+severity and story, source/target excerpts, retry generation, provider/model
+and cost, finding lifecycle actions, transcript approval/change requests,
+structured restart actions, review management, content inspection, cost
+summary, and per-channel profiles.
 
 Production: gunicorn with gthread worker behind Caddy reverse proxy.
 See `deploy/` for systemd units and Caddy config.
@@ -108,16 +121,42 @@ All settings from `.env` (see `.env.example`):
 | `ANTHROPIC_API_KEY` | required | Claude API key |
 | `OPENAI_API_KEY` | required | OpenAI/Whisper API key |
 | `ELEVENLABS_API_KEY` | required (v2) | ElevenLabs TTS key |
+| `TRANSCRIPTION_SECONDARY_ENABLED` | `false` | Global secondary-ASR default |
+| `TRANSCRIPT_QA_ENABLED` | `true` | Enable deterministic transcript QA |
+| `QA_REVIEW_ENABLED` | `true` | Enable independent translation QA globally |
+| `QA_MODEL` | `gpt-5.6-sol` | Global fallback QA model |
+| `DEFAULT_CONTENT_PROFILE` | `bitcoin_podcast` | Profile for newly detected episodes |
 | `GEMINI_API_KEY` | `""` | Gemini API key (for frame editing) |
 | `GEMINI_IMAGE_EDIT_ENABLED` | `true` | Enable Gemini frame editing for tagesschau |
-| `PIPELINE_VERSION` | `2` | Pipeline version (1 or 2) |
+| `PIPELINE_VERSION` | `2` | Pipeline version for newly created episodes |
 | `DRY_RUN` | `false` | Skip API calls, write placeholders |
-| `MAX_EPISODE_COST_USD` | `10` | Cost limit per episode |
+| `MAX_EPISODE_COST_USD` | `10` in `.env.example` | Guard checked before paid calls |
 | `RENDER_PRESET` | `medium` | ffmpeg encoding preset |
 | `RENDER_TIMEOUT_SEGMENT` | `300` | ffmpeg segment timeout (seconds) |
 | `DATABASE_URL` | `sqlite:///data/btcedu.db` | Database connection |
 
 Full settings: `btcedu/config.py`.
+
+Precedence is: code defaults → `.env`/environment → explicit `Settings(...)`
+values → profile-owned stage/provider settings → supported CLI overrides.
+Profile YAML is authoritative only for fields owned by that profile.
+
+## Data and QA artifacts
+
+Per-episode files are stored below `data/transcripts/{episode_id}/` and
+`data/outputs/{episode_id}/`. Important artifacts include:
+
+- `transcript.structured.de.json`, `transcript_analysis.json`, and
+  `transcript_verification.json`
+- `transcript.corrected.structured.de.json` and
+  `transcript/transcript_qa.json`
+- `stories.json`, `stories_translated.json`, and `stories_adapted.json`
+- `translation_qa.json` and `translation_quality_gate.json`
+- `chapters.json`, media/TTS manifests, render provenance, and review history
+
+Legacy text artifacts remain available. Content hashes, provenance files, and
+`.stale` markers make reruns idempotent and invalidate only affected
+downstream stages.
 
 ## Deployment
 
@@ -126,14 +165,16 @@ Full settings: `btcedu/config.py`.
 ```
 
 See `deploy/README.md` for systemd timer setup and Caddy reverse proxy config.
+For `tagesschau_tr`, publishing still requires a final artifact-bound manual
+approval; intermediate approvals never upload automatically.
 
 ## Development
 
 ```bash
 pip install -e ".[dev,web]"
-pytest                               # full test suite (~1189 tests)
-ruff check btcedu/ tests/            # lint
-ruff format btcedu/ tests/           # format
+pytest
+ruff check .
+ruff format --check .
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards and workflow.

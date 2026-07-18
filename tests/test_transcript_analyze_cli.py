@@ -114,9 +114,7 @@ def test_transcript_analyze_command_failure_takes_priority_over_blocking(
     def side_effect(session, episode_id, settings, force=False):
         if episode_id == "episode-1":
             raise ValueError("boom")
-        return SimpleNamespace(
-            skipped=False, suspicious_count=1, segment_count=5, critical_count=1
-        )
+        return SimpleNamespace(skipped=False, suspicious_count=1, segment_count=5, critical_count=1)
 
     mock_analyze.side_effect = side_effect
     runner = CliRunner()

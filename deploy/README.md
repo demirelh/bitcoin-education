@@ -145,6 +145,12 @@ Before running `setup-web.sh` or manual installation, ensure:
 4. Database is initialized: `.venv/bin/btcedu init-db && .venv/bin/btcedu migrate`
 5. (Optional) YouTube credentials: `pip install -e ".[youtube]"` + `data/client_secret.json`
 
+Before upgrading an existing installation, back up `data/btcedu.db` and
+`data/outputs/`. The deployed profile selects transcript analysis,
+verification, QA, provider routing, and retry limits. `tagesschau_tr` keeps
+`auto_publish: false`; a timer run may render a video but cannot upload it
+without final manual approval.
+
 ---
 
 ## Verification Checklist
@@ -175,6 +181,11 @@ sudo -n systemctl restart btcedu-web.service
 # 7. Test automated deployment
 # Go to: https://github.com/demirelh/bitcoin-education/actions/workflows/deploy.yml
 # Click "Run workflow" and verify it completes successfully
+
+# 8. Verify migrations and QA commands
+.venv/bin/btcedu migrate-status
+.venv/bin/btcedu transcript-qa --help
+.venv/bin/btcedu translation-qa --help
 ```
 
 ---

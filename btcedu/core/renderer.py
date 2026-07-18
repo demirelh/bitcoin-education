@@ -992,9 +992,7 @@ def render_is_current(session, episode_id: str, settings: Settings) -> tuple[boo
         manifest_data = json.loads(manifest.read_text(encoding="utf-8"))
         chapters_doc = _load_chapters(base / "chapters.json")
         expected = {chapter.chapter_id for chapter in chapters_doc.chapters}
-        actual = {
-            segment.get("chapter_id") for segment in manifest_data.get("segments", [])
-        }
+        actual = {segment.get("chapter_id") for segment in manifest_data.get("segments", [])}
         if actual != expected:
             return False, "render manifest does not cover every chapter exactly once"
     except (OSError, json.JSONDecodeError, KeyError, ValueError) as exc:

@@ -125,10 +125,7 @@ def _get_stages(
         verify_config.get("enabled") is False
         or secondary_config.get("enabled") is False
         or secondary_config.get("mode") == "disabled"
-        or (
-            not analysis_enabled
-            and secondary_config.get("mode") == "suspicious_segments_only"
-        )
+        or (not analysis_enabled and secondary_config.get("mode") == "suspicious_segments_only")
     ):
         stages = [(name, status) for name, status in stages if name != "transcript_verify"]
     if not stage_config.get("transcript_qa", {}).get("enabled", True):

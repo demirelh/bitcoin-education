@@ -311,10 +311,7 @@ def test_publish_blocks_when_approved_narration_hash_is_missing(db_session, sett
 def test_publish_blocks_when_render_provenance_is_missing(db_session, settings):
     episode = _setup(db_session, settings)
     provenance = (
-        Path(settings.outputs_dir)
-        / episode.episode_id
-        / "provenance"
-        / "render_provenance.json"
+        Path(settings.outputs_dir) / episode.episode_id / "provenance" / "render_provenance.json"
     )
     provenance.unlink()
 
@@ -337,12 +334,7 @@ def test_final_publish_approval_invalidated_when_render_changes(db_session, sett
 def test_final_publish_approval_invalidated_when_metadata_changes(db_session, settings):
     episode = _setup(db_session, settings)
     _approve_publish_review(db_session, settings)
-    metadata = (
-        Path(settings.outputs_dir)
-        / episode.episode_id
-        / "render"
-        / "youtube_metadata.json"
-    )
+    metadata = Path(settings.outputs_dir) / episode.episode_id / "render" / "youtube_metadata.json"
     metadata.write_text(
         json.dumps({"title": "Changed", "description": "changed", "tags": ["changed"]}),
         encoding="utf-8",

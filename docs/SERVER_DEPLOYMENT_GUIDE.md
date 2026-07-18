@@ -36,6 +36,7 @@ cp .env.example .env
 chmod 600 .env
 
 # Database
+.venv/bin/btcedu migrate-status
 .venv/bin/btcedu init-db
 .venv/bin/btcedu migrate
 
@@ -107,6 +108,10 @@ run.sh
     +- systemctl restart btcedu-run.timer
 ```
 
+`run.sh` applies idempotent SQLite migrations before restarting services. Back
+up `data/btcedu.db` and `data/outputs/` before the first deployment of the
+transcript/QA upgrade. No new dedicated Phase-10 migration is required.
+
 ---
 
 ## Service Details
@@ -158,6 +163,13 @@ sudo ss -tlnp | grep 8091
 
 # Health check
 curl -f http://127.0.0.1:8091/api/health
+
+# Migration and QA operation smoke checks
+.venv/bin/btcedu migrate-status
+.venv/bin/btcedu transcript-analyze --help
+.venv/bin/btcedu transcript-verify --help
+.venv/bin/btcedu transcript-qa --help
+.venv/bin/btcedu translation-qa --help
 
 # Timers active with next trigger times
 sudo systemctl list-timers btcedu-*
@@ -214,6 +226,10 @@ sudo journalctl -u btcedu-web -f
 ```
 
 Common causes: missing API keys in `.env`, Python import errors (reinstall deps), file permission errors.
+
+For QA/provider failures, also verify `DEFAULT_CONTENT_PROFILE`, secondary
+transcription settings, `LLM_PROVIDER`/Copilot CLI availability, `QA_MODEL`,
+and the profile's `stage_config.qa` routing.
 
 ### Timers not firing
 
@@ -274,3 +290,16 @@ sudo systemctl restart btcedu-web
 # Full redeployment
 ./run.sh
 ```
+
+## Rollback
+
+1. Stop the run timer so no new paid work starts.
+2. Check out the previous known-good application commit.
+3. Reinstall the previous package version and restart services.
+4. Restore the pre-deployment SQLite/output backup only if the previous code
+   cannot read the upgraded artifacts. Migrations have no automatic down path;
+   do not delete migration rows or columns manually.
+
+Structured and legacy sidecar artifacts coexist, so an application rollback
+normally leaves data intact. Do not publish an episode whose current narration
+or render hash differs from its final approval.

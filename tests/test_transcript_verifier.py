@@ -227,6 +227,7 @@ def test_suspicious_regions_are_clamped_and_merged():
 
     assert len(plans) == 1
     assert plans[0].source_segment_ids == ("seg-0001", "seg-0002")
+    assert "seg-0003" not in plans[0].source_segment_ids
     assert plans[0].clip_start_seconds == 0
     assert plans[0].clip_end_seconds == 20
     assert plans[0].original_start_seconds == 5

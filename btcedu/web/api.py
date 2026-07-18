@@ -3090,11 +3090,7 @@ def update_translation_finding_status(episode_id: str, finding_id: str):
         if status not in FINDING_STATUSES:
             return (
                 jsonify(
-                    {
-                        "error": (
-                            f"status must be one of {sorted(FINDING_STATUSES)}, got '{status}'"
-                        )
-                    }
+                    {"error": (f"status must be one of {sorted(FINDING_STATUSES)}, got '{status}'")}
                 ),
                 400,
             )

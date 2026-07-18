@@ -184,12 +184,8 @@ def test_selective_stale_overlay_change_marks_render_only(tmp_path):
     from btcedu.core.chapterizer import _chapter_component_hashes, _mark_downstream_stale
 
     settings, base = _prep_downstream(tmp_path)
-    prev = _chapter_component_hashes(
-        _doc([_chapter("ch01", 1, "Ayni metin", overlay_text="Eski")])
-    )
-    curr = _chapter_component_hashes(
-        _doc([_chapter("ch01", 1, "Ayni metin", overlay_text="Yeni")])
-    )
+    prev = _chapter_component_hashes(_doc([_chapter("ch01", 1, "Ayni metin", overlay_text="Eski")]))
+    curr = _chapter_component_hashes(_doc([_chapter("ch01", 1, "Ayni metin", overlay_text="Yeni")]))
 
     _mark_downstream_stale("ep", settings, prev, curr)
     m = _markers(base)
@@ -288,9 +284,7 @@ def test_image_manifest_with_failed_or_missing_chapters_is_not_current(tmp_path)
         ),
         encoding="utf-8",
     )
-    assert not _is_image_gen_current(
-        manifest, provenance, "chapters", "prompt", {"ch01"}
-    )
+    assert not _is_image_gen_current(manifest, provenance, "chapters", "prompt", {"ch01"})
 
     (images / "ch01.png").write_bytes(b"image")
     manifest.write_text(
@@ -307,9 +301,7 @@ def test_image_manifest_with_failed_or_missing_chapters_is_not_current(tmp_path)
         ),
         encoding="utf-8",
     )
-    assert not _is_image_gen_current(
-        manifest, provenance, "chapters", "prompt", {"ch01", "ch02"}
-    )
+    assert not _is_image_gen_current(manifest, provenance, "chapters", "prompt", {"ch01", "ch02"})
 
 
 # ---------------------------------------------------------------------------

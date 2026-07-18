@@ -2,10 +2,10 @@
 
 ## Projektbeschreibung
 
-**btcedu** ist eine vollautomatische Content-Pipeline, die fremdsprachige
+**btcedu** ist eine weitgehend automatisierte Content-Pipeline, die fremdsprachige
 Nachrichten- und Bildungsinhalte in fertige, muttersprachliche YouTube-Videos
-umwandelt. Aus einer Quell-Sendung (Video + Audio) entsteht ohne manuelle
-Zwischenschritte ein neues Video mit übersetztem, neutralisiertem Skript,
+umwandelt. Aus einer Quell-Sendung (Video + Audio) entsteht mit gezielten
+QA- und Freigabegates ein neues Video mit übersetztem, neutralisiertem Skript,
 KI-generierten Bildern, synthetischer Sprachausgabe und fertigem Schnitt.
 
 Der Betrieb läuft auf einem **Raspberry Pi** (Python 3.12, Click-CLI +
@@ -35,8 +35,8 @@ Sendungen → neutrale türkische Nachrichten-Videos.
 ---
 
 Vollständige, aus dem Code verifizierte Beschreibung der Verarbeitungspipeline
-für das aktive Profil **`tagesschau_tr`** (Deutsch → Türkisch, `pipeline_version=2`,
-vollautomatisch). Stand: 2026-07.
+für das aktive Profil **`tagesschau_tr`** (Deutsch → Türkisch, `pipeline_version=2`).
+Stand: 2026-07.
 
 **Zweck:** Deutsche *tagesschau*-Nachrichtensendungen automatisch in neutrale
 türkische YouTube-Videos umwandeln.
@@ -144,15 +144,15 @@ türkische YouTube-Videos umwandeln.
   Registerpolitur) sind erlaubt. `stories_adapted.json` erhält pro Story den
   adaptierten Text und die tatsächlich angewandten Operationen;
   `script.adapted.tr.md` bleibt für bestehende Downstream-Stages erhalten.
-- **Narration-Lock-Vorbereitung:** Übersetzte und adaptierte Stories tragen
-  einen SHA-256-Hash des jeweiligen Narrationstexts (`narration_sha256`). Der
-  spätere Translation-QA-Gate kann diesen Hash sperren; in dieser Phase wird
-  noch keine Freigabe oder Sperrlogik erzwungen.
+- **Narration-Lock:** Bei GREEN speichert das Translation-QA-Gate den SHA-256
+  der freigegebenen türkischen Narration. Chapterize darf den Text nur in
+  Kapitel zerlegen und technisch normalisieren; jede inhaltliche Abweichung
+  erzeugt einen Fehler und blockiert die weitere Produktion.
 - **QA-Feedback-Loop:** Die QA-Findings von Stage 12 werden beim nächsten Lauf in
   translate/adapt als Korrekturvorgabe injiziert → iterative Selbstkorrektur.
   Auslösbar über zwei Buttons im QA-Reiter der Web-UI
   („Restart Translate + Adapt" bzw. „Restart All").
-- **Vollautomatik mit Sicherheitsstopp:** Reguläre Profil-Reviews sind
+- **Automatik mit Sicherheitsstopps:** Reguläre Profil-Reviews sind
   auto-approved. Ein blockierendes Transcript-QA-Finding wird jedoch nicht
   automatisch freigegeben. Zusätzlich stoppt die Pipeline bewusst **vor dem
   YouTube-Upload**.

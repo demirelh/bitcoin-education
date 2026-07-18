@@ -12,7 +12,7 @@ btcedu supports multiple content profiles. Each profile configures the full pipe
 | Profile | Source | Target | Domain | Notes |
 |---------|--------|--------|--------|-------|
 | `bitcoin_podcast` | DE podcast | TR YouTube | cryptocurrency | Default; uses adapt stage |
-| `tagesschau_tr` | DE TV news | TR YouTube | news | Skips adapt; uses segment + translation review |
+| `tagesschau_tr` | DE TV news | TR YouTube | news | Conditional adapt; story inventory + QA gates |
 
 ---
 

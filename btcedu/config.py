@@ -80,8 +80,8 @@ class Settings(BaseSettings):
     copilot_cli_timeout: int = 900  # seconds per call
 
     # Independent second-opinion QA of the adapted script (after adapt, before
-    # Review Gate 2). Uses a DIFFERENT model than the translation/adaptation so
-    # the critique is genuinely independent. Advisory only — never blocks.
+    # Review Gate 2). Profile configuration controls routing, escalation, and
+    # whether unresolved findings block the pipeline.
     qa_review_enabled: bool = True
     qa_model: str = "gpt-5.6-sol"  # Copilot CLI model id for the QA second opinion
     claude_max_tokens: int = 16384

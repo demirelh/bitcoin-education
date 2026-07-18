@@ -231,10 +231,7 @@ def _build_kenburns_filter(
         x_expr = "iw/2-(iw/zoom/2)"
         y_expr = "ih/2-(ih/zoom/2)"
 
-    return (
-        f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}'"
-        f":d={d}:s={width}x{height}:fps={fps}"
-    )
+    return f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d={d}:s={width}x{height}:fps={fps}"
 
 
 def _build_animated_lower_third(
@@ -257,19 +254,11 @@ def _build_animated_lower_third(
     filters = []
 
     # Gradient background: two stacked drawbox at different opacities
-    filters.append(
-        f"drawbox=x=0:y={bar_y}:w=iw:h={bar_h}:color=black@0.7:t=fill:{enable}"
-    )
-    filters.append(
-        f"drawbox=x=0:y={bar_y}:w=iw:h={bar_h // 2}"
-        f":color=black@0.5:t=fill:{enable}"
-    )
+    filters.append(f"drawbox=x=0:y={bar_y}:w=iw:h={bar_h}:color=black@0.7:t=fill:{enable}")
+    filters.append(f"drawbox=x=0:y={bar_y}:w=iw:h={bar_h // 2}:color=black@0.5:t=fill:{enable}")
 
     # Accent stripe on left edge
-    filters.append(
-        f"drawbox=x=0:y={bar_y}:w=4:h={bar_h}"
-        f":color={accent_color}:t=fill:{enable}"
-    )
+    filters.append(f"drawbox=x=0:y={bar_y}:w=4:h={bar_h}:color={accent_color}:t=fill:{enable}")
 
     # Slide-in animation for x position
     slide_x = (
@@ -407,15 +396,40 @@ def create_intro_segment(
     filter_complex = ";".join(filter_parts)
 
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c={bg_color}:s={resolution}:d={duration}:r={fps}",
-        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-        "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "1:a",
-        "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "44100",
-        "-t", str(duration),
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c={bg_color}:s={resolution}:d={duration}:r={fps}",
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=r=44100:cl=stereo",
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-map",
+        "1:a",
+        "-c:v",
+        "libx264",
+        "-preset",
+        preset,
+        "-crf",
+        str(crf),
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
+        "-t",
+        str(duration),
         output_path,
     ]
 
@@ -484,15 +498,40 @@ def create_outro_segment(
     )
 
     cmd = [
-        "ffmpeg", "-y",
-        "-f", "lavfi", "-i", f"color=c={bg_color}:s={resolution}:d={duration}:r={fps}",
-        "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
-        "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "1:a",
-        "-c:v", "libx264", "-preset", preset, "-crf", str(crf),
-        "-pix_fmt", "yuv420p",
-        "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-ar", "44100",
-        "-t", str(duration),
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c={bg_color}:s={resolution}:d={duration}:r={fps}",
+        "-f",
+        "lavfi",
+        "-i",
+        "anullsrc=r=44100:cl=stereo",
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-map",
+        "1:a",
+        "-c:v",
+        "libx264",
+        "-preset",
+        preset,
+        "-crf",
+        str(crf),
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
+        "-t",
+        str(duration),
         output_path,
     ]
 
@@ -609,11 +648,13 @@ def create_segment(
     if ken_burns_pattern:
         # Ken Burns: zoompan generates frames from still image (no -loop 1)
         kb_filter = _build_kenburns_filter(
-            ken_burns_pattern, duration, resolution, fps, ken_burns_zoom_ratio,
+            ken_burns_pattern,
+            duration,
+            resolution,
+            fps,
+            ken_burns_zoom_ratio,
         )
-        filter_parts = [
-            f"[0:v]scale=-1:-1,{kb_filter},format=yuv420p[raw]"
-        ]
+        filter_parts = [f"[0:v]scale=-1:-1,{kb_filter},format=yuv420p[raw]"]
     else:
         # Standard: scale and pad image to exact resolution
         filter_parts = [
@@ -625,7 +666,9 @@ def create_segment(
     # Color correction (applied before overlays)
     if color_correction:
         cc_filter = _build_color_correction_filter(
-            color_saturation, color_brightness, color_blue_shift,
+            color_saturation,
+            color_brightness,
+            color_blue_shift,
         )
         filter_parts.append(f"[raw]{cc_filter}[scaled]")
     else:
@@ -641,13 +684,11 @@ def create_segment(
 
         # Text overlays
         for overlay in overlays:
-            if (
-                animated_lower_thirds
-                and overlay.overlay_type == "lower_third"
-            ):
+            if animated_lower_thirds and overlay.overlay_type == "lower_third":
                 # Animated lower third: multiple filter strings
                 lt_filters = _build_animated_lower_third(
-                    overlay, font_path,
+                    overlay,
+                    font_path,
                     slide_duration=lower_third_slide_duration,
                     accent_color=lower_third_accent_color,
                 )
@@ -659,16 +700,17 @@ def create_segment(
             else:
                 drawtext_filter = _build_drawtext_filter(overlay, font_path)
                 out_label = f"ov{filter_idx}"
-                filter_parts.append(
-                    f"[{last_label}]{drawtext_filter}[{out_label}]"
-                )
+                filter_parts.append(f"[{last_label}]{drawtext_filter}[{out_label}]")
                 last_label = out_label
                 filter_idx += 1
 
         # News ticker (after overlays, before fade)
         if ticker_text:
             ticker_filters = _build_ticker_filters(
-                ticker_text, font_path, ticker_speed, ticker_height,
+                ticker_text,
+                font_path,
+                ticker_speed,
+                ticker_height,
                 ticker_fontsize,
             )
             for tf in ticker_filters:
@@ -702,20 +744,35 @@ def create_segment(
     if ken_burns_pattern:
         # Ken Burns: no -loop 1, zoompan generates frames
         cmd = [
-            "ffmpeg", "-y",
-            "-i", image_path,
-            "-i", audio_path,
-            "-filter_complex", filter_complex,
-            "-map", "[v]", "-map", "1:a",
+            "ffmpeg",
+            "-y",
+            "-i",
+            image_path,
+            "-i",
+            audio_path,
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "1:a",
         ]
     else:
         cmd = [
-            "ffmpeg", "-y",
-            "-loop", "1",  # Loop image
-            "-i", image_path,
-            "-i", audio_path,
-            "-filter_complex", filter_complex,
-            "-map", "[v]", "-map", "1:a",
+            "ffmpeg",
+            "-y",
+            "-loop",
+            "1",  # Loop image
+            "-i",
+            image_path,
+            "-i",
+            audio_path,
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "1:a",
         ]
 
     # Add audio fade filter (Sprint 10)
@@ -731,15 +788,24 @@ def create_segment(
     # Continue with codec and output settings
     cmd.extend(
         [
-            "-c:v", "libx264",
-            "-preset", preset,
-            "-crf", str(crf),
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            "-b:a", audio_bitrate,
-            "-ac", "2",
-            "-ar", "44100",
-            "-t", str(duration),
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            audio_bitrate,
+            "-ac",
+            "2",
+            "-ar",
+            "44100",
+            "-t",
+            str(duration),
             "-shortest",
             output_path,
         ]
@@ -940,7 +1006,9 @@ def create_video_segment(
     # Color correction
     if color_correction:
         cc_filter = _build_color_correction_filter(
-            color_saturation, color_brightness, color_blue_shift,
+            color_saturation,
+            color_brightness,
+            color_blue_shift,
         )
         filter_parts.append(f"[raw]{cc_filter}[scaled]")
     else:
@@ -957,7 +1025,8 @@ def create_video_segment(
         for overlay in overlays:
             if animated_lower_thirds and overlay.overlay_type == "lower_third":
                 lt_filters = _build_animated_lower_third(
-                    overlay, font_path,
+                    overlay,
+                    font_path,
                     slide_duration=lower_third_slide_duration,
                     accent_color=lower_third_accent_color,
                 )
@@ -969,15 +1038,16 @@ def create_video_segment(
             else:
                 drawtext_filter = _build_drawtext_filter(overlay, font_path)
                 out_label = f"ov{filter_idx}"
-                filter_parts.append(
-                    f"[{last_label}]{drawtext_filter}[{out_label}]"
-                )
+                filter_parts.append(f"[{last_label}]{drawtext_filter}[{out_label}]")
                 last_label = out_label
                 filter_idx += 1
 
         if ticker_text:
             ticker_filters = _build_ticker_filters(
-                ticker_text, font_path, ticker_speed, ticker_height,
+                ticker_text,
+                font_path,
+                ticker_speed,
+                ticker_height,
                 ticker_fontsize,
             )
             for tf in ticker_filters:
@@ -1006,12 +1076,20 @@ def create_video_segment(
 
     # Build ffmpeg command — key difference: -stream_loop -1 before -i video
     cmd = [
-        "ffmpeg", "-y",
-        "-stream_loop", "-1",
-        "-i", video_path,
-        "-i", audio_path,
-        "-filter_complex", filter_complex,
-        "-map", "[v]", "-map", "1:a",
+        "ffmpeg",
+        "-y",
+        "-stream_loop",
+        "-1",
+        "-i",
+        video_path,
+        "-i",
+        audio_path,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-map",
+        "1:a",
     ]
 
     # Add audio fade filter
@@ -1026,15 +1104,24 @@ def create_video_segment(
 
     cmd.extend(
         [
-            "-c:v", "libx264",
-            "-preset", preset,
-            "-crf", str(crf),
-            "-pix_fmt", "yuv420p",
-            "-c:a", "aac",
-            "-b:a", audio_bitrate,
-            "-ac", "2",
-            "-ar", "44100",
-            "-t", str(duration),
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            audio_bitrate,
+            "-ac",
+            "2",
+            "-ar",
+            "44100",
+            "-t",
+            str(duration),
             "-shortest",
             output_path,
         ]

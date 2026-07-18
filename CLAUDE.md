@@ -10,7 +10,7 @@ Entry point: `btcedu = "btcedu.cli:cli"` (pyproject.toml). All 11 sprints comple
 ```bash
 pip install -e ".[dev,web]"          # install with dev + web deps
 pip install -e ".[youtube]"          # optional YouTube upload deps
-pytest                               # run full test suite (~1189 tests)
+pytest                               # run full test suite
 pytest tests/test_pipeline.py -x -q  # run specific test file
 ruff check btcedu/ tests/            # lint (py312, line-length 100, E/W/F/I/UP)
 ./run.sh                             # production deploy: git pull → pip → migrate → restart
@@ -18,20 +18,29 @@ ruff check btcedu/ tests/            # lint (py312, line-length 100, E/W/F/I/UP)
 
 ## Pipeline Architecture
 
-Two pipeline versions coexist. `pipeline_version` config (1=v1, 2=v2) controls which runs.
+New profiles use v2. Existing stored v1 episodes retain a compatibility path;
+new v1 profile definitions are not supported.
 
 **v1 (legacy):** NEW → DOWNLOADED → TRANSCRIBED → CHUNKED → GENERATED → REFINED → COMPLETED
 **v2 (current):**
 ```
-NEW → DOWNLOADED → TRANSCRIBED → CORRECTED → [review_gate_1] →
-TRANSLATED → ADAPTED → [review_gate_2] → CHAPTERIZED →
-IMAGES_GENERATED → TTS_DONE → RENDERED → [review_gate_3] → APPROVED → PUBLISHED
+download → transcribe → transcript_analyze → transcript_verify → correct →
+transcript_qa → review_gate_transcript_qa → review_gate_1 → segment →
+translate → adapt → review_gate_2/translation quality gate → chapterize →
+frameextract → imagegen → review_gate_stock → tts → anchorgen → render →
+review_gate_3 → publish
 ```
 
-Review gates block the pipeline, create ReviewTask records, and resume on approval.
+Translation QA runs deterministic checks before an independent LLM cascade.
+GREEN stores the approved narration hash; RED blocks chapterize and creates an
+artifact-bound review. Automatic targeted translate/adapt retries are bounded.
+Chapterize must preserve the approved narration modulo explicit technical
+normalization. Review gates resume only when their current artifacts are approved.
 All v2-only stages are guarded in `_run_stage()` — v1 episodes cannot enter v2 stages.
 
-**imagegen dispatch**: tagesschau_tr episodes use Gemini 2.0 Flash frame editing (~$0.003/image); all others use Pexels stock images. Controlled by `gemini_image_edit_enabled` + `gemini_api_key` + `episode.content_profile`.
+**imagegen dispatch**: provider and fallback are profile-owned.
+`tagesschau_tr` uses generative routing with deterministic rendering for exact
+data; other profiles may route among Flux, Ideogram, DALL-E, Gemini, or Pexels.
 
 ## Coding Conventions
 
@@ -45,10 +54,10 @@ All v2-only stages are guarded in `_run_stage()` — v1 episodes cannot enter v2
 ## Key Design Patterns
 
 1. **Stage pattern**: service layer (Protocol) → core module (orchestration) → idempotency (SHA-256 hash + provenance) → cost guard → dry-run → PipelineRun record
-2. **Cascade invalidation**: upstream changes write `.stale` markers downstream
+2. **Cascade invalidation**: upstream changes write selective `.stale` markers downstream
 3. **Review gates**: `has_approved_review()` / `has_pending_review()` → pause pipeline
 4. **Prompt versioning**: YAML frontmatter + Jinja2 templates, PromptRegistry tracks SHA-256 hashes in DB
-5. **Cost guard**: cumulative episode cost vs `max_episode_cost_usd` ($10 default)
+5. **Cost guard**: cumulative episode cost vs `max_episode_cost_usd`
 
 ## Critical Gotchas
 
@@ -62,4 +71,8 @@ All v2-only stages are guarded in `_run_stage()` — v1 episodes cannot enter v2
 
 ## Config (.env)
 
-Key settings: `anthropic_api_key`, `openai_api_key`, `elevenlabs_api_key`, `gemini_api_key`, `database_url` (default: sqlite:///data/btcedu.db), `pipeline_version` (1 or 2), `dry_run`, `max_episode_cost_usd` ($10), `render_preset`, `render_timeout_segment`, `gemini_image_edit_enabled`. Full list in `btcedu/config.py`.
+Key settings: transcription primary/secondary providers, transcript QA
+thresholds, `qa_review_enabled`, `qa_model`, LLM/provider credentials,
+`default_content_profile`, `dry_run`, `max_episode_cost_usd`, image/TTS/render
+providers, and YouTube OAuth paths. Profile YAML owns stage routing and may
+override applicable `.env` values. Full list: `btcedu/config.py`.

@@ -102,9 +102,7 @@ def _write_transcript_qa_artifacts(tmp_path, episode_id="ep_tqa"):
         },
         "gate_config": {},
     }
-    (transcript_output_dir / "transcript_qa.json").write_text(
-        json.dumps(qa_doc), encoding="utf-8"
-    )
+    (transcript_output_dir / "transcript_qa.json").write_text(json.dumps(qa_doc), encoding="utf-8")
     return transcript_dir, transcript_output_dir
 
 
@@ -168,9 +166,7 @@ def _write_gate(tmp_path, episode_id, findings, retry_generation=0):
         dismissed_count=sum(1 for f in findings if f.status == "dismissed"),
     )
     decision = (
-        "red"
-        if any(f.status == "open" and f.severity == "critical" for f in findings)
-        else "green"
+        "red" if any(f.status == "open" and f.severity == "critical" for f in findings) else "green"
     )
     gate = QualityGateDocument(
         episode_id=episode_id,

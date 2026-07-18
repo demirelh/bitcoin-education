@@ -8,10 +8,16 @@ Review gates pause the pipeline at critical points so a human can approve or rej
 
 | Gate | After status | Reviews what |
 |------|-------------|-------------|
+| review_gate_transcript_qa | CORRECTED | Blocking transcript uncertainty and verification conflicts |
 | review_gate_1 | CORRECTED | Transcript correction diff |
-| review_gate_2 | ADAPTED | Cultural adaptation diff |
+| review_gate_2 | ADAPTED | Merged deterministic/LLM translation findings and constrained adaptation |
 | review_gate_stock | CHAPTERIZED + imagegen | Stock image/video selections |
 | review_gate_3 | RENDERED | Final rendered video |
+
+The translation gate evaluates GREEN/YELLOW/RED before chapterize. GREEN
+approves and hashes narration, YELLOW may run bounded targeted translate/adapt
+repairs, and RED creates a review task. Critical deterministic findings cannot
+be downgraded by the model.
 
 ## Flow
 
@@ -28,7 +34,7 @@ Pipeline reaches gate status
 (created) PENDING -> IN_REVIEW -> APPROVED | REJECTED | CHANGES_REQUESTED
 ```
 
-- **APPROVED**: pipeline resumes from next stage
+- **APPROVED**: pipeline resumes only if the task still matches current artifact hashes
 - **REJECTED**: episode stays at current status, needs manual intervention
 - **CHANGES_REQUESTED**: reviewer notes are fed back into re-processing (e.g., corrector re-runs with feedback)
 
@@ -37,6 +43,12 @@ Pipeline reaches gate status
 - Diffs: `data/outputs/{ep_id}/review/correction_diff.json`, `adaptation_diff.json`
 - Review history: `data/outputs/{ep_id}/review/review_history.json` (append-only audit trail)
 - Sidecars (Phase 5): `data/outputs/{ep_id}/review/script.adapted.reviewed.tr.md`
+- Transcript QA: `data/outputs/{ep_id}/transcript/transcript_qa.json`
+- Deterministic translation QA: `data/outputs/{ep_id}/translation_qa.json`
+- Merged gate/audit trail: `data/outputs/{ep_id}/translation_quality_gate.json`
+
+Finding status changes (`open`, `resolved`, `dismissed`) append history and do
+not silently rewrite the translation. A fresh QA run recomputes the gate.
 
 ## Granular review (Phase 5)
 
@@ -47,7 +59,10 @@ Per-item accept/reject for corrections and adaptations:
 
 ## Auto-approve
 
-Corrections with <5 punctuation-only changes are auto-approved (MASTERPLAN section 9.4).
+Profiles may auto-approve ordinary review gates. Transcript RED findings and
+the final publish approval remain explicit safety boundaries. For
+`tagesschau_tr`, `auto_publish: false` means review approval never uploads by
+itself.
 
 ## Key functions
 

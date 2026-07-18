@@ -385,9 +385,7 @@ class TestReviewGateTranslateRunStage:
             json.dumps(_make_stories_translated("ep_ts_review")), encoding="utf-8"
         )
 
-        with patch(
-            "btcedu.core.pipeline._profile_pipeline_flags", return_value=(False, True)
-        ):
+        with patch("btcedu.core.pipeline._profile_pipeline_flags", return_value=(False, True)):
             result = _run_stage(
                 db_session,
                 tagesschau_episode,
@@ -458,9 +456,7 @@ class TestReviewGateTranslateRunStage:
         db_session.add(task)
         db_session.commit()
 
-        with patch(
-            "btcedu.core.pipeline._profile_pipeline_flags", return_value=(False, True)
-        ):
+        with patch("btcedu.core.pipeline._profile_pipeline_flags", return_value=(False, True)):
             result = _run_stage(
                 db_session,
                 tagesschau_episode,
@@ -490,14 +486,11 @@ class TestReviewGateTranslateRunStage:
         assert "translation review approved" in result.detail
         # Auto-approve records a real APPROVED review so downstream stages
         # (chapterizer etc.) that independently require approval can proceed.
-        task = (
-            db_session.query(ReviewTask)
-            .filter(ReviewTask.episode_id == "ep_ts_review")
-            .first()
-        )
+        task = db_session.query(ReviewTask).filter(ReviewTask.episode_id == "ep_ts_review").first()
         assert task is not None
         assert task.stage == "translate"
         assert task.status == "approved"
+
 
 # ---------------------------------------------------------------------------
 # 4. _assemble_translation_review

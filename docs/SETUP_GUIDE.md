@@ -1,6 +1,10 @@
 # Setup Guide — v2 Pipeline vollständig einrichten
 
-Dein `run` hat nur die **v1-Pipeline** durchlaufen (download → transcribe → chunk → generate → refine), weil `PIPELINE_VERSION` nicht gesetzt ist (Default: `1`). Für die volle v2-Pipeline (bis YouTube-Upload) musst du folgendes einrichten:
+Neue Installationen verwenden standardmäßig Pipeline v2. Bestehende
+`pipeline_version=1`-Episoden bleiben aus Kompatibilitätsgründen lesbar, sollen
+aber nicht per SQL in v2 umgeschrieben werden. Die aktuelle Pipeline stoppt für
+`tagesschau_tr` vor dem YouTube-Upload, bis eine finale manuelle Freigabe
+vorliegt.
 
 ---
 
@@ -9,7 +13,7 @@ Dein `run` hat nur die **v1-Pipeline** durchlaufen (download → transcribe → 
 | Was | Status | Aktion |
 |-----|--------|--------|
 | `.env` Datei | ❌ fehlt | Erstellen aus `.env.example` |
-| `PIPELINE_VERSION=2` | ❌ nicht gesetzt | In `.env` setzen |
+| `PIPELINE_VERSION=2` | Standard | In `.env` explizit belassen |
 | Anthropic API Key | ✅ läuft schon | In `.env` übernehmen |
 | OpenAI API Key | ✅ läuft schon | In `.env` übernehmen |
 | ElevenLabs API Key + Voice | ❌ fehlt | Account erstellen, Key holen |
@@ -37,7 +41,9 @@ In `.env`:
 PIPELINE_VERSION=2
 ```
 
-> **Wichtig:** Ohne das läuft immer die alte v1-Pipeline (chunk → generate → refine). Die v2-Pipeline macht: correct → translate → adapt → chapterize → imagegen → tts → render → publish.
+> **Wichtig:** v2 ergänzt strukturierte Transkripte, selektive
+> Zweittranskription, Transcript-QA, Story-Inventar, Translation-QA,
+> Narration-Lock und manuelles Publishing.
 
 ---
 
@@ -49,7 +55,9 @@ In `.env`:
 ```env
 ANTHROPIC_API_KEY=sk-ant-dein-key-hier
 ```
-Wird für: correct, translate, adapt, chapterize (alle LLM-Stages).
+Wird für Anthropic-basierte LLM-Stages oder als konfigurierter Fallback genutzt.
+Bei `LLM_PROVIDER=copilot_cli` muss zusätzlich die Copilot CLI installiert und
+authentifiziert sein.
 
 ### 3b) OpenAI (hast du schon — übernehmen)
 
@@ -57,7 +65,7 @@ In `.env`:
 ```env
 OPENAI_API_KEY=sk-dein-key-hier
 ```
-Wird für: Whisper (Transcription) + DALL-E 3 (Image Generation).
+Wird für primäre/sekundäre Transkription und optional OpenAI-Bildgenerierung genutzt.
 
 ### 3c) ElevenLabs — NEU einrichten
 
@@ -152,27 +160,18 @@ Ist schon da. Wenn nicht: `sudo apt install ffmpeg`
 
 ---
 
-## Schritt 6: Bestehende Episoden auf v2 umstellen
-
-Deine Episode `SJFLLZxlWqk` hat Status `COMPLETED` (v1-Endstatus). Um sie durch die v2-Pipeline zu schicken, musst du ihren Status und `pipeline_version` anpassen. Das geht am einfachsten über das Dashboard oder direkt per SQL:
+## Schritt 6: Datenbank und bestehende Episoden
 
 ```bash
-# Option A: Über die CLI eine neue Episode erkennen und mit v2 laufen lassen
-btcedu detect
-btcedu run --episode-id SJFLLZxlWqk --force
-
-# Option B: Falls --force die v2 stages nicht triggert,
-# muss der Status der Episode manuell zurückgesetzt werden.
-# Dafür sqlite3 installieren (falls nötig: sudo apt install sqlite3):
-sqlite3 data/btcedu.db "UPDATE episodes SET status='TRANSCRIBED', pipeline_version=2 WHERE episode_id='SJFLLZxlWqk';"
+btcedu init-db
+btcedu migrate
+btcedu migrate-status
 ```
 
-Danach:
-```bash
-btcedu run --episode-id SJFLLZxlWqk
-```
-
-Die v2-Pipeline startet dann ab `correct` (nach TRANSCRIBED).
+Migrationen sind idempotent und löschen keine Episodendaten. Bestehende
+v1-Episoden behalten ihren gespeicherten Pfad. Für eine v2-Neuverarbeitung eine
+neue Episode erkennen oder die vorhandenen Restart-/Review-Aktionen verwenden;
+Status und `pipeline_version` nicht direkt per SQL manipulieren.
 
 ---
 
@@ -185,6 +184,7 @@ OPENAI_API_KEY=sk-...                 # Whisper + DALL-E
 ELEVENLABS_API_KEY=...                # TTS
 ELEVENLABS_VOICE_ID=...               # TTS Voice
 PIPELINE_VERSION=2                    # v2 Pipeline aktivieren
+DEFAULT_CONTENT_PROFILE=tagesschau_tr # gewünschtes Profil
 PODCAST_YOUTUBE_CHANNEL_ID=UC...      # Quell-Channel
 
 # ── Optional (Defaults ok) ──────────────────────────
@@ -202,15 +202,19 @@ PODCAST_YOUTUBE_CHANNEL_ID=UC...      # Quell-Channel
 | Stage | Service | ~Kosten |
 |-------|---------|---------|
 | Transcribe | OpenAI Whisper | ~$0.10 |
-| Correct | Claude | ~$0.05 |
+| Selective verification | OpenAI ASR | nur verdächtige Ausschnitte |
+| Correct | konfigurierter LLM-Provider | abhängig vom Modell |
+| Deterministic QA | Python | $0 |
 | Translate | Claude | ~$0.15 |
 | Adapt | Claude | ~$0.10 |
+| Independent QA | konfigurierter QA-Provider | nur Standard/Eskalation |
 | Chapterize | Claude | ~$0.10 |
 | Image Gen | DALL-E 3 | ~$0.40/Bild × ~6 Kapitel = ~$2.40 |
 | TTS | ElevenLabs | ~$0.30 (je nach Plan) |
 | **Gesamt** | | **~$3–4 pro Episode** |
 
-> Die `MAX_EPISODE_COST_USD=10.0` Grenze schützt vor Überraschungen.
+> Der Cost Guard prüft vor jedem kostenpflichtigen Aufruf. Wird die Grenze
+> innerhalb einer Stage erreicht, gilt die Stage nicht als erfolgreich.
 
 ---
 
@@ -220,5 +224,7 @@ PODCAST_YOUTUBE_CHANNEL_ID=UC...      # Quell-Channel
 2. API Keys in `.env` eintragen (Anthropic, OpenAI, ElevenLabs)
 3. `PIPELINE_VERSION=2` setzen
 4. Font installieren: `sudo apt install fonts-noto-core`
-5. (Optional) YouTube: `pip install -e ".[youtube]"` + `btcedu youtube-auth`
-6. Testen: `btcedu run --episode-id SJFLLZxlWqk --force`
+5. Datenbank: `btcedu init-db && btcedu migrate`
+6. (Optional) YouTube: `pip install -e ".[youtube]"` + `btcedu youtube-auth`
+7. Mit einer Testepisode oder `DRY_RUN=true` prüfen
+8. Vor echtem Publish finale manuelle Freigabe im Dashboard erteilen

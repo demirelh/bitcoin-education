@@ -115,9 +115,7 @@ def test_retry_command_resumes_from_last_successful_stage(mock_retry, db_session
 
 
 @patch("btcedu.core.pipeline.retry_episode")
-def test_retry_command_reports_pipeline_failure_and_exits_nonzero(
-    mock_retry, db_session, tmp_path
-):
+def test_retry_command_reports_pipeline_failure_and_exits_nonzero(mock_retry, db_session, tmp_path):
     mock_retry.return_value = PipelineReport(
         episode_id="ep-1",
         title="Resumed Episode",

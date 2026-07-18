@@ -902,7 +902,12 @@ class JobManager:
 
         self._update(job, stage="qa")
         self._log(job, "QA-Re-Run (alles): Qualitätsgate mit gebundenen Reparaturen...")
-        gate_result = resolve_translation_quality_gate(session, job.episode_id, settings)
+        gate_result = resolve_translation_quality_gate(
+            session,
+            job.episode_id,
+            settings,
+            force=True,
+        )
         decision = gate_result.decision or "skipped"
         self._log(
             job,

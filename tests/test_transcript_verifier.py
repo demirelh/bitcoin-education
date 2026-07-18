@@ -345,6 +345,52 @@ def test_cost_guard_blocks_before_provider_call(db_session, tmp_path):
     assert run.status == RunStatus.FAILED
 
 
+def test_dry_run_validates_cost_guard_before_provider_call(db_session, tmp_path):
+    settings = _settings(tmp_path, max_episode_cost_usd=0.0)
+    document = _document()
+    _seed(db_session, tmp_path, document, _analysis(document, "seg-0001"))
+
+    with (
+        patch("btcedu.services.ffmpeg_service.probe_media", return_value=_media()),
+        patch("btcedu.services.transcription_service.get_transcription_provider") as provider,
+        pytest.raises(PipelineError, match="cost limit"),
+    ):
+        verify_transcript(db_session, document.episode_id, settings, dry_run=True)
+
+    provider.assert_not_called()
+
+
+def test_dry_run_validates_clip_limit(db_session, tmp_path):
+    settings = _settings(tmp_path)
+    document = _document()
+    _seed(
+        db_session,
+        tmp_path,
+        document,
+        _analysis(document, "seg-0001", "seg-0003"),
+    )
+
+    with (
+        patch(
+            "btcedu.core.transcript_verifier._load_transcription_config",
+            return_value={
+                "secondary": {
+                    "enabled": True,
+                    "provider": "openai",
+                    "model": "gpt-4o-mini-transcribe",
+                    "mode": "suspicious_segments_only",
+                },
+                "suspicious_segment_context_seconds": 1,
+                "max_secondary_audio_seconds": 300,
+                "max_secondary_clips": 1,
+            },
+        ),
+        patch("btcedu.services.ffmpeg_service.probe_media", return_value=_media()),
+        pytest.raises(PipelineError, match="clip limit"),
+    ):
+        verify_transcript(db_session, document.episode_id, settings, dry_run=True)
+
+
 def test_clip_count_limit_blocks_before_provider_call(db_session, tmp_path):
     settings = _settings(tmp_path)
     document = _document()

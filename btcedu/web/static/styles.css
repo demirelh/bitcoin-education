@@ -2501,6 +2501,12 @@ body {
     gap: 8px;
     margin: 4px 0 14px;
 }
+.qa-finding-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
 .qa-review-head {
     display: flex;
     align-items: center;

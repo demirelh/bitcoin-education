@@ -1345,6 +1345,12 @@
         const story = f.story_id ? `[${esc(f.story_id)}] ` : "";
         const contradiction = f.contradiction ? " · ⚠ Widerspruch" : "";
         const origin = `${esc(f.detector || "")}${f.model ? " · " + esc(f.model) : ""}`;
+        const segmentIds = Array.isArray(f.source_segment_ids) ? f.source_segment_ids : [];
+        const fid = esc(String(f.finding_id || ""));
+        const actions = f.status === "open"
+          ? `<button class="btn btn-sm" onclick="setFindingStatus('${fid}', 'resolved')">Gelöst markieren</button>
+             <button class="btn btn-sm btn-danger" onclick="setFindingStatus('${fid}', 'dismissed')">Verwerfen</button>`
+          : `<button class="btn btn-sm" onclick="setFindingStatus('${fid}', 'open')">Wieder öffnen</button>`;
         return `<details class="qa-stories" ${f.status === "open" && (f.severity === "critical" || f.severity === "major") ? "open" : ""}>
           <summary>
             <span class="qa-score ${sevClass}">${esc(String(f.severity || "").toUpperCase())}</span>
@@ -1355,7 +1361,9 @@
             ${f.source_excerpt ? `<div><strong>Quelle:</strong> ${esc(f.source_excerpt)}</div>` : ""}
             ${f.target_excerpt ? `<div><strong>Ziel:</strong> ${esc(f.target_excerpt)}</div>` : ""}
             ${f.required_action ? `<div><strong>Aktion:</strong> ${esc(f.required_action)}</div>` : ""}
+            ${segmentIds.length ? `<div><strong>Segmente:</strong> ${esc(segmentIds.join(", "))}</div>` : ""}
             <div class="qa-model">Detektor: ${origin}${f.retry_generation ? " · Gen " + Number(f.retry_generation) : ""}</div>
+            <div class="qa-finding-actions">${actions}</div>
           </div>
         </details>`;
       }).join("");
@@ -1387,6 +1395,16 @@
         <span class="qa-model">${qa.generated_at ? esc(new Date(qa.generated_at).toLocaleString()) : ""}</span>
         <span class="qa-score ${statusClass}">${esc(status.toUpperCase())}</span>
       </div>
+      <div class="qa-rerun-actions">
+        <button class="btn btn-sm btn-primary" onclick="approveTranscriptQa()"
+          title="Transkript-QA-Review genehmigen (nutzt/erstellt den 'transcript_qa'-Review-Task).">
+          &#10004; Transkript-QA genehmigen
+        </button>
+        <button class="btn btn-sm btn-danger" onclick="requestChangesTranscriptQa()"
+          title="Änderungen an der Transkript-Korrektur anfordern (Notiz erforderlich).">
+          Änderungen anfordern
+        </button>
+      </div>
       <div class="qa-summary">
         Critical: ${Number(summary.critical_count || 0)} &middot;
         Major: ${Number(summary.major_count || 0)} &middot;
@@ -1417,6 +1435,59 @@
     h += `</div>`;
     return h;
   }
+
+  async function approveTranscriptQa() {
+    if (!selected) return;
+    const note = (prompt("Optionale Notiz zur Genehmigung der Transkript-QA:") || "").trim();
+    const r = await POST(`/episodes/${selected.episode_id}/qa/transcript/approve`, {
+      notes: note || undefined,
+    });
+    if (r.error) {
+      toast(r.error, false);
+      return;
+    }
+    toast("Transkript-QA genehmigt");
+    loadQaPanel();
+  }
+  window.approveTranscriptQa = approveTranscriptQa;
+
+  async function requestChangesTranscriptQa() {
+    if (!selected) return;
+    const note = (prompt("Notiz: welche Änderungen sind nötig?") || "").trim();
+    if (!note) {
+      toast("Eine Notiz ist für Änderungsanfragen erforderlich", false);
+      return;
+    }
+    const r = await POST(`/episodes/${selected.episode_id}/qa/transcript/request-changes`, {
+      notes: note,
+    });
+    if (r.error) {
+      toast(r.error, false);
+      return;
+    }
+    toast("Änderungen angefordert");
+    loadQaPanel();
+  }
+  window.requestChangesTranscriptQa = requestChangesTranscriptQa;
+
+  async function setFindingStatus(findingId, status) {
+    if (!selected) return;
+    let note;
+    if (status !== "open") {
+      note = (prompt(`Optionale Notiz für Finding ${findingId} (${status}):`) || "").trim() || undefined;
+    }
+    const r = await POST(
+      `/episodes/${selected.episode_id}/qa/findings/${encodeURIComponent(findingId)}/status`,
+      { status, note }
+    );
+    if (r.error) {
+      toast(r.error, false);
+      return;
+    }
+    toast(`Finding ${findingId} → ${status}`);
+    loadQaPanel();
+  }
+  window.setFindingStatus = setFindingStatus;
 
   function qaRerunButtons() {
     return `

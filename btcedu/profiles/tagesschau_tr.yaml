@@ -20,6 +20,8 @@ stage_config:
     max_secondary_clips: 10
   transcript_analyze:
     enabled: true
+  transcript_verify:
+    enabled: true
   transcript_qa:
     enabled: true
     block_on_critical: true
@@ -28,6 +30,7 @@ stage_config:
   translation_qa:
     enabled: true
   qa:
+    enabled: true
     # Deterministic checks run first and never cost anything.
     deterministic_checks: true
     # Standard independent second-opinion model (different from the producer).
@@ -55,6 +58,7 @@ stage_config:
   segment:
     enabled: true
   adapt:
+    # Conditional, story-preserving polish only; never a full rewrite.
     skip: false
     mode: conditional
     tiers: [anchor_unify, local_relevance]

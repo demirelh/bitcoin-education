@@ -327,6 +327,7 @@ def _default_qa_config(settings: Settings) -> dict:
     provider = getattr(settings, "llm_provider", "anthropic")
     model = getattr(settings, "qa_model", "") or getattr(settings, "claude_model", "")
     return {
+        "enabled": bool(getattr(settings, "qa_review_enabled", False)),
         "deterministic_checks": True,
         "standard": {"provider": provider, "model": model},
         "escalation": {
@@ -359,9 +360,15 @@ def resolve_qa_config(settings: Settings, episode: Episode) -> dict:
 
         name = getattr(episode, "content_profile", None)
         if name:
-            profile_qa = get_registry(settings).get(name).stage_config.get("qa", {}) or {}
+            stage_config = get_registry(settings).get(name).stage_config
+            profile_qa = stage_config.get("qa", {}) or {}
+            translation_qa = stage_config.get("translation_qa", {}) or {}
+            if translation_qa.get("enabled") is False:
+                config["deterministic_checks"] = False
     except Exception:  # noqa: BLE001
         profile_qa = {}
+    if "enabled" in profile_qa:
+        config["enabled"] = bool(profile_qa["enabled"])
     if "deterministic_checks" in profile_qa:
         config["deterministic_checks"] = bool(profile_qa["deterministic_checks"])
     for key in ("standard", "escalation", "quality_gate"):
@@ -1203,8 +1210,6 @@ def generate_qa_review(
             reason=reason,
         )
 
-    if not getattr(settings, "qa_review_enabled", False):
-        return _skip("qa_review_enabled=False")
     if settings.dry_run:
         return _skip("dry_run")
 
@@ -1220,6 +1225,8 @@ def generate_qa_review(
         return _skip(f"episode not found: {episode_id}")
 
     config = resolve_qa_config(settings, episode)
+    if not config.get("enabled", True):
+        return _skip("QA disabled by effective configuration")
     standard = config["standard"]
     std_provider = standard.get("provider") or getattr(settings, "llm_provider", "anthropic")
     std_model = standard.get("model") or model_label
@@ -1703,6 +1710,72 @@ def gate_review_artifacts(settings: Settings, episode_id: str) -> list[str]:
     return artifacts
 
 
+# Finding lifecycle statuses a reviewer may set directly (mirrors QAFinding.status).
+FINDING_STATUSES = frozenset({"open", "resolved", "dismissed"})
+
+
+def update_finding_status(
+    settings: Settings,
+    episode_id: str,
+    finding_id: str,
+    status: str,
+    *,
+    note: str | None = None,
+) -> dict:
+    """Mutate one finding's lifecycle status directly on the persisted quality gate.
+
+    This is manual curation (e.g. marking a finding as a false positive, or
+    confirming a fix applied outside the automated repair loop) — it does NOT
+    re-evaluate the gate's overall decision/blocked state, which requires the
+    full episode/config context and only changes via a fresh QA run (the
+    "Restart Translate + Adapt" / "Restart All" actions). The audit trail is the
+    finding's own durable ``history`` inside the JSON artifact itself — no
+    parallel DB table is used for translation QA findings.
+
+    Raises:
+        ValueError: if the gate document, or the finding within it, is missing,
+            or if ``status`` is not one of the allowed lifecycle values.
+    """
+    if status not in FINDING_STATUSES:
+        raise ValueError(
+            f"Invalid finding status: '{status}' (expected one of {sorted(FINDING_STATUSES)})"
+        )
+
+    path = _gate_path(settings, episode_id)
+    if not path.exists():
+        raise ValueError(f"No quality gate found for episode {episode_id}")
+    try:
+        gate = QualityGateDocument.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Quality gate for {episode_id} is unreadable: {exc}") from exc
+
+    target = next((f for f in gate.findings if f.finding_id == finding_id), None)
+    if target is None:
+        raise ValueError(f"Finding not found: {finding_id}")
+
+    target.status = status
+    target.history = [
+        *target.history,
+        QAFindingEvent(generation=gate.retry_generation, status=status, note=note),
+    ]
+    gate.summary = _summarize(gate.findings)
+
+    # Re-validate the full document (summary/decision consistency) before persisting.
+    updated = QualityGateDocument.model_validate(gate.model_dump(mode="json"))
+
+    path.write_text(
+        json.dumps(updated.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    _, md_path, _ = _qa_paths(settings, episode_id)
+    try:
+        md_path.write_text(_render_gate_markdown(updated), encoding="utf-8")
+    except OSError:
+        logger.warning("Could not refresh %s after finding status change", md_path)
+
+    return updated.model_dump(mode="json")
+
+
 def resolve_translation_quality_gate(
     session: Session,
     episode_id: str,
@@ -1719,7 +1792,18 @@ def resolve_translation_quality_gate(
     state persists across pipeline runs via the gate's ``retry_generation`` so the
     automatic-repair budget is never exceeded.
     """
-    result = generate_qa_review(session, episode_id, settings, force=force, generation=0)
+    existing_gate = load_quality_gate(settings, episode_id) or {}
+    initial_generation = int(existing_gate.get("retry_generation", 0))
+    initial_history = list(existing_gate.get("retry_history", []))
+    result = generate_qa_review(
+        session,
+        episode_id,
+        settings,
+        force=force,
+        previous_gate=existing_gate or None,
+        generation=initial_generation,
+        retry_history=initial_history,
+    )
     if result.skipped and not result.decision:
         # QA disabled / dry-run / artifacts missing — no active gate.
         return result

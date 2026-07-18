@@ -385,12 +385,23 @@ def verify_transcript(
             reason="already current",
         )
 
+    estimated_total_cost = _estimated_cost(
+        sum(plan.duration_seconds for plan in plans),
+        settings.transcription_openai_cost_per_minute_usd,
+    )
     if effective_dry_run:
+        _validate_plan_limits(
+            plans,
+            max_audio_seconds=resolved.max_secondary_audio_seconds,
+            max_clips=resolved.max_secondary_clips,
+        )
+        _ensure_cost_budget(session, episode, settings, estimated_total_cost)
         return TranscriptVerificationResult(
             episode_id=episode_id,
             verification_path=str(verification_path),
             provenance_path=str(provenance_path),
             regions_checked=len(plans),
+            cost_usd=estimated_total_cost,
             skipped=True,
             reason=f"dry-run: would verify {len(plans)} region(s)",
             dry_run=True,
@@ -412,10 +423,6 @@ def verify_transcript(
             plans,
             max_audio_seconds=resolved.max_secondary_audio_seconds,
             max_clips=resolved.max_secondary_clips,
-        )
-        estimated_total_cost = _estimated_cost(
-            sum(plan.duration_seconds for plan in plans),
-            settings.transcription_openai_cost_per_minute_usd,
         )
         _ensure_cost_budget(session, episode, settings, estimated_total_cost)
 

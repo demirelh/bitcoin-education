@@ -13,6 +13,11 @@
 
 Episodes: `GET/POST /api/episodes/<id>/{download,transcribe,run,retry,publish,...}`
 Reviews: `GET/POST /api/reviews/<id>/{approve,reject,request-changes}`
+QA panel actions: `POST /api/episodes/<id>/qa/transcript/{approve,request-changes}` (reuses/creates the
+`transcript_qa` ReviewTask), `POST /api/episodes/<id>/qa/findings/<finding_id>/status` (mutates a
+translation QA finding's status open/resolved/dismissed; requires an existing pending/in_review
+`translation_qa` ReviewTask; audit trail lives in the finding's `history` inside
+`translation_quality_gate.json`, no parallel DB)
 Batch: `POST /api/batch/start`, `GET /api/batch/<id>`, `POST /api/batch/<id>/stop`
 Jobs: `GET /api/jobs/<id>` (polling for background job status)
 Files: `GET /api/episodes/<id>/files/<type>` (serve episode artifacts)

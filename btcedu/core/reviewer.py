@@ -329,13 +329,22 @@ def approve_review(
     if notes:
         task.reviewer_notes = notes
 
-    # Recompute artifact hash at approval time
+    # Approval must cover the exact bytes that created the task. In-place
+    # rehashing here would silently authorize a different artifact.
     if task.artifact_paths:
         try:
             paths = json.loads(task.artifact_paths)
-            task.artifact_hash = _compute_artifact_hash(paths)
+            current_hash = _compute_artifact_hash(paths)
+            if task.artifact_hash is None:
+                # Backward compatibility for review tasks created before hashes
+                # were persisted.
+                task.artifact_hash = current_hash
+            elif task.artifact_hash != current_hash:
+                raise ValueError(
+                    "Review artifacts changed after task creation; create a new review task."
+                )
         except (json.JSONDecodeError, TypeError):
-            pass
+            raise ValueError("Review task has invalid artifact paths") from None
 
     decision = ReviewDecision(
         review_task_id=task.id,
@@ -782,6 +791,29 @@ def has_approved_review_for_artifacts(
     )
 
 
+def review_task_matches_artifacts(task: ReviewTask, artifact_paths: list[str]) -> bool:
+    """Return whether a review task is bound to the current artifact set and bytes."""
+    try:
+        task_paths = json.loads(task.artifact_paths or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return task_paths == artifact_paths and task.artifact_hash == _compute_artifact_hash(
+        artifact_paths
+    )
+
+
+def refresh_review_task_artifacts(
+    session: Session,
+    task: ReviewTask,
+    artifact_paths: list[str],
+) -> None:
+    """Rebind an actionable task after an audited in-review artifact mutation."""
+    _validate_actionable(task)
+    task.artifact_paths = json.dumps(artifact_paths)
+    task.artifact_hash = _compute_artifact_hash(artifact_paths)
+    session.commit()
+
+
 def profile_auto_approves(settings, episode) -> bool:
     """True if the episode's content profile enables ``auto_approve_reviews``.
 
@@ -859,6 +891,26 @@ def has_pending_review(
     if stage is not None:
         query = query.filter(ReviewTask.stage == stage)
     return query.count() > 0
+
+
+def has_pending_review_for_artifacts(
+    session: Session,
+    episode_id: str,
+    stage: str,
+    artifact_paths: list[str],
+) -> bool:
+    """True when the latest actionable task covers the current artifacts."""
+    task = (
+        session.query(ReviewTask)
+        .filter(
+            ReviewTask.episode_id == episode_id,
+            ReviewTask.stage == stage,
+            ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]),
+        )
+        .order_by(ReviewTask.created_at.desc())
+        .first()
+    )
+    return task is not None and review_task_matches_artifacts(task, artifact_paths)
 
 
 def pending_review_count(session: Session) -> int:

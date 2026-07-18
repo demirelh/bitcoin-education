@@ -217,6 +217,26 @@ def load_transcript_qa(settings: Settings, episode_id: str) -> dict | None:
     return document.model_dump(mode="json")
 
 
+def review_artifacts(settings: Settings, episode_id: str) -> list[str]:
+    """Artifact paths that bind a ``transcript_qa`` review task to current content.
+
+    Mirrors the artifact list ``review_gate_transcript_qa`` uses in the pipeline so
+    a manual approval/request-changes action (e.g. from the dashboard) is bound to
+    the exact same files the pipeline checks via ``has_approved_review_for_artifacts``.
+    """
+    transcript_dir = Path(settings.transcripts_dir) / episode_id
+    transcript_output_dir = Path(settings.outputs_dir) / episode_id / "transcript"
+    artifacts = [
+        str(transcript_dir / "transcript.corrected.de.txt"),
+        str(transcript_dir / "transcript.corrected.structured.de.json"),
+        str(transcript_output_dir / "transcript_qa.json"),
+    ]
+    verification_path = transcript_output_dir / "transcript_verification.json"
+    if verification_path.exists():
+        artifacts.append(str(verification_path))
+    return artifacts
+
+
 def _evaluate(
     corrected: CorrectedTranscriptDocument,
     verification: TranscriptVerificationDocument | None,

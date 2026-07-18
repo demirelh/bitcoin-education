@@ -116,8 +116,21 @@ def _get_stages(
         # If profile lookup fails, return default v2 stages
         return stages
 
-    if not stage_config.get("transcript_analyze", {}).get("enabled", True):
+    analysis_enabled = stage_config.get("transcript_analyze", {}).get("enabled", True)
+    if not analysis_enabled:
         stages = [(name, status) for name, status in stages if name != "transcript_analyze"]
+    verify_config = stage_config.get("transcript_verify", {}) or {}
+    secondary_config = (stage_config.get("transcription", {}) or {}).get("secondary", {}) or {}
+    if (
+        verify_config.get("enabled") is False
+        or secondary_config.get("enabled") is False
+        or secondary_config.get("mode") == "disabled"
+        or (
+            not analysis_enabled
+            and secondary_config.get("mode") == "suspicious_segments_only"
+        )
+    ):
+        stages = [(name, status) for name, status in stages if name != "transcript_verify"]
     if not stage_config.get("transcript_qa", {}).get("enabled", True):
         stages = [
             (name, status)
@@ -186,12 +199,16 @@ def _quality_gate_scoped(settings: Settings, episode: Episode) -> bool:
         name = getattr(episode, "content_profile", None)
         if name:
             profile = get_registry(settings).get(name)
-            if isinstance(profile.stage_config.get("qa"), dict):
-                return True
+            qa_config = profile.stage_config.get("qa")
+            if isinstance(qa_config, dict):
+                return qa_config.get(
+                    "enabled",
+                    bool(getattr(settings, "qa_review_enabled", False)),
+                )
     except Exception:  # noqa: BLE001
         pass
     stories = Path(settings.outputs_dir) / episode.episode_id / "stories_translated.json"
-    return stories.exists()
+    return stories.exists() and bool(getattr(settings, "qa_review_enabled", False))
 
 
 def _imagegen_provider(settings: Settings, episode: Episode) -> str:
@@ -516,9 +533,10 @@ def _run_stage(
             from btcedu.core.reviewer import (
                 create_review_task,
                 has_approved_review_for_artifacts,
-                has_pending_review,
+                has_pending_review_for_artifacts,
             )
             from btcedu.core.transcript_qa import load_transcript_qa
+            from btcedu.core.transcript_qa import review_artifacts as transcript_qa_artifacts
 
             qa = load_transcript_qa(settings, episode.episode_id)
             if not qa:
@@ -531,16 +549,7 @@ def _run_stage(
                     elapsed,
                     detail=f"auto-continued ({qa.get('status', 'green')})",
                 )
-            transcript_dir = Path(settings.transcripts_dir) / episode.episode_id
-            transcript_output_dir = Path(settings.outputs_dir) / episode.episode_id / "transcript"
-            artifacts = [
-                str(transcript_dir / "transcript.corrected.de.txt"),
-                str(transcript_dir / "transcript.corrected.structured.de.json"),
-                str(transcript_output_dir / "transcript_qa.json"),
-            ]
-            verification_path = transcript_output_dir / "transcript_verification.json"
-            if verification_path.exists():
-                artifacts.append(str(verification_path))
+            artifacts = transcript_qa_artifacts(settings, episode.episode_id)
             if has_approved_review_for_artifacts(
                 session,
                 episode.episode_id,
@@ -554,7 +563,12 @@ def _run_stage(
                     elapsed,
                     detail="transcript QA review approved",
                 )
-            if has_pending_review(session, episode.episode_id):
+            if has_pending_review_for_artifacts(
+                session,
+                episode.episode_id,
+                "transcript_qa",
+                artifacts,
+            ):
                 elapsed = time.monotonic() - t0
                 return StageResult(
                     "review_gate_transcript_qa",
@@ -689,6 +703,7 @@ def _run_stage(
                 has_approved_review,
                 has_approved_review_for_artifacts,
                 has_pending_review,
+                has_pending_review_for_artifacts,
             )
 
             # Phase 7: independent factual quality gate with bounded targeted
@@ -697,9 +712,7 @@ def _run_stage(
             # are NOT swallowed for gate-scoped episodes — a genuine QA failure
             # fails the stage. Legacy (non-scoped) episodes keep advisory QA.
             qa_result = None
-            scoped = getattr(settings, "qa_review_enabled", False) and _quality_gate_scoped(
-                settings, episode
-            )
+            scoped = _quality_gate_scoped(settings, episode)
             if scoped:
                 from btcedu.core.qa_reviewer import resolve_translation_quality_gate
 
@@ -757,7 +770,12 @@ def _run_stage(
                     return StageResult("review_gate_2", "success", elapsed, detail=detail)
 
                 # RED or exhausted non-green — block on an artifact-bound review.
-                if has_pending_review(session, episode.episode_id, stage="translation_qa"):
+                if has_pending_review_for_artifacts(
+                    session,
+                    episode.episode_id,
+                    "translation_qa",
+                    artifacts,
+                ):
                     elapsed = time.monotonic() - t0
                     return StageResult(
                         "review_gate_2",

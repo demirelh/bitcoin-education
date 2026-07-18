@@ -15,6 +15,27 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
+# Exit code contract shared by the deterministic/zero-cost QA commands
+# (transcript-analyze, transcript-verify, transcript-qa, translation-qa):
+#   0 = every requested episode was processed with no RED/blocking finding
+#   1 = at least one episode raised an execution error (bad input, missing
+#       artifact, API failure, etc.) — this always takes priority over 2
+#   2 = no execution errors, but at least one episode produced a RED /
+#       blocking QA finding. This is a valid, script-detectable operational
+#       result (not a bug), distinct from a command execution failure.
+EXIT_OK = 0
+EXIT_EXECUTION_FAILURE = 1
+EXIT_QA_BLOCKED = 2
+
+
+def _qa_exit_code(*, has_failure: bool, has_blocking: bool) -> int:
+    """Resolve the shared QA-command exit code from accumulated flags."""
+    if has_failure:
+        return EXIT_EXECUTION_FAILURE
+    if has_blocking:
+        return EXIT_QA_BLOCKED
+    return EXIT_OK
+
 
 @click.group()
 @click.pass_context
@@ -250,11 +271,21 @@ def transcript_analyze(
     episode_ids: tuple[str, ...],
     force: bool,
 ) -> None:
-    """Flag suspicious transcript segments without external API calls."""
+    """Flag suspicious transcript segments without external API calls.
+
+    Deterministic and zero-cost: no simulate-only mode is offered because
+    there are no external calls or spend to simulate — every run does the
+    same (free) work whether or not you inspect the result first.
+
+    Exit codes: 0 GREEN/YELLOW, 1 an episode failed to process, 2 no
+    failures but at least one episode has a RED (critical) finding.
+    """
     from btcedu.core.transcript_analyzer import analyze_transcript
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
+    has_failure = False
+    has_blocking = False
     try:
         for episode_id in episode_ids:
             try:
@@ -264,18 +295,33 @@ def transcript_analyze(
                     settings,
                     force=force,
                 )
-                if result.skipped:
+                if result.skipped and result.reason != "already current":
                     click.echo(f"[SKIP] {episode_id} -> {result.reason}")
-                else:
-                    click.echo(
-                        f"[OK] {episode_id} -> "
-                        f"{result.suspicious_count}/{result.segment_count} suspicious "
-                        f"({result.critical_count} critical)"
-                    )
+                    continue
+                status = (
+                    "RED"
+                    if result.critical_count
+                    else "YELLOW"
+                    if result.suspicious_count
+                    else "GREEN"
+                )
+                if status == "RED":
+                    has_blocking = True
+                click.echo(
+                    f"[{status}] {episode_id} -> "
+                    f"{result.suspicious_count}/{result.segment_count} suspicious "
+                    f"({result.critical_count} critical) "
+                    "cost=$0.0000 (deterministic, zero-cost)"
+                )
             except Exception as exc:
                 click.echo(f"[FAIL] {episode_id}: {exc}", err=True)
+                has_failure = True
     finally:
         session.close()
+
+    exit_code = _qa_exit_code(has_failure=has_failure, has_blocking=has_blocking)
+    if exit_code:
+        sys.exit(exit_code)
 
 
 @cli.command(name="transcript-verify")
@@ -305,11 +351,21 @@ def transcript_verify(
     force: bool,
     dry_run: bool,
 ) -> None:
-    """Verify selected transcript regions with the secondary ASR provider."""
+    """Verify selected transcript regions with the secondary ASR provider.
+
+    --dry-run resolves regions and cost limits without making the (billed)
+    secondary-provider calls, since this stage does external API calls
+    unlike transcript-analyze/-qa and translation-qa.
+
+    Exit codes: 0 GREEN, 1 an episode failed to process, 2 no failures but
+    at least one episode has a RED (critical mismatch) finding.
+    """
     from btcedu.core.transcript_verifier import verify_transcript
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
+    has_failure = False
+    has_blocking = False
     try:
         for episode_id in episode_ids:
             try:
@@ -320,17 +376,25 @@ def transcript_verify(
                     force=force,
                     dry_run=dry_run,
                 )
-                if result.skipped:
+                if result.skipped and result.reason != "already current":
                     click.echo(f"[SKIP] {episode_id} -> {result.reason}")
-                else:
-                    click.echo(
-                        f"[OK] {episode_id} -> {result.regions_checked} regions "
-                        f"({result.critical_count} critical, ${result.cost_usd:.4f})"
-                    )
+                    continue
+                status = "RED" if result.critical_count else "GREEN"
+                if status == "RED":
+                    has_blocking = True
+                click.echo(
+                    f"[{status}] {episode_id} -> {result.regions_checked} regions "
+                    f"({result.critical_count} critical, cost=${result.cost_usd:.4f})"
+                )
             except Exception as exc:
                 click.echo(f"[FAIL] {episode_id}: {exc}", err=True)
+                has_failure = True
     finally:
         session.close()
+
+    exit_code = _qa_exit_code(has_failure=has_failure, has_blocking=has_blocking)
+    if exit_code:
+        sys.exit(exit_code)
 
 
 @cli.command(name="transcript-qa")
@@ -353,11 +417,22 @@ def transcript_qa(
     episode_ids: tuple[str, ...],
     force: bool,
 ) -> None:
-    """Evaluate transcript uncertainty and display blocking findings."""
+    """Evaluate transcript uncertainty and display blocking findings.
+
+    Deterministic and zero-cost: no simulate-only mode is offered because
+    there are no external calls or spend to simulate.
+
+    Exit codes: 0 GREEN/YELLOW, 1 an episode failed to process, 2 no
+    failures but at least one episode is RED/blocked (the same signal that
+    would create a review_gate_transcript_qa task) and needs a human look
+    before the pipeline continues.
+    """
     from btcedu.core.transcript_qa import evaluate_transcript_qa, load_transcript_qa
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
+    has_failure = False
+    has_blocking = False
     try:
         for episode_id in episode_ids:
             try:
@@ -371,14 +446,17 @@ def transcript_qa(
                 if result.skipped and not document:
                     click.echo(f"[SKIP] {episode_id} -> {result.reason}")
                     continue
+                if result.blocked:
+                    has_blocking = True
                 summary = (document or {}).get("summary", {})
                 click.echo(
-                    f"[{'BLOCKED' if result.blocked else 'OK'}] {episode_id} -> "
-                    f"{result.status.upper()} "
+                    f"[{result.status.upper()}] {episode_id} -> "
+                    f"{'BLOCKED' if result.blocked else 'auto-continue'} "
                     f"(critical={summary.get('critical_count', 0)}, "
                     f"major={summary.get('major_count', 0)}, "
                     f"minor={summary.get('minor_count', 0)}, "
-                    f"blocking={summary.get('blocking_count', 0)})"
+                    f"blocking={summary.get('blocking_count', 0)}, "
+                    "cost=$0.0000 (deterministic, zero-cost))"
                 )
                 for finding in (document or {}).get("findings", []):
                     if not finding.get("blocking"):
@@ -393,8 +471,13 @@ def transcript_qa(
                     )
             except Exception as exc:
                 click.echo(f"[FAIL] {episode_id}: {exc}", err=True)
+                has_failure = True
     finally:
         session.close()
+
+    exit_code = _qa_exit_code(has_failure=has_failure, has_blocking=has_blocking)
+    if exit_code:
+        sys.exit(exit_code)
 
 
 @cli.command(name="translation-qa")
@@ -417,11 +500,21 @@ def translation_qa(
     episode_ids: tuple[str, ...],
     force: bool,
 ) -> None:
-    """Run zero-cost deterministic translation quality checks."""
+    """Run zero-cost deterministic translation quality checks.
+
+    Deterministic and zero-cost: no simulate-only mode is offered because
+    there are no external calls or spend to simulate.
+
+    Exit codes: 0 GREEN/YELLOW, 1 an episode failed to process, 2 no
+    failures but at least one episode is RED and should be reviewed before
+    the translation is trusted downstream.
+    """
     from btcedu.core.translation_qa import load_translation_qa, run_translation_qa
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
+    has_failure = False
+    has_blocking = False
     try:
         for episode_id in episode_ids:
             try:
@@ -434,15 +527,19 @@ def translation_qa(
                 document = load_translation_qa(settings, episode_id)
                 if result.skipped and not document:
                     click.echo(f"[SKIP] {episode_id} -> {result.reason}")
+                    if result.reason != "translation QA disabled by profile":
+                        has_failure = True
                     continue
+                if result.status == "red":
+                    has_blocking = True
                 summary = (document or {}).get("summary", {})
                 click.echo(
-                    f"[{'RED' if result.status == 'red' else 'OK'}] {episode_id} -> "
-                    f"{result.status.upper()} "
+                    f"[{result.status.upper()}] {episode_id} -> "
                     f"(critical={summary.get('critical_count', 0)}, "
                     f"major={summary.get('major_count', 0)}, "
                     f"minor={summary.get('minor_count', 0)}, "
-                    f"info={summary.get('info_count', 0)}, cost=$0.0000)"
+                    f"info={summary.get('info_count', 0)}, "
+                    "cost=$0.0000 (deterministic, zero-cost))"
                 )
                 for finding in (document or {}).get("findings", []):
                     click.echo(
@@ -453,8 +550,13 @@ def translation_qa(
                     )
             except Exception as exc:
                 click.echo(f"[FAIL] {episode_id}: {exc}", err=True)
+                has_failure = True
     finally:
         session.close()
+
+    exit_code = _qa_exit_code(has_failure=has_failure, has_blocking=has_blocking)
+    if exit_code:
+        sys.exit(exit_code)
 
 
 @cli.command()
@@ -651,7 +753,14 @@ def run_pending_cmd(
 )
 @click.pass_context
 def retry(ctx: click.Context, episode_ids: tuple[str, ...]) -> None:
-    """Retry failed episodes from their last successful stage."""
+    """Retry failed episodes from their last successful stage.
+
+    This is the pipeline's resume/restart command: it clears the episode's
+    error state and re-enters ``run_episode_pipeline`` at the episode's
+    current status, so already-completed stages are skipped and only the
+    failed/remaining stages re-run. No separate "resume" or "restart"
+    command is offered — this one already covers that need.
+    """
     from btcedu.core.pipeline import retry_episode, write_report
 
     settings = ctx.obj["settings"]
@@ -2242,9 +2351,8 @@ def credits_cmd(ctx: click.Context, as_json: bool) -> None:
     def _emoji(status: str) -> str:
         return {"ok": "🟢", "warn": "🟡", "critical": "🔴", "unknown": "⚪"}.get(status, "⚪")
 
-    click.echo(
-        f"\n=== 💳 API Credits & Usage (as of {datetime.now(UTC).strftime('%Y-%m-%d %H:%M UTC')}) ===\n"
-    )
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M UTC")
+    click.echo(f"\n=== 💳 API Credits & Usage (as of {timestamp}) ===\n")
     for s in statuses:
         icon = _emoji(s.status)
         click.echo(f"{icon} {s.display_name}")
@@ -2255,13 +2363,16 @@ def credits_cmd(ctx: click.Context, as_json: bool) -> None:
                 remaining = (s.chars_limit or 0) - (s.chars_used or 0)
                 pct = 100.0 * (s.chars_used or 0) / max(s.chars_limit, 1)
                 click.echo(
-                    f"    Characters: {s.chars_used:,} / {s.chars_limit:,}  ({pct:.0f}% used, {remaining:,} left)"
+                    f"    Characters: {s.chars_used:,} / {s.chars_limit:,}  "
+                    f"({pct:.0f}% used, {remaining:,} left)"
                 )
             if s.tier:
                 click.echo(f"    Tier: {s.tier}")
         else:  # usage_tracking
             click.echo(
-                f"    Spent today: ${s.spent_today_usd or 0:.2f}  |  7d: ${s.spent_7d_usd or 0:.2f}  |  30d: ${s.spent_30d_usd or 0:.2f}"
+                f"    Spent today: ${s.spent_today_usd or 0:.2f}  |  "
+                f"7d: ${s.spent_7d_usd or 0:.2f}  |  "
+                f"30d: ${s.spent_30d_usd or 0:.2f}"
             )
             if s.note:
                 click.echo(f"    ({s.note})")

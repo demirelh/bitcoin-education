@@ -130,6 +130,17 @@ class TestApproveReview:
         # Episode should still be CORRECTED — pipeline advances on next run
         assert episode.status == EpisodeStatus.CORRECTED
 
+    def test_rejects_artifacts_changed_after_task_creation(
+        self, db_session, review_task, corrected_episode
+    ):
+        Path(corrected_episode["corrected_path"]).write_text(
+            "Changed after review creation",
+            encoding="utf-8",
+        )
+
+        with pytest.raises(ValueError, match="artifacts changed"):
+            approve_review(db_session, review_task.id)
+
 
 class TestRejectReview:
     def test_reverts_episode(self, db_session, review_task, corrected_episode):

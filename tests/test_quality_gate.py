@@ -543,6 +543,42 @@ def test_retry_exhaustion_stays_yellow(db_session, tmp_path):
     assert counter["n"] == 2
 
 
+def test_forced_gate_rerun_preserves_retry_budget_and_history(db_session, tmp_path):
+    _, settings = _make_episode(db_session, tmp_path, [("s01", "Text.", "Metin.", True)])
+    gate_path = Path(settings.outputs_dir) / "ep-gate" / "translation_quality_gate.json"
+    gate_path.write_text(
+        json.dumps(
+            {
+                "decision": "red",
+                "retry_generation": 2,
+                "retry_history": [
+                    {"generation": 1, "resulting_status": "yellow"},
+                    {"generation": 2, "resulting_status": "red"},
+                ],
+                "findings": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with patch(
+        "btcedu.core.qa_reviewer.generate_qa_review",
+        return_value=SimpleNamespace(decision="red", generation=2, skipped=False),
+    ) as generate:
+        result = resolve_translation_quality_gate(
+            db_session,
+            "ep-gate",
+            settings,
+            force=True,
+            allow_retry=False,
+        )
+
+    assert result.decision == "red"
+    assert generate.call_args.kwargs["generation"] == 2
+    assert len(generate.call_args.kwargs["retry_history"]) == 2
+    assert generate.call_args.kwargs["previous_gate"]["decision"] == "red"
+
+
 # ---------------------------------------------------------------------------
 # Selected-story preservation (targeted rerun)
 # ---------------------------------------------------------------------------
@@ -1022,13 +1058,14 @@ def test_web_qa_rerun_all_proceeds_only_when_green(db_session, tmp_path):
         patch(
             "btcedu.core.qa_reviewer.resolve_translation_quality_gate",
             return_value=SimpleNamespace(decision="green", generation=0, skipped=False),
-        ),
+        ) as mock_gate,
         patch("btcedu.core.pipeline.run_episode_pipeline", return_value=report) as mock_pipeline,
         patch("btcedu.core.pipeline.write_report"),
     ):
         manager._do_qa_rerun_all(job, db_session, settings)
 
     mock_pipeline.assert_called_once()
+    assert mock_gate.call_args.kwargs["force"] is True
     assert job.result["proceeded"] is True
 
 

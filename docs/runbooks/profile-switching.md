@@ -1,6 +1,6 @@
 # Profile Switching Runbook
 
-**Last updated:** 2026-03-16
+**Last updated:** 2026-07-18
 **Applies to:** btcedu v2 pipeline with multi-profile support (Phase 4)
 
 ---
@@ -126,12 +126,15 @@ IMAGEGEN → [RG_STOCK] → TTS → RENDER → [RG3] → PUBLISH
 ### Tagesschau
 
 ```
-NEW → DOWNLOAD → TRANSCRIBE → CORRECT → [RG1] →
-SEGMENT → TRANSLATE → [RG_TRANSLATE] → CHAPTERIZE →
+NEW → DOWNLOAD → TRANSCRIBE → ANALYZE → VERIFY → CORRECT → TRANSCRIPT_QA →
+SEGMENT → TRANSLATE → CONDITIONAL_ADAPT → TRANSLATION_QA → CHAPTERIZE →
 IMAGEGEN → [RG_STOCK] → TTS → RENDER → [RG3] → PUBLISH
 ```
 
 - Segment stage splits broadcast into individual news stories
+- Secondary transcription verifies suspicious segments only
+- Transcript and translation QA can block on critical factual uncertainty
+- Adaptation is conditional and preserves story IDs, facts, names and numbers
 - Per-story translation with compression ratio warnings
 - Bilingual review interface with story-level diff
 - ARD tagesschau blue (#004B87) statistic overlays
@@ -154,6 +157,22 @@ btcedu/profiles/
 After editing a profile YAML:
 1. Restart the btcedu service to reload: `sudo systemctl restart btcedu`
 2. Re-run the smoke test: `btcedu smoke-test-pipeline --profile <name>`
+
+### Configuration precedence
+
+The effective value is resolved in this order, from lowest to highest priority:
+
+1. `Settings` class defaults.
+2. `.env` and process environment variables.
+3. Explicit `Settings(...)` constructor values.
+4. The episode's content profile for profile-owned stage/provider settings.
+5. Explicit CLI flags such as `--dry-run`, `--force`, `--profile`, voice/model
+   overrides, where the individual command supports them.
+
+Profile values do not mutate `.env`; CLI overrides apply only to the current
+process. Stage switches such as `transcript_analyze.enabled`,
+`transcript_verify.enabled`, `transcript_qa.enabled`, `translation_qa.enabled`
+and `qa.enabled` can disable the corresponding profile behavior.
 
 ---
 

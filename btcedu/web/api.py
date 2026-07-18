@@ -2885,6 +2885,294 @@ def qa_rerun_all(episode_id: str):
     return _submit_job("qa_rerun_all", episode_id)
 
 
+# ---------------------------------------------------------------------------
+# QA panel actions (Phase 9): transcript QA approve/request-changes, and
+# translation QA finding status curation. Both reuse existing ReviewTask /
+# ReviewDecision conventions and JSON artifact history — no parallel DB.
+# ---------------------------------------------------------------------------
+
+
+def _get_or_create_transcript_qa_task(session, episode_id: str):
+    """Return the actionable 'transcript_qa' ReviewTask for an episode.
+
+    Reuses the most recent pending/in_review task if one exists (created by the
+    pipeline's ``review_gate_transcript_qa`` stage). If none exists, creates one
+    bound to the persisted transcript QA artifact — mirroring the exact artifact
+    list the pipeline itself uses — but only when that artifact is present, so we
+    never fabricate a review against content that hasn't been evaluated.
+
+    Returns (task, None) on success, or (None, (response, status_code)) on error.
+    """
+    from btcedu.models.episode import Episode, EpisodeStatus
+    from btcedu.models.review import ReviewStatus, ReviewTask
+
+    ep = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    if not ep:
+        return None, (jsonify({"error": "Episode not found"}), 404)
+    if ep.status != EpisodeStatus.CORRECTED:
+        return None, (
+            jsonify(
+                {
+                    "error": (
+                        "Transcript QA review actions are only valid while the episode "
+                        f"is corrected; current status is '{ep.status.value}'."
+                    )
+                }
+            ),
+            409,
+        )
+
+    from btcedu.core.reviewer import review_task_matches_artifacts
+    from btcedu.core.transcript_qa import load_transcript_qa
+    from btcedu.core.transcript_qa import review_artifacts as transcript_qa_artifacts
+
+    settings = _get_settings()
+    qa = load_transcript_qa(settings, episode_id)
+    if not qa:
+        return None, (
+            jsonify(
+                {
+                    "error": (
+                        "No transcript QA artifact for this episode; "
+                        "run transcript QA before reviewing it."
+                    )
+                }
+            ),
+            404,
+        )
+    artifacts = transcript_qa_artifacts(settings, episode_id)
+
+    task = (
+        session.query(ReviewTask)
+        .filter(
+            ReviewTask.episode_id == episode_id,
+            ReviewTask.stage == "transcript_qa",
+            ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]),
+        )
+        .order_by(ReviewTask.created_at.desc())
+        .first()
+    )
+    if task:
+        if not review_task_matches_artifacts(task, artifacts):
+            return None, (
+                jsonify(
+                    {
+                        "error": (
+                            "Transcript QA review task is bound to obsolete artifacts; "
+                            "rerun the transcript QA gate to create a current review."
+                        )
+                    }
+                ),
+                409,
+            )
+        return task, None
+
+    from btcedu.core.reviewer import create_review_task
+
+    task = create_review_task(
+        session,
+        episode_id,
+        stage="transcript_qa",
+        artifact_paths=artifacts,
+    )
+    return task, None
+
+
+@api_bp.route("/episodes/<episode_id>/qa/transcript/approve", methods=["POST"])
+def approve_transcript_qa(episode_id: str):
+    """Approve the transcript QA review for an episode.
+
+    Reuses an existing pending/in_review 'transcript_qa' ReviewTask if present,
+    or creates one bound to the persisted transcript QA artifact. Delegates to
+    the standard ``approve_review`` review-infrastructure function so the audit
+    trail (ReviewDecision + review_history.json) matches every other review.
+    """
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import approve_review
+
+        task, err = _get_or_create_transcript_qa_task(session, episode_id)
+        if err:
+            return err
+
+        body = request.get_json(silent=True) or {}
+        rating = body.get("quality_rating")
+        if rating is not None:
+            rating = int(rating)
+        try:
+            decision = approve_review(
+                session, task.id, notes=body.get("notes"), quality_rating=rating
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        return jsonify(
+            {
+                "success": True,
+                "review_task_id": task.id,
+                "decision_id": decision.id,
+                "decision": decision.decision,
+            }
+        )
+    finally:
+        session.close()
+
+
+@api_bp.route("/episodes/<episode_id>/qa/transcript/request-changes", methods=["POST"])
+def request_changes_transcript_qa(episode_id: str):
+    """Request changes on the transcript QA review for an episode (notes required).
+
+    Reuses/creates the 'transcript_qa' ReviewTask exactly like approve, and
+    delegates to the standard ``request_changes`` function, which reverts the
+    episode (RG1) and writes .stale markers per the existing convention.
+    """
+    session = _get_session()
+    try:
+        from btcedu.core.reviewer import request_changes
+
+        body = request.get_json(silent=True) or {}
+        notes = (body.get("notes") or "").strip()
+        if not notes:
+            return jsonify({"error": "Notes are required when requesting changes"}), 400
+
+        task, err = _get_or_create_transcript_qa_task(session, episode_id)
+        if err:
+            return err
+
+        rating = body.get("quality_rating")
+        if rating is not None:
+            rating = int(rating)
+        try:
+            decision = request_changes(session, task.id, notes=notes, quality_rating=rating)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        return jsonify(
+            {
+                "success": True,
+                "review_task_id": task.id,
+                "decision_id": decision.id,
+                "decision": decision.decision,
+            }
+        )
+    finally:
+        session.close()
+
+
+@api_bp.route("/episodes/<episode_id>/qa/findings/<finding_id>/status", methods=["POST"])
+def update_translation_finding_status(episode_id: str, finding_id: str):
+    """Mutate a translation QA finding's lifecycle status (open/resolved/dismissed).
+
+    Authorization mirrors existing item-decision conventions: mutation requires
+    an existing 'translation_qa' ReviewTask for the episode (proof the quality
+    gate currently governs review gate 2) in a pending/in_review state. The
+    audit trail is the finding's own durable ``history`` inside
+    ``translation_quality_gate.json`` — no parallel DB table is created.
+    """
+    session = _get_session()
+    try:
+        from btcedu.models.episode import Episode
+        from btcedu.models.review import ReviewStatus, ReviewTask
+
+        ep = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if not ep:
+            return jsonify({"error": "Episode not found"}), 404
+
+        body = request.get_json(silent=True) or {}
+        status = str(body.get("status") or "").strip()
+
+        from btcedu.core.qa_reviewer import FINDING_STATUSES, gate_review_artifacts
+        from btcedu.core.reviewer import (
+            refresh_review_task_artifacts,
+            review_task_matches_artifacts,
+        )
+
+        if status not in FINDING_STATUSES:
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            f"status must be one of {sorted(FINDING_STATUSES)}, got '{status}'"
+                        )
+                    }
+                ),
+                400,
+            )
+
+        task = (
+            session.query(ReviewTask)
+            .filter(
+                ReviewTask.episode_id == episode_id,
+                ReviewTask.stage == "translation_qa",
+            )
+            .order_by(ReviewTask.created_at.desc())
+            .first()
+        )
+        if not task:
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            "No translation QA review task for this episode; "
+                            "nothing authorizes this change."
+                        )
+                    }
+                ),
+                404,
+            )
+        if task.status not in (ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value):
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            f"Translation QA review {task.id} is '{task.status}', "
+                            "must be pending or in_review"
+                        )
+                    }
+                ),
+                400,
+            )
+        settings = _get_settings()
+        artifacts = gate_review_artifacts(settings, episode_id)
+        if not review_task_matches_artifacts(task, artifacts):
+            return (
+                jsonify(
+                    {
+                        "error": (
+                            "Translation QA review task is bound to obsolete artifacts; "
+                            "rerun the quality gate before changing findings."
+                        )
+                    }
+                ),
+                409,
+            )
+
+        from btcedu.core.qa_reviewer import update_finding_status
+
+        note = body.get("note")
+        try:
+            gate = update_finding_status(settings, episode_id, finding_id, status, note=note)
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 404
+        refresh_review_task_artifacts(
+            session,
+            task,
+            gate_review_artifacts(settings, episode_id),
+        )
+
+        return jsonify(
+            {
+                "success": True,
+                "review_task_id": task.id,
+                "finding_id": finding_id,
+                "status": status,
+                "quality_gate": gate,
+            }
+        )
+    finally:
+        session.close()
+
+
 @api_bp.route("/episodes/<episode_id>/stage/<stage_name>", methods=["POST"])
 def run_single_stage(episode_id: str, stage_name: str):
     """Restart a single pipeline stage for an episode."""

@@ -204,12 +204,34 @@ def _setup_locked_episode(db_session, tmp_path, model_chapters):
 
     # A GREEN translation quality gate locked to the current canonical narration.
     gate = {
+        "schema_version": 1,
         "episode_id": "ep_lock",
+        "generated_at": "2026-07-18T00:00:00Z",
         "decision": "green",
         "status": "green",
+        "blocked": False,
+        "deterministic_status": "green",
+        "reasons": [],
         "narration_sha256": narration_sha256(settings, "ep_lock"),
         "narration_approved": True,
         "findings": [],
+        "summary": {
+            "info_count": 0,
+            "minor_count": 0,
+            "major_count": 0,
+            "critical_count": 0,
+            "open_count": 0,
+            "resolved_count": 0,
+            "dismissed_count": 0,
+            "contradiction_count": 0,
+        },
+        "model_calls": [],
+        "retry_history": [],
+        "retry_generation": 0,
+        "standard_cost_usd": 0,
+        "escalation_cost_usd": 0,
+        "total_cost_usd": 0,
+        "gate_config": {},
     }
     (ep_dir / "translation_quality_gate.json").write_text(json.dumps(gate), encoding="utf-8")
 
@@ -230,6 +252,36 @@ def _setup_locked_episode(db_session, tmp_path, model_chapters):
     mock_response.output_tokens = 10
     mock_response.cost_usd = 0.01
     return settings, mock_response
+
+
+def test_existing_corrupt_quality_gate_blocks_chapterize(db_session, tmp_path):
+    from btcedu.core.chapterizer import _enforce_translation_quality_gate
+    from btcedu.models.episode import Episode, EpisodeStatus
+
+    settings = MagicMock()
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.qa_review_enabled = False
+    gate_path = Path(settings.outputs_dir) / "ep_corrupt" / "translation_quality_gate.json"
+    gate_path.parent.mkdir(parents=True)
+    gate_path.write_text("{not-json", encoding="utf-8")
+    episode = Episode(
+        episode_id="ep_corrupt",
+        source="youtube_rss",
+        title="Corrupt gate",
+        url="https://example.com/corrupt",
+        status=EpisodeStatus.ADAPTED,
+        pipeline_version=2,
+        content_profile="bitcoin_podcast",
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    with pytest.raises(ValueError, match="valid translation quality gate"):
+        _enforce_translation_quality_gate(db_session, episode.episode_id, settings)
+
+    db_session.refresh(episode)
+    assert episode.status == EpisodeStatus.ADAPTED
+    assert not (gate_path.parent / "chapters.json").exists()
 
 
 def _patch_registry(mock_registry):

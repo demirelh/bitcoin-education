@@ -174,6 +174,8 @@ class QualityGateDocument(BaseModel):
             raise ValueError("resolved_count must match findings")
         if self.summary.dismissed_count != sum(f.status == "dismissed" for f in self.findings):
             raise ValueError("dismissed_count must match findings")
+        if self.summary.contradiction_count != sum(f.contradiction for f in self.findings):
+            raise ValueError("contradiction_count must match findings")
         if self.status != self.decision:
             raise ValueError("status must mirror decision")
         if self.blocked != (self.decision == "red"):

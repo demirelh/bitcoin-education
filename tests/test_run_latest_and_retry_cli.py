@@ -13,6 +13,7 @@ from click.testing import CliRunner
 from btcedu.cli import cli
 from btcedu.config import Settings
 from btcedu.core.pipeline import PipelineReport, StageResult
+from btcedu.core.runlock import PipelineBusyError
 
 
 @patch("btcedu.core.pipeline.run_latest")
@@ -31,6 +32,25 @@ def test_run_latest_command_no_pending_episodes(mock_run_latest, db_session, tmp
 
     assert result.exit_code == 0
     assert "No pending episodes to process." in result.output
+
+
+@patch("btcedu.core.pipeline.run_latest")
+def test_run_latest_command_pipeline_busy_exits_nonzero(mock_run_latest, db_session, tmp_path):
+    mock_run_latest.side_effect = PipelineBusyError("lock held")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["run-latest"],
+        obj={
+            "settings": Settings(reports_dir=str(tmp_path / "reports")),
+            "session_factory": lambda: db_session,
+        },
+    )
+
+    assert result.exit_code == 1
+    assert "Pipeline busy" in result.output
+    assert "No pending episodes" not in result.output
 
 
 @patch("btcedu.core.pipeline.run_latest")

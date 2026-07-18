@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -10,6 +11,7 @@ import pytest
 
 from btcedu.config import Settings
 from btcedu.core.qa_reviewer import (
+    _atomic_write_text,
     generate_qa_review,
     load_quality_gate,
     resolve_translation_quality_gate,
@@ -22,6 +24,11 @@ from btcedu.models.episode import (
     RunStatus,
 )
 from btcedu.models.prompt_version import PromptVersion  # noqa: F401 — register table
+from btcedu.models.qa_schema import (
+    QAFinding,
+    QualityGateDocument,
+    QualityGateSummary,
+)
 from btcedu.models.review import ReviewStatus, ReviewTask
 from btcedu.services.claude_service import ClaudeResponse
 from btcedu.services.errors import ErrorCategory, PipelineError
@@ -579,6 +586,49 @@ def test_forced_gate_rerun_preserves_retry_budget_and_history(db_session, tmp_pa
     assert generate.call_args.kwargs["generation"] == 2
     assert len(generate.call_args.kwargs["retry_history"]) == 2
     assert generate.call_args.kwargs["previous_gate"]["decision"] == "red"
+
+
+def test_quality_gate_rejects_wrong_contradiction_count():
+    finding = QAFinding(
+        finding_id="qa-0001",
+        story_id="s01",
+        category="number_mismatch",
+        severity="major",
+        source_excerpt="12",
+        target_excerpt="13",
+        explanation="conflict",
+        required_action="restore source number",
+        contradiction=True,
+    )
+    with pytest.raises(ValueError, match="contradiction_count"):
+        QualityGateDocument(
+            episode_id="ep-contradiction",
+            generated_at=datetime.now(UTC),
+            decision="yellow",
+            status="yellow",
+            blocked=False,
+            deterministic_status="yellow",
+            findings=[finding],
+            summary=QualityGateSummary(
+                major_count=1,
+                open_count=1,
+                contradiction_count=0,
+            ),
+        )
+
+
+def test_atomic_gate_write_preserves_previous_file_on_replace_failure(tmp_path):
+    path = tmp_path / "translation_quality_gate.json"
+    path.write_text('{"decision":"old"}', encoding="utf-8")
+
+    with (
+        patch("btcedu.core.qa_reviewer.os.replace", side_effect=OSError("disk failure")),
+        pytest.raises(OSError, match="disk failure"),
+    ):
+        _atomic_write_text(path, '{"decision":"new"}')
+
+    assert path.read_text(encoding="utf-8") == '{"decision":"old"}'
+    assert list(tmp_path.glob(".translation_quality_gate.json.*.tmp")) == []
 
 
 # ---------------------------------------------------------------------------

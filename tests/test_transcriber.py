@@ -1,7 +1,10 @@
 """Tests for transcription pipeline stage."""
 
+import json
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from btcedu.config import Settings
 from btcedu.core.transcriber import load_transcript_document, transcribe_episode
@@ -18,6 +21,7 @@ def _make_settings(tmp_path: Path) -> Settings:
         whisper_api_key="sk-test-fake",
         transcripts_dir=str(tmp_path / "transcripts"),
         raw_data_dir=str(tmp_path / "raw"),
+        outputs_dir=str(tmp_path / "outputs"),
         audio_format="m4a",
     )
 
@@ -108,16 +112,61 @@ class TestTranscribeEpisode:
     def test_skips_if_transcript_exists(self, mock_whisper, db_session, tmp_path):
         settings = _make_settings(tmp_path)
         _seed_downloaded_episode(db_session, tmp_path)
-
-        # Pre-create transcript file
-        transcript_dir = tmp_path / "transcripts" / "ep001"
-        transcript_dir.mkdir(parents=True)
-        (transcript_dir / "transcript.clean.de.txt").write_text("existing")
-
+        mock_whisper.return_value = _structured_transcript("ep001", "existing")
         path = transcribe_episode(db_session, "ep001", settings)
-
+        mock_whisper.reset_mock()
+        path = transcribe_episode(db_session, "ep001", settings)
         mock_whisper.assert_not_called()
-        assert path == str(transcript_dir / "transcript.clean.de.txt")
+        assert path == str(tmp_path / "transcripts" / "ep001" / "transcript.clean.de.txt")
+
+    @pytest.mark.parametrize("missing_artifact", ["structured", "provenance"])
+    @patch("btcedu.services.transcription_service.transcribe_audio_structured")
+    def test_incomplete_cache_is_regenerated(
+        self, mock_whisper, missing_artifact, db_session, tmp_path
+    ):
+        settings = _make_settings(tmp_path)
+        _seed_downloaded_episode(db_session, tmp_path)
+        mock_whisper.return_value = _structured_transcript("ep001", "restored")
+        transcribe_episode(db_session, "ep001", settings)
+
+        if missing_artifact == "structured":
+            missing_path = tmp_path / "transcripts" / "ep001" / "transcript.structured.de.json"
+        else:
+            missing_path = (
+                tmp_path / "outputs" / "ep001" / "provenance" / "transcribe_provenance.json"
+            )
+        missing_path.unlink()
+
+        transcribe_episode(db_session, "ep001", settings)
+
+        assert mock_whisper.call_count == 2
+        assert missing_path.is_file()
+
+    @pytest.mark.parametrize(
+        "invalid_provenance",
+        [
+            [],
+            {"output_files": 1},
+            {"output_files": [123]},
+        ],
+    )
+    @patch("btcedu.services.transcription_service.transcribe_audio_structured")
+    def test_malformed_provenance_shape_is_regenerated(
+        self, mock_whisper, invalid_provenance, db_session, tmp_path
+    ):
+        settings = _make_settings(tmp_path)
+        _seed_downloaded_episode(db_session, tmp_path)
+        mock_whisper.return_value = _structured_transcript("ep001", "restored")
+        transcribe_episode(db_session, "ep001", settings)
+
+        provenance_path = (
+            tmp_path / "outputs" / "ep001" / "provenance" / "transcribe_provenance.json"
+        )
+        provenance_path.write_text(json.dumps(invalid_provenance), encoding="utf-8")
+
+        transcribe_episode(db_session, "ep001", settings)
+
+        assert mock_whisper.call_count == 2
 
     @patch("btcedu.services.transcription_service.transcribe_audio_structured")
     def test_force_retranscribes(self, mock_whisper, db_session, tmp_path):

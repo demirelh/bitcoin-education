@@ -6,7 +6,10 @@ quality gate's own JSON artifact history for auditing — no parallel DB table.
 """
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
+from threading import Barrier
+from unittest.mock import patch
 
 import pytest
 from flask import Flask
@@ -19,6 +22,7 @@ from btcedu.models.qa_schema import (
     QualityGateDocument,
     QualityGateSummary,
 )
+from btcedu.models.review import ReviewTask
 
 
 @pytest.fixture
@@ -240,6 +244,55 @@ def translation_qa_episode(session_factory, tmp_path):
 
 
 class TestApproveTranscriptQa:
+    def test_requires_json_content_type(
+        self, client, transcript_qa_episode_no_task, session_factory
+    ):
+        resp = client.post(
+            "/api/episodes/ep_tqa2/qa/transcript/approve",
+            data="",
+            content_type="application/x-www-form-urlencoded",
+        )
+        assert resp.status_code == 415
+        session = session_factory()
+        assert session.query(ReviewTask).filter_by(episode_id="ep_tqa2").count() == 0
+        session.close()
+
+    def test_requires_json_object(self, client, transcript_qa_episode_no_task, session_factory):
+        resp = client.post(
+            "/api/episodes/ep_tqa2/qa/transcript/approve",
+            json=[],
+        )
+        assert resp.status_code == 400
+        session = session_factory()
+        assert session.query(ReviewTask).filter_by(episode_id="ep_tqa2").count() == 0
+        session.close()
+
+    @pytest.mark.parametrize("rating", ["bad", 0, 6, True, 1.5])
+    def test_invalid_rating_does_not_create_task(
+        self, client, transcript_qa_episode_no_task, session_factory, rating
+    ):
+        resp = client.post(
+            "/api/episodes/ep_tqa2/qa/transcript/approve",
+            json={"quality_rating": rating},
+        )
+        assert resp.status_code == 400
+        session = session_factory()
+        assert session.query(ReviewTask).filter_by(episode_id="ep_tqa2").count() == 0
+        session.close()
+
+    def test_missing_required_corrected_artifact_does_not_create_task(
+        self, client, transcript_qa_episode_no_task, session_factory, tmp_path
+    ):
+        (tmp_path / "transcripts" / "ep_tqa2" / "transcript.corrected.structured.de.json").unlink()
+        resp = client.post(
+            "/api/episodes/ep_tqa2/qa/transcript/approve",
+            json={},
+        )
+        assert resp.status_code == 409
+        session = session_factory()
+        assert session.query(ReviewTask).filter_by(episode_id="ep_tqa2").count() == 0
+        session.close()
+
     def test_approve_existing_task(self, client, transcript_qa_episode, tmp_path):
         resp = client.post(
             "/api/episodes/ep_tqa/qa/transcript/approve",
@@ -336,6 +389,18 @@ class TestApproveTranscriptQa:
 
 
 class TestRequestChangesTranscriptQa:
+    def test_fractional_rating_does_not_create_task(
+        self, client, transcript_qa_episode_no_task, session_factory
+    ):
+        resp = client.post(
+            "/api/episodes/ep_tqa2/qa/transcript/request-changes",
+            json={"notes": "Bitte prüfen", "quality_rating": 2.5},
+        )
+        assert resp.status_code == 400
+        session = session_factory()
+        assert session.query(ReviewTask).filter_by(episode_id="ep_tqa2").count() == 0
+        session.close()
+
     def test_missing_notes_400(self, client, transcript_qa_episode):
         resp = client.post(
             "/api/episodes/ep_tqa/qa/transcript/request-changes",
@@ -393,6 +458,14 @@ class TestRequestChangesTranscriptQa:
 
 
 class TestFindingStatusMutation:
+    def test_requires_json_content_type(self, client, translation_qa_episode):
+        resp = client.post(
+            "/api/episodes/ep_gate/qa/findings/qa-0001/status",
+            data="status=resolved",
+            content_type="application/x-www-form-urlencoded",
+        )
+        assert resp.status_code == 415
+
     def test_invalid_status_400(self, client, translation_qa_episode):
         resp = client.post(
             "/api/episodes/ep_gate/qa/findings/qa-0001/status",
@@ -531,6 +604,46 @@ class TestFindingStatusMutation:
         finding = next(f for f in gate["findings"] if f["finding_id"] == "qa-0001")
         assert finding["status"] == "dismissed"
 
+    def test_derived_artifact_failure_does_not_stale_review_task(
+        self, client, translation_qa_episode, session_factory
+    ):
+        from btcedu.core import qa_reviewer
+        from btcedu.models.review import ReviewTask
+
+        original_atomic_write = qa_reviewer._atomic_write_text
+
+        def fail_legacy_json(path, content):
+            if path.name == "qa_review.json":
+                raise OSError("disk failure")
+            return original_atomic_write(path, content)
+
+        with patch("btcedu.core.qa_reviewer._atomic_write_text", side_effect=fail_legacy_json):
+            resp = client.post(
+                "/api/episodes/ep_gate/qa/findings/qa-0001/status",
+                json={"status": "dismissed"},
+                content_type="application/json",
+            )
+
+        assert resp.status_code == 200
+        assert resp.get_json()["quality_gate"]["findings"][0]["status"] == "dismissed"
+
+        session = session_factory()
+        task = session.get(ReviewTask, translation_qa_episode["task_id"])
+        refreshed_hash = task.artifact_hash
+        session.close()
+
+        resp2 = client.post(
+            "/api/episodes/ep_gate/qa/findings/qa-0001/status",
+            json={"status": "open"},
+            content_type="application/json",
+        )
+        assert resp2.status_code == 200
+
+        session = session_factory()
+        task = session.get(ReviewTask, translation_qa_episode["task_id"])
+        assert task.artifact_hash != refreshed_hash
+        session.close()
+
 
 class TestFindingStatusAndStructuredRestart:
     """Verify curated finding statuses are respected by the structured-findings
@@ -562,3 +675,61 @@ class TestFindingStatusAndStructuredRestart:
         gate_after = load_quality_gate(settings, "ep_gate")
         assert target_story_ids_from_gate(gate_after) == []
         assert build_story_findings(gate_after) == {}
+
+
+def test_concurrent_finding_updates_preserve_both_histories(tmp_path):
+    from btcedu.core.qa_reviewer import load_quality_gate, update_finding_status
+
+    findings = [
+        QAFinding(
+            finding_id="qa-0001",
+            story_id="s01",
+            category="language_quality",
+            severity="minor",
+            source_excerpt="Quelle 1",
+            target_excerpt="Hedef 1",
+            explanation="Finding 1",
+            required_action="Fix 1",
+        ),
+        QAFinding(
+            finding_id="qa-0002",
+            story_id="s02",
+            category="language_quality",
+            severity="minor",
+            source_excerpt="Quelle 2",
+            target_excerpt="Hedef 2",
+            explanation="Finding 2",
+            required_action="Fix 2",
+        ),
+    ]
+    _write_gate(tmp_path, "ep_concurrent", findings)
+    settings = _stub_settings(tmp_path)
+    barrier = Barrier(2)
+
+    def mutate(finding_id):
+        barrier.wait()
+        update_finding_status(
+            settings,
+            "ep_concurrent",
+            finding_id,
+            "resolved",
+            note=f"resolved {finding_id}",
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(mutate, finding_id) for finding_id in ("qa-0001", "qa-0002")]
+        for future in futures:
+            future.result(timeout=5)
+
+    gate = load_quality_gate(settings, "ep_concurrent", strict=True)
+    by_id = {finding["finding_id"]: finding for finding in gate["findings"]}
+    assert by_id["qa-0001"]["status"] == "resolved"
+    assert by_id["qa-0002"]["status"] == "resolved"
+    assert by_id["qa-0001"]["history"][-1]["note"] == "resolved qa-0001"
+    assert by_id["qa-0002"]["history"][-1]["note"] == "resolved qa-0002"
+    legacy = json.loads(
+        (tmp_path / "outputs" / "ep_concurrent" / "qa_review.json").read_text(encoding="utf-8")
+    )
+    legacy_by_id = {finding["finding_id"]: finding for finding in legacy["findings"]}
+    assert legacy_by_id["qa-0001"]["status"] == "resolved"
+    assert legacy_by_id["qa-0002"]["status"] == "resolved"

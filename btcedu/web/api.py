@@ -2892,6 +2892,34 @@ def qa_rerun_all(episode_id: str):
 # ---------------------------------------------------------------------------
 
 
+def _qa_json_body():
+    """Return a JSON object for QA mutations or a Flask error tuple."""
+    if not request.is_json:
+        return None, (jsonify({"error": "Content-Type must be application/json"}), 415)
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        return None, (jsonify({"error": "Request body must be a JSON object"}), 400)
+    return body, None
+
+
+def _qa_quality_rating(body: dict):
+    """Parse and validate an optional review quality rating before DB mutation."""
+    value = body.get("quality_rating")
+    if value is None:
+        return None, None
+    if isinstance(value, bool):
+        return None, (jsonify({"error": "quality_rating must be an integer from 1 to 5"}), 400)
+    if isinstance(value, int):
+        rating = value
+    elif isinstance(value, str) and re.fullmatch(r"[1-5]", value.strip()):
+        rating = int(value)
+    else:
+        return None, (jsonify({"error": "quality_rating must be an integer from 1 to 5"}), 400)
+    if rating < 1 or rating > 5:
+        return None, (jsonify({"error": f"quality_rating must be 1-5, got {rating}"}), 400)
+    return rating, None
+
+
 def _get_or_create_transcript_qa_task(session, episode_id: str):
     """Return the actionable 'transcript_qa' ReviewTask for an episode.
 
@@ -2969,12 +2997,15 @@ def _get_or_create_transcript_qa_task(session, episode_id: str):
 
     from btcedu.core.reviewer import create_review_task
 
-    task = create_review_task(
-        session,
-        episode_id,
-        stage="transcript_qa",
-        artifact_paths=artifacts,
-    )
+    try:
+        task = create_review_task(
+            session,
+            episode_id,
+            stage="transcript_qa",
+            artifact_paths=artifacts,
+        )
+    except ValueError as exc:
+        return None, (jsonify({"error": str(exc)}), 409)
     return task, None
 
 
@@ -2991,14 +3022,17 @@ def approve_transcript_qa(episode_id: str):
     try:
         from btcedu.core.reviewer import approve_review
 
+        body, err = _qa_json_body()
+        if err:
+            return err
+        rating, err = _qa_quality_rating(body)
+        if err:
+            return err
+
         task, err = _get_or_create_transcript_qa_task(session, episode_id)
         if err:
             return err
 
-        body = request.get_json(silent=True) or {}
-        rating = body.get("quality_rating")
-        if rating is not None:
-            rating = int(rating)
         try:
             decision = approve_review(
                 session, task.id, notes=body.get("notes"), quality_rating=rating
@@ -3030,18 +3064,20 @@ def request_changes_transcript_qa(episode_id: str):
     try:
         from btcedu.core.reviewer import request_changes
 
-        body = request.get_json(silent=True) or {}
+        body, err = _qa_json_body()
+        if err:
+            return err
         notes = (body.get("notes") or "").strip()
         if not notes:
             return jsonify({"error": "Notes are required when requesting changes"}), 400
+        rating, err = _qa_quality_rating(body)
+        if err:
+            return err
 
         task, err = _get_or_create_transcript_qa_task(session, episode_id)
         if err:
             return err
 
-        rating = body.get("quality_rating")
-        if rating is not None:
-            rating = int(rating)
         try:
             decision = request_changes(session, task.id, notes=notes, quality_rating=rating)
         except ValueError as e:
@@ -3078,7 +3114,9 @@ def update_translation_finding_status(episode_id: str, finding_id: str):
         if not ep:
             return jsonify({"error": "Episode not found"}), 404
 
-        body = request.get_json(silent=True) or {}
+        body, err = _qa_json_body()
+        if err:
+            return err
         status = str(body.get("status") or "").strip()
 
         from btcedu.core.qa_reviewer import FINDING_STATUSES, gate_review_artifacts

@@ -19,6 +19,7 @@ from btcedu.core.reviewer import (
     pending_review_count,
     reject_review,
     request_changes,
+    review_task_matches_artifacts,
 )
 from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.models.review import ReviewStatus, ReviewTask
@@ -113,6 +114,16 @@ class TestCreateReviewTask:
         assert task.artifact_hash is not None
         assert len(task.artifact_hash) == 64  # SHA-256 hex
 
+    def test_rejects_missing_artifact(self, db_session, corrected_episode, tmp_path):
+        missing = tmp_path / "missing.json"
+        with pytest.raises(ValueError, match="missing or not a file"):
+            create_review_task(
+                db_session,
+                episode_id="ep001",
+                stage="correct",
+                artifact_paths=[corrected_episode["corrected_path"], str(missing)],
+            )
+
 
 class TestApproveReview:
     def test_sets_approved_status(self, db_session, review_task):
@@ -139,6 +150,15 @@ class TestApproveReview:
         )
 
         with pytest.raises(ValueError, match="artifacts changed"):
+            approve_review(db_session, review_task.id)
+
+    def test_rejects_artifact_removed_after_task_creation(
+        self, db_session, review_task, corrected_episode
+    ):
+        Path(corrected_episode["corrected_path"]).unlink()
+
+        assert not review_task_matches_artifacts(review_task, [corrected_episode["corrected_path"]])
+        with pytest.raises(ValueError, match="missing or not a file"):
             approve_review(db_session, review_task.id)
 
 
@@ -613,13 +633,16 @@ def test_get_review_detail_video_fields_missing_files(db_session, tmp_path):
     db_session.add(episode)
     db_session.commit()
 
-    # Create review task but no actual files
+    # Create a valid bound task, then simulate the artifact disappearing later.
+    missing_video = tmp_path / "draft.mp4"
+    missing_video.write_bytes(b"video")
     task = create_review_task(
         db_session,
         "ep_no_video",
         stage="render",
-        artifact_paths=["/nonexistent/draft.mp4"],
+        artifact_paths=[str(missing_video)],
     )
+    missing_video.unlink()
 
     from unittest.mock import patch
 

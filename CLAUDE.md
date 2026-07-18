@@ -67,7 +67,9 @@ data; other profiles may route among Flux, Ideogram, DALL-E, Gemini, or Pexels.
 - **Lazy imports**: stage functions lazy-imported in `_run_stage()` to avoid circular deps.
 - **YouTube deps are optional**: `pip install -e ".[youtube]"`. `run.sh` auto-installs if `data/client_secret.json` exists.
 - **SQLAlchemy string relationships** (e.g. `"ReviewItemDecision"`) require the target module to be imported at runtime, not just under `TYPE_CHECKING`.
-- **Raspberry Pi**: ffmpeg uses software encoding (slow). Config: `RENDER_PRESET=ultrafast`, `RENDER_TIMEOUT_SEGMENT=900`.
+- **Raspberry Pi**: ffmpeg uses software encoding (slow). Production
+  recommendation: `RENDER_PRESET=ultrafast`, `RENDER_TIMEOUT_SEGMENT=900`;
+  these are tuning values, not generic Settings defaults.
 
 ## Config (.env)
 

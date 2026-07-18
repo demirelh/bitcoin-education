@@ -15,10 +15,10 @@ remain readable and can complete through the legacy compatibility path.
 **v2 pipeline (current):**
 ```
 download → transcribe → transcript_analyze → transcript_verify → correct →
-transcript_qa → [transcript review] → segment → translate → adapt →
-translation_qa (deterministic + independent LLM) → [quality gate] →
+transcript_qa → review_gate_transcript_qa → review_gate_1 → segment →
+translate → adapt → review_gate_2 (deterministic + independent LLM QA) →
 chapterize → frameextract → imagegen → tts → anchorgen → render →
-[final review] → publish
+review_gate_3 → publish
 ```
 
 Transcript and translation QA use structured findings and GREEN/YELLOW/RED
@@ -136,6 +136,10 @@ All settings from `.env` (see `.env.example`):
 | `DATABASE_URL` | `sqlite:///data/btcedu.db` | Database connection |
 
 Full settings: `btcedu/config.py`.
+
+On the Raspberry Pi production host, `RENDER_PRESET=ultrafast` and
+`RENDER_TIMEOUT_SEGMENT=900` are recommended operational tuning values; they
+are not the generic defaults above.
 
 Precedence is: code defaults → `.env`/environment → explicit `Settings(...)`
 values → profile-owned stage/provider settings → supported CLI overrides.

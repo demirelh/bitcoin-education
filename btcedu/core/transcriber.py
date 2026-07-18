@@ -65,20 +65,45 @@ def transcribe_episode(
     raw_path = transcript_dir / "transcript.de.txt"
     clean_path = transcript_dir / "transcript.clean.de.txt"
     structured_path = transcript_dir / STRUCTURED_TRANSCRIPT_FILENAME
+    provenance_path = (
+        Path(settings.outputs_dir) / episode_id / "provenance" / "transcribe_provenance.json"
+    )
+    profile_config = _load_transcription_profile_config(settings, episode)
+    resolved = resolve_transcription_config(settings, profile_config)
+    config_hash = _transcription_config_hash(resolved)
 
     if clean_path.exists() and not force:
-        logger.info("Transcript exists: %s (use --force to re-transcribe)", clean_path)
-        if episode.status == EpisodeStatus.DOWNLOADED:
-            episode.transcript_path = str(clean_path)
-            episode.status = EpisodeStatus.TRANSCRIBED
-            session.commit()
-        return str(clean_path)
+        try:
+            TranscriptDocument.model_validate_json(structured_path.read_text(encoding="utf-8"))
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+            if not isinstance(provenance, dict):
+                raise ValueError("Transcription provenance must be an object")
+            output_file_values = provenance.get("output_files")
+            if not isinstance(output_file_values, list) or not all(
+                isinstance(path, str) for path in output_file_values
+            ):
+                raise ValueError("Transcription provenance output_files must be a string list")
+            output_files = [Path(path) for path in output_file_values]
+            cache_complete = (
+                provenance.get("config_hash") == config_hash
+                and {raw_path, clean_path, structured_path}.issubset(set(output_files))
+                and all(path.is_file() for path in output_files)
+            )
+        except (json.JSONDecodeError, OSError, ValueError):
+            cache_complete = False
+
+        if cache_complete:
+            logger.info("Transcript exists: %s (use --force to re-transcribe)", clean_path)
+            if episode.status == EpisodeStatus.DOWNLOADED:
+                episode.transcript_path = str(clean_path)
+                episode.status = EpisodeStatus.TRANSCRIBED
+                session.commit()
+            return str(clean_path)
+        logger.warning("Transcript cache incomplete for %s; regenerating", episode_id)
 
     if not episode.audio_path:
         raise ValueError(f"No audio file for episode {episode_id}")
 
-    profile_config = _load_transcription_profile_config(settings, episode)
-    resolved = resolve_transcription_config(settings, profile_config)
     api_key = _provider_api_key(settings, resolved.primary.provider)
     provider = get_transcription_provider(
         resolved.primary.provider,
@@ -114,10 +139,6 @@ def transcribe_episode(
             encoding="utf-8",
         )
 
-        config_hash = _transcription_config_hash(resolved)
-        provenance_path = (
-            Path(settings.outputs_dir) / episode_id / "provenance" / "transcribe_provenance.json"
-        )
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
         provenance_path.write_text(
             json.dumps(

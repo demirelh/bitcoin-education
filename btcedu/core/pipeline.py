@@ -1582,18 +1582,13 @@ def run_latest(
 ) -> PipelineReport | None:
     """Detect + process the newest pending episode, guarded by the run lock.
 
-    Returns None when another pipeline run is already active, so the autostart
-    timer does not start an overlapping run that would collide on the SQLite
-    write lock.
+    Raises PipelineBusyError when another pipeline run is already active so
+    callers can distinguish lock contention from an empty pending queue.
     """
-    from btcedu.core.runlock import PipelineBusyError, pipeline_lock
+    from btcedu.core.runlock import pipeline_lock
 
-    try:
-        with pipeline_lock(settings):
-            return _run_latest_locked(session, settings, profile=profile, detect_all=detect_all)
-    except PipelineBusyError:
-        logger.warning("run_latest skipped: another pipeline run is already active.")
-        return None
+    with pipeline_lock(settings):
+        return _run_latest_locked(session, settings, profile=profile, detect_all=detect_all)
 
 
 def _run_latest_locked(

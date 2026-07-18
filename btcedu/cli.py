@@ -655,11 +655,15 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: 
 def run_latest_cmd(ctx: click.Context, profile: str | None, all_channels: bool) -> None:
     """Detect new episodes, then process the newest pending one."""
     from btcedu.core.pipeline import run_latest, write_report
+    from btcedu.core.runlock import PipelineBusyError
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
     try:
-        report = run_latest(session, settings, profile=profile, detect_all=all_channels)
+        try:
+            report = run_latest(session, settings, profile=profile, detect_all=all_channels)
+        except PipelineBusyError as exc:
+            raise click.ClickException(f"Pipeline busy: {exc}") from exc
 
         if report is None:
             click.echo("No pending episodes to process.")

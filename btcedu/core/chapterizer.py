@@ -171,9 +171,10 @@ def _enforce_translation_quality_gate(
         gate_required = False
 
     gate = load_quality_gate(settings, episode_id, strict=True)
-    if gate is None and not gate_required:
-        return
     if gate is None:
+        gate_path = Path(settings.outputs_dir) / episode_id / "translation_quality_gate.json"
+        if not gate_path.exists() and not gate_required:
+            return
         raise ValueError(
             f"Episode {episode_id} requires a valid translation quality gate before chapterization."
         )

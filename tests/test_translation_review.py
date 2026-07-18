@@ -140,7 +140,6 @@ class TestComputeTranslationDiff:
         stories_path.write_text(
             json.dumps(_make_stories_translated("ep_ts_review")), encoding="utf-8"
         )
-
         result = compute_translation_diff(stories_path)
 
         assert result["diff_type"] == "translation"
@@ -384,6 +383,9 @@ class TestReviewGateTranslateRunStage:
         stories_path.write_text(
             json.dumps(_make_stories_translated("ep_ts_review")), encoding="utf-8"
         )
+        transcript_path = tmp_path / "transcripts" / "ep_ts_review" / "transcript.tr.txt"
+        transcript_path.parent.mkdir(parents=True)
+        transcript_path.write_text("Türkçe çeviri", encoding="utf-8")
 
         with patch("btcedu.core.pipeline._profile_pipeline_flags", return_value=(False, True)):
             result = _run_stage(
@@ -474,6 +476,12 @@ class TestReviewGateTranslateRunStage:
         """With auto_approve_reviews=True (tagesschau_tr), the gate never blocks."""
         from btcedu.core.pipeline import _run_stage
 
+        outputs_dir = tmp_path / "outputs" / "ep_ts_review"
+        outputs_dir.mkdir(parents=True)
+        (outputs_dir / "stories_translated.json").write_text(
+            json.dumps(_make_stories_translated("ep_ts_review")),
+            encoding="utf-8",
+        )
         result = _run_stage(
             db_session,
             tagesschau_episode,

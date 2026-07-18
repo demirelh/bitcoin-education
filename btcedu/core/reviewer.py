@@ -133,8 +133,9 @@ def _compute_artifact_hash(paths: list[str]) -> str:
     h = hashlib.sha256()
     for path_str in sorted(paths):
         path = Path(path_str)
-        if path.exists():
-            h.update(path.read_bytes())
+        if not path.is_file():
+            raise ValueError(f"Review artifact is missing or not a file: {path}")
+        h.update(path.read_bytes())
     return h.hexdigest()
 
 
@@ -787,7 +788,7 @@ def has_approved_review_for_artifacts(
     return (
         task is not None
         and task.status == ReviewStatus.APPROVED.value
-        and task.artifact_hash == _compute_artifact_hash(artifact_paths)
+        and review_task_matches_artifacts(task, artifact_paths)
     )
 
 
@@ -795,11 +796,10 @@ def review_task_matches_artifacts(task: ReviewTask, artifact_paths: list[str]) -
     """Return whether a review task is bound to the current artifact set and bytes."""
     try:
         task_paths = json.loads(task.artifact_paths or "[]")
-    except (json.JSONDecodeError, TypeError):
+        current_hash = _compute_artifact_hash(artifact_paths)
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
         return False
-    return task_paths == artifact_paths and task.artifact_hash == _compute_artifact_hash(
-        artifact_paths
-    )
+    return task_paths == artifact_paths and task.artifact_hash == current_hash
 
 
 def refresh_review_task_artifacts(

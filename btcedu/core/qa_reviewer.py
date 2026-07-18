@@ -17,10 +17,15 @@ the SHA-256 of the exact narration consumed downstream.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import hashlib
 import json
 import logging
+import os
+import tempfile
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -321,6 +326,49 @@ def _sha256_text(text: str) -> str:
 
 def _gate_path(settings: Settings, episode_id: str) -> Path:
     return Path(settings.outputs_dir) / episode_id / QUALITY_GATE_ARTIFACT
+
+
+@contextlib.contextmanager
+def _quality_gate_lock(path: Path) -> Iterator[None]:
+    """Serialize generation and manual mutation of one episode's quality gate."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(f".{path.name}.lock")
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    """Replace a text artifact atomically without exposing partial JSON."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+            temp_path = Path(handle.name)
+        os.replace(temp_path, path)
+        temp_path = None
+        parent_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(parent_fd)
+        finally:
+            os.close(parent_fd)
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def _default_qa_config(settings: Settings) -> dict:
@@ -1178,7 +1226,7 @@ def _result_from_gate(
     )
 
 
-def generate_qa_review(
+def _generate_qa_review_unlocked(
     session: Session,
     episode_id: str,
     settings: Settings,
@@ -1499,9 +1547,9 @@ def generate_qa_review(
         )
 
         gate_path.parent.mkdir(parents=True, exist_ok=True)
-        gate_path.write_text(
+        _atomic_write_text(
+            gate_path,
             json.dumps(gate.model_dump(mode="json"), ensure_ascii=False, indent=2),
-            encoding="utf-8",
         )
         json_path.write_text(
             json.dumps(_legacy_view(gate, std_model), ensure_ascii=False, indent=2),
@@ -1578,6 +1626,29 @@ def generate_qa_review(
         session.flush()
         logger.warning("QA gate failed for %s: %s", episode_id, exc)
         raise
+
+
+def generate_qa_review(
+    session: Session,
+    episode_id: str,
+    settings: Settings,
+    force: bool = False,
+    *,
+    previous_gate: dict | None = None,
+    generation: int = 0,
+    retry_history: list[dict] | None = None,
+) -> QaReviewResult:
+    """Run one serialized generation of the authoritative translation QA gate."""
+    with _quality_gate_lock(_gate_path(settings, episode_id)):
+        return _generate_qa_review_unlocked(
+            session,
+            episode_id,
+            settings,
+            force=force,
+            previous_gate=previous_gate,
+            generation=generation,
+            retry_history=retry_history,
+        )
 
 
 def build_story_findings(gate: dict) -> dict[str, list[dict]]:
@@ -1742,36 +1813,54 @@ def update_finding_status(
         )
 
     path = _gate_path(settings, episode_id)
-    if not path.exists():
-        raise ValueError(f"No quality gate found for episode {episode_id}")
-    try:
-        gate = QualityGateDocument.model_validate_json(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise ValueError(f"Quality gate for {episode_id} is unreadable: {exc}") from exc
+    with _quality_gate_lock(path):
+        if not path.exists():
+            raise ValueError(f"No quality gate found for episode {episode_id}")
+        try:
+            gate = QualityGateDocument.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Quality gate for {episode_id} is unreadable: {exc}") from exc
 
-    target = next((f for f in gate.findings if f.finding_id == finding_id), None)
-    if target is None:
-        raise ValueError(f"Finding not found: {finding_id}")
+        target = next((f for f in gate.findings if f.finding_id == finding_id), None)
+        if target is None:
+            raise ValueError(f"Finding not found: {finding_id}")
 
-    target.status = status
-    target.history = [
-        *target.history,
-        QAFindingEvent(generation=gate.retry_generation, status=status, note=note),
-    ]
-    gate.summary = _summarize(gate.findings)
+        target.status = status
+        target.history = [
+            *target.history,
+            QAFindingEvent(generation=gate.retry_generation, status=status, note=note),
+        ]
+        gate.summary = _summarize(gate.findings)
 
-    # Re-validate the full document (summary/decision consistency) before persisting.
-    updated = QualityGateDocument.model_validate(gate.model_dump(mode="json"))
-
-    path.write_text(
-        json.dumps(updated.model_dump(mode="json"), ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    _, md_path, _ = _qa_paths(settings, episode_id)
-    try:
-        md_path.write_text(_render_gate_markdown(updated), encoding="utf-8")
-    except OSError:
-        logger.warning("Could not refresh %s after finding status change", md_path)
+        # Re-validate the full document (summary/decision consistency) before persisting.
+        updated = QualityGateDocument.model_validate(gate.model_dump(mode="json"))
+        _atomic_write_text(
+            path,
+            json.dumps(updated.model_dump(mode="json"), ensure_ascii=False, indent=2),
+        )
+        json_path, md_path, _ = _qa_paths(settings, episode_id)
+        model = next(
+            (
+                call.model
+                for call in reversed(updated.model_calls)
+                if call.kind == "standard" and call.model
+            ),
+            getattr(settings, "qa_model", ""),
+        )
+        derived_artifacts = (
+            (
+                json_path,
+                json.dumps(_legacy_view(updated, model), ensure_ascii=False, indent=2),
+            ),
+            (md_path, _render_gate_markdown(updated)),
+        )
+        for derived_path, content in derived_artifacts:
+            try:
+                _atomic_write_text(derived_path, content)
+            except OSError as exc:
+                # The quality gate above is authoritative. Keep the audited
+                # mutation usable even if a legacy projection cannot refresh.
+                logger.warning("Could not refresh derived QA artifact %s: %s", derived_path, exc)
 
     return updated.model_dump(mode="json")
 

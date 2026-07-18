@@ -1,5 +1,39 @@
 # btcedu Pipeline — Aufbau & KI-Einsatz
 
+## Projektbeschreibung
+
+**btcedu** ist eine vollautomatische Content-Pipeline, die fremdsprachige
+Nachrichten- und Bildungsinhalte in fertige, muttersprachliche YouTube-Videos
+umwandelt. Aus einer Quell-Sendung (Video + Audio) entsteht ohne manuelle
+Zwischenschritte ein neues Video mit übersetztem, neutralisiertem Skript,
+KI-generierten Bildern, synthetischer Sprachausgabe und fertigem Schnitt.
+
+Der Betrieb läuft auf einem **Raspberry Pi** (Python 3.12, Click-CLI +
+Flask-Web-Dashboard, SQLite) und wird über **systemd-Timer** getaktet; die
+Bild-, Sprach- und Text-KI wird über externe APIs bzw. die Copilot CLI
+angebunden. Die Architektur ist **profilbasiert**: ein YAML-Profil beschreibt
+Quelle, Sprachen, Register, Bild-/Stimmen-Einstellungen und Veröffentlichungs­
+regeln, sodass sich neue Kanäle/Formate ohne Codeänderung ergänzen lassen.
+
+Das derzeit aktive Profil ist **`tagesschau_tr`**: deutsche *tagesschau*-
+Sendungen → neutrale türkische Nachrichten-Videos.
+
+## Ziel
+
+- **Automatisierung:** Aus einer Quell-Sendung ohne Handarbeit ein
+  veröffentlichungsreifes Video erzeugen — von Transkription bis Schnitt.
+- **Sprachliche & inhaltliche Qualität:** Fachgerechte DE→TR-Übersetzung im
+  formalen Nachrichten-Register, mit kultureller Adaption, Neutralisierung
+  (Entfernen von Moderator/Intro/Outro) und einer **unabhängigen KI-QA**
+  (anderes Modell als der Produzent) als Cross-Check gegen systematische Fehler.
+- **Sicherheit & Kontrolle:** Kostenobergrenze pro Episode, idempotente Stages,
+  robuste Retries — und ein bewusster **Stopp vor dem YouTube-Upload** für die
+  finale menschliche Endkontrolle.
+- **Skalierbarkeit:** Über zusätzliche Profile auf weitere Sprachen, Quellen und
+  Themen (z. B. Bitcoin-Bildung, der ursprüngliche Anwendungsfall) erweiterbar.
+
+---
+
 Vollständige, aus dem Code verifizierte Beschreibung der Verarbeitungspipeline
 für das aktive Profil **`tagesschau_tr`** (Deutsch → Türkisch, `pipeline_version=2`,
 vollautomatisch). Stand: 2026-07.

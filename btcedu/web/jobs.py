@@ -783,58 +783,172 @@ class JobManager:
             raise RuntimeError(report.error or "Pipeline failed")
 
     def _do_qa_rerun(self, job, session, settings):
-        """Re-run translate + adapt so the QA second opinion feeds back into
-        the prompts, then regenerate a fresh QA critique. Stops after QA.
+        """Restart Translate + Adapt using the QUALITY GATE's structured findings,
+        then regenerate a fresh QA gate. Stops after QA (does not continue the
+        pipeline).
 
-        The translate and adapt stages read the previous ``qa_review.json`` and
-        inject its findings via the ``{{ reviewer_feedback }}`` placeholder, so
-        this closes the QA correction loop.
+        Only the stories carrying open findings are re-translated/re-adapted (the
+        targeted repair path); unaffected stories are preserved verbatim. A whole
+        unstructured QA document is never injected.
         """
-        from btcedu.core.adapter import adapt_script
-        from btcedu.core.qa_reviewer import generate_qa_review
-        from btcedu.core.translator import translate_transcript
-
-        self._update(job, stage="translate")
-        self._log(job, "QA-Re-Run: Übersetzung (QA-Feedback wird angewendet)...")
-        translate_transcript(session, job.episode_id, settings, force=True)
-
-        self._update(job, stage="adapt")
-        self._log(job, "QA-Re-Run: Adaption (QA-Feedback wird angewendet)...")
-        adapt_script(session, job.episode_id, settings, force=True)
-
-        self._update(job, stage="qa")
-        self._log(job, "QA-Re-Run: neue QA-Zweitmeinung...")
-        qa = generate_qa_review(session, job.episode_id, settings, force=True)
-        score = getattr(qa, "overall_score", None)
-        self._update(job, result={"success": True, "qa_score": score})
-        self._log(job, f"QA-Re-Run abgeschlossen (Score={score})")
-
-    def _do_qa_rerun_all(self, job, session, settings):
-        """Re-run translate + adapt + QA, then continue the pipeline through
-        the remaining stages (chapterize -> images -> tts -> render ...).
-
-        First applies the QA correction loop (translate+adapt+QA), then resumes
-        the pipeline from the adapt point so downstream artifacts are rebuilt
-        from the corrected script.
-        """
-        from btcedu.core.pipeline import run_episode_pipeline, write_report
+        from btcedu.core.qa_reviewer import (
+            _cumulative_cost,
+            apply_targeted_repair,
+            generate_qa_review,
+            load_quality_gate,
+            target_story_ids_from_gate,
+        )
         from btcedu.models.episode import Episode
 
-        # Step 1: translate + adapt + fresh QA (QA feedback applied).
-        self._do_qa_rerun(job, session, settings)
+        self._update(job, stage="qa")
+        self._log(job, "QA-Re-Run: aktuelles Qualitätsgate wird geladen...")
+        gate = load_quality_gate(settings, job.episode_id)
+        result = None
+        if gate is None:
+            self._log(job, "QA-Re-Run: kein Gate vorhanden — erste QA-Auswertung...")
+            result = generate_qa_review(session, job.episode_id, settings, force=True)
+            gate = load_quality_gate(settings, job.episode_id) or {}
 
-        # Step 2: resume the pipeline (chapterize onward) with the corrected
-        # script. Episode status is ADAPTED after adapt, so this rebuilds the
-        # downstream stages via cascade invalidation.
+        targets = target_story_ids_from_gate(gate)
+        if targets:
+            self._update(job, stage="translate")
+            self._log(job, f"QA-Re-Run: gezielte Reparatur (Stories {targets})...")
+            episode = session.query(Episode).filter(Episode.episode_id == job.episode_id).first()
+            before_cost = _cumulative_cost(session, episode) if episode else 0.0
+            repaired = apply_targeted_repair(session, job.episode_id, settings, gate)
+            if not repaired:
+                targets = []
+                result = generate_qa_review(
+                    session,
+                    job.episode_id,
+                    settings,
+                    force=True,
+                    previous_gate=gate,
+                    generation=int(gate.get("retry_generation", 0)),
+                    retry_history=list(gate.get("retry_history") or []),
+                )
+            else:
+                targets = repaired
+            after_cost = _cumulative_cost(session, episode) if episode else before_cost
+            if repaired:
+                generation = int(gate.get("retry_generation", 0)) + 1
+                retry_history = list(gate.get("retry_history") or [])
+                retry_history.append(
+                    {
+                        "generation": generation,
+                        "action": "translate_adapt",
+                        "target_story_ids": targets,
+                        "finding_ids": [
+                            finding.get("finding_id")
+                            for finding in gate.get("findings") or []
+                            if finding.get("status") == "open"
+                            and finding.get("story_id") in targets
+                        ],
+                        "provider": getattr(settings, "llm_provider", None),
+                        "model": getattr(settings, "claude_model", None),
+                        "cost_usd": max(0.0, after_cost - before_cost),
+                        "resulting_status": None,
+                    }
+                )
+                result = generate_qa_review(
+                    session,
+                    job.episode_id,
+                    settings,
+                    force=True,
+                    previous_gate=gate,
+                    generation=generation,
+                    retry_history=retry_history,
+                )
+        else:
+            self._log(job, "QA-Re-Run: keine reparierbaren Story-Findings — nur neue QA.")
+            if result is None:
+                result = generate_qa_review(
+                    session,
+                    job.episode_id,
+                    settings,
+                    force=True,
+                    previous_gate=gate,
+                    generation=int(gate.get("retry_generation", 0)),
+                    retry_history=list(gate.get("retry_history") or []),
+                )
+        session.commit()
+        self._update(
+            job,
+            result={
+                "success": True,
+                "decision": result.decision or "skipped",
+                "blocked": result.blocked,
+                "targets": targets,
+            },
+        )
+        self._log(job, f"QA-Re-Run abgeschlossen (Gate={(result.decision or 'skipped').upper()})")
+
+    def _do_qa_rerun_all(self, job, session, settings):
+        """Restart Translate + Adapt + QA (with bounded targeted retries), then
+        continue the pipeline — but only past Review Gate 2 when the gate is GREEN
+        or an artifact-bound translation_qa review is approved.
+
+        The gate enforcement lives in ``review_gate_2``; this job resolves the gate
+        first (applying bounded repairs) and then resumes the pipeline, which stops
+        at the gate when the result is not GREEN/approved.
+        """
+        from btcedu.core.pipeline import _run_stage, run_episode_pipeline, write_report
+        from btcedu.core.qa_reviewer import (
+            gate_review_artifacts,
+            resolve_translation_quality_gate,
+        )
+        from btcedu.core.reviewer import has_approved_review_for_artifacts
+        from btcedu.models.episode import Episode
+
+        self._update(job, stage="qa")
+        self._log(job, "QA-Re-Run (alles): Qualitätsgate mit gebundenen Reparaturen...")
+        gate_result = resolve_translation_quality_gate(session, job.episode_id, settings)
+        decision = gate_result.decision or "skipped"
+        self._log(
+            job,
+            f"Gate-Ergebnis: {decision.upper()} (Reparatur-Gen={gate_result.generation})",
+        )
+
         episode = session.query(Episode).filter(Episode.episode_id == job.episode_id).first()
         if not episode:
             raise ValueError(f"Episode not found: {job.episode_id}")
+        if "cost_limit" in getattr(gate_result, "reasons", []):
+            session.commit()
+            raise RuntimeError("Episode cost limit reached during translation QA")
+
+        approved = has_approved_review_for_artifacts(
+            session,
+            job.episode_id,
+            "translation_qa",
+            gate_review_artifacts(settings, job.episode_id),
+        )
+        if decision != "green" and not approved:
+            gate_stage = _run_stage(
+                session,
+                episode,
+                settings,
+                "review_gate_2",
+                force=False,
+            )
+            session.commit()
+            self._update(
+                job,
+                result={
+                    "success": True,
+                    "decision": decision,
+                    "blocked": True,
+                    "proceeded": False,
+                    "stages_run": [],
+                },
+            )
+            self._log(job, f"Pipeline am Quality Gate gestoppt: {gate_stage.detail}")
+            return
 
         def on_stage(stage_name):
             self._update(job, stage=stage_name)
             self._log(job, f"Running: {stage_name}")
 
-        self._log(job, "QA-Re-Run: Pipeline wird bis Render fortgesetzt...")
+        self._log(job, "QA-Re-Run (alles): Pipeline wird fortgesetzt (Gate entscheidet)...")
         report = run_episode_pipeline(
             session,
             episode,
@@ -844,16 +958,28 @@ class JobManager:
         )
         write_report(report, settings.reports_dir)
 
+        gate2 = next((sr for sr in report.stages if sr.stage == "review_gate_2"), None)
+        proceeded = gate2 is None or gate2.status == "success"
+
         if report.success:
             self._update(
                 job,
                 result={
                     "success": True,
+                    "decision": decision,
+                    "proceeded": proceeded,
                     "cost_usd": report.total_cost_usd,
                     "stages_run": [sr.stage for sr in report.stages if sr.status == "success"],
                 },
             )
-            self._log(job, f"QA-Re-Run (alles) abgeschlossen: ${report.total_cost_usd:.4f}")
+            if proceeded:
+                self._log(job, f"QA-Re-Run (alles) abgeschlossen: ${report.total_cost_usd:.4f}")
+            else:
+                self._log(
+                    job,
+                    f"QA-Re-Run (alles): Gate {decision.upper()} — Pipeline an Gate 2 gestoppt "
+                    "(Freigabe nötig).",
+                )
         else:
             raise RuntimeError(report.error or "Pipeline failed")
 

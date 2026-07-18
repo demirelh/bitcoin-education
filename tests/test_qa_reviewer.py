@@ -12,6 +12,7 @@ from btcedu.core.qa_reviewer import (
     format_qa_feedback,
     generate_qa_review,
     load_qa_review,
+    load_quality_gate,
 )
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
 from btcedu.services.claude_service import ClaudeResponse
@@ -87,30 +88,50 @@ VALID_QA = json.dumps(
     ensure_ascii=False,
 )
 
+# Phase 7 structured findings output (single minor finding -> GREEN within limits).
+STRUCTURED_QA_MINOR = json.dumps(
+    {
+        "assessment": "Kleinere Neutralisierungslücke.",
+        "findings": [
+            {
+                "story_id": None,
+                "category": "neutralization_gap",
+                "severity": "minor",
+                "source_excerpt": "Guten Abend",
+                "target_excerpt": "İyi akşamlar",
+                "explanation": "Moderatorgruß noch vorhanden",
+                "required_action": "Gruß entfernen",
+            }
+        ],
+        "disputed_deterministic_categories": [],
+    },
+    ensure_ascii=False,
+)
+
 
 def test_generate_qa_review_writes_artifacts(db_session, adapted_episode, qa_settings):
     with patch("btcedu.core.qa_reviewer.call_claude") as mock_call:
-        mock_call.return_value = _qa_json_response(VALID_QA)
+        mock_call.return_value = _qa_json_response(STRUCTURED_QA_MINOR)
         result = generate_qa_review(db_session, "ep_qa", qa_settings)
 
     assert not result.skipped
-    assert result.overall_score == 9.1
-    assert result.model == "gpt-5.6-sol"
-    assert result.issue_count == 4  # 1 halluc + 1 neut + 2 story issues
+    # One minor finding, within the default max_minor_findings -> GREEN.
+    assert result.decision == "green"
+    assert result.blocked is False
+    assert result.narration_sha256 is not None  # GREEN records the narration hash
 
-    json_path = Path(result.json_path)
-    md_path = Path(result.markdown_path)
-    assert json_path.exists() and md_path.exists()
-    data = json.loads(json_path.read_text(encoding="utf-8"))
-    assert data["overall_score"] == 9.1
-    assert "getötete Ermittler erfunden" in md_path.read_text(encoding="utf-8")
+    gate = load_quality_gate(qa_settings, "ep_qa")
+    assert gate is not None
+    assert gate["decision"] == "green"
+    assert gate["summary"]["minor_count"] == 1
+    assert gate["narration_approved"] is True
 
-    # PipelineRun recorded as REVIEW/SUCCESS
-    run = (
-        db_session.query(PipelineRun)
-        .filter(PipelineRun.stage == PipelineStage.REVIEW)
-        .first()
-    )
+    # Backward-compatible legacy artifacts still written.
+    assert Path(result.json_path).exists()
+    assert Path(result.markdown_path).exists()
+
+    # PipelineRun recorded as REVIEW/SUCCESS with structured cost.
+    run = db_session.query(PipelineRun).filter(PipelineRun.stage == PipelineStage.REVIEW).first()
     assert run is not None and run.status == RunStatus.SUCCESS
 
 
@@ -161,13 +182,13 @@ def test_generate_qa_review_missing_adapted(db_session, qa_settings, tmp_path):
 
 def test_generate_qa_review_idempotent(db_session, adapted_episode, qa_settings):
     with patch("btcedu.core.qa_reviewer.call_claude") as mock_call:
-        mock_call.return_value = _qa_json_response(VALID_QA)
+        mock_call.return_value = _qa_json_response(STRUCTURED_QA_MINOR)
         generate_qa_review(db_session, "ep_qa", qa_settings)
         result2 = generate_qa_review(db_session, "ep_qa", qa_settings)
         # Second run should not call the model again (fingerprint unchanged)
         assert mock_call.call_count == 1
     assert result2.skipped
-    assert result2.overall_score == 9.1
+    assert result2.decision == "green"
 
 
 def test_generate_qa_review_invalid_json(db_session, adapted_episode, qa_settings):
@@ -175,10 +196,11 @@ def test_generate_qa_review_invalid_json(db_session, adapted_episode, qa_setting
         mock_call.return_value = _qa_json_response("Entschuldigung, hier ist kein JSON.")
         result = generate_qa_review(db_session, "ep_qa", qa_settings)
     assert not result.skipped
-    assert result.overall_score is None
-    data = load_qa_review(qa_settings, "ep_qa")
-    assert data is not None
-    assert "raw_response" in data
+    # Invalid model output surfaces as a visible major finding (never silent GREEN).
+    assert result.decision == "yellow"
+    gate = load_quality_gate(qa_settings, "ep_qa")
+    assert gate is not None
+    assert any(f["category"] == "qa_model_error" for f in gate["findings"])
 
 
 def test_load_qa_review_absent(qa_settings):
@@ -196,9 +218,7 @@ def test_render_markdown_and_count():
 def _write_qa_json(settings, episode_id, payload):
     base = Path(settings.outputs_dir) / episode_id
     base.mkdir(parents=True, exist_ok=True)
-    (base / "qa_review.json").write_text(
-        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
-    )
+    (base / "qa_review.json").write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
 
 def test_format_qa_feedback_absent(qa_settings):

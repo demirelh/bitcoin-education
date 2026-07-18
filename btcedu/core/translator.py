@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,6 +36,35 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _format_story_findings_block(findings: list[dict]) -> str:
+    """Render compact per-story QA findings as targeted correction guidance.
+
+    Only the structured fields are passed (never a whole QA document). The model
+    must fix exactly these points and leave everything else unchanged.
+    """
+    lines = [
+        "## QA-Korrekturen für DIESE Story (gezielt anwenden)",
+        "Ein unabhängiges Qualitätsgate hat die folgenden Punkte beanstandet. "
+        "Korrigiere ausschließlich diese Punkte und ändere sonst nichts. "
+        "Erfinde keine Fakten und übernimm diesen Hinweistext nicht in die Ausgabe.",
+    ]
+    for finding in findings:
+        parts = [
+            f"- [{str(finding.get('severity', '')).upper()}]",
+            str(finding.get("category", "")),
+        ]
+        if finding.get("explanation"):
+            parts.append(f"— {finding['explanation']}")
+        if finding.get("required_action"):
+            parts.append(f"→ {finding['required_action']}")
+        lines.append(" ".join(p for p in parts if p))
+        if finding.get("source"):
+            lines.append(f"    Quelle: {str(finding['source'])[:240]}")
+        if finding.get("target"):
+            lines.append(f"    Ziel:   {str(finding['target'])[:240]}")
+    return "\n".join(lines)
+
+
 @dataclass
 class TranslationResult:
     """Summary of translation operation for one episode."""
@@ -56,6 +86,10 @@ def translate_transcript(
     episode_id: str,
     settings: Settings,
     force: bool = False,
+    *,
+    target_story_ids: list[str] | None = None,
+    structured_findings: dict[str, list[dict]] | None = None,
+    budget_check: Callable[[float], bool] | None = None,
 ) -> TranslationResult:
     """Translate a corrected German transcript to Turkish.
 
@@ -67,6 +101,15 @@ def translate_transcript(
         episode_id: Episode identifier.
         settings: Application settings.
         force: If True, re-translate even if output exists.
+        target_story_ids: When set (per-story mode), only these stories are
+            re-translated by the model; all other stories are preserved verbatim
+            from the existing ``stories_translated.json``. Enables safe targeted
+            QA repairs without touching unaffected stories.
+        structured_findings: Optional mapping ``story_id -> [compact finding, ...]``
+            (finding_id/category/severity/explanation/source/target/required_action)
+            injected as per-story correction guidance for the targeted stories.
+        budget_check: Optional callback receiving in-flight stage cost before each
+            external call. Returning False aborts with a cost-limit error.
 
     Returns:
         TranslationResult with paths and usage stats.
@@ -227,12 +270,8 @@ def translate_transcript(
                 "Important: Treat this feedback as correction guidance. "
                 "Do not include the feedback text verbatim in your output."
             )
-        if getattr(settings, "qa_review_enabled", False):
-            from btcedu.core.qa_reviewer import format_qa_feedback
-
-            qa_feedback = format_qa_feedback(settings, episode_id)
-            if qa_feedback:
-                feedback_parts.append(qa_feedback)
+        # QA quality-gate findings are injected per story (structured, targeted)
+        # in _translate_per_story — never as a whole unstructured document here.
         template_body = template_body.replace(
             "{{ reviewer_feedback }}", "\n\n".join(feedback_parts)
         )
@@ -276,6 +315,9 @@ def translate_transcript(
                 profile_namespace=profile_namespace,
                 clean_moderator=clean_moderator,
                 session=session,
+                target_story_ids=target_story_ids,
+                structured_findings=structured_findings,
+                budget_check=budget_check,
             )
         else:
             # Standard full-transcript translation
@@ -284,6 +326,13 @@ def translate_transcript(
             translated_segments: list[str] = []
 
             for i, segment in enumerate(segments):
+                if budget_check is not None and not budget_check(total_cost):
+                    from btcedu.services.errors import ErrorCategory, PipelineError
+
+                    raise PipelineError(
+                        "Episode cost limit reached before translation call",
+                        ErrorCategory.PERMANENT_COST_LIMIT,
+                    )
                 user_message = user_template.replace("{{ transcript }}", segment)
 
                 # Dry-run path
@@ -426,6 +475,15 @@ def translate_transcript(
         pipeline_run.status = RunStatus.FAILED
         pipeline_run.completed_at = _utcnow()
         pipeline_run.error_message = str(e)
+        pipeline_run.input_tokens = locals().get("total_input_tokens", 0) + int(
+            getattr(e, "input_tokens", 0)
+        )
+        pipeline_run.output_tokens = locals().get("total_output_tokens", 0) + int(
+            getattr(e, "output_tokens", 0)
+        )
+        pipeline_run.estimated_cost_usd = locals().get("total_cost", 0.0) + float(
+            getattr(e, "cost_usd", 0.0)
+        )
         episode.error_message = str(e)
         session.commit()
         raise
@@ -584,6 +642,9 @@ def _translate_per_story(
     profile_namespace: str | None = None,
     clean_moderator: bool = False,
     session: "Session | None" = None,
+    target_story_ids: list[str] | None = None,
+    structured_findings: dict[str, list[dict]] | None = None,
+    budget_check: Callable[[float], bool] | None = None,
 ) -> tuple[str, int, int, int, float]:
     """Translate each story in a StoryDocument individually.
 
@@ -594,6 +655,10 @@ def _translate_per_story(
     When clean_moderator is True and story_type is "intro" or "outro", uses a
     specialized prompt that neutralizes moderator greetings and broadcast names,
     followed by deterministic regex cleaning of moderator names.
+
+    When ``target_story_ids`` is given, only those stories are re-translated by the
+    model; every other story is preserved verbatim from the existing
+    ``stories_translated.json`` so unaffected stories never change.
 
     Returns:
         Tuple of (translated_text, segments_processed, input_tokens, output_tokens, cost_usd)
@@ -608,6 +673,22 @@ def _translate_per_story(
     total_cost = 0.0
     segments_processed = 0
 
+    target_set = set(target_story_ids) if target_story_ids is not None else None
+    findings_by_story = structured_findings or {}
+
+    # For a targeted rerun, preserve untargeted stories from the existing artifact.
+    existing_by_id: dict[str, dict] = {}
+    if target_set is not None:
+        translated_artifact = stories_path.parent / "stories_translated.json"
+        if translated_artifact.exists():
+            try:
+                existing_data = json.loads(translated_artifact.read_text(encoding="utf-8"))
+                for entry in existing_data.get("stories", []):
+                    if entry.get("story_id"):
+                        existing_by_id[entry["story_id"]] = entry
+            except (json.JSONDecodeError, OSError):
+                existing_by_id = {}
+
     # Load intro/outro prompt if moderator cleaning is enabled
     intro_outro_prompt: tuple[str, str] | None = None
     if clean_moderator and session is not None and profile_namespace:
@@ -618,6 +699,16 @@ def _translate_per_story(
     translated_stories = []
 
     for i, story in enumerate(story_doc.stories):
+        # Targeted rerun: preserve unaffected stories exactly as previously translated.
+        if (
+            target_set is not None
+            and story.story_id not in target_set
+            and story.story_id in existing_by_id
+        ):
+            translated_stories.append(existing_by_id[story.story_id])
+            logger.info("Story %s preserved (not targeted by QA repair)", story.story_id)
+            continue
+
         is_intro_outro = story.story_type in ("intro", "outro")
 
         # Select prompt: specialized for intro/outro, standard for everything else
@@ -639,6 +730,9 @@ def _translate_per_story(
             "{{ transcript }}",
             json.dumps(story_payload, ensure_ascii=False, indent=2),
         )
+        story_findings = findings_by_story.get(story.story_id)
+        if story_findings:
+            body_user += "\n\n" + _format_story_findings_block(story_findings)
         dry_run_path = (
             Path(settings.outputs_dir) / episode_id / f"dry_run_translate_s{i:02d}_body.json"
             if settings.dry_run
@@ -650,6 +744,11 @@ def _translate_per_story(
             user_message=body_user,
             settings=settings,
             dry_run_path=dry_run_path,
+            budget_check=(
+                (lambda pending, spent=total_cost: budget_check(spent + pending))
+                if budget_check is not None
+                else None
+            ),
         )
         total_input_tokens += sum(response.input_tokens for response in responses)
         total_output_tokens += sum(response.output_tokens for response in responses)
@@ -737,6 +836,7 @@ def _call_story_translation(
     user_message: str,
     settings: "Settings",
     dry_run_path: "Path | None",
+    budget_check: Callable[[float], bool] | None = None,
 ):
     """Request and validate one structured story translation, retrying factual mismatches."""
     from btcedu.models.story_schema import StoryTranslationOutput
@@ -745,6 +845,19 @@ def _call_story_translation(
     active_message = user_message
     last_error: Exception | None = None
     for attempt in range(2):
+        if budget_check is not None and not budget_check(
+            sum(response.cost_usd for response in responses)
+        ):
+            from btcedu.services.errors import ErrorCategory, PipelineError
+
+            error = PipelineError(
+                "Episode cost limit reached before story translation call",
+                ErrorCategory.PERMANENT_COST_LIMIT,
+            )
+            error.input_tokens = sum(response.input_tokens for response in responses)
+            error.output_tokens = sum(response.output_tokens for response in responses)
+            error.cost_usd = sum(response.cost_usd for response in responses)
+            raise error
         response: ClaudeResponse = call_claude(
             system_prompt=system_prompt,
             user_message=active_message,

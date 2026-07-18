@@ -2815,12 +2815,15 @@ def get_stage_runs(episode_id: str):
 
         # Independent QA second opinion (shown in the Adapt stage detail)
         qa_review = None
+        quality_gate = None
         try:
-            from btcedu.core.qa_reviewer import load_qa_review
+            from btcedu.core.qa_reviewer import load_qa_review, load_quality_gate
 
             qa_review = load_qa_review(settings, episode_id)
+            quality_gate = load_quality_gate(settings, episode_id)
         except Exception:
             qa_review = None
+            quality_gate = None
 
         return jsonify(
             {
@@ -2830,6 +2833,7 @@ def get_stage_runs(episode_id: str):
                 "status": ep.status.value,
                 "error_message": ep.error_message,
                 "qa_review": qa_review,
+                "quality_gate": quality_gate,
             }
         )
     finally:
@@ -2838,40 +2842,46 @@ def get_stage_runs(episode_id: str):
 
 @api_bp.route("/episodes/<episode_id>/qa")
 def get_qa_review(episode_id: str):
-    """Return transcript QA and the independent translation QA critique."""
+    """Return transcript QA, the merged translation quality gate, and legacy QA."""
     settings = _get_settings()
+    quality_gate = None
     try:
-        from btcedu.core.qa_reviewer import load_qa_review
+        from btcedu.core.qa_reviewer import load_qa_review, load_quality_gate
 
         qa_review = load_qa_review(settings, episode_id)
+        quality_gate = load_quality_gate(settings, episode_id)
     except Exception:
         qa_review = None
+        quality_gate = None
     try:
         from btcedu.core.transcript_qa import load_transcript_qa
 
         transcript_qa = load_transcript_qa(settings, episode_id)
     except Exception:
         transcript_qa = None
-    if not qa_review and not transcript_qa:
+    if not qa_review and not transcript_qa and not quality_gate:
         return jsonify({"error": "Noch keine QA-Auswertung für diese Episode."}), 404
     return jsonify(
         {
             "episode_id": episode_id,
             "transcript_qa": transcript_qa,
             "qa_review": qa_review,
+            "quality_gate": quality_gate,
         }
     )
 
 
 @api_bp.route("/episodes/<episode_id>/qa-rerun", methods=["POST"])
 def qa_rerun(episode_id: str):
-    """Re-run translate + adapt (+ QA) so the QA feedback is applied. Stops after QA."""
+    """Targeted translate + adapt repair using the gate's structured findings,
+    then a fresh QA gate. Stops after QA."""
     return _submit_job("qa_rerun", episode_id)
 
 
 @api_bp.route("/episodes/<episode_id>/qa-rerun-all", methods=["POST"])
 def qa_rerun_all(episode_id: str):
-    """Re-run translate + adapt + QA, then continue the pipeline through render."""
+    """Resolve the quality gate (bounded targeted retries), then continue the
+    pipeline — only past Review Gate 2 when GREEN or approved."""
     return _submit_job("qa_rerun_all", episode_id)
 
 

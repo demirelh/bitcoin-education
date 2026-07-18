@@ -663,15 +663,18 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
 
     # Independent QA second opinion (loaded for adapt-stage reviews)
     qa_review = None
+    quality_gate = None
     transcript_qa = None
     if episode:
         try:
-            from btcedu.core.qa_reviewer import load_qa_review
+            from btcedu.core.qa_reviewer import load_qa_review, load_quality_gate
 
             settings = _get_runtime_settings()
             qa_review = load_qa_review(settings, episode.episode_id)
+            quality_gate = load_quality_gate(settings, episode.episode_id)
         except Exception:
             qa_review = None
+            quality_gate = None
         if task.stage == "transcript_qa":
             try:
                 from btcedu.core.transcript_qa import load_transcript_qa
@@ -706,6 +709,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         "compression_ratio": compression_ratio,  # Phase 3: TR/DE word ratio
         "translation_warnings": translation_warnings,  # Phase 3: anomaly warnings
         "qa_review": qa_review,  # QA: independent second-opinion critique
+        "quality_gate": quality_gate,  # QA: merged deterministic + model gate
         "transcript_qa": transcript_qa,
     }
 
@@ -845,17 +849,16 @@ def auto_approve_stage(
 def has_pending_review(
     session: Session,
     episode_id: str,
+    stage: str | None = None,
 ) -> bool:
-    """True if any PENDING or IN_REVIEW task exists for this episode."""
-    count = (
-        session.query(ReviewTask)
-        .filter(
-            ReviewTask.episode_id == episode_id,
-            ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]),
-        )
-        .count()
+    """True if a pending task exists for the episode, optionally for one stage."""
+    query = session.query(ReviewTask).filter(
+        ReviewTask.episode_id == episode_id,
+        ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]),
     )
-    return count > 0
+    if stage is not None:
+        query = query.filter(ReviewTask.stage == stage)
+    return query.count() > 0
 
 
 def pending_review_count(session: Session) -> int:

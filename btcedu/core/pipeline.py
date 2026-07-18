@@ -173,6 +173,27 @@ def _profile_pipeline_flags(settings: Settings, episode: Episode) -> tuple[bool,
         return False, True
 
 
+def _quality_gate_scoped(settings: Settings, episode: Episode) -> bool:
+    """True when the factual translation quality gate governs this episode.
+
+    Scoped to profiles that opt in via ``stage_config.qa`` or to story-based
+    (news) episodes. Legacy episodes without either keep their existing advisory
+    QA + human review flow, preserving backward compatibility.
+    """
+    try:
+        from btcedu.profiles import get_registry
+
+        name = getattr(episode, "content_profile", None)
+        if name:
+            profile = get_registry(settings).get(name)
+            if isinstance(profile.stage_config.get("qa"), dict):
+                return True
+    except Exception:  # noqa: BLE001
+        pass
+    stories = Path(settings.outputs_dir) / episode.episode_id / "stories_translated.json"
+    return stories.exists()
+
+
 def _imagegen_provider(settings: Settings, episode: Episode) -> str:
     """Return the configured imagegen provider for the episode's profile.
 
@@ -666,32 +687,112 @@ def _run_stage(
                 auto_approve_stage,
                 create_review_task,
                 has_approved_review,
+                has_approved_review_for_artifacts,
                 has_pending_review,
             )
 
-            # Independent second-opinion QA of the adapted script (advisory).
-            # Runs regardless of auto-approve so the critique is always produced
-            # and surfaced in the dashboard. Never blocks the pipeline.
-            if getattr(settings, "qa_review_enabled", False):
+            # Phase 7: independent factual quality gate with bounded targeted
+            # repairs. RED (or an exhausted non-green gate) blocks the pipeline;
+            # GREEN records the narration hash and auto-continues. QA exceptions
+            # are NOT swallowed for gate-scoped episodes — a genuine QA failure
+            # fails the stage. Legacy (non-scoped) episodes keep advisory QA.
+            qa_result = None
+            scoped = getattr(settings, "qa_review_enabled", False) and _quality_gate_scoped(
+                settings, episode
+            )
+            if scoped:
+                from btcedu.core.qa_reviewer import resolve_translation_quality_gate
+
+                qa_result = resolve_translation_quality_gate(session, episode.episode_id, settings)
+            elif getattr(settings, "qa_review_enabled", False):
+                # Advisory QA (never blocks) for non-gate-scoped legacy profiles.
                 try:
                     from btcedu.core.qa_reviewer import generate_qa_review
 
-                    qa = generate_qa_review(session, episode.episode_id, settings)
-                    if not qa.skipped:
-                        logger.info(
-                            "  QA second opinion (%s): score=%s, %d issue(s)",
-                            qa.model,
-                            qa.overall_score,
-                            qa.issue_count,
-                        )
+                    generate_qa_review(session, episode.episode_id, settings)
                 except Exception as qa_exc:  # noqa: BLE001
                     logger.warning(
-                        "QA second opinion failed for %s (non-fatal): %s",
+                        "Advisory QA failed for %s (non-fatal): %s",
                         episode.episode_id,
                         qa_exc,
                     )
 
-            # Check if already approved
+            gate_active = (
+                scoped
+                and qa_result is not None
+                and qa_result.decision in {"green", "yellow", "red"}
+            )
+            if gate_active:
+                from btcedu.core.qa_reviewer import gate_review_artifacts
+
+                artifacts = gate_review_artifacts(settings, episode.episode_id)
+                if "cost_limit" in qa_result.reasons:
+                    elapsed = time.monotonic() - t0
+                    return StageResult(
+                        "review_gate_2",
+                        "failed",
+                        elapsed,
+                        error=("[cost_limit] Episode cost limit reached during translation QA"),
+                    )
+                manual_ok = has_approved_review_for_artifacts(
+                    session, episode.episode_id, "translation_qa", artifacts
+                )
+
+                if qa_result.decision == "green" or manual_ok:
+                    # Keep the legacy adapt-approval invariant for auto-approve
+                    # profiles so downstream adapt-review checks still pass.
+                    auto_approve, _ = _profile_pipeline_flags(settings, episode)
+                    if auto_approve:
+                        adapted = (
+                            Path(settings.outputs_dir) / episode.episode_id / "script.adapted.tr.md"
+                        )
+                        auto_approve_stage(session, episode.episode_id, "adapt", [str(adapted)])
+                    elapsed = time.monotonic() - t0
+                    detail = (
+                        "quality gate GREEN — narration approved"
+                        if qa_result.decision == "green"
+                        else "quality gate manually approved"
+                    )
+                    logger.info("  review_gate_2 %s (%s)", detail, episode.episode_id)
+                    return StageResult("review_gate_2", "success", elapsed, detail=detail)
+
+                # RED or exhausted non-green — block on an artifact-bound review.
+                if has_pending_review(session, episode.episode_id, stage="translation_qa"):
+                    elapsed = time.monotonic() - t0
+                    return StageResult(
+                        "review_gate_2",
+                        "review_pending",
+                        elapsed,
+                        detail=f"awaiting translation QA review ({qa_result.decision})",
+                    )
+                diff_path = (
+                    Path(settings.outputs_dir)
+                    / episode.episode_id
+                    / "review"
+                    / "adaptation_diff.json"
+                )
+                create_review_task(
+                    session,
+                    episode.episode_id,
+                    stage="translation_qa",
+                    artifact_paths=artifacts,
+                    diff_path=str(diff_path) if diff_path.exists() else None,
+                )
+                elapsed = time.monotonic() - t0
+                logger.info(
+                    "  review_gate_2 quality gate %s — blocking review created (%s)",
+                    qa_result.decision.upper(),
+                    episode.episode_id,
+                )
+                return StageResult(
+                    "review_gate_2",
+                    "review_pending",
+                    elapsed,
+                    detail=f"quality gate {qa_result.decision.upper()} — review created",
+                )
+
+            # QA gate inactive (disabled/dry-run/artifacts missing) — fall back to
+            # the legacy adaptation review gate.
             auto_approve, _ = _profile_pipeline_flags(settings, episode)
             if auto_approve or has_approved_review(session, episode.episode_id, "adapt"):
                 if auto_approve:

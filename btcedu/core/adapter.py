@@ -6,6 +6,7 @@ import logging
 import re
 import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
 from btcedu.core.prompt_registry import TEMPLATES_DIR, PromptRegistry
+from btcedu.core.translator import _format_story_findings_block
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import (
     Episode,
@@ -92,6 +94,10 @@ def adapt_script(
     episode_id: str,
     settings: Settings,
     force: bool = False,
+    *,
+    target_story_ids: list[str] | None = None,
+    structured_findings: dict[str, list[dict]] | None = None,
+    budget_check: Callable[[float], bool] | None = None,
 ) -> AdaptationResult:
     """Adapt a Turkish translation for Turkey context using tiered rules.
 
@@ -103,6 +109,13 @@ def adapt_script(
         episode_id: Episode identifier.
         settings: Application settings.
         force: If True, re-adapt even if output exists.
+        target_story_ids: When set (per-story mode), only these stories are
+            re-adapted by the model; all other stories are preserved verbatim
+            from the existing ``stories_adapted.json``.
+        structured_findings: Optional mapping ``story_id -> [compact finding, ...]``
+            injected as per-story correction guidance for the targeted stories.
+        budget_check: Optional callback receiving in-flight stage cost before each
+            external call. Returning False aborts with a cost-limit error.
 
     Returns:
         AdaptationResult with paths and usage stats.
@@ -288,12 +301,8 @@ def adapt_script(
                 "Önemli: Bu geri bildirimi çıktıda aynen aktarmayın, "
                 "yalnızca düzeltme kılavuzu olarak kullanın."
             )
-        if getattr(settings, "qa_review_enabled", False):
-            from btcedu.core.qa_reviewer import format_qa_feedback
-
-            qa_feedback = format_qa_feedback(settings, episode_id)
-            if qa_feedback:
-                feedback_parts.append(qa_feedback)
+        # QA quality-gate findings are injected per story (structured, targeted)
+        # in _adapt_per_story — never as a whole unstructured document here.
         template_body = template_body.replace(
             "{{ reviewer_feedback }}", "\n\n".join(feedback_parts)
         )
@@ -318,6 +327,9 @@ def adapt_script(
                 settings=settings,
                 mode=adapt_mode,
                 allowed_operations=adapt_cfg.get("allowed_operations") or tiers_list,
+                target_story_ids=target_story_ids,
+                structured_findings=structured_findings,
+                budget_check=budget_check,
             )
         else:
             (
@@ -473,6 +485,15 @@ def adapt_script(
         pipeline_run.status = RunStatus.FAILED
         pipeline_run.completed_at = _utcnow()
         pipeline_run.error_message = str(e)
+        pipeline_run.input_tokens = locals().get("total_input_tokens", 0) + int(
+            getattr(e, "input_tokens", 0)
+        )
+        pipeline_run.output_tokens = locals().get("total_output_tokens", 0) + int(
+            getattr(e, "output_tokens", 0)
+        )
+        pipeline_run.estimated_cost_usd = locals().get("total_cost", 0.0) + float(
+            getattr(e, "cost_usd", 0.0)
+        )
         episode.error_message = f"Adaptation failed: {e}"
         session.commit()
         logger.error("Adaptation failed for %s: %s", episode_id, e)
@@ -545,8 +566,15 @@ def _adapt_per_story(
     settings: Settings,
     mode: str,
     allowed_operations: list[str],
+    target_story_ids: list[str] | None = None,
+    structured_findings: dict[str, list[dict]] | None = None,
+    budget_check: Callable[[float], bool] | None = None,
 ) -> tuple[str, dict, int, int, float, int]:
-    """Adapt only stories with a concrete need and preserve their identity."""
+    """Adapt only stories with a concrete need and preserve their identity.
+
+    When ``target_story_ids`` is given, only those stories are re-adapted; every
+    other story is preserved verbatim from the existing ``stories_adapted.json``.
+    """
     from btcedu.models.story_schema import StoryAdaptationOutput, StoryDocument
 
     story_doc = StoryDocument.model_validate_json(
@@ -559,7 +587,47 @@ def _adapt_per_story(
     adaptations: list[dict] = []
     adapted_stories: list[dict] = []
 
+    target_set = set(target_story_ids) if target_story_ids is not None else None
+    findings_by_story = structured_findings or {}
+
+    existing_by_id: dict[str, dict] = {}
+    if target_set is not None and stories_adapted_path.exists():
+        try:
+            existing_data = json.loads(stories_adapted_path.read_text(encoding="utf-8"))
+            for entry in existing_data.get("stories", []):
+                if entry.get("story_id"):
+                    existing_by_id[entry["story_id"]] = entry
+        except (json.JSONDecodeError, OSError):
+            existing_by_id = {}
+
     for story in story_doc.stories:
+        # Targeted rerun: preserve unaffected stories exactly as previously adapted.
+        if (
+            target_set is not None
+            and story.story_id not in target_set
+            and story.story_id in existing_by_id
+        ):
+            preserved = existing_by_id[story.story_id]
+            adapted_stories.append(preserved)
+            for operation in preserved.get("adaptation_operations", []):
+                adaptations.append(
+                    {
+                        "item_id": f"adapt-{story.story_id}-{len(adaptations) + 1:03d}",
+                        "story_id": story.story_id,
+                        "tier": "T1",
+                        "category": operation,
+                        "original": story.text_tr or "",
+                        "adapted": preserved.get("text_adapted_tr", ""),
+                        "context": (preserved.get("text_adapted_tr", "") or "")[:200],
+                        "position": {
+                            "start": 0,
+                            "end": len(preserved.get("text_adapted_tr", "") or ""),
+                        },
+                    }
+                )
+            logger.info("Story %s preserved (not targeted by QA repair)", story.story_id)
+            continue
+
         source_text = story.text_tr or ""
         needed = _needed_adaptation_operations(story, source_text, allowed_operations)
         if mode == "conditional" and not needed:
@@ -582,6 +650,9 @@ def _adapt_per_story(
                 "{{ translation }}",
                 json.dumps(payload, ensure_ascii=False, indent=2),
             ).replace("{{ original_german }}", story.source_text or story.text_de)
+            story_findings = findings_by_story.get(story.story_id)
+            if story_findings:
+                user_message += "\n\n" + _format_story_findings_block(story_findings)
             dry_run_path = (
                 Path(settings.outputs_dir) / episode_id / f"dry_run_adapt_{story.story_id}.json"
                 if settings.dry_run
@@ -595,6 +666,11 @@ def _adapt_per_story(
                 None,
                 f"story {story.story_id}",
                 json_mode=True,
+                budget_check=(
+                    (lambda pending, spent=total_cost: budget_check(spent + pending))
+                    if budget_check is not None
+                    else None
+                ),
             )
             processed += 1
             total_input_tokens += response.input_tokens
@@ -686,8 +762,16 @@ def _call_adaptation_with_refusal_retry(
     max_tokens: int | None,
     label: str,
     json_mode: bool,
+    budget_check: Callable[[float], bool] | None = None,
 ) -> ClaudeResponse:
     """Retry one refusal and never accept it as successful output."""
+    if budget_check is not None and not budget_check(0.0):
+        from btcedu.services.errors import ErrorCategory, PipelineError
+
+        raise PipelineError(
+            "Episode cost limit reached before adaptation call",
+            ErrorCategory.PERMANENT_COST_LIMIT,
+        )
     response = call_claude(
         system_prompt=system_prompt,
         user_message=user_message,
@@ -698,7 +782,18 @@ def _call_adaptation_with_refusal_retry(
     )
     if not settings.dry_run and _looks_like_refusal(response.text):
         logger.warning("%s: model refused adaptation, retrying once", label)
-        response = call_claude(
+        if budget_check is not None and not budget_check(response.cost_usd):
+            from btcedu.services.errors import ErrorCategory, PipelineError
+
+            error = PipelineError(
+                "Episode cost limit reached before adaptation retry",
+                ErrorCategory.PERMANENT_COST_LIMIT,
+            )
+            error.input_tokens = response.input_tokens
+            error.output_tokens = response.output_tokens
+            error.cost_usd = response.cost_usd
+            raise error
+        retry_response = call_claude(
             system_prompt=system_prompt,
             user_message=user_message,
             settings=settings,
@@ -706,11 +801,18 @@ def _call_adaptation_with_refusal_retry(
             max_tokens=max_tokens,
             json_mode=json_mode,
         )
-        if _looks_like_refusal(response.text):
+        if _looks_like_refusal(retry_response.text):
             raise AdaptationRefusedError(
                 f"Model refused to adapt {label} twice; aborting to avoid content loss. "
-                f"Refusal preview: {response.text.strip()[:200]!r}"
+                f"Refusal preview: {retry_response.text.strip()[:200]!r}"
             )
+        response = ClaudeResponse(
+            text=retry_response.text,
+            input_tokens=response.input_tokens + retry_response.input_tokens,
+            output_tokens=response.output_tokens + retry_response.output_tokens,
+            cost_usd=response.cost_usd + retry_response.cost_usd,
+            model=getattr(retry_response, "model", getattr(response, "model", "")),
+        )
     return response
 
 

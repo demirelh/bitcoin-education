@@ -371,6 +371,9 @@ class TestChastorizerStoryMode:
         self, db_session, tagesschau_episode, settings_with_profiles, tmp_path
     ):
         """Chapterizer uses stories_translated.json when available (tagesschau profile)."""
+        # This unit test exercises story-mode chapterization in isolation. The
+        # quality gate is covered separately in test_quality_gate.py.
+        settings_with_profiles.qa_review_enabled = False
         # Setup: episode at TRANSLATED status with stories_translated.json
         tagesschau_episode.status = EpisodeStatus.TRANSLATED
         db_session.commit()

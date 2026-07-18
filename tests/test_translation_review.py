@@ -773,6 +773,9 @@ class TestChapterizerUsesSidecar:
         self, db_session, settings_with_profiles, tmp_path
     ):
         """Chapterizer uses stories_translated.reviewed.json when it exists."""
+        # This test isolates reviewed-sidecar selection; quality-gate enforcement
+        # is covered in test_quality_gate.py.
+        settings_with_profiles.qa_review_enabled = False
         episode = Episode(
             episode_id="ep_sidecar",
             source="youtube_rss",
@@ -822,6 +825,7 @@ class TestChapterizerUsesSidecar:
         self, db_session, settings_with_profiles, tmp_path
     ):
         """Chapterizer uses stories_translated.json when no reviewed sidecar exists."""
+        settings_with_profiles.qa_review_enabled = False
         episode = Episode(
             episode_id="ep_nosidecar",
             source="youtube_rss",

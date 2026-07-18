@@ -838,14 +838,19 @@ def test_adapt_script_retries_refusal_then_succeeds(
 
 
 @patch("btcedu.core.adapter.call_claude")
-def test_adapt_injects_qa_feedback(
+def test_adapt_does_not_inject_whole_qa_document(
     mock_call_claude,
     translated_episode,
     mock_settings,
     db_session,
     mock_claude_adapt_response,
 ):
-    """QA critique from a prior run is injected into the adapt prompt."""
+    """Phase 7: whole unstructured QA docs are NEVER injected into adapt.
+
+    Only compact, per-story structured findings are passed (via
+    ``structured_findings``). A legacy ``qa_review.json`` must not leak into the
+    prompt as a whole document.
+    """
     import json as _json
 
     mock_call_claude.return_value = type("Response", (), mock_claude_adapt_response)
@@ -872,5 +877,5 @@ def test_adapt_injects_qa_feedback(
     adapt_script(db_session, "ep_test", mock_settings, force=True)
 
     sent = " ".join(str(v) for v in mock_call_claude.call_args.kwargs.values())
-    assert "QA-Zweitmeinung des vorherigen Laufs" in sent
-    assert "Wettersatz korrigieren" in sent
+    assert "QA-Zweitmeinung des vorherigen Laufs" not in sent
+    assert "getötete Ermittler erfunden" not in sent

@@ -36,6 +36,67 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _enforce_translation_quality_gate(
+    session: Session,
+    episode_id: str,
+    settings: Settings,
+) -> None:
+    """Block chapterization when a non-green / stale translation quality gate exists.
+
+    Backward-compatible: episodes without a ``translation_quality_gate.json``
+    (legacy / podcast) are unaffected. When a gate exists it must be GREEN for the
+    exact current narration hash, or carry an artifact-bound approved
+    ``translation_qa`` review. Force does not bypass this factual gate.
+    """
+    from btcedu.core.qa_reviewer import (
+        gate_review_artifacts,
+        load_quality_gate,
+        narration_sha256,
+    )
+
+    gate_required = False
+    try:
+        from btcedu.profiles import get_registry
+
+        episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        profile_name = getattr(episode, "content_profile", None) if episode else None
+        if profile_name:
+            profile = get_registry(settings).get(profile_name)
+            gate_required = bool(getattr(settings, "qa_review_enabled", False)) and isinstance(
+                profile.stage_config.get("qa"), dict
+            )
+    except Exception:  # noqa: BLE001
+        gate_required = False
+
+    gate = load_quality_gate(settings, episode_id, strict=True)
+    if gate is None and not gate_required:
+        return
+    if gate is None:
+        raise ValueError(
+            f"Episode {episode_id} requires a valid translation quality gate before "
+            "chapterization."
+        )
+
+    from btcedu.core.reviewer import has_approved_review_for_artifacts
+
+    artifacts = gate_review_artifacts(settings, episode_id)
+    if has_approved_review_for_artifacts(session, episode_id, "translation_qa", artifacts):
+        return
+
+    current_hash = narration_sha256(settings, episode_id)
+    approved_hash = gate.get("narration_sha256")
+    if gate.get("decision") == "green" and approved_hash and approved_hash == current_hash:
+        return
+
+    hash_matches = bool(approved_hash) and approved_hash == current_hash
+    raise ValueError(
+        f"Episode {episode_id} translation quality gate is "
+        f"'{gate.get('decision', 'unknown')}' (narration_match={hash_matches}). "
+        "Chapterization is blocked until the gate is GREEN for the current narration "
+        "or an artifact-bound translation_qa review is approved."
+    )
+
+
 @dataclass
 class ChapterizationResult:
     """Summary of chapterization operation for one episode."""
@@ -80,6 +141,12 @@ def chapterize_script(
     episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
+
+    # Phase 7 factual gate: when a translation quality gate exists, chapterization
+    # is only allowed if it is GREEN for the current narration, or an artifact-bound
+    # translation_qa review is approved. This runs even with force so a stale or
+    # non-green factual gate cannot be silently bypassed.
+    _enforce_translation_quality_gate(session, episode_id, settings)
 
     # Determine if this is a story-mode episode (tagesschau news profiles)
     # Story mode: stories_translated.json exists AND adapt was skipped (no adapted script).

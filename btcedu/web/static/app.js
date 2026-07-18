@@ -1285,6 +1285,95 @@
     return h;
   }
 
+  function renderQualityGate(gate) {
+    if (!gate) return "";
+    const decision = String(gate.decision || gate.status || "yellow").toLowerCase();
+    const decClass = decision === "green" ? "qa-score-good"
+                   : decision === "red" ? "qa-score-bad"
+                   : "qa-score-mid";
+    const s = gate.summary || {};
+    const calls = Array.isArray(gate.model_calls) ? gate.model_calls : [];
+    const escalated = calls.some(c => c.kind === "escalation" && c.ok !== false);
+    let h = `<div class="qa-review-panel">
+      <div class="qa-review-head">
+        <strong>Übersetzungs-Qualitätsgate</strong>
+        <span class="qa-model">det: ${esc(String(gate.deterministic_status || "—"))}</span>
+        ${escalated ? `<span class="qa-model">eskaliert</span>` : ""}
+        <span class="qa-score ${decClass}">${esc(decision.toUpperCase())}</span>
+      </div>
+      <div class="qa-summary">
+        Critical: ${Number(s.critical_count || 0)} &middot;
+        Major: ${Number(s.major_count || 0)} &middot;
+        Minor: ${Number(s.minor_count || 0)} &middot;
+        Gelöst: ${Number(s.resolved_count || 0)} &middot;
+        Widerspruch: ${Number(s.contradiction_count || 0)} &middot;
+        Reparatur-Gen: ${Number(gate.retry_generation || 0)} &middot;
+        Kosten: $${Number(gate.total_cost_usd || 0).toFixed(4)}
+      </div>`;
+    if (gate.narration_approved && gate.narration_sha256) {
+      h += `<div class="qa-block qa-top">Narration freigegeben (SHA-256 ${esc(String(gate.narration_sha256).slice(0, 12))}…)</div>`;
+    }
+    if (Array.isArray(gate.reasons) && gate.reasons.length) {
+      h += `<div class="qa-block qa-halluc"><div class="qa-block-title">Gründe</div><ul>${
+        gate.reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul></div>`;
+    }
+
+    // Model route + costs
+    if (calls.length) {
+      const rows = calls.map(c => {
+        const trig = (c.triggered_by || []).length ? ` · Trigger: ${esc((c.triggered_by || []).join(", "))}` : "";
+        const errored = c.ok === false ? ` · <span class="qa-score-bad">${esc(c.error || "fehlgeschlagen")}</span>` : "";
+        return `<li>${esc(c.kind)} · ${esc(c.provider || "")}/${esc(c.model || "")} · $${Number(c.cost_usd || 0).toFixed(4)}${trig}${errored}</li>`;
+      }).join("");
+      h += `<div class="qa-block qa-top"><div class="qa-block-title">Modell-Route</div><ul>${rows}</ul></div>`;
+    }
+
+    // Findings grouped by severity, open first
+    const findings = (Array.isArray(gate.findings) ? gate.findings : [])
+      .slice()
+      .sort((a, b) => {
+        const rank = { critical: 0, major: 1, minor: 2, info: 3 };
+        const st = { open: 0, resolved: 1, dismissed: 2 };
+        return (st[a.status] ?? 9) - (st[b.status] ?? 9)
+            || (rank[a.severity] ?? 9) - (rank[b.severity] ?? 9);
+      });
+    if (findings.length) {
+      const items = findings.map(f => {
+        const sevClass = f.severity === "critical" ? "qa-score-bad"
+                       : f.severity === "major" ? "qa-score-mid"
+                       : "qa-score-na";
+        const story = f.story_id ? `[${esc(f.story_id)}] ` : "";
+        const contradiction = f.contradiction ? " · ⚠ Widerspruch" : "";
+        const origin = `${esc(f.detector || "")}${f.model ? " · " + esc(f.model) : ""}`;
+        return `<details class="qa-stories" ${f.status === "open" && (f.severity === "critical" || f.severity === "major") ? "open" : ""}>
+          <summary>
+            <span class="qa-score ${sevClass}">${esc(String(f.severity || "").toUpperCase())}</span>
+            · ${esc(String(f.status || "open").toUpperCase())} · ${story}${esc(f.category || "")}${contradiction}
+          </summary>
+          <div class="qa-story">
+            <div class="qa-summary">${esc(f.explanation || "")}</div>
+            ${f.source_excerpt ? `<div><strong>Quelle:</strong> ${esc(f.source_excerpt)}</div>` : ""}
+            ${f.target_excerpt ? `<div><strong>Ziel:</strong> ${esc(f.target_excerpt)}</div>` : ""}
+            ${f.required_action ? `<div><strong>Aktion:</strong> ${esc(f.required_action)}</div>` : ""}
+            <div class="qa-model">Detektor: ${origin}${f.retry_generation ? " · Gen " + Number(f.retry_generation) : ""}</div>
+          </div>
+        </details>`;
+      }).join("");
+      h += `<div class="qa-block"><div class="qa-block-title">Findings (${findings.length})</div>${items}</div>`;
+    }
+
+    // Retry history
+    if (Array.isArray(gate.retry_history) && gate.retry_history.length) {
+      const rows = gate.retry_history.map(r =>
+        `<li>Gen ${Number(r.generation)} · ${esc(r.action || "")} · Stories: ${esc((r.target_story_ids || []).join(", "))} → ${esc(String(r.resulting_status || "—").toUpperCase())}</li>`
+      ).join("");
+      h += `<details class="qa-stories"><summary>Reparatur-Historie (${gate.retry_history.length})</summary><ul>${rows}</ul></details>`;
+    }
+
+    h += `</div>`;
+    return h;
+  }
+
   function renderTranscriptQa(qa) {
     if (!qa) return "";
     const status = String(qa.status || "yellow").toLowerCase();
@@ -1347,20 +1436,21 @@
     if (!selected) return;
     const viewer = document.getElementById("viewer");
     const data = await GET(`/episodes/${selected.episode_id}/qa`);
-    if (!data || data.error || (!data.qa_review && !data.transcript_qa)) {
+    if (!data || data.error || (!data.qa_review && !data.transcript_qa && !data.quality_gate)) {
       viewer.innerHTML = `
         <div class="qa-review-panel">
           ${qaRerunButtons()}
           <div class="qa-summary">${esc((data && data.error) || "Noch keine QA-Auswertung für diese Episode.")}</div>
           <p style="color:#888;margin-top:0.5em">
-            Die QA-Zweitmeinung wird nach der Adaption (Review Gate 2) automatisch erstellt.
+            Das Qualitätsgate wird nach der Adaption (Review Gate 2) automatisch erstellt.
           </p>
         </div>`;
       return;
     }
     viewer.innerHTML = qaRerunButtons()
       + renderTranscriptQa(data.transcript_qa)
-      + renderQaReview(data.qa_review);
+      + renderQualityGate(data.quality_gate)
+      + (data.quality_gate ? "" : renderQaReview(data.qa_review));
   }
 
   function renderStageDetailHTML(stageName, data) {
@@ -1373,9 +1463,11 @@
     let html = `<div class="stage-detail-panel">`;
     html += `<h3 class="stage-detail-title">${esc(label)}</h3>`;
 
-    // Independent QA second opinion (shown on the Adapt stage).
-    if (stageName === "adapt" && data.qa_review) {
-      html += renderQaReview(data.qa_review);
+    // Independent QA quality gate (shown on the Adapt stage).
+    if (stageName === "adapt" && (data.quality_gate || data.qa_review)) {
+      html += data.quality_gate
+        ? renderQualityGate(data.quality_gate)
+        : renderQaReview(data.qa_review);
     }
 
     // Live render progress (populated by polling for the render stage).
@@ -2326,8 +2418,10 @@
       </div>
     </div>`;
 
-    // Independent QA second opinion (adapt reviews)
-    if (data.qa_review) {
+    // Independent QA second opinion (adapt reviews) + merged quality gate
+    if (data.quality_gate) {
+      html += renderQualityGate(data.quality_gate);
+    } else if (data.qa_review) {
       html += renderQaReview(data.qa_review);
     }
     if (data.transcript_qa) {

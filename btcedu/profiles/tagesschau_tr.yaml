@@ -27,6 +27,31 @@ stage_config:
     auto_continue_below_threshold: true
   translation_qa:
     enabled: true
+  qa:
+    # Deterministic checks run first and never cost anything.
+    deterministic_checks: true
+    # Standard independent second-opinion model (different from the producer).
+    standard:
+      provider: copilot_cli
+      model: gpt-5.6-sol
+    # Stronger escalation model, only invoked for high-risk triggers.
+    escalation:
+      enabled: true
+      provider: copilot_cli
+      model: claude-opus-4.6
+      trigger_on:
+        - suspected_hallucination
+        - missing_story
+        - casualty_claim
+        - legal_claim
+        - unresolved_transcript
+        - contradictory_findings
+    quality_gate:
+      max_automatic_retries: 2
+      block_on_critical: true
+      block_on_missing_story: true
+      block_on_unresolved_transcript: true
+      max_minor_findings: 4
   segment:
     enabled: true
   adapt:

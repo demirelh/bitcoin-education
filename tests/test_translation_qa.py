@@ -429,13 +429,9 @@ def test_llm_qa_runs_deterministic_check_first(
         return ClaudeResponse(
             text=json.dumps(
                 {
-                    "overall_score": 10,
-                    "summary": "",
-                    "stories": [],
-                    "missing_content": [],
-                    "hallucinations": [],
-                    "neutralization_gaps": [],
-                    "top_fixes": [],
+                    "assessment": "No findings.",
+                    "findings": [],
+                    "disputed_deterministic_categories": [],
                 }
             ),
             input_tokens=1,

@@ -63,13 +63,26 @@ def compute_prompt_hash(
     return hashlib.sha256(payload.encode()).hexdigest()
 
 
-def _resolve_provider(settings) -> str:
+def _resolve_provider(settings, provider_override: str | None = None) -> str:
     """Determine which LLM provider to use.
 
-    Priority: settings.llm_provider, but fall back to openai if
-    anthropic key is missing and openai key is present.
+    Priority: ``provider_override`` (when set), then ``settings.llm_provider``,
+    but fall back to openai if the anthropic key is missing and the openai key
+    is present. The github_models provider falls back to openai when no token
+    is configured. This keeps the QA second opinion able to force a specific
+    provider without disturbing the default routing.
     """
-    provider = getattr(settings, "llm_provider", "anthropic")
+    provider = provider_override or getattr(settings, "llm_provider", "anthropic")
+    if provider_override is not None:
+        if provider == "anthropic" and not getattr(settings, "anthropic_api_key", ""):
+            raise ValueError("Explicit Anthropic provider requires ANTHROPIC_API_KEY")
+        if provider == "openai" and not getattr(settings, "openai_api_key", ""):
+            raise ValueError("Explicit OpenAI provider requires OPENAI_API_KEY")
+        if provider == "github_models" and not getattr(settings, "github_token", ""):
+            raise ValueError("Explicit GitHub Models provider requires GITHUB_TOKEN")
+        if provider not in {"anthropic", "openai", "github_models", "copilot_cli"}:
+            raise ValueError(f"Unsupported explicit LLM provider: {provider!r}")
+        return provider
     if provider == "github_models" and not getattr(settings, "github_token", ""):
         logger.warning("No GITHUB_TOKEN set — falling back to OpenAI")
         provider = "openai"
@@ -91,12 +104,14 @@ def call_claude(
     max_tokens: int | None = None,
     json_mode: bool = False,
     model_override: str | None = None,
+    provider_override: str | None = None,
 ) -> ClaudeResponse:
     """Call LLM API (Anthropic or OpenAI fallback).
 
     Provider selection:
-        1. ``settings.llm_provider`` ("anthropic" or "openai")
-        2. Auto-fallback to OpenAI when Anthropic key is empty
+        1. ``provider_override`` (explicit, e.g. an independent QA route)
+        2. ``settings.llm_provider`` ("anthropic" or "openai")
+        3. Auto-fallback to OpenAI when Anthropic key is empty
 
     Args:
         system_prompt: System-level instructions.
@@ -105,9 +120,13 @@ def call_claude(
         dry_run_path: If settings.dry_run, write payload here instead of calling API.
         max_tokens: Override settings.claude_max_tokens for this call.
         json_mode: If True, request JSON output from the API (OpenAI response_format).
-        model_override: If set (copilot_cli provider), use this model instead of
-            settings.copilot_cli_model for this call. Enables an independent QA
-            second opinion with a different model than the translation.
+        model_override: If set, use this model instead of the provider default for
+            this call (honored by anthropic, openai, github_models and copilot_cli).
+            Enables an independent QA second opinion with a different model than the
+            translation.
+        provider_override: If set, force this provider ("anthropic", "openai",
+            "github_models", "copilot_cli") for this call regardless of
+            ``settings.llm_provider``. Missing-key fallbacks still apply.
 
     Returns:
         ClaudeResponse with text, token counts, and cost.
@@ -115,7 +134,7 @@ def call_claude(
     if settings.dry_run:
         return _write_dry_run(system_prompt, user_message, settings, dry_run_path)
 
-    provider = _resolve_provider(settings)
+    provider = _resolve_provider(settings, provider_override)
 
     if provider == "copilot_cli":
         response = _call_copilot_cli(
@@ -131,6 +150,11 @@ def call_claude(
         # and fall back to Anthropic (if key available) so translations don't
         # silently corrupt the pipeline.
         if _is_copilot_refusal(response.text):
+            if provider_override is not None:
+                raise ModelRefusalError(
+                    "Explicit Copilot route refused the task; provider fallback is disabled "
+                    f"for audited calls. Refusal preview: {response.text.strip()[:200]!r}"
+                )
             logger.warning(
                 "Copilot CLI refused task (len=%d, first=%s...). Retrying with coding-frame.",
                 len(response.text),
@@ -157,7 +181,9 @@ def call_claude(
             if _is_copilot_refusal(response.text) and getattr(settings, "anthropic_api_key", ""):
                 logger.warning("Coding-frame retry also refused. Falling back to Anthropic API.")
                 try:
-                    return _call_anthropic(system_prompt, user_message, settings, max_tokens=max_tokens)
+                    return _call_anthropic(
+                        system_prompt, user_message, settings, max_tokens=max_tokens
+                    )
                 except Exception as exc:
                     logger.error("Anthropic fallback failed: %s.", exc)
             # If every attempt (Copilot + coding-frame + Anthropic) still refuses,
@@ -177,6 +203,7 @@ def call_claude(
             settings,
             max_tokens=max_tokens,
             json_mode=json_mode,
+            model_override=model_override,
         )
     if provider == "openai":
         return _call_openai(
@@ -185,8 +212,15 @@ def call_claude(
             settings,
             max_tokens=max_tokens,
             json_mode=json_mode,
+            model_override=model_override,
         )
-    return _call_anthropic(system_prompt, user_message, settings, max_tokens=max_tokens)
+    return _call_anthropic(
+        system_prompt,
+        user_message,
+        settings,
+        max_tokens=max_tokens,
+        model_override=model_override,
+    )
 
 
 def _call_anthropic(
@@ -194,11 +228,13 @@ def _call_anthropic(
     user_message: str,
     settings,
     max_tokens: int | None = None,
+    model_override: str | None = None,
 ) -> ClaudeResponse:
     """Call Anthropic Claude Messages API."""
     from anthropic import Anthropic
 
     effective_max_tokens = max_tokens or settings.claude_max_tokens
+    model = model_override or settings.claude_model
 
     client = Anthropic(
         api_key=settings.anthropic_api_key,
@@ -206,7 +242,7 @@ def _call_anthropic(
     )
 
     response = client.messages.create(
-        model=settings.claude_model,
+        model=model,
         max_tokens=effective_max_tokens,
         temperature=settings.claude_temperature,
         system=system_prompt,
@@ -227,7 +263,7 @@ def _call_anthropic(
         input_tokens,
         output_tokens,
         cost,
-        settings.claude_model,
+        model,
     )
 
     return ClaudeResponse(
@@ -235,7 +271,7 @@ def _call_anthropic(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cost_usd=cost,
-        model=settings.claude_model,
+        model=model,
     )
 
 
@@ -277,24 +313,26 @@ def _call_copilot_cli(
             "\n\n---\n\n"
             "ÇIKTI KURALI (MUTLAK): Sadece geçerli, tek bir JSON nesnesi döndür. "
             "JSON dışında hiçbir metin, açıklama, markdown code-fence, önsöz, sonsöz olmasın. "
-            "Yanıt karakterin ilk karakteri '{' olmak zorundadır ve son karakteri '}' olmak zorundadır."
+            "Yanıt karakterin ilk karakteri '{' olmak zorundadır ve son karakteri '}' "
+            "olmak zorundadır."
         )
 
     # Write prompt to tempfile to avoid arg-length issues (translate segments can be huge).
-    with tempfile.NamedTemporaryFile(
-        mode="w", suffix=".txt", encoding="utf-8", delete=False
-    ) as pf:
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", encoding="utf-8", delete=False) as pf:
         pf.write(combined)
         prompt_path = pf.name
 
     cmd = [
         binary,
-        "--model", model,
+        "--model",
+        model,
         "--no-custom-instructions",
         "--allow-all-tools",
         "--no-ask-user",
-        "--output-format", "json",
-        "-p", combined,
+        "--output-format",
+        "json",
+        "-p",
+        combined,
     ]
 
     t0 = _time.time()
@@ -308,6 +346,7 @@ def _call_copilot_cli(
     finally:
         try:
             import os as _os
+
             _os.unlink(prompt_path)
         except Exception:
             pass
@@ -475,23 +514,30 @@ def _supports_at_prompt(binary: str) -> bool:
     """Copilot CLI accepts @file syntax for -p in recent versions."""
     try:
         import subprocess
-        out = subprocess.run(
-            [binary, "--help"], capture_output=True, text=True, timeout=5
-        ).stdout
+
+        out = subprocess.run([binary, "--help"], capture_output=True, text=True, timeout=5).stdout
         return "@" in out and "prompt" in out.lower()
     except Exception:
         return False
 
 
-def _copilot_cli_fallback_text(
-    binary: str, model: str, prompt: str, settings
-) -> str:
+def _copilot_cli_fallback_text(binary: str, model: str, prompt: str, settings) -> str:
     """Fallback to text-format output, stripping the stats footer."""
     import subprocess
+
     proc = subprocess.run(
-        [binary, "--model", model, "--no-custom-instructions",
-         "--allow-all-tools", "--no-ask-user",
-         "--output-format", "text", "-p", prompt],
+        [
+            binary,
+            "--model",
+            model,
+            "--no-custom-instructions",
+            "--allow-all-tools",
+            "--no-ask-user",
+            "--output-format",
+            "text",
+            "-p",
+            prompt,
+        ],
         capture_output=True,
         text=True,
         timeout=getattr(settings, "copilot_cli_timeout", 900),
@@ -512,6 +558,7 @@ def _call_github_models(
     settings,
     max_tokens: int | None = None,
     json_mode: bool = False,
+    model_override: str | None = None,
 ) -> ClaudeResponse:
     """Call GitHub Models API (OpenAI-compatible, uses GitHub PAT).
 
@@ -523,10 +570,8 @@ def _call_github_models(
     from openai import OpenAI
 
     effective_max_tokens = max_tokens or settings.claude_max_tokens
-    model = getattr(settings, "github_models_model", "openai/gpt-4.1")
-    endpoint = getattr(
-        settings, "github_models_endpoint", "https://models.github.ai/inference"
-    )
+    model = model_override or getattr(settings, "github_models_model", "openai/gpt-4.1")
+    endpoint = getattr(settings, "github_models_endpoint", "https://models.github.ai/inference")
 
     client = OpenAI(api_key=settings.github_token, base_url=endpoint)
 
@@ -572,12 +617,13 @@ def _call_openai(
     settings,
     max_tokens: int | None = None,
     json_mode: bool = False,
+    model_override: str | None = None,
 ) -> ClaudeResponse:
     """Call OpenAI Chat Completions API as fallback."""
     from openai import OpenAI
 
     effective_max_tokens = max_tokens or settings.claude_max_tokens
-    model = getattr(settings, "openai_llm_model", "gpt-4o")
+    model = model_override or getattr(settings, "openai_llm_model", "gpt-4o")
     client = OpenAI(api_key=settings.openai_api_key)
 
     kwargs: dict = {

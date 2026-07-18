@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -167,4 +168,115 @@ class TranscriptVerificationDocument(BaseModel):
         region_cost = round(sum(region.cost_usd for region in self.verified_regions), 6)
         if round(self.summary.cost_usd, 6) != region_cost:
             raise ValueError("summary cost_usd must match verified region costs")
+        return self
+
+
+class CorrectedTranscriptSegment(BaseModel):
+    """One safely corrected segment with explicit uncertainty state."""
+
+    segment_id: str = Field(..., pattern=_SEGMENT_ID_RE.pattern)
+    start_seconds: float = Field(..., ge=0)
+    end_seconds: float = Field(..., ge=0)
+    original_text: str = Field(..., min_length=1)
+    corrected_text: str = Field(..., min_length=1)
+    status: Literal["verified", "corrected", "uncertain", "unresolved"]
+    severity: Literal["none", "minor", "major", "critical"]
+    flags: list[str] = Field(default_factory=list)
+    reason: str | None = None
+    verification_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_corrected_segment(self) -> CorrectedTranscriptSegment:
+        if self.end_seconds < self.start_seconds:
+            raise ValueError("end_seconds must be greater than or equal to start_seconds")
+        if self.status in {"uncertain", "unresolved"} and not self.reason:
+            raise ValueError("uncertain and unresolved segments require a reason")
+        return self
+
+
+class CorrectedTranscriptDocument(BaseModel):
+    """Versioned structured correction artifact."""
+
+    schema_version: Literal[1] = 1
+    episode_id: str = Field(..., min_length=1)
+    language: str = Field(..., min_length=2)
+    segments: list[CorrectedTranscriptSegment]
+    full_text: str
+
+    @model_validator(mode="after")
+    def validate_corrected_segments(self) -> CorrectedTranscriptDocument:
+        ids = [segment.segment_id for segment in self.segments]
+        if len(ids) != len(set(ids)):
+            raise ValueError("corrected transcript segment IDs must be unique")
+        return self
+
+
+TranscriptQACategory = Literal[
+    "unresolved_name",
+    "unresolved_number",
+    "unresolved_date",
+    "unresolved_negation",
+    "incomplete_sentence",
+    "conflicting_transcriptions",
+    "casualty_uncertainty",
+    "result_uncertainty",
+    "semantic_role_uncertainty",
+]
+
+
+class TranscriptQAFinding(BaseModel):
+    """Persistent transcript QA finding shared by CLI, review, and web."""
+
+    finding_id: str = Field(..., pattern=r"^transcript-qa-\d{4,}$")
+    category: TranscriptQACategory
+    severity: Literal["info", "minor", "major", "critical"]
+    blocking: bool
+    segment_ids: list[str] = Field(..., min_length=1)
+    start_seconds: float = Field(..., ge=0)
+    end_seconds: float = Field(..., ge=0)
+    message: str = Field(..., min_length=1)
+    primary_text: str
+    secondary_text: str | None = None
+    corrected_text: str
+    verification_ids: list[str] = Field(default_factory=list)
+
+
+class TranscriptQASummary(BaseModel):
+    """Severity counters and evaluated gate result."""
+
+    info_count: int = Field(default=0, ge=0)
+    minor_count: int = Field(default=0, ge=0)
+    major_count: int = Field(default=0, ge=0)
+    critical_count: int = Field(default=0, ge=0)
+    blocking_count: int = Field(default=0, ge=0)
+
+
+class TranscriptQADocument(BaseModel):
+    """Versioned deterministic transcript QA and gate artifact."""
+
+    schema_version: Literal[1] = 1
+    episode_id: str = Field(..., min_length=1)
+    generated_at: datetime
+    status: Literal["green", "yellow", "red"]
+    blocked: bool
+    findings: list[TranscriptQAFinding]
+    summary: TranscriptQASummary
+    gate_config: dict
+
+    @model_validator(mode="after")
+    def validate_qa_summary(self) -> TranscriptQADocument:
+        counts = {
+            severity: sum(finding.severity == severity for finding in self.findings)
+            for severity in ("info", "minor", "major", "critical")
+        }
+        if self.summary.info_count != counts["info"]:
+            raise ValueError("info_count must match findings")
+        if self.summary.minor_count != counts["minor"]:
+            raise ValueError("minor_count must match findings")
+        if self.summary.major_count != counts["major"]:
+            raise ValueError("major_count must match findings")
+        if self.summary.critical_count != counts["critical"]:
+            raise ValueError("critical_count must match findings")
+        if self.summary.blocking_count != sum(finding.blocking for finding in self.findings):
+            raise ValueError("blocking_count must match findings")
         return self

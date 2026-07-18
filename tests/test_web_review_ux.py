@@ -280,12 +280,13 @@ class TestComputePipelineState:
 class TestReviewGateLabels:
     def test_all_review_stages_present(self):
         """_REVIEW_GATE_LABELS covers all review gate stages."""
+        assert "transcript_qa" in _REVIEW_GATE_LABELS
         assert "correct" in _REVIEW_GATE_LABELS
         assert "translate" in _REVIEW_GATE_LABELS
         assert "adapt" in _REVIEW_GATE_LABELS
         assert "stock_images" in _REVIEW_GATE_LABELS
         assert "render" in _REVIEW_GATE_LABELS
-        assert len(_REVIEW_GATE_LABELS) == 5
+        assert len(_REVIEW_GATE_LABELS) == 6
 
     def test_status_map_matches_labels(self):
         """Every value in _REVIEW_GATE_STATUS_MAP has a label entry."""

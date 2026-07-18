@@ -333,6 +333,70 @@ def transcript_verify(
         session.close()
 
 
+@cli.command(name="transcript-qa")
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) whose corrected transcript should be evaluated.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Re-evaluate even if the transcript QA artifact is current.",
+)
+@click.pass_context
+def transcript_qa(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+) -> None:
+    """Evaluate transcript uncertainty and display blocking findings."""
+    from btcedu.core.transcript_qa import evaluate_transcript_qa, load_transcript_qa
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        for episode_id in episode_ids:
+            try:
+                result = evaluate_transcript_qa(
+                    session,
+                    episode_id,
+                    settings,
+                    force=force,
+                )
+                document = load_transcript_qa(settings, episode_id)
+                if result.skipped and not document:
+                    click.echo(f"[SKIP] {episode_id} -> {result.reason}")
+                    continue
+                summary = (document or {}).get("summary", {})
+                click.echo(
+                    f"[{'BLOCKED' if result.blocked else 'OK'}] {episode_id} -> "
+                    f"{result.status.upper()} "
+                    f"(critical={summary.get('critical_count', 0)}, "
+                    f"major={summary.get('major_count', 0)}, "
+                    f"minor={summary.get('minor_count', 0)}, "
+                    f"blocking={summary.get('blocking_count', 0)})"
+                )
+                for finding in (document or {}).get("findings", []):
+                    if not finding.get("blocking"):
+                        continue
+                    start = finding.get("start_seconds", 0)
+                    end = finding.get("end_seconds", 0)
+                    segment_ids = ", ".join(finding.get("segment_ids", []))
+                    click.echo(
+                        f"  - {finding.get('severity', '').upper()} "
+                        f"{finding.get('category')} [{segment_ids}] "
+                        f"{start:.1f}-{end:.1f}s: {finding.get('message', '')}"
+                    )
+            except Exception as exc:
+                click.echo(f"[FAIL] {episode_id}: {exc}", err=True)
+    finally:
+        session.close()
+
+
 @cli.command()
 @click.option(
     "--episode-id",

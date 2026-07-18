@@ -8,6 +8,11 @@ stages_enabled: all
 stage_config:
   transcript_analyze:
     enabled: true
+  transcript_qa:
+    enabled: true
+    block_on_critical: true
+    max_major_findings: 3
+    auto_continue_below_threshold: true
   adapt:
     skip: false
     tiers: [cultural, technical, examples_turkey, local_regulation]

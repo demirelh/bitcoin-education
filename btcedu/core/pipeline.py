@@ -53,6 +53,8 @@ _V2_STAGES = [
     ("transcript_analyze", EpisodeStatus.TRANSCRIBED),
     ("transcript_verify", EpisodeStatus.TRANSCRIBED),
     ("correct", EpisodeStatus.TRANSCRIBED),
+    ("transcript_qa", EpisodeStatus.CORRECTED),
+    ("review_gate_transcript_qa", EpisodeStatus.CORRECTED),
     ("review_gate_1", EpisodeStatus.CORRECTED),
     ("translate", EpisodeStatus.CORRECTED),  # after review approved
     ("adapt", EpisodeStatus.TRANSLATED),
@@ -93,7 +95,13 @@ def _get_stages(
         return [
             (name, status)
             for name, status in stages
-            if name not in {"transcript_analyze", "transcript_verify"}
+            if name
+            not in {
+                "transcript_analyze",
+                "transcript_verify",
+                "transcript_qa",
+                "review_gate_transcript_qa",
+            }
         ]
 
     # Load profile for profile-aware stage modifications
@@ -110,6 +118,12 @@ def _get_stages(
 
     if not stage_config.get("transcript_analyze", {}).get("enabled", True):
         stages = [(name, status) for name, status in stages if name != "transcript_analyze"]
+    if not stage_config.get("transcript_qa", {}).get("enabled", True):
+        stages = [
+            (name, status)
+            for name, status in stages
+            if name not in {"transcript_qa", "review_gate_transcript_qa"}
+        ]
 
     # Insert 'segment' stage for news profiles
     if stage_config.get("segment", {}).get("enabled"):
@@ -258,6 +272,7 @@ _STAGE_NAME_TO_PIPELINE_STAGE = {
     "transcript_analyze": PipelineStage.TRANSCRIPT_ANALYZE,
     "transcript_verify": PipelineStage.TRANSCRIPT_VERIFY,
     "correct": PipelineStage.CORRECT,
+    "transcript_qa": PipelineStage.TRANSCRIPT_QA,
     "segment": PipelineStage.SEGMENT,
     "translate": PipelineStage.TRANSLATE,
     "adapt": PipelineStage.ADAPT,
@@ -342,6 +357,8 @@ def _run_stage(
         "correct",
         "transcript_analyze",
         "transcript_verify",
+        "transcript_qa",
+        "review_gate_transcript_qa",
         "review_gate_1",
         "segment",
         "translate",
@@ -444,6 +461,97 @@ def _run_stage(
                 "success",
                 elapsed,
                 detail=f"{result.change_count} corrections (${result.cost_usd:.4f})",
+            )
+
+        elif stage_name == "transcript_qa":
+            from btcedu.core.transcript_qa import evaluate_transcript_qa
+
+            result = evaluate_transcript_qa(
+                session,
+                episode.episode_id,
+                settings,
+                force=force,
+            )
+            elapsed = time.monotonic() - t0
+            if result.skipped:
+                return StageResult(
+                    "transcript_qa",
+                    "skipped",
+                    elapsed,
+                    detail=result.reason,
+                )
+            return StageResult(
+                "transcript_qa",
+                "success",
+                elapsed,
+                detail=(
+                    f"{result.status}: {result.finding_count} findings, "
+                    f"{result.blocking_count} blocking"
+                ),
+            )
+
+        elif stage_name == "review_gate_transcript_qa":
+            from btcedu.core.reviewer import (
+                create_review_task,
+                has_approved_review_for_artifacts,
+                has_pending_review,
+            )
+            from btcedu.core.transcript_qa import load_transcript_qa
+
+            qa = load_transcript_qa(settings, episode.episode_id)
+            if not qa:
+                raise ValueError(f"Transcript QA artifact missing for episode {episode.episode_id}")
+            if not qa.get("blocked"):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_transcript_qa",
+                    "success",
+                    elapsed,
+                    detail=f"auto-continued ({qa.get('status', 'green')})",
+                )
+            transcript_dir = Path(settings.transcripts_dir) / episode.episode_id
+            transcript_output_dir = Path(settings.outputs_dir) / episode.episode_id / "transcript"
+            artifacts = [
+                str(transcript_dir / "transcript.corrected.de.txt"),
+                str(transcript_dir / "transcript.corrected.structured.de.json"),
+                str(transcript_output_dir / "transcript_qa.json"),
+            ]
+            verification_path = transcript_output_dir / "transcript_verification.json"
+            if verification_path.exists():
+                artifacts.append(str(verification_path))
+            if has_approved_review_for_artifacts(
+                session,
+                episode.episode_id,
+                "transcript_qa",
+                artifacts,
+            ):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_transcript_qa",
+                    "success",
+                    elapsed,
+                    detail="transcript QA review approved",
+                )
+            if has_pending_review(session, episode.episode_id):
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_transcript_qa",
+                    "review_pending",
+                    elapsed,
+                    detail="awaiting transcript QA review",
+                )
+            create_review_task(
+                session,
+                episode.episode_id,
+                stage="transcript_qa",
+                artifact_paths=artifacts,
+            )
+            elapsed = time.monotonic() - t0
+            return StageResult(
+                "review_gate_transcript_qa",
+                "review_pending",
+                elapsed,
+                detail="blocking transcript QA review created",
             )
 
         elif stage_name == "review_gate_1":

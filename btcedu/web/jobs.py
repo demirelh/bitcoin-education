@@ -25,7 +25,8 @@ STAGE_WEIGHTS = {
     "transcribe": 17,
     "transcript_analyze": 1,
     "transcript_verify": 2,
-    "correct": 7,
+    "correct": 6,
+    "transcript_qa": 1,
     "translate": 20,
     "adapt": 10,
     "chapterize": 5,
@@ -253,6 +254,7 @@ class JobManager:
                     "transcript_analyze": self._do_transcript_analyze,
                     "transcript_verify": self._do_transcript_verify,
                     "correct": self._do_correct,
+                    "transcript_qa": self._do_transcript_qa,
                     "segment": self._do_segment,
                     "translate": self._do_translate,
                     "adapt": self._do_adapt,
@@ -399,6 +401,34 @@ class JobManager:
             },
         )
         self._log(job, "Correction complete")
+
+    def _do_transcript_qa(self, job, session, settings):
+        from btcedu.core.transcript_qa import evaluate_transcript_qa
+
+        self._update(job, stage="transcript_qa")
+        self._log(job, "Evaluating transcript QA...")
+        result = evaluate_transcript_qa(
+            session,
+            job.episode_id,
+            settings,
+            force=job.force,
+        )
+        self._update(
+            job,
+            result={
+                "success": True,
+                "status": result.status,
+                "blocked": result.blocked,
+                "finding_count": result.finding_count,
+                "blocking_count": result.blocking_count,
+                "skipped": result.skipped,
+                "reason": result.reason,
+            },
+        )
+        self._log(
+            job,
+            f"Transcript QA complete: {result.status}, {result.blocking_count} blocking",
+        )
 
     def _do_segment(self, job, session, settings):
         from btcedu.core.segmenter import segment_broadcast
@@ -979,6 +1009,13 @@ class JobManager:
                 "transcript_analyze",
                 "transcript_verify",
             ]
+        if episode_status not in (
+            EpisodeStatus.NEW,
+            EpisodeStatus.DOWNLOADED,
+            EpisodeStatus.TRANSCRIBED,
+            EpisodeStatus.CORRECTED,
+        ):
+            completed_stages = [*completed_stages, "transcript_qa"]
         remaining_work = 0.0
 
         for stage, weight in STAGE_WEIGHTS.items():

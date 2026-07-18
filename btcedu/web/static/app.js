@@ -1285,6 +1285,50 @@
     return h;
   }
 
+  function renderTranscriptQa(qa) {
+    if (!qa) return "";
+    const status = String(qa.status || "yellow").toLowerCase();
+    const statusClass = status === "green" ? "qa-score-good"
+                      : status === "red" ? "qa-score-bad"
+                      : "qa-score-mid";
+    const summary = qa.summary || {};
+    let h = `<div class="qa-review-panel">
+      <div class="qa-review-head">
+        <strong>Transcript-QA</strong>
+        <span class="qa-model">${qa.generated_at ? esc(new Date(qa.generated_at).toLocaleString()) : ""}</span>
+        <span class="qa-score ${statusClass}">${esc(status.toUpperCase())}</span>
+      </div>
+      <div class="qa-summary">
+        Critical: ${Number(summary.critical_count || 0)} &middot;
+        Major: ${Number(summary.major_count || 0)} &middot;
+        Minor: ${Number(summary.minor_count || 0)} &middot;
+        Blocking: ${Number(summary.blocking_count || 0)}
+      </div>`;
+    const findings = Array.isArray(qa.findings) ? qa.findings : [];
+    if (findings.length === 0) {
+      h += `<div class="qa-block qa-top">Keine offenen Transkript-Findings.</div>`;
+    } else {
+      h += findings.map(finding => {
+        const segments = (finding.segment_ids || []).join(", ");
+        const time = `${Number(finding.start_seconds || 0).toFixed(1)}–${Number(finding.end_seconds || 0).toFixed(1)}s`;
+        return `<details class="qa-stories" ${finding.blocking ? "open" : ""}>
+          <summary>
+            ${finding.blocking ? "BLOCKING · " : ""}${esc(String(finding.severity || "").toUpperCase())}
+            · ${esc(finding.category || "")} · ${esc(segments)} · ${time}
+          </summary>
+          <div class="qa-story">
+            <div class="qa-summary">${esc(finding.message || "")}</div>
+            <div><strong>Primär:</strong> ${esc(finding.primary_text || "")}</div>
+            ${finding.secondary_text ? `<div><strong>Sekundär:</strong> ${esc(finding.secondary_text)}</div>` : ""}
+            <div><strong>Korrigiert:</strong> ${esc(finding.corrected_text || "")}</div>
+          </div>
+        </details>`;
+      }).join("");
+    }
+    h += `</div>`;
+    return h;
+  }
+
   function qaRerunButtons() {
     return `
       <div class="qa-rerun-actions">
@@ -1303,18 +1347,20 @@
     if (!selected) return;
     const viewer = document.getElementById("viewer");
     const data = await GET(`/episodes/${selected.episode_id}/qa`);
-    if (!data || data.error || !data.qa_review) {
+    if (!data || data.error || (!data.qa_review && !data.transcript_qa)) {
       viewer.innerHTML = `
         <div class="qa-review-panel">
           ${qaRerunButtons()}
-          <div class="qa-summary">${esc((data && data.error) || "Noch keine QA-Zweitmeinung für diese Episode.")}</div>
+          <div class="qa-summary">${esc((data && data.error) || "Noch keine QA-Auswertung für diese Episode.")}</div>
           <p style="color:#888;margin-top:0.5em">
             Die QA-Zweitmeinung wird nach der Adaption (Review Gate 2) automatisch erstellt.
           </p>
         </div>`;
       return;
     }
-    viewer.innerHTML = qaRerunButtons() + renderQaReview(data.qa_review);
+    viewer.innerHTML = qaRerunButtons()
+      + renderTranscriptQa(data.transcript_qa)
+      + renderQaReview(data.qa_review);
   }
 
   function renderStageDetailHTML(stageName, data) {
@@ -2283,6 +2329,9 @@
     // Independent QA second opinion (adapt reviews)
     if (data.qa_review) {
       html += renderQaReview(data.qa_review);
+    }
+    if (data.transcript_qa) {
+      html += renderTranscriptQa(data.transcript_qa);
     }
 
     // Video player for render reviews (Sprint 10)

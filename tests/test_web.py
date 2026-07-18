@@ -387,6 +387,28 @@ class TestPipelineActions:
         assert r.status_code == 202
         assert "job_id" in r.get_json()
 
+    @patch("btcedu.core.transcript_qa.load_transcript_qa")
+    @patch("btcedu.core.qa_reviewer.load_qa_review")
+    def test_qa_endpoint_returns_both_reviews(
+        self,
+        mock_translation_qa,
+        mock_transcript_qa,
+        client,
+    ):
+        mock_translation_qa.return_value = {"overall_score": 8}
+        mock_transcript_qa.return_value = {
+            "status": "red",
+            "blocked": True,
+            "findings": [{"category": "unresolved_negation"}],
+        }
+
+        response = client.get("/api/episodes/ep002/qa")
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["qa_review"]["overall_score"] == 8
+        assert data["transcript_qa"]["status"] == "red"
+
     def test_qa_rerun_actions_registered(self):
         """The job manager must dispatch the new QA re-run actions."""
         from btcedu.web.jobs import JobManager
@@ -597,10 +619,18 @@ class TestFileViewer:
             "total_chapters": 2,
             "estimated_duration_seconds": 20,
             "chapters": [
-                {"chapter_id": "c2", "title": "İkinci", "order": 2,
-                 "narration": {"text": "İkinci cümle."}},
-                {"chapter_id": "c1", "title": "Birinci", "order": 1,
-                 "narration": {"text": "Birinci cümle."}},
+                {
+                    "chapter_id": "c2",
+                    "title": "İkinci",
+                    "order": 2,
+                    "narration": {"text": "İkinci cümle."},
+                },
+                {
+                    "chapter_id": "c1",
+                    "title": "Birinci",
+                    "order": 1,
+                    "narration": {"text": "Birinci cümle."},
+                },
             ],
         }
         (ep_dir / "chapters.json").write_text(

@@ -489,18 +489,20 @@ def get_all_feedback(
 
     results = []
     for decision, task, episode in query.all():
-        results.append({
-            "episode_id": task.episode_id,
-            "episode_title": episode.title,
-            "content_profile": episode.content_profile,
-            "stage": task.stage,
-            "decision": decision.decision,
-            "quality_rating": decision.quality_rating,
-            "notes": decision.notes,
-            "decided_at": decision.decided_at.isoformat() if decision.decided_at else None,
-            "review_task_id": task.id,
-            "decision_id": decision.id,
-        })
+        results.append(
+            {
+                "episode_id": task.episode_id,
+                "episode_title": episode.title,
+                "content_profile": episode.content_profile,
+                "stage": task.stage,
+                "decision": decision.decision,
+                "quality_rating": decision.quality_rating,
+                "notes": decision.notes,
+                "decided_at": decision.decided_at.isoformat() if decision.decided_at else None,
+                "review_task_id": task.id,
+                "decision_id": decision.id,
+            }
+        )
     return results
 
 
@@ -661,6 +663,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
 
     # Independent QA second opinion (loaded for adapt-stage reviews)
     qa_review = None
+    transcript_qa = None
     if episode:
         try:
             from btcedu.core.qa_reviewer import load_qa_review
@@ -669,6 +672,14 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
             qa_review = load_qa_review(settings, episode.episode_id)
         except Exception:
             qa_review = None
+        if task.stage == "transcript_qa":
+            try:
+                from btcedu.core.transcript_qa import load_transcript_qa
+
+                settings = _get_runtime_settings()
+                transcript_qa = load_transcript_qa(settings, episode.episode_id)
+            except Exception:
+                transcript_qa = None
 
     return {
         "id": task.id,
@@ -695,6 +706,7 @@ def get_review_detail(session: Session, review_task_id: int) -> dict:
         "compression_ratio": compression_ratio,  # Phase 3: TR/DE word ratio
         "translation_warnings": translation_warnings,  # Phase 3: anomaly warnings
         "qa_review": qa_review,  # QA: independent second-opinion critique
+        "transcript_qa": transcript_qa,
     }
 
 
@@ -741,6 +753,29 @@ def has_approved_review(
         .first()
     )
     return task is not None and task.status == ReviewStatus.APPROVED.value
+
+
+def has_approved_review_for_artifacts(
+    session: Session,
+    episode_id: str,
+    stage: str,
+    artifact_paths: list[str],
+) -> bool:
+    """True when the latest approval covers the current artifact contents."""
+    task = (
+        session.query(ReviewTask)
+        .filter(
+            ReviewTask.episode_id == episode_id,
+            ReviewTask.stage == stage,
+        )
+        .order_by(ReviewTask.created_at.desc())
+        .first()
+    )
+    return (
+        task is not None
+        and task.status == ReviewStatus.APPROVED.value
+        and task.artifact_hash == _compute_artifact_hash(artifact_paths)
+    )
 
 
 def profile_auto_approves(settings, episode) -> bool:

@@ -37,6 +37,7 @@ class PipelineStage(str, enum.Enum):
     TRANSCRIPT_VERIFY = "transcript_verify"
     # v2 pipeline
     CORRECT = "correct"
+    TRANSCRIPT_QA = "transcript_qa"
     SEGMENT = "segment"  # Story segmentation (news profiles)
     TRANSLATE = "translate"
     ADAPT = "adapt"

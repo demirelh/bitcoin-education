@@ -17,6 +17,8 @@ from btcedu.core.corrector import (
     correct_transcript,
 )
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
+from btcedu.models.transcript_schema import CorrectedTranscriptDocument
+from btcedu.services.claude_service import ClaudeResponse
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -297,8 +299,17 @@ class TestCorrectTranscript:
         assert isinstance(result, CorrectionResult)
         assert result.episode_id == "ep_test"
         assert Path(result.corrected_path).exists()
+        assert Path(result.structured_path).exists()
         assert Path(result.diff_path).exists()
         assert Path(result.provenance_path).exists()
+        structured = CorrectedTranscriptDocument.model_validate_json(
+            Path(result.structured_path).read_text(encoding="utf-8")
+        )
+        assert structured.full_text == Path(result.corrected_path).read_text(encoding="utf-8")
+        assert [segment.segment_id for segment in structured.segments] == [
+            "seg-0001",
+            "seg-0002",
+        ]
 
         # Episode status updated
         db_session.refresh(transcribed_episode)
@@ -389,7 +400,7 @@ class TestReviewerFeedbackInjection:
             episode_id="ep_test",
             stage="correct",
             artifact_paths=[result1.corrected_path],
-            diff_path=result1.diff_path,
+            diff_path=None,
         )
         request_changes(db_session, task.id, notes="Fix Bitcoin spelling")
 
@@ -417,6 +428,48 @@ class TestReviewerFeedbackInjection:
         system_prompt = captured_prompts[0]
         assert "Fix Bitcoin spelling" in system_prompt
         assert "Reviewer-Korrekturen" in system_prompt
+
+    def test_invalid_json_retries_once(self, db_session, transcribed_episode, mock_settings):
+        mock_settings.dry_run = False
+        valid = json.dumps(
+            {
+                "segments": [
+                    {
+                        "segment_id": "seg-0001",
+                        "corrected_text": (
+                            "Heute sprechen wir über Bitcoin und die Blockchain Technologie."
+                        ),
+                        "status": "corrected",
+                        "severity": "minor",
+                        "flags": [],
+                        "reason": None,
+                        "verification_ids": [],
+                    },
+                    {
+                        "segment_id": "seg-0002",
+                        "corrected_text": (
+                            "Es ist eine dezentrale Währung die von Satoshi Nakamoto "
+                            "erfunden wurde."
+                        ),
+                        "status": "corrected",
+                        "severity": "minor",
+                        "flags": [],
+                        "reason": None,
+                        "verification_ids": [],
+                    },
+                ]
+            }
+        )
+        responses = [
+            ClaudeResponse("not-json", 1, 1, 0.001, "test-model"),
+            ClaudeResponse(valid, 1, 1, 0.001, "test-model"),
+        ]
+
+        with patch("btcedu.core.corrector.call_claude", side_effect=responses) as call:
+            result = correct_transcript(db_session, "ep_test", mock_settings)
+
+        assert call.call_count == 2
+        assert Path(result.structured_path).exists()
 
     def test_no_feedback_placeholder_removed(self, db_session, transcribed_episode, mock_settings):
         """When no feedback exists, {{ reviewer_feedback }} is replaced with empty string."""
@@ -510,6 +563,17 @@ class TestCorrectCLI:
         assert "Correct Whisper transcripts" in result.output
         assert "--episode-id" in result.output
         assert "--force" in result.output
+
+
+def test_correction_prompt_forbids_free_reconstruction():
+    prompt = (
+        Path(__file__).parents[1] / "btcedu" / "prompts" / "templates" / "correct_transcript.md"
+    ).read_text(encoding="utf-8")
+    normalized = " ".join(prompt.split())
+    assert "rekonstruiere keine unvollständigen Sätze frei" in normalized
+    assert "Errate niemals Namen, Zahlen" in normalized
+    assert "niemals externes Wissen" in normalized
+    assert "{{ transcript_payload }}" in prompt
 
 
 # ---------------------------------------------------------------------------

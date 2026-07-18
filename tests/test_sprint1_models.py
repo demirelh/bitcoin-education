@@ -192,6 +192,7 @@ class TestEpisodeV2Fields:
             PipelineStage.TRANSCRIPT_ANALYZE,
             PipelineStage.TRANSCRIPT_VERIFY,
             PipelineStage.CORRECT,
+            PipelineStage.TRANSCRIPT_QA,
             PipelineStage.TRANSLATE,
             PipelineStage.ADAPT,
             PipelineStage.CHAPTERIZE,
@@ -204,7 +205,7 @@ class TestEpisodeV2Fields:
         for stage in new_stages:
             assert stage.value  # exists and has a string value
 
-        assert len(PipelineStage) == 17
+        assert len(PipelineStage) == 18
 
     def test_episode_status_total_count(self):
         assert len(EpisodeStatus) == 17

@@ -61,6 +61,10 @@ class Settings(BaseSettings):
     transcription_max_secondary_audio_seconds: float = 300.0
     transcription_max_secondary_clips: int = 10
     transcription_openai_cost_per_minute_usd: float = 0.006
+    transcript_qa_enabled: bool = True
+    transcript_qa_block_on_critical: bool = True
+    transcript_qa_max_major_findings: int = 3
+    transcript_qa_auto_continue_below_threshold: bool = True
 
     # Content Generation
     llm_provider: str = "anthropic"  # "anthropic" | "openai" | "github_models" | "copilot_cli"

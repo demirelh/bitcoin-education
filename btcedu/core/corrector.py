@@ -9,7 +9,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
 from pathlib import Path
+from typing import Literal
 
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
@@ -22,12 +24,20 @@ from btcedu.models.episode import (
     PipelineStage,
     RunStatus,
 )
+from btcedu.models.transcript_schema import (
+    CorrectedTranscriptDocument,
+    CorrectedTranscriptSegment,
+    TranscriptAnalysisDocument,
+    TranscriptDocument,
+    TranscriptVerificationDocument,
+)
 from btcedu.services.claude_service import ClaudeResponse, call_claude
 
 logger = logging.getLogger(__name__)
 
 # Transcripts longer than this (in characters) are split into segments
 SEGMENT_CHAR_LIMIT = 15_000
+STRUCTURED_CORRECTION_FILENAME = "transcript.corrected.structured.de.json"
 
 # Tokens the ASR corrector must NEVER alter: numbers/dates and sport-tournament
 # names. The corrector fixes spelling/punctuation only; it is not a fact-checker.
@@ -90,6 +100,7 @@ class CorrectionResult:
 
     episode_id: str
     corrected_path: str
+    structured_path: str
     diff_path: str
     provenance_path: str
     input_tokens: int = 0
@@ -98,6 +109,20 @@ class CorrectionResult:
     change_count: int = 0
     input_char_count: int = 0
     output_char_count: int = 0
+
+
+class _ModelCorrectionSegment(BaseModel):
+    segment_id: str
+    corrected_text: str = Field(..., min_length=1)
+    status: Literal["verified", "corrected", "uncertain", "unresolved"]
+    severity: Literal["none", "minor", "major", "critical"]
+    flags: list[str] = Field(default_factory=list)
+    reason: str | None = None
+    verification_ids: list[str] = Field(default_factory=list)
+
+
+class _ModelCorrectionResponse(BaseModel):
+    segments: list[_ModelCorrectionSegment]
 
 
 def correct_transcript(
@@ -142,6 +167,7 @@ def correct_transcript(
         )
 
     corrected_path = Path(settings.transcripts_dir) / episode_id / "transcript.corrected.de.txt"
+    structured_path = Path(settings.transcripts_dir) / episode_id / STRUCTURED_CORRECTION_FILENAME
     diff_path = Path(settings.outputs_dir) / episode_id / "review" / "correction_diff.json"
     provenance_path = (
         Path(settings.outputs_dir) / episode_id / "provenance" / "correct_provenance.json"
@@ -170,13 +196,26 @@ def correct_transcript(
     _, template_body = registry.load_template(template_file)
     prompt_content_hash = registry.compute_hash(template_body)
 
-    # Compute input content hash for idempotency
-    original_text = transcript_path.read_text(encoding="utf-8")
-    input_content_hash = hashlib.sha256(original_text.encode("utf-8")).hexdigest()
+    transcript_document = _load_transcript_document(settings, episode_id)
+    analysis = _load_optional_analysis(settings, episode_id)
+    verification = _load_optional_verification(settings, episode_id)
+    original_text = transcript_document.text
+    input_content_hash = _correction_input_hash(
+        transcript_document,
+        analysis,
+        verification,
+    )
 
     # Idempotency check
-    if not force and _is_correction_current(
-        corrected_path, provenance_path, input_content_hash, prompt_content_hash
+    if (
+        not force
+        and structured_path.exists()
+        and _is_correction_current(
+            corrected_path,
+            provenance_path,
+            input_content_hash,
+            prompt_content_hash,
+        )
     ):
         logger.info("Correction is current for %s (use --force to re-correct)", episode_id)
         existing_corrected = corrected_path.read_text(encoding="utf-8")
@@ -184,6 +223,7 @@ def correct_transcript(
         return CorrectionResult(
             episode_id=episode_id,
             corrected_path=str(corrected_path),
+            structured_path=str(structured_path),
             diff_path=str(diff_path),
             provenance_path=str(provenance_path),
             change_count=existing_diff.get("summary", {}).get("total_changes", 0),
@@ -206,7 +246,12 @@ def correct_transcript(
         # Inject reviewer feedback if available (from request_changes)
         from btcedu.core.reviewer import get_latest_reviewer_feedback
 
-        reviewer_feedback = get_latest_reviewer_feedback(session, episode_id, "correct")
+        feedback_parts = [
+            feedback
+            for stage in ("transcript_qa", "correct")
+            if (feedback := get_latest_reviewer_feedback(session, episode_id, stage))
+        ]
+        reviewer_feedback = "\n\n".join(feedback_parts)
         if reviewer_feedback:
             feedback_block = (
                 "## Reviewer-Korrekturen "
@@ -220,39 +265,61 @@ def correct_transcript(
         # Split prompt template into system and user parts
         system_prompt, user_template = _split_prompt(template_body)
 
-        # Segment transcript if needed
-        segments = _segment_transcript(original_text)
-
-        # Process each segment
+        payloads = _build_correction_payloads(
+            transcript_document,
+            analysis,
+            verification,
+        )
         total_input_tokens = 0
         total_output_tokens = 0
         total_cost = 0.0
-        corrected_segments: list[str] = []
+        corrected_segments: list[CorrectedTranscriptSegment] = []
 
-        for i, segment in enumerate(segments):
-            user_message = user_template.replace("{{ transcript }}", segment)
+        for index, payload in enumerate(payloads):
+            payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
+            user_message = user_template.replace("{{ transcript_payload }}", payload_json)
 
-            # Dry-run path
             dry_run_path = (
-                Path(settings.outputs_dir) / episode_id / f"dry_run_correct_{i}.json"
+                Path(settings.outputs_dir) / episode_id / f"dry_run_correct_{index}.json"
                 if settings.dry_run
                 else None
             )
+            if settings.dry_run:
+                call_claude(
+                    system_prompt=system_prompt,
+                    user_message=user_message,
+                    settings=settings,
+                    dry_run_path=dry_run_path,
+                    json_mode=True,
+                )
+                model_response = _dry_run_response(payload)
+                responses: list[ClaudeResponse] = []
+            else:
+                model_response, responses = _call_structured_correction(
+                    system_prompt,
+                    user_message,
+                    payload,
+                    settings,
+                    episode_id,
+                )
 
-            response: ClaudeResponse = call_claude(
-                system_prompt=system_prompt,
-                user_message=user_message,
-                settings=settings,
-                dry_run_path=dry_run_path,
+            corrected_segments.extend(
+                _finalize_correction_segments(
+                    payload,
+                    model_response,
+                )
             )
+            total_input_tokens += sum(response.input_tokens for response in responses)
+            total_output_tokens += sum(response.output_tokens for response in responses)
+            total_cost += sum(response.cost_usd for response in responses)
 
-            corrected_segments.append(_revert_protected_token_changes(segment, response.text))
-            total_input_tokens += response.input_tokens
-            total_output_tokens += response.output_tokens
-            total_cost += response.cost_usd
-
-        # Reassemble corrected text
-        corrected_text = "\n\n".join(corrected_segments)
+        corrected_text = "\n\n".join(segment.corrected_text for segment in corrected_segments)
+        corrected_document = CorrectedTranscriptDocument(
+            episode_id=episode_id,
+            language=transcript_document.language,
+            segments=corrected_segments,
+            full_text=corrected_text,
+        )
 
         # Compute diff
         diff_data = compute_correction_diff(original_text, corrected_text, episode_id)
@@ -260,6 +327,14 @@ def correct_transcript(
         # Write output files
         corrected_path.parent.mkdir(parents=True, exist_ok=True)
         corrected_path.write_text(corrected_text, encoding="utf-8")
+        structured_path.write_text(
+            json.dumps(
+                corrected_document.model_dump(mode="json"),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
 
         diff_path.parent.mkdir(parents=True, exist_ok=True)
         diff_path.write_text(json.dumps(diff_data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -291,14 +366,14 @@ def correct_transcript(
                 "temperature": settings.claude_temperature,
                 "max_tokens": settings.claude_max_tokens,
             },
-            "input_files": [str(transcript_path)],
+            "input_files": _correction_input_files(settings, episode_id, transcript_path),
             "input_content_hash": input_content_hash,
-            "output_files": [str(corrected_path), str(diff_path)],
+            "output_files": [str(corrected_path), str(structured_path), str(diff_path)],
             "input_tokens": total_input_tokens,
             "output_tokens": total_output_tokens,
             "cost_usd": total_cost,
             "duration_seconds": round(elapsed, 2),
-            "segments_processed": len(segments),
+            "segments_processed": len(corrected_segments),
         }
 
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
@@ -316,6 +391,18 @@ def correct_transcript(
             retrieval_snapshot_path=None,
         )
         session.add(artifact)
+        session.add(
+            ContentArtifact(
+                episode_id=episode_id,
+                artifact_type="corrected_transcript",
+                file_path=str(structured_path),
+                model=settings.claude_model,
+                prompt_hash=prompt_content_hash,
+                retrieval_snapshot_path=None,
+            )
+        )
+
+        _mark_transcript_qa_stale(settings, episode_id)
 
         # Update PipelineRun
         pipeline_run.status = RunStatus.SUCCESS
@@ -338,6 +425,7 @@ def correct_transcript(
         return CorrectionResult(
             episode_id=episode_id,
             corrected_path=str(corrected_path),
+            structured_path=str(structured_path),
             diff_path=str(diff_path),
             provenance_path=str(provenance_path),
             input_tokens=total_input_tokens,
@@ -355,6 +443,358 @@ def correct_transcript(
         episode.error_message = str(e)
         session.commit()
         raise
+
+
+def _load_transcript_document(settings: Settings, episode_id: str) -> TranscriptDocument:
+    from btcedu.core.transcriber import load_transcript_document
+
+    return load_transcript_document(settings, episode_id)
+
+
+def _load_optional_analysis(
+    settings: Settings,
+    episode_id: str,
+) -> TranscriptAnalysisDocument | None:
+    path = Path(settings.outputs_dir) / episode_id / "transcript" / "transcript_analysis.json"
+    if not path.exists():
+        return None
+    return TranscriptAnalysisDocument.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _load_optional_verification(
+    settings: Settings,
+    episode_id: str,
+) -> TranscriptVerificationDocument | None:
+    path = Path(settings.outputs_dir) / episode_id / "transcript" / "transcript_verification.json"
+    if not path.exists():
+        return None
+    return TranscriptVerificationDocument.model_validate_json(path.read_text(encoding="utf-8"))
+
+
+def _correction_input_hash(
+    document: TranscriptDocument,
+    analysis: TranscriptAnalysisDocument | None,
+    verification: TranscriptVerificationDocument | None,
+) -> str:
+    payload = {
+        "transcript": document.model_dump(mode="json"),
+        "analysis": analysis.model_dump(mode="json") if analysis else None,
+        "verification": verification.model_dump(mode="json") if verification else None,
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _correction_input_files(
+    settings: Settings,
+    episode_id: str,
+    transcript_path: Path,
+) -> list[str]:
+    candidates = [
+        Path(settings.transcripts_dir) / episode_id / "transcript.structured.de.json",
+        Path(settings.outputs_dir) / episode_id / "transcript" / "transcript_analysis.json",
+        Path(settings.outputs_dir) / episode_id / "transcript" / "transcript_verification.json",
+    ]
+    files = [str(path) for path in candidates if path.exists()]
+    if not files:
+        files.append(str(transcript_path))
+    return files
+
+
+def _build_correction_payloads(
+    document: TranscriptDocument,
+    analysis: TranscriptAnalysisDocument | None,
+    verification: TranscriptVerificationDocument | None,
+) -> list[dict]:
+    analysis_by_id = {
+        finding.segment_id: finding.model_dump(mode="json")
+        for finding in (analysis.suspicious_segments if analysis else [])
+    }
+    verification_by_id: dict[str, list[dict]] = {}
+    if verification:
+        for region in verification.verified_regions:
+            item = {
+                "verification_id": region.verification_id,
+                "secondary_text": region.secondary_text,
+                "agreement": region.agreement,
+                "risk_types": region.risk_types,
+                "severity": region.severity,
+                "status": region.status,
+                "error": region.error,
+            }
+            for segment_id in region.source_segment_ids:
+                verification_by_id.setdefault(segment_id, []).append(item)
+
+    items = [
+        {
+            "segment_id": segment.segment_id,
+            "start_seconds": segment.start_seconds,
+            "end_seconds": segment.end_seconds,
+            "primary_text": segment.text,
+            "analysis": analysis_by_id.get(segment.segment_id),
+            "verifications": verification_by_id.get(segment.segment_id, []),
+        }
+        for segment in document.segments
+    ]
+    payloads: list[dict] = []
+    current: list[dict] = []
+    current_size = 0
+    for item in items:
+        item_size = len(json.dumps(item, ensure_ascii=False))
+        if current and current_size + item_size > SEGMENT_CHAR_LIMIT:
+            payloads.append(
+                {
+                    "episode_id": document.episode_id,
+                    "language": document.language,
+                    "segments": current,
+                }
+            )
+            current = []
+            current_size = 0
+        current.append(item)
+        current_size += item_size
+    if current:
+        payloads.append(
+            {
+                "episode_id": document.episode_id,
+                "language": document.language,
+                "segments": current,
+            }
+        )
+    return payloads
+
+
+def _call_structured_correction(
+    system_prompt: str,
+    user_message: str,
+    payload: dict,
+    settings: Settings,
+    episode_id: str,
+) -> tuple[_ModelCorrectionResponse, list[ClaudeResponse]]:
+    responses: list[ClaudeResponse] = []
+    response = call_claude(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        settings=settings,
+        json_mode=True,
+    )
+    responses.append(response)
+    try:
+        parsed = _parse_correction_response(response.text)
+        _validate_response_segments(parsed, payload)
+        return parsed, responses
+    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+        logger.warning("Invalid structured correction for %s: %s", episode_id, exc)
+
+    retry_prompt = (
+        "Your previous response was invalid. Return the correction for the SAME input "
+        "as one strictly valid JSON object with a 'segments' array. Do not add, remove, "
+        "merge, or reorder segment IDs. Do not reconstruct missing facts. Output JSON "
+        "only.\n\nInput:\n" + user_message
+    )
+    retry = call_claude(
+        system_prompt=system_prompt,
+        user_message=retry_prompt,
+        settings=settings,
+        json_mode=True,
+    )
+    responses.append(retry)
+    parsed = _parse_correction_response(retry.text)
+    _validate_response_segments(parsed, payload)
+    return parsed, responses
+
+
+def _parse_correction_response(text: str) -> _ModelCorrectionResponse:
+    cleaned = text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[len("```json") :].strip()
+    elif cleaned.startswith("```"):
+        cleaned = cleaned[len("```") :].strip()
+    if cleaned.endswith("```"):
+        cleaned = cleaned[: -len("```")].strip()
+    if not cleaned.startswith("{"):
+        first = cleaned.find("{")
+        last = cleaned.rfind("}")
+        if first >= 0 and last > first:
+            cleaned = cleaned[first : last + 1]
+    data = json.loads(cleaned)
+    return _ModelCorrectionResponse.model_validate(data)
+
+
+def _validate_response_segments(response: _ModelCorrectionResponse, payload: dict) -> None:
+    expected = [item["segment_id"] for item in payload["segments"]]
+    actual = [item.segment_id for item in response.segments]
+    if actual != expected:
+        raise ValueError(
+            f"Correction response segment IDs must exactly match input: {expected!r} != {actual!r}"
+        )
+
+
+def _dry_run_response(payload: dict) -> _ModelCorrectionResponse:
+    return _ModelCorrectionResponse(
+        segments=[
+            _ModelCorrectionSegment(
+                segment_id=item["segment_id"],
+                corrected_text=item["primary_text"],
+                status="verified",
+                severity="none",
+            )
+            for item in payload["segments"]
+        ]
+    )
+
+
+def _finalize_correction_segments(
+    payload: dict,
+    response: _ModelCorrectionResponse,
+) -> list[CorrectedTranscriptSegment]:
+    response_by_id = {item.segment_id: item for item in response.segments}
+    finalized: list[CorrectedTranscriptSegment] = []
+    for source in payload["segments"]:
+        model = response_by_id[source["segment_id"]]
+        original = source["primary_text"].strip()
+        corrected = _revert_protected_token_changes(original, model.corrected_text.strip())
+        status = model.status
+        severity = model.severity
+        flags = list(dict.fromkeys(model.flags))
+        reason = model.reason
+        verification_ids = [item["verification_id"] for item in source.get("verifications", [])]
+
+        from btcedu.core.transcript_verifier import compare_transcripts
+
+        comparison = compare_transcripts(original, corrected)
+        correction_risks = set(comparison.risk_types)
+        dangerous_changes = correction_risks & {
+            "number_disagreement",
+            "date_disagreement",
+            "time_disagreement",
+            "casualty_disagreement",
+            "score_disagreement",
+            "negation_disagreement",
+            "possible_name_disagreement",
+            "semantic_role_disagreement",
+        }
+        if dangerous_changes:
+            corrected = original
+            status = "unresolved"
+            severity = (
+                "critical"
+                if dangerous_changes
+                & {
+                    "casualty_disagreement",
+                    "negation_disagreement",
+                    "semantic_role_disagreement",
+                }
+                else "major"
+            )
+            flags = list(dict.fromkeys([*flags, *sorted(dangerous_changes)]))
+            reason = "Riskante faktische Änderung wurde verworfen; Originaltext beibehalten."
+        elif comparison.token_difference >= 0.5:
+            corrected = original
+            status = "unresolved"
+            severity = "major"
+            flags = list(dict.fromkeys([*flags, "possible_free_reconstruction"]))
+            reason = "Zu starke freie Rekonstruktion wurde verworfen; Originaltext beibehalten."
+
+        verifications = source.get("verifications", [])
+        verification_risks = {risk for item in verifications for risk in item.get("risk_types", [])}
+        failed_verification = any(item.get("status") == "failed" for item in verifications)
+        if failed_verification or verification_risks:
+            blocking = verification_risks & {
+                "casualty_disagreement",
+                "score_disagreement",
+                "negation_disagreement",
+                "possible_name_disagreement",
+                "date_disagreement",
+                "semantic_role_disagreement",
+                "incomplete_sentence",
+            }
+            status = "unresolved" if failed_verification or blocking else "uncertain"
+            severity = (
+                "critical"
+                if failed_verification
+                or verification_risks
+                & {
+                    "casualty_disagreement",
+                    "negation_disagreement",
+                    "semantic_role_disagreement",
+                }
+                else "major"
+            )
+            flags = list(
+                dict.fromkeys(
+                    [
+                        *flags,
+                        *sorted(verification_risks),
+                        "conflicting_transcriptions",
+                    ]
+                )
+            )
+            reason = (
+                "Primär- und Sekundärtranskription widersprechen sich; "
+                "keine künstliche Einigung vorgenommen."
+            )
+
+        analysis = source.get("analysis")
+        if analysis and not verifications:
+            analysis_reasons = analysis.get("reasons", [])
+            flags = list(dict.fromkeys([*flags, *analysis_reasons]))
+            if analysis.get("severity") == "critical" or "incomplete_sentence" in analysis_reasons:
+                status = "unresolved"
+                severity = "critical" if analysis.get("severity") == "critical" else "major"
+            elif status not in {"unresolved", "uncertain"}:
+                status = "uncertain"
+                severity = "major" if analysis.get("severity") == "major" else "minor"
+            reason = reason or "Verdächtiges ASR-Segment konnte nicht eindeutig verifiziert werden."
+
+        if corrected == original and status == "corrected":
+            status = "verified"
+        elif corrected != original and status == "verified":
+            status = "corrected"
+        if status in {"verified", "corrected"}:
+            reason = None
+        elif not reason:
+            reason = "Unsicherheit wurde vom Korrekturmodell markiert."
+        if status == "unresolved" and severity in {"none", "minor"}:
+            severity = "major"
+
+        finalized.append(
+            CorrectedTranscriptSegment(
+                segment_id=source["segment_id"],
+                start_seconds=source["start_seconds"],
+                end_seconds=source["end_seconds"],
+                original_text=original,
+                corrected_text=corrected,
+                status=status,
+                severity=severity,
+                flags=flags,
+                reason=reason,
+                verification_ids=verification_ids,
+            )
+        )
+    return finalized
+
+
+def _mark_transcript_qa_stale(settings: Settings, episode_id: str) -> None:
+    qa_path = Path(settings.outputs_dir) / episode_id / "transcript" / "transcript_qa.json"
+    if not qa_path.exists():
+        return
+    qa_path.with_name(qa_path.name + ".stale").write_text(
+        json.dumps(
+            {
+                "stale": True,
+                "invalidated_by": "correct",
+                "invalidated_at": _utcnow().isoformat(),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
 
 def _is_correction_current(

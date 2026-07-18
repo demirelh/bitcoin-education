@@ -119,13 +119,15 @@ class TestRunEpisodePipeline:
         call_args = mock_stage.call_args
         assert call_args[0][3] == "adapt"  # stage_name arg
 
-        skipped_before_adapt = [s.stage for s in report.stages[:7]]
+        skipped_before_adapt = [s.stage for s in report.stages[:9]]
         assert skipped_before_adapt == [
             "download",
             "transcribe",
             "transcript_analyze",
             "transcript_verify",
             "correct",
+            "transcript_qa",
+            "review_gate_transcript_qa",
             "review_gate_1",
             "translate",
         ]
@@ -573,7 +575,7 @@ class TestWriteReport:
 class TestResolvePipelinePlan:
     def test_new_episode_plans_all_stages(self, db_session, new_episode):
         plan = resolve_pipeline_plan(db_session, new_episode)
-        assert len(plan) == 18
+        assert len(plan) == 20
         assert plan[0] == StagePlan("download", "run", "status=new")
         assert plan[1] == StagePlan("transcribe", "pending", "after prior stages")
         assert plan[2] == StagePlan("transcript_analyze", "pending", "after prior stages")
@@ -615,9 +617,9 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep)
         skipped = [p for p in plan if p.decision == "skip"]
-        assert len(skipped) == 7
-        assert plan[7] == StagePlan("adapt", "run", "status=translated")
-        assert plan[8] == StagePlan("review_gate_2", "pending", "after prior stages")
+        assert len(skipped) == 9
+        assert plan[9] == StagePlan("adapt", "run", "status=translated")
+        assert plan[10] == StagePlan("review_gate_2", "pending", "after prior stages")
 
     def test_adapted_runs_review_gate_and_chapterize(self, db_session):
         ep = Episode(
@@ -634,9 +636,9 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep)
         skipped = [p for p in plan if p.decision == "skip"]
-        assert len(skipped) == 8
-        assert plan[8] == StagePlan("review_gate_2", "run", "status=adapted")
-        assert plan[9] == StagePlan("chapterize", "run", "status=adapted")
+        assert len(skipped) == 10
+        assert plan[10] == StagePlan("review_gate_2", "run", "status=adapted")
+        assert plan[11] == StagePlan("chapterize", "run", "status=adapted")
 
     def test_published_skips_all(self, db_session):
         ep = Episode(
@@ -669,7 +671,7 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep, force=True)
         assert all(p.decision == "run" for p in plan)
-        assert len(plan) == 18
+        assert len(plan) == 20
         assert plan[0].reason == "forced"
         assert plan[-1].reason == "forced"
 
@@ -677,11 +679,11 @@ class TestResolvePipelinePlan:
         """Pipeline plan ignores error_message — only looks at status."""
         plan = resolve_pipeline_plan(db_session, failed_episode)
         skipped = [p for p in plan if p.decision == "skip"]
-        assert len(skipped) == 7
-        assert plan[7].decision == "run"
-        assert plan[7].stage == "adapt"
-        assert plan[8].decision == "pending"
-        assert plan[8].stage == "review_gate_2"
+        assert len(skipped) == 9
+        assert plan[9].decision == "run"
+        assert plan[9].stage == "adapt"
+        assert plan[10].decision == "pending"
+        assert plan[10].stage == "review_gate_2"
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_stage_callback_invoked(self, mock_stage, db_session, tmp_path):
@@ -770,6 +772,29 @@ class TestV2PipelineE2E:
                         {"type": "replace", "original": "Bitcon", "corrected": "Bitcoin"},
                     ],
                     "summary": {"total_changes": 1},
+                }
+            ),
+            encoding="utf-8",
+        )
+        transcript_dir = o_dir / "transcript"
+        transcript_dir.mkdir(parents=True, exist_ok=True)
+        (transcript_dir / "transcript_qa.json").write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "episode_id": ep_id,
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "status": "green",
+                    "blocked": False,
+                    "findings": [],
+                    "summary": {
+                        "info_count": 0,
+                        "minor_count": 0,
+                        "major_count": 0,
+                        "critical_count": 0,
+                        "blocking_count": 0,
+                    },
+                    "gate_config": {},
                 }
             ),
             encoding="utf-8",
@@ -935,10 +960,10 @@ class TestV2PipelineE2E:
         assert stage_statuses.get("publish") == "success"
 
     @patch("btcedu.core.pipeline._run_stage")
-    def test_v2_plan_shows_all_18_stages(self, mock_stage, db_session, v2_episode, v2_settings):
-        """resolve_pipeline_plan returns all 18 v2 stages."""
+    def test_v2_plan_shows_all_20_stages(self, mock_stage, db_session, v2_episode, v2_settings):
+        """resolve_pipeline_plan returns all 20 v2 stages."""
         plan = resolve_pipeline_plan(db_session, v2_episode, settings=v2_settings)
-        assert len(plan) == 18
+        assert len(plan) == 20
         stage_names = [p.stage for p in plan]
         assert stage_names == [
             "download",
@@ -946,6 +971,8 @@ class TestV2PipelineE2E:
             "transcript_analyze",
             "transcript_verify",
             "correct",
+            "transcript_qa",
+            "review_gate_transcript_qa",
             "review_gate_1",
             "translate",
             "adapt",
@@ -985,6 +1012,8 @@ class TestV2PipelineE2E:
 
         assert "transcript_analyze" not in [item.stage for item in plan]
         assert "transcript_verify" not in [item.stage for item in plan]
+        assert "transcript_qa" not in [item.stage for item in plan]
+        assert "review_gate_transcript_qa" not in [item.stage for item in plan]
         correct = next(item for item in plan if item.stage == "correct")
         assert correct.decision == "run"
 

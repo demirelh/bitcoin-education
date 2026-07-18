@@ -590,6 +590,7 @@ def _get_story_count(episode_id: str, settings) -> int | None:
 
 # Review gate labels: stage → (gate_name, human_readable_label)
 _REVIEW_GATE_LABELS = {
+    "transcript_qa": ("review_gate_transcript_qa", "Transcript QA Review"),
     "correct": ("review_gate_1", "Transcript Correction Review"),
     "translate": ("review_gate_translate", "Translation Review"),
     "adapt": ("review_gate_2", "Adaptation Review"),
@@ -723,6 +724,8 @@ _STAGE_LABELS = {
     "transcript_analyze": "Transcript Analysis",
     "transcript_verify": "Transcript Verification",
     "correct": "Correct",
+    "transcript_qa": "Transcript QA",
+    "review_gate_transcript_qa": "Transcript QA Review",
     "review_gate_1": "Review 1",
     "segment": "Segment",
     "translate": "Translate",
@@ -746,6 +749,7 @@ _STAGE_TO_PIPELINE_STAGE = {
     "transcript_analyze": PipelineStage.TRANSCRIPT_ANALYZE,
     "transcript_verify": PipelineStage.TRANSCRIPT_VERIFY,
     "correct": PipelineStage.CORRECT,
+    "transcript_qa": PipelineStage.TRANSCRIPT_QA,
     "translate": PipelineStage.TRANSLATE,
     "adapt": PipelineStage.ADAPT,
     "chapterize": PipelineStage.CHAPTERIZE,
@@ -810,6 +814,13 @@ def _build_stage_progress(
     if review_context:
         rc_state = review_context.get("state")
         rc_gate = review_context.get("review_gate")
+        gate_index = next(
+            (index for index, stage in enumerate(stages) if stage["name"] == rc_gate),
+            None,
+        )
+        if gate_index is not None:
+            for stage in stages[:gate_index]:
+                stage["state"] = "done"
         for s in stages:
             if s["is_gate"] and s["name"] == rc_gate:
                 if rc_state == "paused_for_review":
@@ -2730,6 +2741,7 @@ _ALLOWED_STAGE_ACTIONS = frozenset(
         "transcript_analyze",
         "transcript_verify",
         "correct",
+        "transcript_qa",
         "segment",
         "translate",
         "adapt",
@@ -2826,7 +2838,7 @@ def get_stage_runs(episode_id: str):
 
 @api_bp.route("/episodes/<episode_id>/qa")
 def get_qa_review(episode_id: str):
-    """Return the independent QA second-opinion critique for an episode."""
+    """Return transcript QA and the independent translation QA critique."""
     settings = _get_settings()
     try:
         from btcedu.core.qa_reviewer import load_qa_review
@@ -2834,9 +2846,21 @@ def get_qa_review(episode_id: str):
         qa_review = load_qa_review(settings, episode_id)
     except Exception:
         qa_review = None
-    if not qa_review:
-        return jsonify({"error": "Noch keine QA-Zweitmeinung für diese Episode."}), 404
-    return jsonify({"episode_id": episode_id, "qa_review": qa_review})
+    try:
+        from btcedu.core.transcript_qa import load_transcript_qa
+
+        transcript_qa = load_transcript_qa(settings, episode_id)
+    except Exception:
+        transcript_qa = None
+    if not qa_review and not transcript_qa:
+        return jsonify({"error": "Noch keine QA-Auswertung für diese Episode."}), 404
+    return jsonify(
+        {
+            "episode_id": episode_id,
+            "transcript_qa": transcript_qa,
+            "qa_review": qa_review,
+        }
+    )
 
 
 @api_bp.route("/episodes/<episode_id>/qa-rerun", methods=["POST"])

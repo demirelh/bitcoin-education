@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from difflib import SequenceMatcher
@@ -12,6 +13,7 @@ from pathlib import Path
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
@@ -32,6 +34,7 @@ from btcedu.models.transcript_schema import (
     TranscriptVerificationDocument,
 )
 from btcedu.services.claude_service import ClaudeResponse, call_claude
+from btcedu.services.errors import ErrorCategory, PipelineError
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +244,7 @@ def correct_transcript(
     session.flush()
 
     t0 = time.monotonic()
+    all_responses: list[ClaudeResponse] = []
 
     try:
         # Inject reviewer feedback if available (from request_changes)
@@ -301,6 +305,13 @@ def correct_transcript(
                     payload,
                     settings,
                     episode_id,
+                    budget_check=lambda pending, spent=total_cost: _ensure_cost_budget(
+                        session,
+                        episode,
+                        settings,
+                        spent + pending,
+                    ),
+                    response_sink=all_responses,
                 )
 
             corrected_segments.extend(
@@ -439,8 +450,13 @@ def correct_transcript(
     except Exception as e:
         pipeline_run.status = RunStatus.FAILED
         pipeline_run.completed_at = _utcnow()
+        pipeline_run.input_tokens = sum(response.input_tokens for response in all_responses)
+        pipeline_run.output_tokens = sum(response.output_tokens for response in all_responses)
+        pipeline_run.estimated_cost_usd = sum(response.cost_usd for response in all_responses)
         pipeline_run.error_message = str(e)
         episode.error_message = str(e)
+        if isinstance(e, PipelineError) and e.category == ErrorCategory.PERMANENT_COST_LIMIT:
+            episode.status = EpisodeStatus.COST_LIMIT
         session.commit()
         raise
 
@@ -575,8 +591,12 @@ def _call_structured_correction(
     payload: dict,
     settings: Settings,
     episode_id: str,
+    *,
+    budget_check: Callable[[float], None],
+    response_sink: list[ClaudeResponse],
 ) -> tuple[_ModelCorrectionResponse, list[ClaudeResponse]]:
     responses: list[ClaudeResponse] = []
+    budget_check(0.0)
     response = call_claude(
         system_prompt=system_prompt,
         user_message=user_message,
@@ -584,6 +604,8 @@ def _call_structured_correction(
         json_mode=True,
     )
     responses.append(response)
+    response_sink.append(response)
+    budget_check(sum(item.cost_usd for item in responses))
     try:
         parsed = _parse_correction_response(response.text)
         _validate_response_segments(parsed, payload)
@@ -597,6 +619,7 @@ def _call_structured_correction(
         "merge, or reorder segment IDs. Do not reconstruct missing facts. Output JSON "
         "only.\n\nInput:\n" + user_message
     )
+    budget_check(sum(item.cost_usd for item in responses))
     retry = call_claude(
         system_prompt=system_prompt,
         user_message=retry_prompt,
@@ -604,9 +627,33 @@ def _call_structured_correction(
         json_mode=True,
     )
     responses.append(retry)
+    response_sink.append(retry)
+    budget_check(sum(item.cost_usd for item in responses))
     parsed = _parse_correction_response(retry.text)
     _validate_response_segments(parsed, payload)
     return parsed, responses
+
+
+def _ensure_cost_budget(
+    session: Session,
+    episode: Episode,
+    settings: Settings,
+    in_flight_cost: float,
+) -> None:
+    current_cost = (
+        session.query(func.coalesce(func.sum(PipelineRun.estimated_cost_usd), 0.0))
+        .filter(PipelineRun.episode_id == episode.id)
+        .scalar()
+    )
+    projected = float(current_cost or 0.0) + max(0.0, in_flight_cost)
+    if projected >= settings.max_episode_cost_usd:
+        raise PipelineError(
+            (
+                f"Episode cost limit reached before correction call: "
+                f"${projected:.4f} >= ${settings.max_episode_cost_usd:.4f}"
+            ),
+            ErrorCategory.PERMANENT_COST_LIMIT,
+        )
 
 
 def _parse_correction_response(text: str) -> _ModelCorrectionResponse:

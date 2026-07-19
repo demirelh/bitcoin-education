@@ -10,6 +10,7 @@ import unicodedata
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Literal
 
@@ -21,7 +22,7 @@ from btcedu.models.episode import Episode, PipelineRun, PipelineStage, RunStatus
 from btcedu.models.qa_schema import QAFinding, QASummary, TranslationQADocument
 from btcedu.prompts.glossary_loader import load_glossary
 
-DETECTOR_VERSION = "deterministic/translation-qa-v1"
+DETECTOR_VERSION = "deterministic/translation-qa-v2"
 
 _MONTHS = {
     "januar": 1,
@@ -58,26 +59,32 @@ _TIME_RE = re.compile(
     r"\b(?:saat\s*)?([01]?\d|2[0-3])(?:[:.]([0-5]\d)|\s*uhr)\b",
     re.IGNORECASE,
 )
+_NUMERIC_TOKEN = r"(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)"
 _PERCENT_RE = re.compile(
-    r"(?<!\w)(\d+(?:[.,]\d+)?)\s*(?:%|prozent\b|yüzde\b)",
+    rf"(?<!\w)({_NUMERIC_TOKEN})\s*(?:%|prozent\b|yüzde\b)",
     re.IGNORECASE,
 )
 _PERCENT_PREFIX_RE = re.compile(
-    r"\byüzde\s*(\d+(?:[.,]\d+)?)(?!\w)",
+    rf"\byüzde\s*({_NUMERIC_TOKEN})(?!\w)",
     re.IGNORECASE,
 )
 _MONEY_RE = re.compile(
-    r"(?<!\w)(\d+(?:[.,]\d+)?)\s*"
-    r"(millionen?|milliarden?|milyon|milyar)?\s*"
+    rf"(?<!\w)({_NUMERIC_TOKEN})\s*"
+    r"(million(?:en)?|milliarden?|milyon|milyar)?\s*"
     r"(euro|eur|€|dollar|usd|\$|tl|lira|₺)(?!\w)",
     re.IGNORECASE,
 )
+_SCALED_NUMBER_RE = re.compile(
+    rf"(?<!\w)({_NUMERIC_TOKEN})\s*"
+    r"(million(?:en)?|milliarden?|milyon|milyar)(?!\w)",
+    re.IGNORECASE,
+)
 _TEMP_RE = re.compile(
-    r"(?<!\w)(-?\d+(?:[.,]\d+)?)\s*(?:°\s*c|grad|derece)\b",
+    rf"(?<!\w)(-?{_NUMERIC_TOKEN})\s*(?:°\s*c|grad|derece)\b",
     re.IGNORECASE,
 )
 _SCORE_RE = re.compile(r"(?<!\w)(\d{1,2})\s*(?::|-|zu)\s*(\d{1,2})(?!\w)", re.IGNORECASE)
-_NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?(?!\w)")
+_NUMBER_RE = re.compile(rf"(?<!\w){_NUMERIC_TOKEN}(?!\w)")
 _QUANTITY_WORD_RE = re.compile(
     r"\b(tausend|tausende|hundert|hunderte|bin|binlerce|yüz|yüzlerce)\b",
     re.IGNORECASE,
@@ -135,7 +142,7 @@ _WORD_VALUES = {
 _NEGATION_GROUPS = {
     "negative": {
         "de": ("nicht", "kein", "keine", "nie", "weder"),
-        "tr": ("değil", "yok", "hiçbir", "asla", "ne ", " ne"),
+        "tr": ("değil", "yok", "hiçbir", "asla"),
     },
     "limiter": {"de": ("nur",), "tr": ("sadece", "yalnızca")},
     "pending": {
@@ -153,6 +160,7 @@ _TR_VERBAL_NEGATION_RE = re.compile(
     r"(?:m|n|k|nız|niz|lar|ler)?\b",
     re.IGNORECASE,
 )
+_TR_NEITHER_RE = re.compile(r"\bne\b(?:(?![.!?]).){1,80}\bne\s+de\b", re.IGNORECASE)
 _CHRONOLOGY_GROUPS = {
     "before": {"de": ("vorher", "zuvor", "bevor"), "tr": ("önce", "daha önce")},
     "after": {"de": ("nachher", "danach", "anschließend"), "tr": ("sonra", "ardından")},
@@ -697,6 +705,19 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
         ),
     )
     collect(_TEMP_RE, "temperature", lambda match: _decimal(match.group(1)))
+    for match in _SCALED_NUMBER_RE.finditer(text):
+        if any(
+            start <= match.start() < end or start < match.end() <= end for start, end in occupied
+        ):
+            continue
+        facts.append(
+            NumericFact(
+                "number",
+                _scaled_decimal(match.group(1), match.group(2)),
+                match.group(0),
+            )
+        )
+        occupied.append(match.span())
 
     is_sport = _has_sport_context(text)
     if is_sport:
@@ -862,7 +883,10 @@ def _check_marker_groups(
         target_present = any(
             _contains_turkish_variant(target_normalized, term) for term in language_terms["tr"]
         )
-        if group == "negative" and _TR_VERBAL_NEGATION_RE.search(target_normalized):
+        if group == "negative" and (
+            _TR_VERBAL_NEGATION_RE.search(target_normalized)
+            or _TR_NEITHER_RE.search(target_normalized)
+        ):
             target_present = True
         if target_present:
             continue
@@ -950,19 +974,35 @@ def _has_sport_context(text: str) -> bool:
 
 
 def _decimal(value: str) -> str:
-    return format(float(value.replace(",", ".")), ".6f").rstrip("0").rstrip(".")
+    normalized = value.strip().replace("\u00a0", "").replace("\u202f", "").replace(" ", "")
+    if "," in normalized:
+        normalized = normalized.replace(".", "").replace(",", ".")
+    elif "." in normalized:
+        groups = normalized.split(".")
+        if len(groups[0]) <= 3 and all(len(group) == 3 for group in groups[1:]):
+            normalized = "".join(groups)
+    try:
+        number = Decimal(normalized)
+    except InvalidOperation as exc:
+        raise ValueError(f"Invalid localized number: {value!r}") from exc
+    rendered = format(number, "f")
+    if "." in rendered:
+        rendered = rendered.rstrip("0").rstrip(".")
+    return rendered
 
 
 def _scaled_decimal(value: str, magnitude: str | None) -> str:
-    multiplier = {
-        "million": 1_000_000,
-        "millionen": 1_000_000,
-        "milyon": 1_000_000,
-        "milliarde": 1_000_000_000,
-        "milliarden": 1_000_000_000,
-        "milyar": 1_000_000_000,
-    }.get(_normalize(magnitude or ""), 1)
-    return _decimal(str(float(value.replace(",", ".")) * multiplier))
+    multiplier = Decimal(
+        {
+            "million": 1_000_000,
+            "millionen": 1_000_000,
+            "milyon": 1_000_000,
+            "milliarde": 1_000_000_000,
+            "milliarden": 1_000_000_000,
+            "milyar": 1_000_000_000,
+        }.get(_normalize(magnitude or ""), 1)
+    )
+    return _decimal(str(Decimal(_decimal(value)) * multiplier))
 
 
 def _currency(value: str) -> str:

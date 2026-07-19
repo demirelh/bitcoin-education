@@ -1,6 +1,39 @@
 # Transcript and QA Upgrade: Final Result
 
-Status: completed on 2026-07-18.
+Status: completed and independently re-reviewed on 2026-07-19.
+
+## Independent review resolution (2026-07-19)
+
+Every finding in
+`docs/implementation/transcript_and_qa_upgrade_independent_review.md` was
+checked against commit `1d7291b` and the current implementation.
+
+| Finding | Decision | Rationale and outcome |
+| --- | --- | --- |
+| F1: correction Cost Guard | **confirmed** | `correct_transcript()` called the paid LLM without checking cumulative episode cost. It now checks before every call, checks again immediately after every paid response, records partial spend on failure, marks the run failed, and sets the episode to `COST_LIMIT`. |
+| F2: localized number parsing | **confirmed** | The previous regex/parser interpreted `1.000` as `1` and could not consume multiple thousands groups. Numeric tokens now support German/Turkish thousands separators, decimal commas, singular/plural million/milliard forms, and standalone scaled values. The detector version was bumped so old QA caches are invalidated. |
+| F3: negation heuristic | **partially confirmed** | The claimed false match from an ordinary positive `-ma/-me` verb was not reproducible: the regex requires Turkish negative morphology and existing cases remained correct. However, the generic token `ne` did hide omissions in phrases such as `ne zaman`. Generic `ne` markers were removed and only a conservative `ne ... ne de ...` construction is accepted. |
+| F4: real orchestration coverage | **partially confirmed** | Runtime wiring through `_get_stages()`, `_run_stage()`, and `run_episode_pipeline()` was present and correct; the defect was test coverage, not production orchestration. A new integration test runs the real v2 transcript chain through analysis, selective verification, correction, Transcript-QA, and the blocking review gate while mocking only the paid LLM boundary. |
+| F5: shared Whisper temp directory | **confirmed (minor)** | Both chunked transcription paths use a deterministic `_whisper_tmp` directory. The host pipeline lock prevents normal timer overlap, but direct concurrent same-file calls can collide. This remains documented minor concurrency debt and was not required for the confirmed major corrections. |
+| F6: non-atomic chapter writes | **confirmed (minor)** | `chapters.json` and its provenance still use direct writes. The authoritative translation gate is atomic and chapterization is idempotently regenerable, but interruption can leave a corrupt chapter sidecar. A shared atomic artifact writer remains recommended. |
+| F7: broad profile fallbacks | **partially confirmed (minor)** | Broad exception fallbacks exist. Several are deliberately fail-safe, but some lack a warning and can obscure configuration errors. They do not bypass QA, narration, or publish gates. Narrower exceptions and consistent warning logs remain recommended. |
+| F8: file-based finding history | **rejected as a defect** | The factual observation is correct, but the upgrade explicitly chose existing JSON provenance plus artifact-bound `ReviewTask`/`ReviewDecision` records instead of new QA tables. This satisfies the agreed SQLite-compatible artifact design; DB mirroring is an optional reporting feature, not a missing correctness requirement. |
+| F9: model name in prompt frontmatter | **confirmed (minor/cosmetic)** | The templates contain a historical model label, but runtime routing and provenance use effective Settings/profile models. No business logic is hard-coded to that frontmatter value. Removing the label remains harmless cleanup rather than a production blocker. |
+
+The review suggestions were also checked:
+
+- **S1 partially confirmed:** apostrophe suffixes are supported; unrestricted
+  Turkish stemming is intentionally not used because entity findings are
+  conservative and minor.
+- **S2 confirmed as intended behavior:** full secondary transcription is an
+  explicit opt-in and remains bounded by clip, duration, and cost limits.
+- **S3 confirmed as pre-existing debt:** report-level cost aggregation still
+  parses stage detail strings; authoritative costs remain stored structurally
+  in `PipelineRun`.
+
+After these corrections there are no open critical or major findings from the
+independent review. F5-F7 and F9 remain non-blocking technical debt for the
+single-host, manually published production profile.
 
 ## Final architecture
 
@@ -105,6 +138,8 @@ Translation QA checks, per story and local context:
 - missing, duplicate, unknown, and reordered stories
 - numbers, dates, times, percentages, money, temperatures, scores, and
   casualty/injury counts
+- localized German/Turkish thousands and decimal formats, including scaled
+  million/milliard expressions
 - protected glossary targets and Turkish suffixes
 - conservative entities, negation, chronology, and weather-region mapping
 
@@ -159,6 +194,9 @@ Deterministic analysis and QA cost zero. Every paid call checks cumulative
 episode cost before invocation and records structured `cost_usd`. Partial
 provider spend is retained on failure; a stage is not marked successful after
 the episode limit is reached.
+
+The correction stage now enforces this invariant before and after each paid
+response, including its structured-output retry.
 
 Configuration precedence, from lowest to highest, is:
 
@@ -286,7 +324,9 @@ application-only rollback normally preserves data.
 
 ## Validation result
 
-- Full pytest suite: **1,499 passed** in 122.24 seconds
+- Full pytest suite after the independent-review corrections:
+  **1,533 passed** in 111.51 seconds
+- Focused independent-review regressions: **85 passed**
 - Migration suite: **15 passed**
 - Migration + mocked v1/v2 integration selection: **17 passed**
 - Focused final QA/pipeline/web regressions: **118 passed**
@@ -294,6 +334,9 @@ application-only rollback normally preserves data.
 - Flask health/index/episodes/reviews/profiles smoke: **passed**
 - Mocked complete v1/v2 dry-runs: covered by
   `test_complete_pipeline_dry_run_is_legacy_safe`
+- Real v2 transcript orchestration: covered from `TRANSCRIBED` through
+  `review_gate_transcript_qa` with real `_get_stages`, `_run_stage`, analysis,
+  verification, correction, Transcript-QA, and artifact-bound review creation
 - Dedicated type checker: **not configured**
 - `ruff check .`: changed implementation files pass; the repository-wide
   command reports 18 unrelated baseline findings in frame extraction,
@@ -334,6 +377,13 @@ application-only rollback normally preserves data.
 - Conservative entity/negation/semantic checks produce findings rather than
   claiming every wording difference is wrong. Human review remains necessary
   for ambiguous names, roles, legal claims, and complex paraphrases.
+- Chunked primary transcription still uses a shared per-audio temporary
+  directory outside the normal host-wide pipeline lock, and chapter sidecars
+  are not yet written through the shared atomic gate writer. These are
+  confirmed minor hardening items, not open QA-gate or publishing blockers.
+- Some profile-resolution paths retain broad fail-safe exception handling, and
+  prompt frontmatter still contains a historical correction-model label.
+  Runtime provider/model routing and provenance remain configuration-driven.
 - No heavy NER dependency or new QA database tables were introduced. Existing
   JSON artifacts and review/audit models were sufficient and safer for SQLite
   compatibility.

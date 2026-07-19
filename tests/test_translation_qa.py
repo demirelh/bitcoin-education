@@ -138,6 +138,32 @@ def test_equivalent_numeric_formats_are_accepted(source, target):
 
 
 @pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("Die Hilfe beträgt 1.000 Euro.", "Yardım 1000 Euro."),
+        ("Die Hilfe beträgt 1.000,50 Euro.", "Yardım 1000,50 Euro."),
+        ("1 Million Menschen waren betroffen.", "1 milyon insan etkilendi."),
+        ("Eine Million Menschen waren betroffen: 1.000.000.", "1 milyon insan etkilendi."),
+    ],
+)
+def test_localized_thousands_and_decimals_are_accepted(source, target):
+    document = _evaluate(source, target)
+    assert not {
+        "number_mismatch",
+        "money_mismatch",
+        "unexpected_number",
+    }.intersection(_categories(document))
+
+
+def test_localized_thousands_difference_is_reported():
+    document = _evaluate(
+        "Die Hilfe beträgt 1.000 Euro.",
+        "Yardım 100 Euro.",
+    )
+    assert "money_mismatch" in _categories(document)
+
+
+@pytest.mark.parametrize(
     ("source", "target", "category"),
     [
         ("Das Treffen ist am 12. Juli.", "Görüşme 13 Temmuz'da.", "date_mismatch"),
@@ -222,6 +248,30 @@ def test_correct_turkish_negation_does_not_create_finding(target):
         target,
     )
     assert "negation_suspicion" not in _categories(document)
+
+
+def test_question_word_ne_does_not_hide_missing_negation():
+    document = _evaluate(
+        "Die Regierung bestätigte den Bericht nicht.",
+        "Hükümet raporu doğruladı ve ne zaman yayımlanacağını açıkladı.",
+    )
+    assert "negation_suspicion" in _categories(document)
+
+
+def test_turkish_neither_pair_preserves_negation():
+    document = _evaluate(
+        "Weder die Regierung noch der Minister bestätigten den Bericht.",
+        "Ne hükümet ne de bakan raporu doğruladı.",
+    )
+    assert "negation_suspicion" not in _categories(document)
+
+
+def test_two_question_words_do_not_count_as_neither_pair():
+    document = _evaluate(
+        "Die Regierung bestätigte den Bericht nicht.",
+        "Hükümet raporu doğruladı; ne zaman yayımlanacağını ve ne yapacağını açıkladı.",
+    )
+    assert "negation_suspicion" in _categories(document)
 
 
 def test_non_sport_ratio_is_not_treated_as_score():

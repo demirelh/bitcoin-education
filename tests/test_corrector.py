@@ -19,6 +19,7 @@ from btcedu.core.corrector import (
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
 from btcedu.models.transcript_schema import CorrectedTranscriptDocument
 from btcedu.services.claude_service import ClaudeResponse
+from btcedu.services.errors import ErrorCategory, PipelineError
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -378,6 +379,90 @@ class TestCorrectTranscript:
             db_session.query(PipelineRun).filter(PipelineRun.stage == PipelineStage.CORRECT).all()
         )
         assert len(runs) == 2
+
+    def test_cost_limit_blocks_before_first_paid_call(
+        self, db_session, transcribed_episode, mock_settings
+    ):
+        mock_settings.dry_run = False
+        mock_settings.max_episode_cost_usd = 0.01
+        db_session.add(
+            PipelineRun(
+                episode_id=transcribed_episode.id,
+                stage=PipelineStage.TRANSCRIBE,
+                status=RunStatus.SUCCESS,
+                estimated_cost_usd=0.01,
+            )
+        )
+        db_session.commit()
+
+        with (
+            patch("btcedu.core.corrector.call_claude") as call,
+            pytest.raises(PipelineError) as exc_info,
+        ):
+            correct_transcript(db_session, "ep_test", mock_settings)
+
+        assert exc_info.value.category == ErrorCategory.PERMANENT_COST_LIMIT
+        call.assert_not_called()
+        db_session.refresh(transcribed_episode)
+        assert transcribed_episode.status == EpisodeStatus.COST_LIMIT
+        run = db_session.query(PipelineRun).filter(PipelineRun.stage == PipelineStage.CORRECT).one()
+        assert run.status == RunStatus.FAILED
+        assert run.estimated_cost_usd == 0.0
+
+    def test_cost_limit_after_paid_call_prevents_success(
+        self, db_session, transcribed_episode, mock_settings
+    ):
+        mock_settings.dry_run = False
+        mock_settings.max_episode_cost_usd = 0.0005
+        response = ClaudeResponse(
+            text=json.dumps(
+                {
+                    "segments": [
+                        {
+                            "segment_id": "seg-0001",
+                            "corrected_text": (
+                                "Heute sprechen wir über Bitcoin und die Blockchain Technologie."
+                            ),
+                            "status": "corrected",
+                            "severity": "minor",
+                            "flags": [],
+                            "reason": None,
+                            "verification_ids": [],
+                        },
+                        {
+                            "segment_id": "seg-0002",
+                            "corrected_text": (
+                                "Es ist eine dezentrale Währung die von Satoshi Nakamoto "
+                                "erfunden wurde."
+                            ),
+                            "status": "corrected",
+                            "severity": "minor",
+                            "flags": [],
+                            "reason": None,
+                            "verification_ids": [],
+                        },
+                    ]
+                }
+            ),
+            input_tokens=10,
+            output_tokens=10,
+            cost_usd=0.001,
+            model="test-model",
+        )
+
+        with (
+            patch("btcedu.core.corrector.call_claude", return_value=response) as call,
+            pytest.raises(PipelineError) as exc_info,
+        ):
+            correct_transcript(db_session, "ep_test", mock_settings)
+
+        assert exc_info.value.category == ErrorCategory.PERMANENT_COST_LIMIT
+        call.assert_called_once()
+        db_session.refresh(transcribed_episode)
+        assert transcribed_episode.status == EpisodeStatus.COST_LIMIT
+        run = db_session.query(PipelineRun).filter(PipelineRun.stage == PipelineStage.CORRECT).one()
+        assert run.status == RunStatus.FAILED
+        assert run.estimated_cost_usd == pytest.approx(0.001)
 
 
 # ---------------------------------------------------------------------------

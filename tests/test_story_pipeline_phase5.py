@@ -149,6 +149,34 @@ def test_translation_allows_natural_number_reordering():
     assert _translation_fidelity_risks(source, translation) == []
 
 
+def test_translation_allows_turkish_thousands_separator():
+    source = "Die Zahl stieg auf 5000, fast 350 Mio. US-Dollar wurden freigegeben."
+    translation = "Sayı 5.000'e çıktı, yaklaşık 350 milyon ABD doları serbest bırakıldı."
+
+    assert _translation_fidelity_risks(source, translation) == []
+
+
+def test_translation_allows_written_turkish_list_numbers():
+    source = "2. Punkt ist der Wahlkampf. 3. Der Kanzler reagierte. Ich nenne 2 Beispiele."
+    translation = "İkincisi seçim kampanyası. Üçüncüsü şansölyenin tepkisi. İki örnek vereyim."
+
+    assert _translation_fidelity_risks(source, translation) == []
+
+
+def test_translation_precheck_defers_missing_written_number_to_full_qa():
+    source = "5 Jahre später wurde er mit 22 Jahren gewählt."
+    translation = "Beş yıl sonra yirmi iki yaşında seçildi."
+
+    assert _translation_fidelity_risks(source, translation) == []
+
+
+def test_translation_matches_german_and_turkish_ordinals():
+    source = "Seit 2025 war er der zweitwichtigste Mann."
+    translation = "2025'ten beri en önemli ikinci isimdi."
+
+    assert _translation_fidelity_risks(source, translation) == []
+
+
 def test_translation_retries_missing_news_headline():
     story = _normalize_story_inventory(_story_document(), _corrected_document()).stories[1]
     invalid = MagicMock(
@@ -189,6 +217,37 @@ def test_translation_retries_missing_news_headline():
     assert len(responses) == 2
 
 
+def test_intro_outro_may_remove_program_time_during_cleaning():
+    story = _normalize_story_inventory(_story_document(), _corrected_document()).stories[0]
+    story.text_de = "Die Tagesthemen beginnen um 22 Uhr."
+    story.source_text = story.text_de
+    response = MagicMock(
+        text=json.dumps(
+            {
+                "story_id": story.story_id,
+                "source_segment_ids": story.source_segment_ids,
+                "translated_headline": "",
+                "translated_text": "",
+            }
+        ),
+        input_tokens=1,
+        output_tokens=1,
+        cost_usd=0,
+    )
+
+    with patch("btcedu.core.translator.call_claude", return_value=response):
+        output, responses = _call_story_translation(
+            story,
+            "system",
+            "user",
+            MagicMock(),
+            None,
+        )
+
+    assert output.translated_text == ""
+    assert len(responses) == 1
+
+
 @pytest.mark.parametrize(
     ("adapted", "expected"),
     [
@@ -199,6 +258,20 @@ def test_translation_retries_missing_news_headline():
 def test_adaptation_rejects_changed_dates_and_names(adapted, expected):
     source = "Başbakan Scholz, 12 Temmuz'da Berlin'e gitti."
     assert expected in _adaptation_fidelity_risks(source, adapted)
+
+
+def test_adaptation_accepts_turkish_apostrophe_suffix_variants():
+    source = "Açıklama Berlin'den geldi."
+    adapted = "Açıklama Berlin’den geldi."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_may_remove_parenthetical_office_translation():
+    source = "Federal Şansölye (Bundeskanzler) açıklama yaptı."
+    adapted = "Federal Şansölye açıklama yaptı."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
 
 
 def test_anchor_unify_may_remove_reporter_handoff_name():

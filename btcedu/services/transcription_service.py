@@ -46,6 +46,7 @@ class ResolvedTranscriptionConfig:
 
     primary: TranscriptionProviderSpec
     secondary: SecondaryTranscriptionSpec
+    secondary_minimum_severity: str
     suspicious_segment_context_seconds: float
     max_secondary_audio_seconds: float
     max_secondary_clips: int
@@ -104,13 +105,20 @@ class OpenAITranscriptionProvider:
         language: str,
     ) -> ProviderTranscript:
         client = OpenAI(api_key=self._api_key)
+        request_options: dict[str, object]
+        if model == "whisper-1":
+            request_options = {
+                "response_format": "verbose_json",
+                "timestamp_granularities": ["segment"],
+            }
+        else:
+            request_options = {"response_format": "json"}
         with open(audio_path, "rb") as audio_file:
             response = client.audio.transcriptions.create(
                 model=model,
                 file=audio_file,
                 language=language,
-                response_format="verbose_json",
-                timestamp_granularities=["segment"],
+                **request_options,
             )
 
         data = _response_to_dict(response)
@@ -126,6 +134,10 @@ class OpenAITranscriptionProvider:
         audio_seconds = _coerce_non_negative_float(response_duration)
         if audio_seconds == 0 and segments:
             audio_seconds = max(segment.end_seconds for segment in segments)
+        if audio_seconds == 0:
+            from pydub import AudioSegment
+
+            audio_seconds = len(AudioSegment.from_file(audio_path)) / 1000
 
         if not segments and text:
             segments = [
@@ -195,6 +207,14 @@ def resolve_transcription_config(
                 )
             ),
         ),
+        secondary_minimum_severity=str(
+            secondary.get(
+                "minimum_severity",
+                getattr(settings, "transcription_secondary_minimum_severity", "minor"),
+            )
+        )
+        .strip()
+        .lower(),
         suspicious_segment_context_seconds=float(
             config.get(
                 "suspicious_segment_context_seconds",

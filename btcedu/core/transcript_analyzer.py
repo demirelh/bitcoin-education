@@ -35,7 +35,7 @@ from btcedu.models.transcript_schema import (
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_RULESET_VERSION = "1.0"
+ANALYSIS_RULESET_VERSION = "1.1"
 
 _WORD_RE = re.compile(r"[A-Za-zÄÖÜäöüß]+(?:[-'][A-Za-zÄÖÜäöüß]+)?")
 _NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?(?!\w)")
@@ -519,10 +519,24 @@ def _proper_name_variant_segments(segments: list[TranscriptSegment]) -> set[str]
             if max(counts[left], counts[right]) < 2:
                 continue
             ratio = SequenceMatcher(None, left.lower(), right.lower()).ratio()
-            if 0.82 <= ratio < 1:
+            if 0.82 <= ratio < 1 and _german_variant_stem(left) != _german_variant_stem(right):
                 flagged.update(occurrences[left])
                 flagged.update(occurrences[right])
     return flagged
+
+
+def _german_variant_stem(word: str) -> str:
+    stem = word.casefold()
+    suffixes = ("innen", "ern", "en", "er", "in", "amt", "e", "n", "r", "s")
+    changed = True
+    while changed:
+        changed = False
+        for suffix in suffixes:
+            if stem.endswith(suffix) and len(stem) - len(suffix) >= 5:
+                stem = stem[: -len(suffix)]
+                changed = True
+                break
+    return stem
 
 
 def _is_abrupt_context_break(segments: list[TranscriptSegment], index: int) -> bool:

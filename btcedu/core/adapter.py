@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import json_repair
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
@@ -828,7 +829,14 @@ def _parse_structured_adaptation(response_text: str) -> dict:
     end = text.rfind("}")
     if start < 0 or end <= start:
         raise ValueError("Adaptation response did not contain a JSON object")
-    return json.loads(text[start : end + 1])
+    payload = text[start : end + 1]
+    try:
+        return json.loads(payload)
+    except json.JSONDecodeError:
+        repaired = json_repair.loads(payload)
+        if isinstance(repaired, dict) and repaired:
+            return repaired
+        raise
 
 
 def _needed_adaptation_operations(story, text: str, allowed_operations: list[str]) -> list[str]:
@@ -855,6 +863,15 @@ def _needed_adaptation_operations(story, text: str, allowed_operations: list[str
 
 _ADAPT_NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,:%-]\d+)*(?!\w)")
 _ADAPT_NAME_RE = re.compile(r"(?<![.!?]\s)\b[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'-]{2,}\b")
+_ADAPT_GENERIC_NAMES = {
+    "bundeskanzler",
+    "bundeskanzlerin",
+    "bundespräsident",
+    "kanzler",
+    "minister",
+    "präsident",
+    "şansölye",
+}
 
 
 def _adaptation_fidelity_risks(
@@ -873,14 +890,29 @@ def _adaptation_fidelity_risks(
     name_source_text = (
         _strip_anchor_handoff_text(source_text) if allow_anchor_unify else source_text
     )
-    source_names = set(_ADAPT_NAME_RE.findall(name_source_text))
+    source_names = {
+        stem
+        for name in _ADAPT_NAME_RE.findall(name_source_text)
+        if (stem := _adapt_name_stem(name)).casefold() not in _ADAPT_GENERIC_NAMES
+    }
     for removable_name in removable_names or []:
-        source_names.difference_update(_ADAPT_NAME_RE.findall(removable_name))
-    adapted_names = set(_ADAPT_NAME_RE.findall(adapted_text))
+        source_names.difference_update(
+            _adapt_name_stem(name) for name in _ADAPT_NAME_RE.findall(removable_name)
+        )
+    adapted_names = {
+        stem
+        for name in _ADAPT_NAME_RE.findall(adapted_text)
+        if (stem := _adapt_name_stem(name)).casefold() not in _ADAPT_GENERIC_NAMES
+    }
     missing_names = sorted(source_names - adapted_names)
     if missing_names:
         risks.append("names:" + ",".join(missing_names))
     return risks
+
+
+def _adapt_name_stem(name: str) -> str:
+    """Normalize Turkish apostrophe suffixes while preserving the proper-name stem."""
+    return re.split(r"['’]", name, maxsplit=1)[0]
 
 
 def _strip_anchor_handoff_text(text: str) -> str:

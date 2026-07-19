@@ -11,6 +11,7 @@ from btcedu.core.adapter import (
     _classify_adaptation,
     _is_adaptation_current,
     _looks_like_refusal,
+    _parse_structured_adaptation,
     _segment_text,
     _split_prompt,
     adapt_script,
@@ -18,6 +19,16 @@ from btcedu.core.adapter import (
 )
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
 from btcedu.models.review import ReviewStatus, ReviewTask
+
+
+def test_parse_structured_adaptation_repairs_invalid_json():
+    parsed = _parse_structured_adaptation(
+        '{"story_id":"s02","adapted_text":"Merz, "Karar doğru", dedi.","operations_applied":[]}'
+    )
+
+    assert parsed["story_id"] == "s02"
+    assert parsed["operations_applied"] == []
+
 
 # ---------------------------------------------------------------------------
 # Fixtures

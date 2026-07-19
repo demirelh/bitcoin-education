@@ -40,6 +40,7 @@ _FLAG_TO_CATEGORY = {
     "missing_sentence_end": "incomplete_sentence",
     "possible_missing_words": "incomplete_sentence",
     "asr_fragment": "incomplete_sentence",
+    "possible_free_reconstruction": "incomplete_sentence",
     "conflicting_transcriptions": "conflicting_transcriptions",
     "casualty_disagreement": "casualty_uncertainty",
     "score_disagreement": "result_uncertainty",

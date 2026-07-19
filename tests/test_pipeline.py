@@ -20,7 +20,13 @@ from btcedu.core.pipeline import (
     run_pending,
     write_report,
 )
-from btcedu.models.episode import Episode, EpisodeStatus
+from btcedu.models.episode import (
+    Episode,
+    EpisodeStatus,
+    PipelineRun,
+    PipelineStage,
+    RunStatus,
+)
 
 
 def _make_settings(tmp_path: Path) -> Settings:
@@ -481,6 +487,47 @@ class TestRetryEpisode:
 
         db_session.refresh(failed_episode)
         assert failed_episode.error_message is None
+
+    @patch("btcedu.core.pipeline.run_episode_pipeline")
+    def test_cost_limit_resumes_from_failed_stage_without_error_message(
+        self, mock_run, db_session, tmp_path
+    ):
+        episode = Episode(
+            episode_id="ep_cost_limit",
+            source="youtube_rss",
+            title="Cost limited",
+            url="https://youtube.com/watch?v=cost",
+            status=EpisodeStatus.COST_LIMIT,
+            pipeline_version=2,
+            content_profile="tagesschau_tr",
+            error_message=None,
+        )
+        db_session.add(episode)
+        db_session.flush()
+        db_session.add(
+            PipelineRun(
+                episode_id=episode.id,
+                stage=PipelineStage.TRANSCRIPT_VERIFY,
+                status=RunStatus.FAILED,
+                error_message="[cost_limit] verification plan exceeded",
+            )
+        )
+        db_session.commit()
+        settings = _make_settings(tmp_path)
+        expected = PipelineReport(
+            episode_id=episode.episode_id,
+            title=episode.title,
+            success=True,
+        )
+        mock_run.return_value = expected
+
+        report = retry_episode(db_session, episode.episode_id, settings)
+
+        assert report is expected
+        db_session.refresh(episode)
+        assert episode.status == EpisodeStatus.TRANSCRIBED
+        assert episode.error_message is None
+        assert mock_run.call_args.args[1] is episode
 
     def test_rejects_non_failed_episode(self, db_session, tmp_path):
         ep = Episode(

@@ -205,6 +205,7 @@ class TestProfileRegistry:
         }
         assert transcription["secondary"]["enabled"] is True
         assert transcription["secondary"]["mode"] == "suspicious_segments_only"
+        assert transcription["secondary"]["minimum_severity"] == "major"
         assert transcription["max_secondary_audio_seconds"] == 300
         assert transcription["max_secondary_clips"] == 10
 

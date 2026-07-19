@@ -9,7 +9,9 @@ from click.testing import CliRunner
 
 from btcedu.core.corrector import (
     CorrectionResult,
+    _contains_unexpected_turkish,
     _is_correction_current,
+    _is_supported_by_verification,
     _revert_protected_token_changes,
     _segment_transcript,
     _split_prompt,
@@ -100,6 +102,45 @@ class TestRevertProtectedTokenChanges:
         assert "Grünen" in result  # legitimate spelling fix kept
         assert "12 Prozent" in result  # number over-correction reverted
         assert "15 Prozent" not in result
+
+
+def test_detects_turkish_fragment_inserted_into_german_correction():
+    assert _contains_unexpected_turkish(
+        "Auch die Tagesthemen beschäftigen sich mit dem Rücktritt.",
+        "Auch die Tagesthemen ile beschäftigen sich mit dem Rücktritt.",
+    )
+    assert not _contains_unexpected_turkish(
+        "Heute über Bit Coin und den Bundes tag sprechen.",
+        "Heute über Bitcoin und den Bundestag sprechen.",
+    )
+
+
+def test_secondary_transcript_can_support_targeted_factual_correction():
+    assert _is_supported_by_verification(
+        "Ich trete vom Amt zurück.",
+        [
+            {
+                "status": "success",
+                "secondary_text": (
+                    "Heute erklärte er: Ich trete vom Amt zurück. Danach endete die Sitzung."
+                ),
+            }
+        ],
+    )
+
+
+def test_large_verified_replacement_is_supported_by_secondary_transcript():
+    assert _is_supported_by_verification(
+        "zurücktrete.",
+        [
+            {
+                "status": "success",
+                "secondary_text": (
+                    "Ich habe die Vorsitzenden informiert, dass ich von meinem Amt zurücktrete."
+                ),
+            }
+        ],
+    )
 
 
 class TestComputeCorrectionDiff:
@@ -657,6 +698,7 @@ def test_correction_prompt_forbids_free_reconstruction():
     normalized = " ".join(prompt.split())
     assert "rekonstruiere keine unvollständigen Sätze frei" in normalized
     assert "Errate niemals Namen, Zahlen" in normalized
+    assert "Sekundärtranskription die konkrete Ersatzformulierung direkt belegt" in normalized
     assert "niemals externes Wissen" in normalized
     assert "{{ transcript_payload }}" in prompt
 

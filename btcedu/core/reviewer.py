@@ -53,6 +53,33 @@ def _validate_actionable(task: ReviewTask) -> None:
         )
 
 
+def supersede_pending_reviews(session: Session, episode_id: str, stage: str) -> int:
+    """Close obsolete review tasks after a newer artifact passes its gate."""
+    tasks = (
+        session.query(ReviewTask)
+        .filter(
+            ReviewTask.episode_id == episode_id,
+            ReviewTask.stage == stage,
+            ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]),
+        )
+        .all()
+    )
+    for task in tasks:
+        task.status = ReviewStatus.SUPERSEDED.value
+        task.reviewed_at = _utcnow()
+        task.reviewer_notes = "Superseded by a newer artifact that passed the quality gate."
+        session.add(
+            ReviewDecision(
+                review_task_id=task.id,
+                decision=ReviewStatus.SUPERSEDED.value,
+                notes=task.reviewer_notes,
+            )
+        )
+    if tasks:
+        session.commit()
+    return len(tasks)
+
+
 def _validate_quality_rating(rating: int | None) -> None:
     """Raise ValueError if quality_rating is not 1-5."""
     if rating is not None and (not isinstance(rating, int) or rating < 1 or rating > 5):

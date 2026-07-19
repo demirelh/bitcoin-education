@@ -70,23 +70,29 @@ _PERCENT_PREFIX_RE = re.compile(
 )
 _MONEY_RE = re.compile(
     rf"(?<!\w)({_NUMERIC_TOKEN})\s*"
-    r"(million(?:en)?|milliarden?|milyon|milyar)?\s*"
+    r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
+    r"yüz|bin(?:i|e|den|in)?|milyon|milyar)?\s*"
     r"(euro|eur|€|dollar|usd|\$|tl|lira|₺)(?!\w)",
     re.IGNORECASE,
 )
 _SCALED_NUMBER_RE = re.compile(
     rf"(?<!\w)({_NUMERIC_TOKEN})\s*"
-    r"(million(?:en)?|milliarden?|milyon|milyar)(?!\w)",
+    r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
+    r"yüz|bin(?:i|e|den|in)?|milyon|milyar)(?!\w)",
     re.IGNORECASE,
 )
 _TEMP_RE = re.compile(
-    rf"(?<!\w)(-?{_NUMERIC_TOKEN})\s*(?:°\s*c|grad|derece)\b",
+    rf"(?<!\w)(-?{_NUMERIC_TOKEN})\s*"
+    rf"(?:°(?:\s*c)?|grad|derece(?:ye|yi|de|den|nin)?)(?!\w)",
     re.IGNORECASE,
 )
 _SCORE_RE = re.compile(r"(?<!\w)(\d{1,2})\s*(?::|-|zu)\s*(\d{1,2})(?!\w)", re.IGNORECASE)
 _NUMBER_RE = re.compile(rf"(?<!\w){_NUMERIC_TOKEN}(?!\w)")
 _QUANTITY_WORD_RE = re.compile(
-    r"\b(tausend|tausende|hundert|hunderte|bin|binlerce|yüz|yüzlerce)\b",
+    (
+        r"\b(tausend|tausende|hundert|hunderte|bin|binlerce|yüz|yüzlerce|"
+        r"zweit\w*|dritt\w*|iki|ikinci|ikincisi|üçüncü|üçüncüsü)\b"
+    ),
     re.IGNORECASE,
 )
 _SPORT_CONTEXT = {
@@ -138,6 +144,11 @@ _WORD_VALUES = {
     "binlerce": "vague:thousands",
     "hunderte": "vague:hundreds",
     "yüzlerce": "vague:hundreds",
+    "ikinci": "2",
+    "ikincisi": "2",
+    "iki": "2",
+    "üçüncü": "3",
+    "üçüncüsü": "3",
 }
 _NEGATION_GROUPS = {
     "negative": {
@@ -155,7 +166,7 @@ _NEGATION_GROUPS = {
     },
 }
 _TR_VERBAL_NEGATION_RE = re.compile(
-    r"\b[\wçğıöşü]+(?:ma|me)"
+    r"\b[\wçğıöşü]+(?:ma|me|mı|mi|mu|mü)"
     r"(?:dı|di|du|dü|tı|ti|tu|tü|mış|miş|muş|müş|yor|yacak|yecek|z)"
     r"(?:m|n|k|nız|niz|lar|ler)?\b",
     re.IGNORECASE,
@@ -164,18 +175,22 @@ _TR_NEITHER_RE = re.compile(r"\bne\b(?:(?![.!?]).){1,80}\bne\s+de\b", re.IGNOREC
 _CHRONOLOGY_GROUPS = {
     "before": {"de": ("vorher", "zuvor", "bevor"), "tr": ("önce", "daha önce")},
     "after": {"de": ("nachher", "danach", "anschließend"), "tr": ("sonra", "ardından")},
-    "since": {"de": ("seit",), "tr": ("beri", "-den bu yana")},
+    "since": {"de": ("seit",), "tr": ("beri", "bu yana", "süredir", "günlerdir")},
     "until": {"de": ("bis",), "tr": ("kadar", "dek")},
     "yesterday": {"de": ("gestern",), "tr": ("dün",)},
-    "today": {"de": ("heute",), "tr": ("bugün",)},
+    "today": {"de": ("heute",), "tr": ("bugün", "bu gece")},
     "tomorrow": {"de": ("morgen",), "tr": ("yarın",)},
 }
 _ENTITY_ALIASES = {
     "deutschland": ("almanya",),
     "türkei": ("türkiye",),
     "russland": ("rusya",),
+    "ukraine": ("ukrayna",),
     "china": ("çin",),
     "usa": ("abd",),
+    "us": ("abd",),
+    "nrw": ("kuzey ren-vestfalya", "kuzey ren vestfalya"),
+    "zelensky": ("zelenskiy",),
     "münchen": ("münih",),
     "brüssel": ("brüksel",),
     "moskau": ("moskova",),
@@ -217,7 +232,7 @@ _TITLE_ENTITY_RE = re.compile(
 _ACRONYM_RE = re.compile(r"\b[A-ZÄÖÜ]{2,8}\b")
 _WEATHER_TERMS = {
     "schauer": ("sağanak",),
-    "regen": ("yağmur",),
+    "regen": ("yağmur", "yağış"),
     "sonne": ("güneş",),
     "sonnenschein": ("güneş",),
     "schnee": ("kar",),
@@ -458,6 +473,8 @@ def evaluate_translation_documents(
         target_story = target_by_id[story_id]
         source_text = _source_text(source_story)
         target_text = _target_text(target_story)
+        if source_story.get("story_type") in {"intro", "outro"} and not target_text.strip():
+            continue
 
         source_facts = extract_numeric_facts(source_text)
         target_facts = extract_numeric_facts(target_text)
@@ -710,9 +727,16 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
             start <= match.start() < end or start < match.end() <= end for start, end in occupied
         ):
             continue
+        window = _numeric_context(text, match.start(), match.end())
+        if any(term in window for term in _CASUALTY_CONTEXT):
+            kind = "casualty"
+        elif any(term in window for term in _INJURY_CONTEXT):
+            kind = "injury"
+        else:
+            kind = "number"
         facts.append(
             NumericFact(
-                "number",
+                kind,
                 _scaled_decimal(match.group(1), match.group(2)),
                 match.group(0),
             )
@@ -733,10 +757,21 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
         )
         if overlaps_typed_fact:
             continue
-        window = _normalize(text[max(0, match.start() - 55) : match.end() + 55])
+        window = _numeric_context(text, match.start(), match.end())
         raw = match.group(0)
         normalized_raw = _normalize(raw)
-        value = _WORD_VALUES[normalized_raw] if normalized_raw in _WORD_VALUES else _decimal(raw)
+        if normalized_raw == "iki":
+            prefix = _normalize(text[max(0, match.start() - 12) : match.start()])
+            if re.search(r"\b(?:yirmi|otuz|kırk|elli|altmış|yetmiş|seksen|doksan)\s*$", prefix):
+                continue
+        if normalized_raw.startswith("zweit"):
+            value = "2"
+        elif normalized_raw.startswith("dritt"):
+            value = "3"
+        else:
+            value = (
+                _WORD_VALUES[normalized_raw] if normalized_raw in _WORD_VALUES else _decimal(raw)
+            )
         if any(term in window for term in _CASUALTY_CONTEXT):
             kind = "casualty"
         elif any(term in window for term in _INJURY_CONTEXT):
@@ -827,17 +862,10 @@ def _check_entities(
     add,
 ) -> None:
     protected_sources = {_normalize(term) for term in protected_terms}
-    candidates = {
-        match.group(0)
-        for match in _MULTIWORD_ENTITY_RE.finditer(source_text)
-        if _normalize(match.group(0)) not in _ENTITY_STOPWORDS
-        and _normalize(match.group(0)).split()[0] not in _ENTITY_LEADING_STOPWORDS
-        and _normalize(match.group(0)).split()[0] not in _OFFICE_TITLES
-        and not (set(_normalize(match.group(0)).split()) & _ENTITY_GENERIC_TOKENS)
-    }
+    candidates: set[str] = set()
     candidates.update(match.group(1) for match in _TITLE_ENTITY_RE.finditer(source_text))
     candidates.update(_ACRONYM_RE.findall(source_text))
-    if story.get("location"):
+    if story.get("location") and not re.search(r"[,/]", story["location"]):
         candidates.add(story["location"])
     normalized_source = _normalize(source_text)
     candidates.update(
@@ -942,6 +970,14 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", normalized).strip()
 
 
+def _numeric_context(text: str, start: int, end: int) -> str:
+    """Return only the sentence containing a number to avoid distant fact labels."""
+    left = max(text.rfind(mark, 0, start) for mark in ".!?;") + 1
+    boundaries = [position for mark in ".!?;" if (position := text.find(mark, end)) >= 0]
+    right = min(boundaries) if boundaries else len(text)
+    return _normalize(text[left:right])
+
+
 def _contains_phrase(normalized_text: str, phrase: str) -> bool:
     normalized_phrase = _normalize(phrase)
     return bool(re.search(rf"(?<!\w){re.escape(normalized_phrase)}(?!\w)", normalized_text))
@@ -992,15 +1028,24 @@ def _decimal(value: str) -> str:
 
 
 def _scaled_decimal(value: str, magnitude: str | None) -> str:
+    normalized_magnitude = _normalize(magnitude or "").rstrip(".")
+    if normalized_magnitude.startswith("bin"):
+        normalized_magnitude = "bin"
     multiplier = Decimal(
         {
+            "hundert": 100,
+            "yüz": 100,
+            "tausend": 1_000,
+            "bin": 1_000,
             "million": 1_000_000,
             "millionen": 1_000_000,
+            "mio": 1_000_000,
             "milyon": 1_000_000,
             "milliarde": 1_000_000_000,
             "milliarden": 1_000_000_000,
+            "mrd": 1_000_000_000,
             "milyar": 1_000_000_000,
-        }.get(_normalize(magnitude or ""), 1)
+        }.get(normalized_magnitude, 1)
     )
     return _decimal(str(Decimal(_decimal(value)) * multiplier))
 

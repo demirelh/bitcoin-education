@@ -14,6 +14,67 @@ from btcedu.models.story_schema import (
     StoryType,
 )
 
+
+def test_parse_json_response_repairs_truncated_object():
+    from btcedu.core.segmenter import _parse_json_response
+
+    result = _parse_json_response(
+        '{"episode_id":"ep-news","stories":[{"story_id":"story-001","title_de":"Test"}',
+        "ep-news",
+    )
+
+    assert result["episode_id"] == "ep-news"
+    assert result["stories"][0]["story_id"] == "story-001"
+
+
+def test_hydrates_compact_story_from_segment_ids():
+    from btcedu.core.segmenter import _hydrate_story_data
+    from btcedu.models.transcript_schema import (
+        CorrectedTranscriptDocument,
+        CorrectedTranscriptSegment,
+    )
+
+    document = CorrectedTranscriptDocument(
+        episode_id="ep-news",
+        language="de",
+        source_transcript_path="source.json",
+        full_text="Erster Satz. Zweiter Satz.",
+        segments=[
+            CorrectedTranscriptSegment(
+                segment_id="seg-0001",
+                start_seconds=0,
+                end_seconds=2,
+                original_text="Erster Satz.",
+                corrected_text="Erster Satz.",
+                status="verified",
+                severity="none",
+            ),
+            CorrectedTranscriptSegment(
+                segment_id="seg-0002",
+                start_seconds=2,
+                end_seconds=5,
+                original_text="Zweiter Satz.",
+                corrected_text="Zweiter Satz.",
+                status="verified",
+                severity="none",
+            ),
+        ],
+    )
+    payload = {
+        "stories": [{"source_segment_ids": ["seg-0001", "seg-0002"]}],
+        "total_stories": 0,
+        "total_duration_seconds": 0,
+    }
+
+    _hydrate_story_data(payload, document)
+
+    assert payload["stories"][0]["text_de"] == "Erster Satz. Zweiter Satz."
+    assert payload["stories"][0]["word_count"] == 4
+    assert payload["stories"][0]["estimated_duration_seconds"] == 5
+    assert payload["total_stories"] == 1
+    assert payload["total_duration_seconds"] == 5
+
+
 # ---------------------------------------------------------------------------
 # Helpers: sample StoryDocument
 # ---------------------------------------------------------------------------
@@ -240,6 +301,30 @@ class TestSegmentBroadcast:
         # Stale marker written for translation
         stale_path = Path(mock_settings.transcripts_dir) / "ep_news" / "transcript.tr.txt.stale"
         assert stale_path.exists()
+
+    def test_retries_truncated_output_as_compact_json(
+        self, db_session, corrected_episode, mock_settings
+    ):
+        from btcedu.core.segmenter import segment_broadcast
+
+        truncated = MagicMock(
+            text='{"episode_id":"ep_news","stories":[{',
+            input_tokens=100,
+            output_tokens=100,
+            cost_usd=0.01,
+        )
+        valid = self._make_mock_claude_response("ep_news", 3)
+
+        with patch(
+            "btcedu.core.segmenter.call_claude",
+            side_effect=[truncated, valid],
+        ) as mock_call:
+            result = segment_broadcast(db_session, "ep_news", mock_settings)
+
+        assert mock_call.call_count == 2
+        assert "kompaktes JSON" in mock_call.call_args_list[1].kwargs["user_message"]
+        assert result.story_count == 3
+        assert result.cost_usd == pytest.approx(0.02)
 
     def test_segment_broadcast_idempotent(self, db_session, corrected_episode, mock_settings):
         """Running twice without force returns skipped=True on second run."""

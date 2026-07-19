@@ -38,8 +38,9 @@ from btcedu.services.errors import ErrorCategory, PipelineError
 
 logger = logging.getLogger(__name__)
 
-VERIFICATION_COMPARATOR_VERSION = "1.0"
+VERIFICATION_COMPARATOR_VERSION = "1.1"
 _VALID_MODES = {"disabled", "full", "suspicious_segments_only"}
+_SEVERITY_ORDER = {"minor": 0, "major": 1, "critical": 2}
 _TOKEN_RE = re.compile(r"[^\W_]+(?:['’-][^\W_]+)*|\d+(?:[.,:]\d+)*%?", re.UNICODE)
 _NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?(?!\w)")
 _PERCENT_RE = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?\s*%")
@@ -135,6 +136,21 @@ _RISK_ORDER = [
     "incomplete_sentence",
     "semantic_role_disagreement",
 ]
+_GERMAN_NUMBER_WORDS = {
+    "null": "0",
+    "eins": "1",
+    "ein": "1",
+    "eine": "1",
+    "zwei": "2",
+    "drei": "3",
+    "vier": "4",
+    "fünf": "5",
+    "sechs": "6",
+    "sieben": "7",
+    "acht": "8",
+    "neun": "9",
+    "zehn": "10",
+}
 _CRITICAL_RISKS = {
     "casualty_disagreement",
     "negation_disagreement",
@@ -198,6 +214,13 @@ def compare_transcripts(primary_text: str, secondary_text: str) -> TranscriptCom
     """Compare two transcripts while ignoring punctuation and case-only differences."""
     primary_tokens = _normalized_tokens(primary_text)
     secondary_tokens = _normalized_tokens(secondary_text)
+    if _is_contiguous_subsequence(primary_tokens, secondary_tokens):
+        return TranscriptComparison(
+            token_difference=0.0,
+            agreement="high",
+            risk_types=(),
+            severity="none",
+        )
     similarity = SequenceMatcher(None, primary_tokens, secondary_tokens).ratio()
     token_difference = round(1 - similarity, 4)
     if primary_tokens == secondary_tokens:
@@ -278,6 +301,17 @@ def compare_transcripts(primary_text: str, secondary_text: str) -> TranscriptCom
     )
 
 
+def _is_contiguous_subsequence(primary_tokens: list[str], secondary_tokens: list[str]) -> bool:
+    """Return true when a context transcript contains the complete target passage."""
+    if not primary_tokens or len(primary_tokens) > len(secondary_tokens):
+        return False
+    width = len(primary_tokens)
+    return any(
+        secondary_tokens[index : index + width] == primary_tokens
+        for index in range(len(secondary_tokens) - width + 1)
+    )
+
+
 def verify_transcript(
     session: Session,
     episode_id: str,
@@ -337,6 +371,11 @@ def verify_transcript(
 
     document = load_transcript_document(settings, episode_id)
     analysis = _load_analysis(settings, episode_id) if mode == "suspicious_segments_only" else None
+    if analysis is not None:
+        analysis = _filter_analysis_by_severity(
+            analysis,
+            resolved.secondary_minimum_severity,
+        )
     effective_dry_run = settings.dry_run if dry_run is None else dry_run
     if analysis is not None and not analysis.suspicious_segments:
         return _write_empty_verification(
@@ -452,7 +491,7 @@ def verify_transcript(
                     start_seconds=plan.clip_start_seconds,
                     end_seconds=plan.clip_end_seconds,
                 )
-                primary_text = _primary_text(document, plan.source_segment_ids)
+                primary_text = _primary_text_for_clip(document, plan)
                 try:
                     response = provider.transcribe(
                         str(clip_path),
@@ -471,7 +510,11 @@ def verify_transcript(
                     )
                     raise
 
-                comparison = compare_transcripts(primary_text, response.text)
+                comparison = _compare_region_segments(
+                    document,
+                    plan.source_segment_ids,
+                    response.text,
+                )
                 total_cost += response.cost_usd
                 verified_regions.append(
                     TranscriptVerificationRegion(
@@ -510,6 +553,7 @@ def verify_transcript(
                     "provider": resolved.secondary.provider,
                     "model": resolved.secondary.model,
                     "mode": mode,
+                    "minimum_analysis_severity": resolved.secondary_minimum_severity,
                     "comparator_version": VERIFICATION_COMPARATOR_VERSION,
                     "config_hash": config_hash,
                     "input_files": _verification_input_files(settings, episode_id, mode),
@@ -634,7 +678,47 @@ def build_verification_regions(
             clip_start_seconds=previous.clip_start_seconds,
             clip_end_seconds=max(previous.clip_end_seconds, region.clip_end_seconds),
         )
-    return merged
+    return [
+        VerificationRegionPlan(
+            source_segment_ids=tuple(
+                segment.segment_id
+                for segment in document.segments
+                if segment.start_seconds >= region.original_start_seconds
+                and segment.end_seconds <= region.original_end_seconds
+            ),
+            original_start_seconds=region.original_start_seconds,
+            original_end_seconds=region.original_end_seconds,
+            clip_start_seconds=region.clip_start_seconds,
+            clip_end_seconds=region.clip_end_seconds,
+        )
+        for region in merged
+    ]
+
+
+def _filter_analysis_by_severity(
+    analysis: TranscriptAnalysisDocument,
+    minimum_severity: str,
+) -> TranscriptAnalysisDocument:
+    minimum = minimum_severity.strip().lower()
+    if minimum not in _SEVERITY_ORDER:
+        raise ValueError(
+            f"Unsupported secondary minimum severity '{minimum_severity}'. "
+            f"Expected one of: {', '.join(_SEVERITY_ORDER)}."
+        )
+    selected = [
+        finding
+        for finding in analysis.suspicious_segments
+        if _SEVERITY_ORDER[finding.severity] >= _SEVERITY_ORDER[minimum]
+    ]
+    return TranscriptAnalysisDocument(
+        episode_id=analysis.episode_id,
+        suspicious_segments=selected,
+        summary={
+            "segment_count": analysis.summary.segment_count,
+            "suspicious_count": len(selected),
+            "critical_count": sum(finding.severity == "critical" for finding in selected),
+        },
+    )
 
 
 def _write_empty_verification(
@@ -893,6 +977,7 @@ def _verification_config_hash(resolved) -> str:
         "model": resolved.secondary.model,
         "mode": resolved.secondary.mode,
         "enabled": resolved.secondary.enabled,
+        "minimum_severity": resolved.secondary_minimum_severity,
         "context_seconds": resolved.suspicious_segment_context_seconds,
         "max_audio_seconds": resolved.max_secondary_audio_seconds,
         "max_clips": resolved.max_secondary_clips,
@@ -938,18 +1023,49 @@ def _verification_input_files(
     return files
 
 
-def _primary_text(
+def _primary_text_for_clip(
     document: TranscriptDocument,
-    source_segment_ids: tuple[str, ...],
+    plan: VerificationRegionPlan,
 ) -> str:
-    wanted = set(source_segment_ids)
+    """Build primary text from the same context interval sent to secondary ASR."""
     return " ".join(
-        segment.text for segment in document.segments if segment.segment_id in wanted
+        segment.text
+        for segment in document.segments
+        if segment.start_seconds >= plan.clip_start_seconds
+        and segment.end_seconds <= plan.clip_end_seconds
     ).strip()
 
 
+def _compare_region_segments(
+    document: TranscriptDocument,
+    source_segment_ids: tuple[str, ...],
+    secondary_text: str,
+) -> TranscriptComparison:
+    wanted = set(source_segment_ids)
+    comparisons = [
+        compare_transcripts(segment.text, secondary_text)
+        for segment in document.segments
+        if segment.segment_id in wanted
+    ]
+    if not comparisons:
+        return compare_transcripts("", secondary_text)
+    severity_order = {"none": 0, "minor": 1, "major": 2, "critical": 3}
+    agreement_order = {"high": 0, "medium": 1, "low": 2}
+    risks = {risk for comparison in comparisons for risk in comparison.risk_types}
+    return TranscriptComparison(
+        token_difference=max(comparison.token_difference for comparison in comparisons),
+        agreement=max(comparisons, key=lambda item: agreement_order[item.agreement]).agreement,
+        risk_types=tuple(risk for risk in _RISK_ORDER if risk in risks),
+        severity=max(comparisons, key=lambda item: severity_order[item.severity]).severity,
+    )
+
+
 def _normalized_tokens(text: str) -> list[str]:
-    return [token.casefold().replace(",", ".") for token in _TOKEN_RE.findall(text)]
+    return [
+        _GERMAN_NUMBER_WORDS.get(normalized, normalized)
+        for token in _TOKEN_RE.findall(text)
+        if (normalized := token.casefold().replace(",", "."))
+    ]
 
 
 def _normalized_matches(pattern: re.Pattern[str], text: str) -> tuple[str, ...]:

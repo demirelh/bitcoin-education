@@ -20,6 +20,7 @@ from btcedu.core.reviewer import (
     reject_review,
     request_changes,
     review_task_matches_artifacts,
+    supersede_pending_reviews,
 )
 from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.models.review import ReviewStatus, ReviewTask
@@ -262,6 +263,24 @@ class TestGetLatestReviewerFeedback:
 
     def test_returns_none_when_no_feedback(self, db_session, review_task):
         assert get_latest_reviewer_feedback(db_session, "ep001", "correct") is None
+
+
+def test_supersede_pending_reviews_preserves_audit_trail(db_session, corrected_episode):
+    task = create_review_task(
+        db_session,
+        "ep001",
+        "transcript_qa",
+        [corrected_episode["corrected_path"]],
+    )
+
+    count = supersede_pending_reviews(db_session, "ep001", "transcript_qa")
+
+    db_session.refresh(task)
+    assert count == 1
+    assert task.status == ReviewStatus.SUPERSEDED.value
+    assert task.reviewed_at is not None
+    assert task.decisions[0].decision == ReviewStatus.SUPERSEDED.value
+    assert get_pending_reviews(db_session) == []
 
 
 class TestPendingReviewCount:

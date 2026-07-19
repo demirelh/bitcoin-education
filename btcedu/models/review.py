@@ -30,6 +30,7 @@ class ReviewStatus(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     CHANGES_REQUESTED = "changes_requested"
+    SUPERSEDED = "superseded"
 
 
 class ReviewTask(Base):

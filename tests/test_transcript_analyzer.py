@@ -153,6 +153,38 @@ def test_normal_news_sentence_is_not_flagged():
     assert analysis.summary.suspicious_count == 0
 
 
+def test_german_noun_inflections_are_not_name_variants():
+    analysis = _analyze_document(
+        _document(
+            _segment(
+                "seg-0001",
+                "Mehrere Abgeordnete diskutierten die Entscheidung.",
+                confidence=0.9,
+            ),
+            _segment(
+                "seg-0002",
+                "Ein Abgeordneter verteidigte die Entscheidungen.",
+                start=5,
+                end=10,
+                confidence=0.9,
+            ),
+            _segment(
+                "seg-0003",
+                "Die Abgeordneten stimmten über eine Entscheidung ab.",
+                start=10,
+                end=15,
+                confidence=0.9,
+            ),
+        ),
+        {},
+    )
+
+    assert all(
+        "inconsistent_proper_name_spelling" not in finding.reasons
+        for finding in analysis.suspicious_segments
+    )
+
+
 def test_analysis_writes_artifact_provenance_and_pipeline_run(
     db_session,
     tmp_path,

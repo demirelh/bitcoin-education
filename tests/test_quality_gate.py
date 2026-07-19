@@ -260,6 +260,25 @@ def test_major_hallucination_is_red(db_session, tmp_path):
     assert "critical_factual_risk" in result.reasons
 
 
+def test_minor_invented_fact_is_repairable_yellow(db_session, tmp_path):
+    _, settings = _make_episode(db_session, tmp_path, [("s01", "Text.", "Metin.", True)])
+    finding = {
+        "story_id": "s01",
+        "category": "invented_fact",
+        "severity": "minor",
+        "source_excerpt": "ukrainischen Angaben zufolge",
+        "target_excerpt": "Ukrayna makamlarına göre",
+        "explanation": "Attribution was made slightly more specific.",
+        "required_action": "Use a neutral attribution.",
+    }
+
+    with patch("btcedu.core.qa_reviewer.call_claude", return_value=_qa([finding])):
+        result = generate_qa_review(db_session, "ep-gate", settings)
+
+    assert result.decision == "green"
+    assert "critical_factual_risk" not in result.reasons
+
+
 # ---------------------------------------------------------------------------
 # Deterministic authority + dedup + contradictions
 # ---------------------------------------------------------------------------

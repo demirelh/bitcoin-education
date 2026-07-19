@@ -130,6 +130,24 @@ def test_unresolved_negation_blocks(db_session, corrected_episode, qa_settings):
     )
 
 
+def test_possible_free_reconstruction_does_not_pass_green(
+    db_session, corrected_episode, qa_settings
+):
+    _write_corrected(
+        qa_settings,
+        flags=["possible_free_reconstruction"],
+        status="unresolved",
+        severity="major",
+    )
+
+    result = evaluate_transcript_qa(db_session, "ep_qa", qa_settings)
+
+    assert result.status == "yellow"
+    assert load_transcript_qa(qa_settings, "ep_qa")["findings"][0]["category"] == (
+        "incomplete_sentence"
+    )
+
+
 def test_punctuation_only_does_not_block(db_session, corrected_episode, qa_settings):
     _write_corrected(qa_settings)
 

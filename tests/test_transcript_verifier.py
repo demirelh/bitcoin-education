@@ -12,6 +12,8 @@ import pytest
 from btcedu.config import Settings
 from btcedu.core.transcript_analyzer import analyze_transcript
 from btcedu.core.transcript_verifier import (
+    _filter_analysis_by_severity,
+    _primary_text_for_clip,
     build_verification_regions,
     compare_transcripts,
     verify_transcript,
@@ -234,6 +236,24 @@ def test_suspicious_regions_are_clamped_and_merged():
     assert plans[0].original_end_seconds == 18
 
 
+def test_secondary_severity_filter_keeps_major_and_critical_findings():
+    document = _document()
+    analysis = _analysis(document, "seg-0001", "seg-0002", "seg-0003")
+    analysis.suspicious_segments[0].severity = "minor"
+    analysis.suspicious_segments[1].severity = "major"
+    analysis.suspicious_segments[2].severity = "critical"
+    analysis.summary.critical_count = 1
+
+    filtered = _filter_analysis_by_severity(analysis, "major")
+
+    assert [finding.segment_id for finding in filtered.suspicious_segments] == [
+        "seg-0002",
+        "seg-0003",
+    ]
+    assert filtered.summary.suspicious_count == 2
+    assert filtered.summary.critical_count == 1
+
+
 def test_no_findings_completes_without_api_call(db_session, tmp_path):
     settings = _settings(tmp_path)
     document = _document()
@@ -264,6 +284,60 @@ def test_identical_text_ignores_case_and_punctuation():
     assert comparison.agreement == "high"
     assert comparison.severity == "none"
     assert comparison.risk_types == ()
+
+
+def test_context_transcript_containing_primary_passage_is_high_agreement():
+    comparison = compare_transcripts(
+        "1997 trat er in die CDU ein.",
+        (
+            "Die politische Karriere begann früh. 1997 trat er in die CDU ein, "
+            "fünf Jahre später wurde er gewählt."
+        ),
+    )
+
+    assert comparison.agreement == "high"
+    assert comparison.severity == "none"
+    assert comparison.risk_types == ()
+
+
+def test_context_transcript_accepts_spelled_number_and_degree_word():
+    comparison = compare_transcripts(
+        "Heute Nacht wird es bis zu 9°.",
+        "Im Westen bleibt es trocken. Heute Nacht wird es bis zu neun Grad.",
+    )
+
+    assert comparison.agreement == "high"
+    assert comparison.severity == "none"
+    assert comparison.risk_types == ()
+
+
+def test_primary_text_for_clip_includes_context_between_suspicious_segments():
+    segments = [
+        _segment("seg-0001", 0, 2, "Erster Verdacht."),
+        _segment("seg-0002", 2, 4, "Relevanter Kontext dazwischen."),
+        _segment("seg-0003", 4, 6, "Zweiter Verdacht."),
+    ]
+    document = TranscriptDocument(
+        episode_id="episode-1",
+        provider="openai",
+        model="whisper-1",
+        language="de",
+        text=" ".join(segment.text for segment in segments),
+        segments=segments,
+        usage=TranscriptUsage(audio_seconds=6, cost_usd=0.001),
+    )
+    plan = build_verification_regions(
+        document,
+        _analysis(document, "seg-0001", "seg-0003"),
+        mode="suspicious_segments_only",
+        audio_duration_seconds=6,
+        context_seconds=1,
+    )[0]
+
+    primary_text = _primary_text_for_clip(document, plan)
+
+    assert document.segments[1].text in primary_text
+    assert plan.source_segment_ids == ("seg-0001", "seg-0002", "seg-0003")
 
 
 @pytest.mark.parametrize(

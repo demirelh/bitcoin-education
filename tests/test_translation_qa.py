@@ -282,6 +282,15 @@ def test_non_sport_ratio_is_not_treated_as_score():
     assert "score_mismatch" not in _categories(document)
 
 
+def test_turkish_progressive_verbal_negation_is_accepted():
+    document = _evaluate(
+        "Seine Zukunft soll nicht auf dem Fußballplatz liegen.",
+        "Geleceğinin futbol sahasında olması düşünülmüyor.",
+    )
+
+    assert "negation_suspicion" not in _categories(document)
+
+
 def test_chronology_difference_creates_suspicion():
     document = _evaluate(
         "Zuvor traf der Minister die Länder, danach sprach er im Bundestag.",
@@ -317,6 +326,65 @@ def test_numeric_extractor_classifies_all_required_types():
     )
     kinds = {fact.kind for fact in facts}
     assert {"date", "time", "percent", "money", "temperature", "score"} <= kinds
+
+
+def test_numeric_extractor_normalizes_turkish_scaled_thousands():
+    facts = extract_numeric_facts("Resmi can kaybı 5 bine yükseldi.")
+
+    assert [(fact.kind, fact.value) for fact in facts] == [("casualty", "5000")]
+
+
+def test_numeric_extractor_does_not_split_turkish_compound_number():
+    assert extract_numeric_facts("Yirmi iki yaşında seçildi.") == []
+
+
+def test_numeric_context_does_not_label_elapsed_time_as_casualties():
+    source = (
+        "Mehr als 3 Wochen sind seit dem Erdbeben vergangen. "
+        "Die Zahl der Toten ist auf mehr als 5000 gestiegen."
+    )
+    target = "Depremden bu yana 3 haftadan fazla zaman geçti. Ölü sayısı 5 binden fazlaya yükseldi."
+
+    document = _evaluate(source, target)
+
+    assert not {
+        "casualty_mismatch",
+        "unexpected_casualty",
+        "number_mismatch",
+        "unexpected_number",
+    } & set(_categories(document))
+
+
+def test_degree_symbol_and_turkish_degree_word_are_equivalent():
+    document = _evaluate(
+        "Höchstwerte von 18° bis 26°.",
+        "En yüksek sıcaklıklar 18 derece ile 26 derece arasında.",
+    )
+
+    assert "temperature_mismatch" not in _categories(document)
+    assert "unexpected_temperature" not in _categories(document)
+
+
+def test_turkish_temperature_suffix_is_accepted():
+    document = _evaluate("Bis zu 9°.", "Sıcaklık 9 dereceye kadar düşecek.")
+
+    assert "temperature_mismatch" not in _categories(document)
+    assert "unexpected_number" not in _categories(document)
+
+
+def test_intentionally_removed_intro_is_not_quality_checked():
+    source_story, target_story = _story(
+        "s01",
+        "Heute im Studio Torsten Schröder um 20 Uhr.",
+        "",
+    )
+    source_story["story_type"] = "intro"
+    target_story["story_type"] = "intro"
+    source, target = _documents([(source_story, target_story)])
+
+    document = evaluate_translation_documents("ep-qa", source, target)
+
+    assert document.findings == []
 
 
 @pytest.fixture

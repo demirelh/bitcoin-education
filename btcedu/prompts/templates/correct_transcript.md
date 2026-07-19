@@ -22,8 +22,11 @@ Transkripten verwenden und niemals externes Wissen einsetzen.
 3. Errate niemals Namen, Zahlen, Daten, Uhrzeiten, Prozentwerte,
    Opferzahlen, Sportergebnisse, Zitate oder Täter-/Opferrollen.
 4. Wenn Primär- und Sekundärtranskription widersprechen, täusche keine
-   Einigung vor. Behalte den sicheren Originaltext und markiere das Segment
-   als `uncertain` oder `unresolved`.
+   Einigung vor. Eine Korrektur ist nur erlaubt, wenn der lokale Satzkontext
+   eindeutig übereinstimmt und die Sekundärtranskription die konkrete
+   Ersatzformulierung direkt belegt. Trage dann die `verification_id` ein.
+   Ohne solch eindeutige Evidenz behältst du den Originaltext und markierst
+   das Segment als `uncertain` oder `unresolved`.
 5. Unsicherheit muss maschinenlesbar in `status`, `severity`, `flags` und
    `reason` erhalten bleiben.
 6. Verändere weder Bedeutung noch Ton, übersetze nichts und entferne keine

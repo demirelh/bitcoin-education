@@ -3,7 +3,6 @@
 import hashlib
 import json
 import logging
-import re
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -880,12 +879,28 @@ def _call_story_translation(
                 translation.translated_headline.strip()
             ):
                 raise ValueError("Translation omitted the story headline")
-            risks = _translation_fidelity_risks(
-                story.source_text or story.text_de,
-                translation.translated_text,
+            risks = (
+                []
+                if story.story_type in {"intro", "outro"}
+                else _translation_fidelity_risks(
+                    story.source_text or story.text_de,
+                    translation.translated_text,
+                )
             )
             if risks:
-                raise ValueError(f"Translation changed protected facts: {', '.join(risks)}")
+                detail = ""
+                if "numbers" in risks:
+                    from btcedu.core.translation_qa import extract_numeric_facts
+
+                    source_values = [
+                        fact.value
+                        for fact in extract_numeric_facts(story.source_text or story.text_de)
+                    ]
+                    target_values = [
+                        fact.value for fact in extract_numeric_facts(translation.translated_text)
+                    ]
+                    detail = f" (source={source_values}, target={target_values})"
+                raise ValueError(f"Translation changed protected facts: {', '.join(risks)}{detail}")
             return translation, responses
         except (ValueError, json.JSONDecodeError) as exc:
             last_error = exc
@@ -915,7 +930,6 @@ def _parse_structured_response(response_text: str) -> dict:
     return json.loads(text[start : end + 1])
 
 
-_NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,:]\d+)*(?!\w)")
 _TRANSLATION_TERMS = {
     "fussball-wm": ("dünya kupası",),
     "weltmeisterschaft": ("dünya kupası",),
@@ -930,9 +944,11 @@ _TRANSLATION_TERMS = {
 def _translation_fidelity_risks(source_text: str, translated_text: str) -> list[str]:
     """Detect high-confidence factual regressions without judging semantic style."""
     risks: list[str] = []
-    source_numbers = Counter(_NUMBER_RE.findall(source_text.casefold()))
-    translated_numbers = Counter(_NUMBER_RE.findall(translated_text.casefold()))
-    if source_numbers != translated_numbers:
+    from btcedu.core.translation_qa import extract_numeric_facts
+
+    source_numbers = Counter(fact.value for fact in extract_numeric_facts(source_text))
+    translated_numbers = Counter(fact.value for fact in extract_numeric_facts(translated_text))
+    if translated_numbers - source_numbers:
         risks.append("numbers")
 
     source_lower = source_text.casefold()

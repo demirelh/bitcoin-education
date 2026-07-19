@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     transcription_secondary_provider: str = "openai"
     transcription_secondary_model: str = ""
     transcription_secondary_mode: str = "suspicious_segments_only"
+    transcription_secondary_minimum_severity: str = "minor"
     transcription_suspicious_segment_context_seconds: float = 15.0
     transcription_max_secondary_audio_seconds: float = 300.0
     transcription_max_secondary_clips: int = 10

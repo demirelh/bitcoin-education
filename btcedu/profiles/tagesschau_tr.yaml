@@ -15,6 +15,7 @@ stage_config:
       provider: openai
       model: gpt-4o-mini-transcribe
       mode: suspicious_segments_only
+      minimum_severity: major
     suspicious_segment_context_seconds: 15
     max_secondary_audio_seconds: 300
     max_secondary_clips: 10

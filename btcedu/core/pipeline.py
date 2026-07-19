@@ -531,6 +531,7 @@ def _run_stage(
                 create_review_task,
                 has_approved_review_for_artifacts,
                 has_pending_review_for_artifacts,
+                supersede_pending_reviews,
             )
             from btcedu.core.transcript_qa import load_transcript_qa
             from btcedu.core.transcript_qa import review_artifacts as transcript_qa_artifacts
@@ -539,6 +540,7 @@ def _run_stage(
             if not qa:
                 raise ValueError(f"Transcript QA artifact missing for episode {episode.episode_id}")
             if not qa.get("blocked"):
+                supersede_pending_reviews(session, episode.episode_id, "transcript_qa")
                 elapsed = time.monotonic() - t0
                 return StageResult(
                     "review_gate_transcript_qa",
@@ -701,6 +703,7 @@ def _run_stage(
                 has_approved_review_for_artifacts,
                 has_pending_review,
                 has_pending_review_for_artifacts,
+                supersede_pending_reviews,
             )
 
             # Phase 7: independent factual quality gate with bounded targeted
@@ -749,6 +752,8 @@ def _run_stage(
                 )
 
                 if qa_result.decision == "green" or manual_ok:
+                    if qa_result.decision == "green":
+                        supersede_pending_reviews(session, episode.episode_id, "translation_qa")
                     # Keep the legacy adapt-approval invariant for auto-approve
                     # profiles so downstream adapt-review checks still pass.
                     auto_approve, _ = _profile_pipeline_flags(settings, episode)
@@ -1696,7 +1701,10 @@ def retry_episode(
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
-    if not episode.error_message and episode.status != EpisodeStatus.FAILED:
+    if not episode.error_message and episode.status not in {
+        EpisodeStatus.FAILED,
+        EpisodeStatus.COST_LIMIT,
+    }:
         raise ValueError(
             f"Episode {episode_id} is not in a failed state "
             f"(status='{episode.status.value}', no error_message). "
@@ -1709,6 +1717,43 @@ def retry_episode(
         episode.status.value,
         episode.retry_count + 1,
     )
+
+    if episode.status in {EpisodeStatus.FAILED, EpisodeStatus.COST_LIMIT}:
+        failed_run = (
+            session.query(PipelineRun)
+            .filter(
+                PipelineRun.episode_id == episode.id,
+                PipelineRun.status == RunStatus.FAILED,
+            )
+            .order_by(PipelineRun.id.desc())
+            .first()
+        )
+        if failed_run is None:
+            raise ValueError(
+                f"Episode {episode_id} has status '{episode.status.value}' "
+                "but no failed pipeline run to resume."
+            )
+        failed_stage_name = next(
+            (
+                stage_name
+                for stage_name, pipeline_stage in _STAGE_NAME_TO_PIPELINE_STAGE.items()
+                if pipeline_stage == failed_run.stage
+            ),
+            None,
+        )
+        resume_status = next(
+            (
+                required_status
+                for stage_name, required_status in _get_stages(settings, episode)
+                if stage_name == failed_stage_name
+            ),
+            None,
+        )
+        if resume_status is None:
+            raise ValueError(
+                f"Episode {episode_id} cannot resume failed stage '{failed_run.stage.value}'."
+            )
+        episode.status = resume_status
 
     # Clear error to allow pipeline to proceed
     episode.error_message = None

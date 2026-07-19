@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import json_repair
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -200,31 +201,51 @@ def segment_broadcast(
             else None
         )
 
-        response: ClaudeResponse = call_claude(
-            system_prompt=system_prompt,
-            user_message=user_message,
-            settings=settings,
-            dry_run_path=dry_run_path,
-            max_tokens=16384,
-            json_mode=True,
-        )
+        responses: list[ClaudeResponse] = []
+        story_doc: StoryDocument | None = None
+        for attempt in range(2):
+            attempt_message = user_message
+            if attempt:
+                attempt_message += (
+                    "\n\nWICHTIG: Die vorherige Antwort wurde am Ende abgeschnitten. "
+                    "Gib das vollständige Dokument erneut als kompaktes JSON ohne Markdown, "
+                    "Einrückung oder zusätzliche Erklärungen aus. Keine Story darf fehlen "
+                    "oder unvollständig sein."
+                )
+            response = call_claude(
+                system_prompt=system_prompt,
+                user_message=attempt_message,
+                settings=settings,
+                dry_run_path=dry_run_path,
+                max_tokens=32768,
+                json_mode=True,
+            )
+            responses.append(response)
+            try:
+                story_data = _parse_json_response(response.text, episode_id)
+                if not story_data.get("episode_id") or (
+                    story_data["episode_id"] == "EPISODE_ID_PLACEHOLDER"
+                ):
+                    story_data["episode_id"] = episode_id
+                _hydrate_story_data(story_data, corrected_doc)
+                story_doc = StoryDocument.model_validate(story_data)
+                story_doc = _normalize_story_inventory(story_doc, corrected_doc)
+                break
+            except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+                if attempt:
+                    raise ValueError(
+                        f"Story segmentation output remained invalid after compact retry: {exc}"
+                    ) from exc
+                logger.warning(
+                    "Segmentation output invalid or truncated (%s); retrying compact JSON",
+                    exc,
+                )
 
-        # Parse and validate JSON response
-        story_data = _parse_json_response(response.text, episode_id)
-
-        # Inject episode_id if not present
-        if "episode_id" not in story_data or not story_data["episode_id"]:
-            story_data["episode_id"] = episode_id
-        elif story_data["episode_id"] == "EPISODE_ID_PLACEHOLDER":
-            story_data["episode_id"] = episode_id
-
-        # Validate with Pydantic
-        try:
-            story_doc = StoryDocument.model_validate(story_data)
-            story_doc = _normalize_story_inventory(story_doc, corrected_doc)
-        except ValidationError as e:
-            logger.warning("Segmentation output failed validation: %s", e)
-            raise ValueError(f"Story segmentation output failed Pydantic validation: {e}") from e
+        if story_doc is None:
+            raise ValueError("Story segmentation did not produce a document.")
+        input_tokens = sum(response.input_tokens for response in responses)
+        output_tokens = sum(response.output_tokens for response in responses)
+        cost_usd = sum(response.cost_usd for response in responses)
 
         # Write stories.json
         stories_path.parent.mkdir(parents=True, exist_ok=True)
@@ -259,16 +280,17 @@ def segment_broadcast(
             "model": settings.claude_model,
             "model_params": {
                 "temperature": settings.claude_temperature,
-                "max_tokens": 16384,
+                "max_tokens": 32768,
             },
             "input_files": [
                 str(path) for path in (corrected_path, structured_corrected_path) if path.exists()
             ],
             "input_content_hash": input_content_hash,
             "output_files": [str(stories_path)],
-            "input_tokens": response.input_tokens,
-            "output_tokens": response.output_tokens,
-            "cost_usd": response.cost_usd,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cost_usd": cost_usd,
+            "attempt_count": len(responses),
             "duration_seconds": round(elapsed, 2),
             "story_count": story_doc.total_stories,
             "total_duration_seconds": story_doc.total_duration_seconds,
@@ -295,9 +317,9 @@ def segment_broadcast(
         # Update PipelineRun
         pipeline_run.status = RunStatus.SUCCESS
         pipeline_run.completed_at = _utcnow()
-        pipeline_run.input_tokens = response.input_tokens
-        pipeline_run.output_tokens = response.output_tokens
-        pipeline_run.estimated_cost_usd = response.cost_usd
+        pipeline_run.input_tokens = input_tokens
+        pipeline_run.output_tokens = output_tokens
+        pipeline_run.estimated_cost_usd = cost_usd
 
         # Update Episode
         episode.status = EpisodeStatus.SEGMENTED
@@ -309,7 +331,7 @@ def segment_broadcast(
             episode_id,
             story_doc.total_stories,
             story_doc.total_duration_seconds,
-            response.cost_usd,
+            cost_usd,
         )
 
         return SegmentationResult(
@@ -318,9 +340,9 @@ def segment_broadcast(
             provenance_path=str(provenance_path),
             story_count=story_doc.total_stories,
             total_duration_seconds=story_doc.total_duration_seconds,
-            input_tokens=response.input_tokens,
-            output_tokens=response.output_tokens,
-            cost_usd=response.cost_usd,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cost_usd=cost_usd,
             skipped=False,
         )
 
@@ -419,6 +441,10 @@ def _parse_json_response(response_text: str, episode_id: str) -> dict:
         try:
             return json.loads(cleaned)
         except json.JSONDecodeError as e:
+            repaired = json_repair.loads(cleaned)
+            if isinstance(repaired, dict) and repaired:
+                logger.info("json_repair recovered segmentation output for %s", episode_id)
+                return repaired
             logger.error("Failed to parse JSON response for %s: %s", episode_id, e)
             logger.error("Response text (first 500 chars): %s", response_text[:500])
             raise
@@ -477,8 +503,8 @@ def _normalize_story_inventory(
         story.story_id = f"s{index:02d}"
         story.order = index
 
-    if corrected_doc is None:
-        return story_doc
+        if corrected_doc is None:
+            return story_doc
 
     segment_by_id = {segment.segment_id: segment for segment in corrected_doc.segments}
     referenced_ids: list[str] = []
@@ -531,3 +557,37 @@ def _normalize_story_inventory(
     story_doc.stories = normalized_stories
     story_doc.total_stories = len(normalized_stories)
     return story_doc
+
+
+def _hydrate_story_data(
+    story_data: dict,
+    corrected_doc: CorrectedTranscriptDocument | None,
+) -> None:
+    """Fill verbose source fields deterministically from compact model boundaries."""
+    if corrected_doc is None:
+        return
+    segment_by_id = {segment.segment_id: segment for segment in corrected_doc.segments}
+    stories = story_data.get("stories")
+    if not isinstance(stories, list):
+        return
+    total_duration = 0
+    for story in stories:
+        if not isinstance(story, dict):
+            continue
+        segment_ids = story.get("source_segment_ids")
+        if not isinstance(segment_ids, list) or not segment_ids:
+            continue
+        if any(segment_id not in segment_by_id for segment_id in segment_ids):
+            continue
+        segments = [segment_by_id[segment_id] for segment_id in segment_ids]
+        source_text = " ".join(segment.corrected_text.strip() for segment in segments)
+        duration = max(0, round(segments[-1].end_seconds - segments[0].start_seconds))
+        story["text_de"] = source_text
+        story["source_text"] = source_text
+        story["source_start_seconds"] = segments[0].start_seconds
+        story["source_end_seconds"] = segments[-1].end_seconds
+        story["word_count"] = len(source_text.split())
+        story["estimated_duration_seconds"] = duration
+        total_duration += duration
+    story_data["total_stories"] = len(stories)
+    story_data["total_duration_seconds"] = total_duration

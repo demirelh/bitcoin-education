@@ -1089,16 +1089,19 @@ def _evaluate_decision(
         red = True
         reasons.append("unresolved_transcript")
     if any(
-        _category_bucket(f.category) == "hallucination"
-        or f.category.lower()
-        in {
-            "factual_deviation",
-            "unsupported_addition",
-            "date_mismatch",
-            "score_mismatch",
-            "result_mismatch",
-            "semantic_role_disagreement",
-        }
+        f.severity in {"major", "critical"}
+        and (
+            _category_bucket(f.category) == "hallucination"
+            or f.category.lower()
+            in {
+                "factual_deviation",
+                "unsupported_addition",
+                "date_mismatch",
+                "score_mismatch",
+                "result_mismatch",
+                "semantic_role_disagreement",
+            }
+        )
         for f in open_findings
     ):
         red = True

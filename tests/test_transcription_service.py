@@ -89,6 +89,7 @@ def test_profile_transcription_config_overrides_settings():
                 "provider": "openai",
                 "model": "secondary-model",
                 "mode": "suspicious_segments_only",
+                "minimum_severity": "major",
             },
             "suspicious_segment_context_seconds": 12,
             "max_secondary_audio_seconds": 240,
@@ -98,6 +99,7 @@ def test_profile_transcription_config_overrides_settings():
     assert config.primary.model == "primary-model"
     assert config.secondary.enabled is True
     assert config.secondary.model == "secondary-model"
+    assert config.secondary_minimum_severity == "major"
     assert config.suspicious_segment_context_seconds == 12
     assert config.max_secondary_audio_seconds == 240
 
@@ -150,6 +152,30 @@ class _FakeAudio:
         assert format == "mp3"
         with open(path, "wb") as output:
             output.write(b"chunk")
+
+
+@patch("btcedu.services.transcription_service.OpenAI")
+def test_openai_transcribe_model_uses_json_and_local_duration(mock_openai, tmp_path):
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"audio")
+    response = MagicMock()
+    response.model_dump.return_value = {"text": "Guten Abend."}
+    mock_openai.return_value.audio.transcriptions.create.return_value = response
+    provider = OpenAITranscriptionProvider("sk-test", cost_per_minute_usd=0.006)
+
+    with patch("pydub.AudioSegment.from_file", return_value=_FakeAudio(30_000)):
+        result = provider.transcribe(
+            str(audio_path),
+            model="gpt-4o-mini-transcribe",
+            language="de",
+        )
+
+    call = mock_openai.return_value.audio.transcriptions.create.call_args.kwargs
+    assert call["response_format"] == "json"
+    assert "timestamp_granularities" not in call
+    assert result.audio_seconds == 30
+    assert result.cost_usd == pytest.approx(0.003)
+    assert result.segments[0].end_seconds == 30
 
 
 def test_chunked_structured_transcription_offsets_timestamps(tmp_path):

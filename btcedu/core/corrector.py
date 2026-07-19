@@ -51,6 +51,17 @@ _PROTECTED_TOKEN_RE = re.compile(
     r"|\b(?:WM|EM|Welt(?:meister\w*|meisterschaft)|Europa(?:meister\w*|meisterschaft))\b",
     re.IGNORECASE,
 )
+_TURKISH_TRANSLATION_MARKERS = {
+    "ile",
+    "için",
+    "olarak",
+    "değil",
+    "bugün",
+    "yarın",
+    "kadar",
+    "konut",
+    "oldu",
+}
 
 
 def _has_protected_token(span: str) -> bool:
@@ -91,6 +102,27 @@ def _revert_protected_token_changes(original: str, corrected: str) -> str:
                     orig_span,
                 )
     return result
+
+
+def _contains_unexpected_turkish(original: str, corrected: str) -> bool:
+    """Detect Turkish translation fragments newly introduced into German source text."""
+    original_tokens = set(re.findall(r"[^\W\d_]+", original.casefold(), re.UNICODE))
+    corrected_tokens = set(re.findall(r"[^\W\d_]+", corrected.casefold(), re.UNICODE))
+    added_tokens = corrected_tokens - original_tokens
+    return bool(added_tokens & _TURKISH_TRANSLATION_MARKERS) or bool(
+        re.search(r"[ğıİşç]", corrected) and not re.search(r"[ğıİşç]", original)
+    )
+
+
+def _is_supported_by_verification(corrected: str, verifications: list[dict]) -> bool:
+    """Return true when secondary ASR contains the corrected segment."""
+    from btcedu.core.transcript_verifier import compare_transcripts
+
+    return any(
+        item.get("status") == "success"
+        and compare_transcripts(corrected, str(item.get("secondary_text") or "")).severity == "none"
+        for item in verifications
+    )
 
 
 def _utcnow() -> datetime:
@@ -711,10 +743,35 @@ def _finalize_correction_segments(
         flags = list(dict.fromkeys(model.flags))
         reason = model.reason
         verification_ids = [item["verification_id"] for item in source.get("verifications", [])]
+        verifications = source.get("verifications", [])
 
         from btcedu.core.transcript_verifier import compare_transcripts
 
+        if _contains_unexpected_turkish(original, corrected):
+            logger.warning(
+                "Rejected non-German correction for segment %s; original retained",
+                source["segment_id"],
+            )
+            corrected = original
+            status = "verified"
+            severity = "none"
+            flags = []
+            reason = "Nicht-deutsche Modellantwort verworfen; Originaltext beibehalten."
+
         comparison = compare_transcripts(original, corrected)
+        verification_supports_correction = _is_supported_by_verification(
+            corrected,
+            verifications,
+        )
+        if verification_supports_correction:
+            status = "corrected" if corrected != original else "verified"
+            severity = "none"
+            flags = []
+            reason = (
+                "Korrektur durch Sekundärtranskription bestätigt."
+                if corrected != original
+                else "Primärtext durch Sekundärtranskription bestätigt."
+            )
         correction_risks = set(comparison.risk_types)
         dangerous_changes = correction_risks & {
             "number_disagreement",
@@ -726,7 +783,7 @@ def _finalize_correction_segments(
             "possible_name_disagreement",
             "semantic_role_disagreement",
         }
-        if dangerous_changes:
+        if dangerous_changes and not verification_supports_correction:
             corrected = original
             status = "unresolved"
             severity = (
@@ -741,17 +798,16 @@ def _finalize_correction_segments(
             )
             flags = list(dict.fromkeys([*flags, *sorted(dangerous_changes)]))
             reason = "Riskante faktische Änderung wurde verworfen; Originaltext beibehalten."
-        elif comparison.token_difference >= 0.5:
+        elif comparison.token_difference >= 0.5 and not verification_supports_correction:
             corrected = original
             status = "unresolved"
             severity = "major"
             flags = list(dict.fromkeys([*flags, "possible_free_reconstruction"]))
             reason = "Zu starke freie Rekonstruktion wurde verworfen; Originaltext beibehalten."
 
-        verifications = source.get("verifications", [])
         verification_risks = {risk for item in verifications for risk in item.get("risk_types", [])}
         failed_verification = any(item.get("status") == "failed" for item in verifications)
-        if failed_verification or verification_risks:
+        if failed_verification or (verification_risks and not verification_supports_correction):
             blocking = verification_risks & {
                 "casualty_disagreement",
                 "score_disagreement",

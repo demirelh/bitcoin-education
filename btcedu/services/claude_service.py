@@ -332,7 +332,7 @@ def _call_copilot_cli(
         "--output-format",
         "json",
         "-p",
-        combined,
+        _copilot_prompt_argument(combined, prompt_path),
     ]
 
     t0 = _time.time()
@@ -403,6 +403,16 @@ def _call_copilot_cli(
         output_tokens=output_tokens or len(text) // 4,
         cost_usd=0.0,
         model=f"copilot/{model}",
+    )
+
+
+def _copilot_prompt_argument(prompt: str, prompt_path: str) -> str:
+    """Keep large prompts out of argv so Linux ARG_MAX cannot abort the CLI."""
+    if len(prompt.encode("utf-8")) < 60_000:
+        return prompt
+    return (
+        f"Read the complete task from {prompt_path} and follow it exactly. "
+        "Return only the requested final output."
     )
 
 

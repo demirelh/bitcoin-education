@@ -14,6 +14,7 @@ from btcedu.config import Settings
 from btcedu.services.claude_service import (
     ClaudeResponse,
     ModelRefusalError,
+    _copilot_prompt_argument,
     _is_copilot_refusal,
     call_claude,
 )
@@ -47,6 +48,15 @@ def test_is_copilot_refusal_detects_production_variants(text):
 
 def test_is_copilot_refusal_passes_legit_turkish():
     assert _is_copilot_refusal(LEGIT_TURKISH) is False
+
+
+def test_large_copilot_prompt_uses_tempfile_instruction():
+    argument = _copilot_prompt_argument("x" * 60_000, "/tmp/prompt.txt")
+
+    assert argument == (
+        "Read the complete task from /tmp/prompt.txt and follow it exactly. "
+        "Return only the requested final output."
+    )
 
 
 def _refusal_response():

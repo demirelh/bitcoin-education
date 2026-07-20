@@ -119,6 +119,71 @@ def test_marks_incomplete_sentence_conservatively():
     assert "possible_missing_words" in suspicious.reasons
 
 
+def test_dangling_word_not_flagged_when_next_segment_continues_seamlessly():
+    """A segment ending mid-clause with zero gap before the next segment is a
+    normal ASR chunking artifact, not evidence of missing/truncated words.
+
+    Regression test for the false-positive that caused suspicious-region
+    planning to over-select audio for secondary verification (episode
+    GG18EjVz8x8): continuous news narration was split by the ASR at
+    prepositions/conjunctions/articles with no silence gap, and every such
+    boundary was previously flagged as a "major" incomplete_sentence finding.
+    """
+    analysis = _analyze_document(
+        _document(
+            _segment(
+                "seg-0001",
+                "Spanien feiert seine Fußball-Nationalmannschaft nach dem Sieg bei",
+                start=0,
+                end=9.24,
+            ),
+            _segment(
+                "seg-0002",
+                "der Weltmeisterschaft. Mit einem späten Tor gegen Argentinien.",
+                start=9.24,
+                end=15.0,
+            ),
+        ),
+        {},
+    )
+
+    first = next(
+        (segment for segment in analysis.suspicious_segments if segment.segment_id == "seg-0001"),
+        None,
+    )
+    reasons = first.reasons if first is not None else []
+    assert "incomplete_sentence" not in reasons
+    assert "possible_missing_words" not in reasons
+
+
+def test_dangling_word_flagged_when_real_gap_precedes_next_segment():
+    """A genuine silence gap after a dangling connector still indicates
+    likely truncated/missing content and must remain flagged."""
+    analysis = _analyze_document(
+        _document(
+            _segment(
+                "seg-0001",
+                "Die Verhandlungen dauern an und",
+                start=0,
+                end=5,
+            ),
+            _segment(
+                "seg-0002",
+                "Neue Details werden erwartet.",
+                start=8,
+                end=12,
+            ),
+        ),
+        {},
+    )
+
+    first = next(
+        segment for segment in analysis.suspicious_segments if segment.segment_id == "seg-0001"
+    )
+    assert "incomplete_sentence" in first.reasons
+    assert "possible_missing_words" in first.reasons
+
+
 def test_marks_strong_repetition():
     analysis = _analyze_document(
         _document(_segment("seg-0001", "Fehler Fehler Fehler Fehler im Transkript.")),

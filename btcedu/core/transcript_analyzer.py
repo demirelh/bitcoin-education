@@ -35,7 +35,7 @@ from btcedu.models.transcript_schema import (
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_RULESET_VERSION = "1.2"
+ANALYSIS_RULESET_VERSION = "1.3"
 
 _WORD_RE = re.compile(r"[A-Za-zÄÖÜäöüß]+(?:[-'][A-Za-zÄÖÜäöüß]+)?")
 _NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?(?!\w)")
@@ -308,7 +308,22 @@ def _analyze_document(
         normalized = [word.lower() for word in words]
         last_word = normalized[-1] if normalized else ""
 
-        if last_word in _DANGLING_WORDS:
+        next_segment = document.segments[index + 1] if index + 1 < len(document.segments) else None
+        gap_seconds = (
+            next_segment.start_seconds - segment.end_seconds if next_segment is not None else None
+        )
+        min_gap = float(config.get("incomplete_sentence_min_gap_seconds", 0.75))
+        # A segment ending in a dangling connector (e.g. "und", "der") is only
+        # genuine evidence of missing/truncated words when nothing follows it,
+        # or when a real audio gap separates it from the next segment. ASR
+        # segmenters routinely split continuous speech mid-clause with zero
+        # gap; that is a chunking artifact, not lost content, since the
+        # sentence is completed verbatim by the immediately following
+        # segment. Flagging every such boundary as "major" was the dominant
+        # source of suspicious-segment false positives.
+        if last_word in _DANGLING_WORDS and (
+            next_segment is None or (gap_seconds is not None and gap_seconds >= min_gap)
+        ):
             reasons["incomplete_sentence"] = "major"
             reasons["possible_missing_words"] = "major"
 
@@ -333,7 +348,6 @@ def _analyze_document(
         if _looks_like_asr_fragment(segment.text, words):
             reasons["asr_fragment"] = "major"
 
-        next_segment = document.segments[index + 1] if index + 1 < len(document.segments) else None
         if (
             len(words) >= int(config.get("missing_sentence_end_min_words", 12))
             and not _TERMINAL_RE.search(segment.text.strip())

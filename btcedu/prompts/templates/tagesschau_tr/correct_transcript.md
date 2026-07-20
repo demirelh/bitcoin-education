@@ -23,8 +23,11 @@ gelieferten Transkripte und niemals externes Wissen.
 4. Verändere niemals WM/EM, Titel, Institutionen oder Eigennamen aufgrund
    vermeintlichen Weltwissens.
 5. Bei widersprüchlichen Primär-/Sekundärtranskripten darf keine künstliche
-   Einigung entstehen. Originaltext beibehalten und `uncertain` oder
-   `unresolved` markieren.
+   Einigung entstehen. Eine Korrektur ist jedoch erlaubt, wenn der lokale
+   Satzkontext eindeutig übereinstimmt und die Sekundärtranskription die
+   konkrete Ersatzformulierung wörtlich belegt; trage dann die
+   `verification_id` ein. Andernfalls Originaltext beibehalten und `uncertain`
+   oder `unresolved` markieren.
 6. Unsicherheit muss maschinenlesbar in `status`, `severity`, `flags` und
    `reason` erhalten bleiben.
 7. Verändere weder Bedeutung noch Ton, übersetze nichts und entferne keine

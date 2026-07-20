@@ -85,6 +85,11 @@ class TestRevertProtectedTokenChanges:
         assert "Fußball-WM" in result
         assert "Fußball-EM" not in result
 
+    def test_preserves_repair_around_unchanged_tournament_token(self):
+        original = "das WM-Titel."
+        corrected = "der Stolz über den WM-Titel."
+        assert _revert_protected_token_changes(original, corrected) == corrected
+
     def test_reverts_date_shift(self):
         original = "die Wettervorhersage für morgen Sonntag, den 12. Juli."
         corrected = "die Wettervorhersage für morgen Sonntag, den 13. Juli."
@@ -199,6 +204,37 @@ def test_context_verification_risks_are_recomputed_per_segment():
     assert segment.severity == "none"
     assert segment.flags == []
     assert segment.reason is None
+
+
+def test_unsupported_large_deletion_is_rejected():
+    original = "Erster vollständiger Satz. Zweiter wichtiger Satz bleibt erhalten."
+    payload = {
+        "segments": [
+            {
+                "segment_id": "seg-0001",
+                "start_seconds": 0,
+                "end_seconds": 5,
+                "primary_text": original,
+                "analysis": None,
+                "verifications": [],
+            }
+        ]
+    }
+    response = _ModelCorrectionResponse(
+        segments=[
+            _ModelCorrectionSegment(
+                segment_id="seg-0001",
+                corrected_text="Zweiter wichtiger Satz.",
+                status="corrected",
+                severity="minor",
+                flags=[],
+            )
+        ]
+    )
+    segment = _finalize_correction_segments(payload, response)[0]
+    assert segment.corrected_text == original
+    assert segment.status == "unresolved"
+    assert "possible_content_deletion" in segment.flags
 
 
 def test_unchanged_text_does_not_keep_unsupported_model_risk_flags():

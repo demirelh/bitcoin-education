@@ -195,6 +195,28 @@ def test_marks_strong_repetition():
     assert "strong_repetition" in suspicious.reasons
 
 
+def test_marks_repeated_multi_segment_block_as_major():
+    analysis = _analyze_document(
+        _document(
+            _segment("seg-0001", "Heute überwiegt die Freude", start=0, end=4),
+            _segment("seg-0002", "über den Titel.", start=5, end=9),
+            _segment("seg-0003", "Heute überwiegt die Freude", start=10, end=14),
+            _segment("seg-0004", "über den Titel.", start=15, end=19),
+        ),
+        {},
+    )
+    repeated = [
+        item for item in analysis.suspicious_segments if "repeated_segment_block" in item.reasons
+    ]
+    assert [item.segment_id for item in repeated] == [
+        "seg-0001",
+        "seg-0002",
+        "seg-0003",
+        "seg-0004",
+    ]
+    assert all(item.severity == "major" for item in repeated)
+
+
 def test_marks_low_provider_confidence():
     analysis = _analyze_document(
         _document(

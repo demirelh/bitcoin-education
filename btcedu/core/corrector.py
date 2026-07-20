@@ -68,6 +68,11 @@ def _has_protected_token(span: str) -> bool:
     return bool(_PROTECTED_TOKEN_RE.search(span))
 
 
+def _protected_tokens(span: str) -> tuple[str, ...]:
+    """Return factual tokens whose values must remain unchanged."""
+    return tuple(match.group(0).casefold() for match in _PROTECTED_TOKEN_RE.finditer(span))
+
+
 def _revert_protected_token_changes(original: str, corrected: str) -> str:
     """Restore original wording for any ASR-correction edit that touched a
     protected token (numbers/dates or sport-tournament names).
@@ -93,7 +98,11 @@ def _revert_protected_token_changes(original: str, corrected: str) -> str:
         corr_span = " ".join(corr_words[j1:j2])
         if not corr_span or orig_span == corr_span:
             continue
-        if _has_protected_token(orig_span) or _has_protected_token(corr_span):
+        # A protected token that is present unchanged may share an opcode with
+        # a legitimate surrounding repair (for example "das WM-Titel" ->
+        # "der Stolz über den WM-Titel"). Only reject the edit when the
+        # protected token values themselves changed.
+        if _protected_tokens(orig_span) != _protected_tokens(corr_span):
             if corr_span in result:
                 result = result.replace(corr_span, orig_span, 1)
                 logger.info(
@@ -758,11 +767,23 @@ def _finalize_correction_segments(
             flags = []
             reason = "Nicht-deutsche Modellantwort verworfen; Originaltext beibehalten."
 
-        comparison = compare_transcripts(original, corrected)
         verification_supports_correction = _is_supported_by_verification(
             corrected,
             verifications,
         )
+        original_words = original.split()
+        corrected_words = corrected.split()
+        if (
+            original_words
+            and len(corrected_words) < len(original_words) * 0.7
+            and not verification_supports_correction
+        ):
+            corrected = original
+            status = "unresolved"
+            severity = "major"
+            flags = list(dict.fromkeys([*flags, "possible_content_deletion"]))
+            reason = "Starke unbelegte Kürzung wurde verworfen; Originaltext beibehalten."
+        comparison = compare_transcripts(original, corrected)
         if verification_supports_correction:
             status = "corrected" if corrected != original else "verified"
             severity = "none"

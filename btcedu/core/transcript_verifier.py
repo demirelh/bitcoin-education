@@ -38,7 +38,7 @@ from btcedu.services.errors import ErrorCategory, PipelineError
 
 logger = logging.getLogger(__name__)
 
-VERIFICATION_COMPARATOR_VERSION = "1.2"
+VERIFICATION_COMPARATOR_VERSION = "1.4"
 _VALID_MODES = {"disabled", "full", "suspicious_segments_only"}
 _SEVERITY_ORDER = {"minor": 0, "major": 1, "critical": 2}
 _TOKEN_RE = re.compile(r"[^\W_]+(?:['’-][^\W_]+)*|\d+(?:[.,:]\d+)*%?", re.UNICODE)
@@ -229,6 +229,7 @@ def compare_transcripts(primary_text: str, secondary_text: str) -> TranscriptCom
             severity="none",
         )
     context_passage = _best_context_passage(primary_text, secondary_text)
+    locally_aligned = context_passage is not None
     if context_passage is not None:
         secondary_text = context_passage
         secondary_tokens = _normalized_tokens(context_passage)
@@ -240,6 +241,18 @@ def compare_transcripts(primary_text: str, secondary_text: str) -> TranscriptCom
             agreement="high",
             risk_types=(),
             severity="none",
+        )
+    # A provider returns one transcript for the whole context clip. If a short
+    # target segment cannot be aligned inside it, names, numbers, and negations
+    # elsewhere in the clip must not be attributed to that segment. Preserve
+    # the low textual agreement, but leave the factual risk untyped.
+    context_is_much_longer = len(secondary_tokens) > max(1, len(primary_tokens)) * 2
+    if not locally_aligned and context_is_much_longer:
+        return TranscriptComparison(
+            token_difference=token_difference,
+            agreement="low" if similarity < 0.5 else "medium",
+            risk_types=(),
+            severity="minor" if token_difference >= 0.4 else "none",
         )
     risks: set[str] = set()
 
@@ -278,7 +291,15 @@ def compare_transcripts(primary_text: str, secondary_text: str) -> TranscriptCom
 
     primary_names = _name_candidates(primary_text)
     secondary_names = _name_candidates(secondary_text)
-    if primary_names != secondary_names and (primary_names or secondary_names):
+    # Do not attribute names from an entire context clip to one short source
+    # segment when no local passage could be aligned. Region-level comparison
+    # still detects real name disagreements because the texts are comparable.
+    context_is_much_longer = len(secondary_tokens) > max(1, len(primary_tokens)) * 2
+    if (
+        (locally_aligned or not context_is_much_longer)
+        and primary_names != secondary_names
+        and (primary_names or secondary_names)
+    ):
         risks.add("possible_name_disagreement")
 
     if _is_incomplete(primary_tokens, secondary_tokens):
@@ -584,6 +605,7 @@ def verify_transcript(
             mode,
             verified_regions,
         )
+        verification_path.with_name(verification_path.name + ".stale").unlink(missing_ok=True)
         elapsed = time.monotonic() - started
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
         provenance_path.write_text(

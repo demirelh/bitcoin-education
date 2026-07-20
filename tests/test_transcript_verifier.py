@@ -339,6 +339,17 @@ def test_context_alignment_does_not_copy_unrelated_clip_facts():
     assert comparison.risk_types == ()
 
 
+def test_unaligned_long_context_does_not_attribute_unrelated_names():
+    comparison = compare_transcripts(
+        "Es ist eine große Herausforderung.",
+        (
+            "Als erstes wurden sie von König Felipe empfangen. Danach fuhr das Team "
+            "zum Regierungssitz und feierte mit vielen Menschen in Madrid."
+        ),
+    )
+    assert "possible_name_disagreement" not in comparison.risk_types
+
+
 def test_context_alignment_preserves_local_name_disagreement():
     comparison = compare_transcripts(
         "Angela Merkel hat das Gesetz unterstützt.",
@@ -637,7 +648,7 @@ def test_idempotency_force_and_stale_invalidation(db_session, tmp_path):
         stale_path = Path(first.verification_path + ".stale")
         assert stale_path.exists()
 
-        rerun = verify_transcript(db_session, document.episode_id, settings)
+        rerun = verify_transcript(db_session, document.episode_id, settings, force=True)
 
     assert rerun.skipped is False
     assert provider.transcribe.call_count == 3

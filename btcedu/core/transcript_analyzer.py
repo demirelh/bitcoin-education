@@ -35,7 +35,7 @@ from btcedu.models.transcript_schema import (
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_RULESET_VERSION = "1.3"
+ANALYSIS_RULESET_VERSION = "1.4"
 
 _WORD_RE = re.compile(r"[A-Za-zÄÖÜäöüß]+(?:[-'][A-Za-zÄÖÜäöüß]+)?")
 _NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?(?!\w)")
@@ -121,6 +121,7 @@ _REASON_ORDER = [
     "unusually_short_segment",
     "unusually_long_segment",
     "strong_repetition",
+    "repeated_segment_block",
     "many_non_alphabetic_characters",
     "asr_fragment",
     "missing_sentence_end",
@@ -300,6 +301,7 @@ def _analyze_document(
 ) -> TranscriptAnalysisDocument:
     flagged: list[SuspiciousTranscriptSegment] = []
     name_variants = _proper_name_variant_segments(document.segments)
+    repeated_block_ids = _repeated_segment_block_ids(document.segments)
 
     for index, segment in enumerate(document.segments):
         reasons: dict[str, str] = {}
@@ -337,6 +339,8 @@ def _analyze_document(
 
         if _has_strong_repetition(normalized):
             reasons["strong_repetition"] = "critical"
+        if segment.segment_id in repeated_block_ids:
+            reasons["repeated_segment_block"] = "major"
 
         visible_chars = [char for char in segment.text if not char.isspace()]
         non_alpha = sum(not char.isalpha() for char in visible_chars)
@@ -475,6 +479,25 @@ def _mark_verification_stale(settings: Settings, episode_id: str) -> None:
 
 def _words(text: str) -> list[str]:
     return _WORD_RE.findall(text)
+
+
+def _repeated_segment_block_ids(segments: list[TranscriptSegment]) -> set[str]:
+    """Find immediately repeated multi-segment blocks produced by ASR loops.
+
+    A two-or-more segment block repeated verbatim is far less likely to be
+    ordinary rhetorical repetition than a single repeated sentence, and must
+    be sent to secondary verification instead of being treated as a harmless
+    short segment.
+    """
+    normalized = [tuple(word.casefold() for word in _words(item.text)) for item in segments]
+    repeated: set[str] = set()
+    for width in range(2, min(4, len(segments) // 2 + 1)):
+        for start in range(0, len(segments) - 2 * width + 1):
+            first = normalized[start : start + width]
+            second = normalized[start + width : start + 2 * width]
+            if first == second and all(first):
+                repeated.update(item.segment_id for item in segments[start : start + 2 * width])
+    return repeated
 
 
 def _has_strong_repetition(words: list[str]) -> bool:

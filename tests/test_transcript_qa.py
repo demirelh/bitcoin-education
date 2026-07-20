@@ -8,12 +8,15 @@ from click.testing import CliRunner
 
 from btcedu.core.pipeline import _run_stage
 from btcedu.core.reviewer import approve_review, get_review_detail
-from btcedu.core.transcript_qa import evaluate_transcript_qa, load_transcript_qa
+from btcedu.core.transcript_qa import _evaluate, evaluate_transcript_qa, load_transcript_qa
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
 from btcedu.models.review import ReviewStatus, ReviewTask
 from btcedu.models.transcript_schema import (
     CorrectedTranscriptDocument,
     CorrectedTranscriptSegment,
+    TranscriptVerificationDocument,
+    TranscriptVerificationRegion,
+    TranscriptVerificationSummary,
 )
 
 
@@ -195,6 +198,17 @@ def test_qa_is_idempotent(db_session, corrected_episode, qa_settings):
     assert runs[0].status == RunStatus.SUCCESS
 
 
+def test_forced_qa_regeneration_clears_stale_marker(db_session, corrected_episode, qa_settings):
+    _write_corrected(qa_settings)
+    result = evaluate_transcript_qa(db_session, "ep_qa", qa_settings)
+    stale = Path(result.qa_path + ".stale")
+    stale.write_text("{}", encoding="utf-8")
+
+    evaluate_transcript_qa(db_session, "ep_qa", qa_settings, force=True)
+
+    assert not stale.exists()
+
+
 def test_blocking_gate_creates_review_and_resumes_after_approval(
     db_session, corrected_episode, qa_settings
 ):
@@ -305,3 +319,135 @@ def test_transcript_qa_cli_help():
     assert result.exit_code == 0
     assert "--episode-id" in result.output
     assert "--force" in result.output
+
+
+def _gate_config():
+    return {
+        "enabled": True,
+        "block_on_critical": True,
+        "max_major_findings": 3,
+        "auto_continue_below_threshold": True,
+    }
+
+
+def test_mid_sentence_chunk_boundary_is_not_incomplete_finding():
+    corrected = CorrectedTranscriptDocument(
+        episode_id="ep",
+        language="de",
+        full_text="Text können.",
+        segments=[
+            CorrectedTranscriptSegment(
+                segment_id="seg-0001",
+                start_seconds=0,
+                end_seconds=4,
+                original_text="Landkreise kaum noch auffangen",
+                corrected_text="Landkreise kaum noch auffangen",
+                status="unresolved",
+                severity="major",
+                flags=["incomplete_sentence", "possible_missing_words"],
+                reason="Unsicher.",
+            ),
+            CorrectedTranscriptSegment(
+                segment_id="seg-0002",
+                start_seconds=4,
+                end_seconds=6,
+                original_text="können.",
+                corrected_text="können.",
+                status="verified",
+                severity="none",
+            ),
+        ],
+    )
+    assert _evaluate(corrected, None, _gate_config()).findings == []
+
+
+@pytest.mark.parametrize(
+    "flag",
+    [
+        "asr_fragment",
+        "possible_free_reconstruction",
+        "grammatical_error",
+        "possible_content_deletion",
+    ],
+)
+def test_real_corruption_is_not_hidden_by_seamless_next_segment(flag):
+    corrected = CorrectedTranscriptDocument(
+        episode_id="ep",
+        language="de",
+        full_text="Beschädigter Text geht weiter.",
+        segments=[
+            CorrectedTranscriptSegment(
+                segment_id="seg-0001",
+                start_seconds=0,
+                end_seconds=4,
+                original_text="Beschädigter Text",
+                corrected_text="Beschädigter Text",
+                status="unresolved",
+                severity="major",
+                flags=[flag],
+                reason="Unsicher.",
+            ),
+            CorrectedTranscriptSegment(
+                segment_id="seg-0002",
+                start_seconds=4,
+                end_seconds=6,
+                original_text="geht weiter.",
+                corrected_text="geht weiter.",
+                status="verified",
+                severity="none",
+            ),
+        ],
+    )
+
+    document = _evaluate(corrected, None, _gate_config())
+
+    assert len(document.findings) == 1
+    assert document.findings[0].category == "incomplete_sentence"
+
+
+def test_one_verification_region_produces_one_qa_finding():
+    segments = [
+        CorrectedTranscriptSegment(
+            segment_id=f"seg-{index:04d}",
+            start_seconds=index,
+            end_seconds=index + 1,
+            original_text="Fehlertext.",
+            corrected_text="Fehlertext.",
+            status="unresolved",
+            severity="major",
+            flags=["possible_name_disagreement"],
+            reason="Widerspruch.",
+            verification_ids=["verify-0001"],
+        )
+        for index in range(1, 5)
+    ]
+    corrected = CorrectedTranscriptDocument(
+        episode_id="ep", language="de", segments=segments, full_text="Fehlertext."
+    )
+    verification = TranscriptVerificationDocument(
+        episode_id="ep",
+        provider="openai",
+        model="test",
+        mode="suspicious_segments_only",
+        verified_regions=[
+            TranscriptVerificationRegion(
+                verification_id="verify-0001",
+                source_segment_ids=[item.segment_id for item in segments],
+                original_start_seconds=1,
+                original_end_seconds=5,
+                clip_start_seconds=0,
+                clip_end_seconds=6,
+                primary_text="Fehlertext.",
+                secondary_text="Anderer Text.",
+                agreement="low",
+                risk_types=["possible_name_disagreement"],
+                severity="major",
+                cost_usd=0,
+            )
+        ],
+        summary=TranscriptVerificationSummary(regions_checked=1, critical_count=0, cost_usd=0),
+    )
+    document = _evaluate(corrected, verification, _gate_config())
+    assert len(document.findings) == 1
+    assert document.findings[0].segment_ids == [item.segment_id for item in segments]
+    assert document.summary.major_count == 1

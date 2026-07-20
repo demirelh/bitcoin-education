@@ -41,10 +41,20 @@ _FLAG_TO_CATEGORY = {
     "possible_missing_words": "incomplete_sentence",
     "asr_fragment": "incomplete_sentence",
     "possible_free_reconstruction": "incomplete_sentence",
+    "possible_content_deletion": "incomplete_sentence",
     "conflicting_transcriptions": "conflicting_transcriptions",
+    "low_verification_agreement": "conflicting_transcriptions",
+    "low_confidence": "conflicting_transcriptions",
+    "garbled_text": "conflicting_transcriptions",
+    "grammatical_error": "incomplete_sentence",
     "casualty_disagreement": "casualty_uncertainty",
     "score_disagreement": "result_uncertainty",
     "semantic_role_disagreement": "semantic_role_uncertainty",
+}
+_CONTINUATION_SUPPRESSIBLE_FLAGS = {
+    "incomplete_sentence",
+    "missing_sentence_end",
+    "possible_missing_words",
 }
 _INHERENTLY_CRITICAL = {
     "unresolved_negation",
@@ -151,6 +161,7 @@ def evaluate_transcript_qa(
             json.dumps(document.model_dump(mode="json"), ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+        qa_path.with_name(qa_path.name + ".stale").unlink(missing_ok=True)
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
         provenance_path.write_text(
             json.dumps(
@@ -248,13 +259,19 @@ def _evaluate(
         for region in (verification.verified_regions if verification else [])
     }
     findings: list[TranscriptQAFinding] = []
-    for segment in corrected.segments:
-        categories = list(
-            dict.fromkeys(
-                _FLAG_TO_CATEGORY[flag] for flag in segment.flags if flag in _FLAG_TO_CATEGORY
-            )
-        )
+    for segment_index, segment in enumerate(corrected.segments):
+        category_flags: dict[str, list[str]] = {}
+        for flag in segment.flags:
+            if category := _FLAG_TO_CATEGORY.get(flag):
+                category_flags.setdefault(category, []).append(flag)
+        categories = list(category_flags)
         for category in categories:
+            if (
+                category == "incomplete_sentence"
+                and set(category_flags[category]) <= _CONTINUATION_SUPPRESSIBLE_FLAGS
+                and _continues_in_next_segment(corrected.segments, segment_index)
+            ):
+                continue
             severity = _finding_severity(segment, category)
             verification_ids = [
                 verification_id
@@ -283,6 +300,7 @@ def _evaluate(
                 )
             )
 
+    findings = _merge_adjacent_findings(_merge_verification_region_findings(findings))
     major_findings = [finding for finding in findings if finding.severity == "major"]
     if len(major_findings) > config["max_major_findings"]:
         for finding in major_findings:
@@ -308,6 +326,88 @@ def _evaluate(
         summary=summary,
         gate_config=config,
     )
+
+
+def _continues_in_next_segment(segments: list[CorrectedTranscriptSegment], index: int) -> bool:
+    """Treat a zero-gap mid-sentence boundary as ASR chunking, not truncation."""
+    if index + 1 >= len(segments):
+        return False
+    current = segments[index]
+    following = segments[index + 1]
+    return (
+        not current.original_text.rstrip().endswith((".", "!", "?", "…"))
+        and following.start_seconds - current.end_seconds <= 0.1
+    )
+
+
+def _merge_verification_region_findings(
+    findings: list[TranscriptQAFinding],
+) -> list[TranscriptQAFinding]:
+    """Count one regional discrepancy once, not once per source segment."""
+    merged: list[TranscriptQAFinding] = []
+    by_key: dict[tuple, TranscriptQAFinding] = {}
+    for finding in findings:
+        if not finding.verification_ids:
+            merged.append(finding)
+            continue
+        key = (
+            finding.category,
+            finding.severity,
+            tuple(finding.verification_ids),
+        )
+        existing = by_key.get(key)
+        if existing is None:
+            by_key[key] = finding
+            merged.append(finding)
+            continue
+        existing.segment_ids.extend(
+            item for item in finding.segment_ids if item not in existing.segment_ids
+        )
+        existing.start_seconds = min(existing.start_seconds, finding.start_seconds)
+        existing.end_seconds = max(existing.end_seconds, finding.end_seconds)
+        existing.primary_text = " ".join(
+            item for item in (existing.primary_text, finding.primary_text) if item
+        )
+        existing.corrected_text = " ".join(
+            item for item in (existing.corrected_text, finding.corrected_text) if item
+        )
+    for index, finding in enumerate(merged, 1):
+        finding.finding_id = f"transcript-qa-{index:04d}"
+    return merged
+
+
+def _merge_adjacent_findings(
+    findings: list[TranscriptQAFinding],
+) -> list[TranscriptQAFinding]:
+    """Merge consecutive segments that describe one continuous uncertainty."""
+    merged: list[TranscriptQAFinding] = []
+    for finding in findings:
+        previous = merged[-1] if merged else None
+        if (
+            previous is not None
+            and previous.category == finding.category
+            and previous.severity == finding.severity
+            and finding.start_seconds - previous.end_seconds <= 1.1
+        ):
+            previous.segment_ids.extend(
+                item for item in finding.segment_ids if item not in previous.segment_ids
+            )
+            previous.end_seconds = max(previous.end_seconds, finding.end_seconds)
+            previous.primary_text = " ".join(
+                item for item in (previous.primary_text, finding.primary_text) if item
+            )
+            previous.corrected_text = " ".join(
+                item for item in (previous.corrected_text, finding.corrected_text) if item
+            )
+            previous.verification_ids.extend(
+                item for item in finding.verification_ids if item not in previous.verification_ids
+            )
+            previous.secondary_text = previous.secondary_text or finding.secondary_text
+            continue
+        merged.append(finding)
+    for index, finding in enumerate(merged, 1):
+        finding.finding_id = f"transcript-qa-{index:04d}"
+    return merged
 
 
 def _finding_severity(segment: CorrectedTranscriptSegment, category: str) -> str:

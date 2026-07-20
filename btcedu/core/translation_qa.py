@@ -68,6 +68,13 @@ _PERCENT_PREFIX_RE = re.compile(
     rf"\byüzde\s*({_NUMERIC_TOKEN})(?!\w)",
     re.IGNORECASE,
 )
+_PERCENT_RANGE_RE = re.compile(
+    rf"(?:(?:yüzde|%)\s*)?({_NUMERIC_TOKEN})\s*(?:[-–]|ila|ile)\s*"
+    rf"({_NUMERIC_TOKEN})\s*%"
+    rf"|(?:yüzde|%)\s*({_NUMERIC_TOKEN})\s*(?:[-–]|ila|ile)\s*"
+    rf"({_NUMERIC_TOKEN})(?!\w)",
+    re.IGNORECASE,
+)
 _MONEY_RE = re.compile(
     rf"(?<!\w)({_NUMERIC_TOKEN})\s*"
     r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
@@ -86,12 +93,39 @@ _TEMP_RE = re.compile(
     rf"(?:°(?:\s*c)?|grad|derece(?:ye|yi|de|den|nin)?)(?!\w)",
     re.IGNORECASE,
 )
+_TEMP_RANGE_RE = re.compile(
+    rf"(?<!\w)(-?{_NUMERIC_TOKEN})\s*(?:bis|ila|ile|-)\s*(-?{_NUMERIC_TOKEN})\s*"
+    rf"(?:°(?:\s*c)?|grad|derece(?:ye|yi|de|den|nin)?)(?!\w)",
+    re.IGNORECASE,
+)
 _SCORE_RE = re.compile(r"(?<!\w)(\d{1,2})\s*(?::|-|zu)\s*(\d{1,2})(?!\w)", re.IGNORECASE)
+_COMPOUND_SCORE_RE = re.compile(
+    r"(?<!\w)(\d{1,2})\s+und\s+(\d{1,2})\s+zu\s+(\d{1,2})(?!\w)",
+    re.IGNORECASE,
+)
+_TURKISH_COMPOUND_NUMBER_RE = re.compile(
+    r"\b(on|yirmi|otuz|kırk|elli|altmış|yetmiş|seksen|doksan)\s+"
+    r"(iki|üç|dört|beş|altı|yedi|sekiz|dokuz)\b",
+    re.IGNORECASE,
+)
+_TURKISH_TENS = {
+    "on": 10,
+    "yirmi": 20,
+    "otuz": 30,
+    "kırk": 40,
+    "elli": 50,
+    "altmış": 60,
+    "yetmiş": 70,
+    "seksen": 80,
+    "doksan": 90,
+}
 _NUMBER_RE = re.compile(rf"(?<!\w){_NUMERIC_TOKEN}(?!\w)")
 _QUANTITY_WORD_RE = re.compile(
     (
         r"\b(tausend|tausende|hundert|hunderte|bin|binlerce|yüz|yüzlerce|"
-        r"zweit\w*|dritt\w*|iki|ikinci|ikincisi|üçüncü|üçüncüsü)\b"
+        r"zwei|drei|vier|fünf|sechs|sieben|acht|neun|zehn|elf|zwölf|"
+        r"iki|ikisi\w*|üç|dört|dördü|beş|altı|yedi|sekiz|dokuz|on|"
+        r"beid\w*|zweit\w*|dritt\w*|ikinci\w*|üçüncü\w*)\b"
     ),
     re.IGNORECASE,
 )
@@ -146,7 +180,27 @@ _WORD_VALUES = {
     "yüzlerce": "vague:hundreds",
     "ikinci": "2",
     "ikincisi": "2",
+    "zwei": "2",
     "iki": "2",
+    "drei": "3",
+    "üç": "3",
+    "vier": "4",
+    "dört": "4",
+    "dördü": "4",
+    "fünf": "5",
+    "beş": "5",
+    "sechs": "6",
+    "altı": "6",
+    "sieben": "7",
+    "yedi": "7",
+    "acht": "8",
+    "sekiz": "8",
+    "neun": "9",
+    "dokuz": "9",
+    "zehn": "10",
+    "on": "10",
+    "elf": "11",
+    "zwölf": "12",
     "üçüncü": "3",
     "üçüncüsü": "3",
 }
@@ -696,6 +750,11 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
 
     def collect(pattern: re.Pattern, kind: str, normalizer) -> None:
         for match in pattern.finditer(text):
+            if any(
+                start <= match.start() < end or start < match.end() <= end
+                for start, end in occupied
+            ):
+                continue
             facts.append(NumericFact(kind, normalizer(match), match.group(0)))
             occupied.append(match.span())
 
@@ -712,6 +771,16 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
         "time",
         lambda match: f"{int(match.group(1)):02d}:{int(match.group(2) or 0):02d}",
     )
+    for match in _PERCENT_RANGE_RE.finditer(text):
+        left = match.group(1) or match.group(3)
+        right = match.group(2) or match.group(4)
+        facts.extend(
+            [
+                NumericFact("percent", _decimal(left), match.group(0)),
+                NumericFact("percent", _decimal(right), match.group(0)),
+            ]
+        )
+        occupied.append(match.span())
     collect(_PERCENT_RE, "percent", lambda match: _decimal(match.group(1)))
     collect(_PERCENT_PREFIX_RE, "percent", lambda match: _decimal(match.group(1)))
     collect(
@@ -721,6 +790,14 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
             f"{_scaled_decimal(match.group(1), match.group(2))}:{_currency(match.group(3))}"
         ),
     )
+    for match in _TEMP_RANGE_RE.finditer(text):
+        facts.extend(
+            [
+                NumericFact("temperature", _decimal(match.group(1)), match.group(0)),
+                NumericFact("temperature", _decimal(match.group(2)), match.group(0)),
+            ]
+        )
+        occupied.append(match.span())
     collect(_TEMP_RE, "temperature", lambda match: _decimal(match.group(1)))
     for match in _SCALED_NUMBER_RE.finditer(text):
         if any(
@@ -743,13 +820,42 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
         )
         occupied.append(match.span())
 
+    for match in _COMPOUND_SCORE_RE.finditer(text):
+        facts.extend(
+            [
+                NumericFact(
+                    "score", f"{int(match.group(1))}-{int(match.group(3))}", match.group(0)
+                ),
+                NumericFact(
+                    "score", f"{int(match.group(2))}-{int(match.group(3))}", match.group(0)
+                ),
+            ]
+        )
+        occupied.append(match.span())
+
     is_sport = _has_sport_context(text)
     if is_sport:
-        collect(
-            _SCORE_RE,
-            "score",
-            lambda match: f"{int(match.group(1))}-{int(match.group(2))}",
+        for match in _SCORE_RE.finditer(text):
+            if any(
+                start <= match.start() < end or start < match.end() <= end
+                for start, end in occupied
+            ):
+                continue
+            facts.append(
+                NumericFact(
+                    "score",
+                    f"{int(match.group(1))}-{int(match.group(2))}",
+                    match.group(0),
+                )
+            )
+            occupied.append(match.span())
+
+    for match in _TURKISH_COMPOUND_NUMBER_RE.finditer(text):
+        value = _TURKISH_TENS[_normalize(match.group(1))] + int(
+            _WORD_VALUES[_normalize(match.group(2))]
         )
+        facts.append(NumericFact("number", str(value), match.group(0)))
+        occupied.append(match.span())
 
     for match in list(_NUMBER_RE.finditer(text)) + list(_QUANTITY_WORD_RE.finditer(text)):
         overlaps_typed_fact = any(
@@ -760,14 +866,12 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
         window = _numeric_context(text, match.start(), match.end())
         raw = match.group(0)
         normalized_raw = _normalize(raw)
-        if normalized_raw == "iki":
-            prefix = _normalize(text[max(0, match.start() - 12) : match.start()])
-            if re.search(r"\b(?:yirmi|otuz|kırk|elli|altmış|yetmiş|seksen|doksan)\s*$", prefix):
-                continue
-        if normalized_raw.startswith("zweit"):
+        if normalized_raw.startswith(("beid", "zweit", "ikisi")):
             value = "2"
-        elif normalized_raw.startswith("dritt"):
+        elif normalized_raw.startswith("dritt") or normalized_raw.startswith("üçüncü"):
             value = "3"
+        elif normalized_raw.startswith("ikinci"):
+            value = "2"
         else:
             value = (
                 _WORD_VALUES[normalized_raw] if normalized_raw in _WORD_VALUES else _decimal(raw)
@@ -776,6 +880,8 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
             kind = "casualty"
         elif any(term in window for term in _INJURY_CONTEXT):
             kind = "injury"
+        elif re.search(r"\b(?:temperatur|sıcaklık)\w*|\b(?:grad|derece)\b|°", window):
+            kind = "temperature"
         else:
             kind = "number"
         facts.append(NumericFact(kind, value, raw))
@@ -792,6 +898,10 @@ def _compare_numeric_facts(
 ) -> int:
     source_counter = Counter((fact.kind, fact.value) for fact in source_facts)
     target_counter = Counter((fact.kind, fact.value) for fact in target_facts)
+    for counter in (source_counter, target_counter):
+        for key in list(counter):
+            if key[0] == "number":
+                counter[key] = 1
     matched = sum((source_counter & target_counter).values())
     for (kind, value), count in (source_counter - target_counter).items():
         severity: Literal["major", "critical"] = (
@@ -903,9 +1013,14 @@ def _check_marker_groups(
     source_normalized = _normalize(source_text)
     target_normalized = _normalize(target_text)
     for group, language_terms in groups.items():
-        source_present = any(
-            _contains_phrase(source_normalized, term) for term in language_terms["de"]
-        )
+        marker_source = source_normalized
+        if group == "until":
+            marker_source = re.sub(
+                r"\b\d+(?:[.,]\d+)?\s+bis\s+\d+(?:[.,]\d+)?\b",
+                "",
+                marker_source,
+            )
+        source_present = any(_contains_phrase(marker_source, term) for term in language_terms["de"])
         if not source_present:
             continue
         target_present = any(
@@ -916,6 +1031,15 @@ def _check_marker_groups(
             or _TR_NEITHER_RE.search(target_normalized)
         ):
             target_present = True
+        if group in {"today", "tomorrow", "yesterday"}:
+            source_dates = {
+                fact.value for fact in extract_numeric_facts(source_text) if fact.kind == "date"
+            }
+            target_dates = {
+                fact.value for fact in extract_numeric_facts(target_text) if fact.kind == "date"
+            }
+            if source_dates and source_dates == target_dates:
+                target_present = True
         if target_present:
             continue
         add(

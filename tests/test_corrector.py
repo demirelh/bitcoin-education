@@ -10,8 +10,11 @@ from click.testing import CliRunner
 from btcedu.core.corrector import (
     CorrectionResult,
     _contains_unexpected_turkish,
+    _finalize_correction_segments,
     _is_correction_current,
     _is_supported_by_verification,
+    _ModelCorrectionResponse,
+    _ModelCorrectionSegment,
     _revert_protected_token_changes,
     _segment_transcript,
     _split_prompt,
@@ -141,6 +144,96 @@ def test_large_verified_replacement_is_supported_by_secondary_transcript():
             }
         ],
     )
+
+
+def test_context_verification_risks_are_recomputed_per_segment():
+    text = "Und noch nie ist ein 0 zu 4 gedreht worden."
+    payload = {
+        "segments": [
+            {
+                "segment_id": "seg-0210",
+                "start_seconds": 648.5,
+                "end_seconds": 651.5,
+                "primary_text": text,
+                "analysis": None,
+                "verifications": [
+                    {
+                        "verification_id": "verify-0001",
+                        "status": "success",
+                        "risk_types": [
+                            "number_disagreement",
+                            "score_disagreement",
+                            "negation_disagreement",
+                            "possible_name_disagreement",
+                        ],
+                        "secondary_text": (
+                            "England führte 4:0. Und noch nie ist ein 0:4 gedreht "
+                            "worden. Mbappé traf später zum 1:4."
+                        ),
+                    }
+                ],
+            }
+        ]
+    }
+    response = _ModelCorrectionResponse(
+        segments=[
+            _ModelCorrectionSegment(
+                segment_id="seg-0210",
+                corrected_text=text,
+                status="unresolved",
+                severity="critical",
+                flags=[
+                    "number_disagreement",
+                    "score_disagreement",
+                    "negation_disagreement",
+                    "possible_name_disagreement",
+                ],
+                reason="Region appears contradictory.",
+            )
+        ]
+    )
+
+    segment = _finalize_correction_segments(payload, response)[0]
+
+    assert segment.status == "verified"
+    assert segment.severity == "none"
+    assert segment.flags == []
+    assert segment.reason is None
+
+
+def test_unchanged_text_does_not_keep_unsupported_model_risk_flags():
+    text = "Die Grünchefin wirft der Bundesregierung aber vor,"
+    payload = {
+        "segments": [
+            {
+                "segment_id": "seg-0090",
+                "start_seconds": 280.0,
+                "end_seconds": 283.0,
+                "primary_text": text,
+                "analysis": None,
+                "verifications": [],
+            }
+        ]
+    }
+    response = _ModelCorrectionResponse(
+        segments=[
+            _ModelCorrectionSegment(
+                segment_id="seg-0090",
+                corrected_text=text,
+                status="unresolved",
+                severity="major",
+                flags=["possible_name_disagreement"],
+                reason="Riskante faktische Änderung wurde verworfen.",
+            )
+        ]
+    )
+
+    segment = _finalize_correction_segments(payload, response)[0]
+
+    assert segment.status == "verified"
+    assert segment.severity == "none"
+    assert segment.flags == []
+    assert segment.reason is None
 
 
 class TestComputeCorrectionDiff:

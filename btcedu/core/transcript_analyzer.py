@@ -35,7 +35,7 @@ from btcedu.models.transcript_schema import (
 
 logger = logging.getLogger(__name__)
 
-ANALYSIS_RULESET_VERSION = "1.1"
+ANALYSIS_RULESET_VERSION = "1.2"
 
 _WORD_RE = re.compile(r"[A-Za-zÄÖÜäöüß]+(?:[-'][A-Za-zÄÖÜäöüß]+)?")
 _NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,]\d+)?(?!\w)")
@@ -500,8 +500,8 @@ def _proper_name_variant_segments(segments: list[TranscriptSegment]) -> set[str]
     occurrences: dict[str, set[str]] = {}
     for segment in segments:
         words = _words(segment.text)
-        for word in words[1:]:
-            if len(word) >= 6 and word[:1].isupper():
+        for index, word in enumerate(words[1:], start=1):
+            if len(word) >= 6 and word[:1].isupper() and _is_likely_proper_name(words, index):
                 occurrences.setdefault(word, set()).add(segment.segment_id)
 
     flagged: set[str] = set()
@@ -509,8 +509,10 @@ def _proper_name_variant_segments(segments: list[TranscriptSegment]) -> set[str]
     counts = Counter(
         word
         for segment in segments
-        for word in _words(segment.text)[1:]
-        if len(word) >= 6 and word[:1].isupper()
+        for index, word in enumerate(_words(segment.text)[1:], start=1)
+        if len(word) >= 6
+        and word[:1].isupper()
+        and _is_likely_proper_name(_words(segment.text), index)
     )
     for index, left in enumerate(names):
         for right in names[index + 1 :]:
@@ -523,6 +525,30 @@ def _proper_name_variant_segments(segments: list[TranscriptSegment]) -> set[str]
                 flagged.update(occurrences[left])
                 flagged.update(occurrences[right])
     return flagged
+
+
+def _is_likely_proper_name(words: list[str], index: int) -> bool:
+    """Reject ordinary German nouns introduced by determiners or adjectives."""
+    previous = words[index - 1]
+    if previous.casefold() in {
+        "der",
+        "die",
+        "das",
+        "den",
+        "dem",
+        "des",
+        "ein",
+        "eine",
+        "einer",
+        "einem",
+        "einen",
+        "diese",
+        "dieser",
+        "diesem",
+        "diesen",
+    }:
+        return False
+    return previous[:1].isupper() or not previous.casefold().endswith(("e", "en", "er", "es"))
 
 
 def _german_variant_stem(word: str) -> str:

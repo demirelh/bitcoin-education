@@ -9,6 +9,7 @@ terms:
   Bundeskanzler: "Federal Şansölye (Bundeskanzler)"
   Bundespräsident: "Federal Cumhurbaşkanı (Bundespräsident)"
   Bundesregierung: "Federal Hükümet"
+  Fraktion: "meclis grubu"
   Bundesministerium: "Federal Bakanlık"
   Bundesverfassungsgericht: "Federal Anayasa Mahkemesi"
   Bundeswehr: "Bundeswehr (Almanya Silahlı Kuvvetleri)"
@@ -99,6 +100,19 @@ protected_terms:
   Titelverteidiger:
     allowed_targets:
       - son şampiyon
+  Titelverteidigung:
+    allowed_targets:
+      - şampiyonluğu savunma
+      - şampiyonluğu başarıyla savunma
+      - şampiyonluk savunması
+      - son şampiyonluğunu koruma
+  Bewährung:
+    allowed_targets:
+      - denetimli serbestlik
+      - hapis cezasının ertelenmesi
+  dringender Tatverdacht:
+    allowed_targets:
+      - kuvvetli suç şüphesi
   tausend Waffen:
     allowed_targets:
       - bin silah
@@ -109,6 +123,8 @@ phrases:
   "wie ARD berichtet": "ARD'nin haberine göre"
   "das teilte X mit": "X, açıklama yaptı"
   "unter der Bedingung der Anonymität": "isminin açıklanmaması koşuluyla"
+  "unter anderem deshalb": "diğer nedenlerin yanı sıra bu nedenle"
+  "Das war es für [Person/Rolle]": "[Kişi/rol] için süreç veya turnuva sona erdi"
   "keine Stellungnahme": "yorum yapmadı"
 
 # Ton

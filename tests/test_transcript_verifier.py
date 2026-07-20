@@ -311,6 +311,60 @@ def test_context_transcript_accepts_spelled_number_and_degree_word():
     assert comparison.risk_types == ()
 
 
+def test_context_transcript_accepts_equivalent_score_notation():
+    comparison = compare_transcripts(
+        "Und noch nie ist ein 0 zu 4 gedreht worden.",
+        (
+            "Vier Gegentore hatte Frankreich noch nie kassiert und noch nie ist "
+            "ein 0:4 gedreht worden. Frankreich versucht es weiter."
+        ),
+    )
+
+    assert comparison.agreement == "high"
+    assert comparison.severity == "none"
+    assert comparison.risk_types == ()
+
+
+def test_context_alignment_does_not_copy_unrelated_clip_facts():
+    comparison = compare_transcripts(
+        "Frankreich versucht es, Mbappé mit dem 1 zu 4.",
+        (
+            "England führte nach Toren von Rice und Saka mit 4:0. "
+            "Frankreich versucht es, Mbappé mit dem 1:4. "
+            "Später fiel noch das 5:3."
+        ),
+    )
+
+    assert comparison.severity == "none"
+    assert comparison.risk_types == ()
+
+
+def test_context_alignment_preserves_local_name_disagreement():
+    comparison = compare_transcripts(
+        "Angela Merkel hat das Gesetz unterstützt.",
+        (
+            "Die Debatte dauerte mehrere Stunden. Angela Merker hat das Gesetz unterstützt. "
+            "Danach wurde die Sitzung beendet."
+        ),
+    )
+
+    assert comparison.severity == "major"
+    assert "possible_name_disagreement" in comparison.risk_types
+
+
+def test_context_alignment_preserves_opposing_claim_disagreement():
+    comparison = compare_transcripts(
+        "Der Minister hat das Gesetz abgelehnt.",
+        (
+            "Nach langer Debatte gab es eine Entscheidung. "
+            "Der Minister hat das Gesetz angenommen. Danach endete die Sitzung."
+        ),
+    )
+
+    assert comparison.severity == "critical"
+    assert "semantic_role_disagreement" in comparison.risk_types
+
+
 def test_primary_text_for_clip_includes_context_between_suspicious_segments():
     segments = [
         _segment("seg-0001", 0, 2, "Erster Verdacht."),

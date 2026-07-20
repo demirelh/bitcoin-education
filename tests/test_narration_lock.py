@@ -16,6 +16,7 @@ from btcedu.core.narration_lock import (
     check_narration_lock,
     compose_chapter_narration,
     normalize_narration_text,
+    restore_minor_narration_drift,
 )
 from btcedu.models.prompt_version import PromptVersion  # noqa: F401 (table registration)
 
@@ -80,6 +81,27 @@ def test_compose_chapter_narration_orders_and_joins():
     ch2.narration.text = "Ikinci bolum."
     composed = compose_chapter_narration([ch1, ch2])
     assert composed == "Birinci bolum.\nIkinci bolum."
+
+
+def test_restore_minor_narration_drift_uses_approved_partition():
+    chapters = [
+        _chapter("ch1", 1, "Barcolas 54. dakikada gol attı."),
+        _chapter("ch2", 2, "İngiltere yoruldu."),
+    ]
+    approved = "Barcolar 54. dakikada gol attı. İngiltere yoruldu."
+
+    assert restore_minor_narration_drift(approved, chapters) is True
+    assert normalize_narration_text(compose_chapter_narration(chapters)) == approved
+
+
+def test_restore_minor_narration_drift_rejects_rewrite():
+    chapters = [
+        _chapter("ch1", 1, "Tamamen farklı bir anlatım."),
+        _chapter("ch2", 2, "İngiltere yoruldu."),
+    ]
+    approved = "Barcolar 54. dakikada gol attı. İngiltere yoruldu."
+
+    assert restore_minor_narration_drift(approved, chapters) is False
 
 
 # ---------------------------------------------------------------------------

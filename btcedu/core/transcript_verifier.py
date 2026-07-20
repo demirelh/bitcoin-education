@@ -38,7 +38,7 @@ from btcedu.services.errors import ErrorCategory, PipelineError
 
 logger = logging.getLogger(__name__)
 
-VERIFICATION_COMPARATOR_VERSION = "1.1"
+VERIFICATION_COMPARATOR_VERSION = "1.2"
 _VALID_MODES = {"disabled", "full", "suspicious_segments_only"}
 _SEVERITY_ORDER = {"minor": 0, "major": 1, "critical": 2}
 _TOKEN_RE = re.compile(r"[^\W_]+(?:['’-][^\W_]+)*|\d+(?:[.,:]\d+)*%?", re.UNICODE)
@@ -51,7 +51,7 @@ _DATE_RE = re.compile(
     re.IGNORECASE,
 )
 _TIME_RE = re.compile(r"\b(?:[01]?\d|2[0-3])(?::[0-5]\d|\s*Uhr)\b", re.IGNORECASE)
-_SCORE_RE = re.compile(r"\b\d{1,2}\s*[:\-]\s*\d{1,2}\b")
+_SCORE_RE = re.compile(r"\b\d{1,2}\s*(?::|-|zu)\s*\d{1,2}\b", re.IGNORECASE)
 _NAME_RE = re.compile(
     r"\b[A-ZÄÖÜ][a-zäöüß]+(?:[-'][A-ZÄÖÜ]?[a-zäöüß]+)?"
     r"(?:\s+[A-ZÄÖÜ][a-zäöüß]+(?:[-'][A-ZÄÖÜ]?[a-zäöüß]+)?)+\b"
@@ -108,6 +108,13 @@ _ROLE_VERBS = {
     "kritisierte",
     "kritisierten",
 }
+_OPPOSING_CLAIM_GROUPS = (
+    ({"angenommen", "akzeptiert", "beschlossen"}, {"abgelehnt", "verworfen"}),
+    ({"gestiegen", "gewachsen", "erhöht"}, {"gesunken", "gefallen", "verringert"}),
+    ({"gewonnen", "besiegt"}, {"verloren", "unterlegen"}),
+    ({"erlaubt", "genehmigt"}, {"verboten", "untersagt"}),
+    ({"bestätigt", "zugestimmt"}, {"widersprochen", "dementiert"}),
+)
 _DANGLING_WORDS = {
     "aber",
     "als",
@@ -221,6 +228,10 @@ def compare_transcripts(primary_text: str, secondary_text: str) -> TranscriptCom
             risk_types=(),
             severity="none",
         )
+    context_passage = _best_context_passage(primary_text, secondary_text)
+    if context_passage is not None:
+        secondary_text = context_passage
+        secondary_tokens = _normalized_tokens(context_passage)
     similarity = SequenceMatcher(None, primary_tokens, secondary_tokens).ratio()
     token_difference = round(1 - similarity, 4)
     if primary_tokens == secondary_tokens:
@@ -275,6 +286,8 @@ def compare_transcripts(primary_text: str, secondary_text: str) -> TranscriptCom
 
     if _semantic_roles_differ(primary_text, secondary_text):
         risks.add("semantic_role_disagreement")
+    if _opposing_claims_differ(primary_words, secondary_words):
+        risks.add("semantic_role_disagreement")
 
     ordered_risks = tuple(risk for risk in _RISK_ORDER if risk in risks)
     if risks & _CRITICAL_RISKS:
@@ -310,6 +323,35 @@ def _is_contiguous_subsequence(primary_tokens: list[str], secondary_tokens: list
         secondary_tokens[index : index + width] == primary_tokens
         for index in range(len(secondary_tokens) - width + 1)
     )
+
+
+def _best_context_passage(primary_text: str, secondary_text: str) -> str | None:
+    """Return the raw local secondary passage best aligned to a short source."""
+    primary_tokens = _normalized_tokens(primary_text)
+    secondary_spans = _normalized_token_spans(secondary_text)
+    secondary_tokens = [token for token, _, _ in secondary_spans]
+    if not primary_tokens or len(secondary_tokens) < len(primary_tokens) * 2:
+        return None
+    width = len(primary_tokens)
+    best_bounds: tuple[int, int] | None = None
+    best_ratio = 0.0
+    best_boundary_score = -1
+    for candidate_width in range(width, min(len(secondary_tokens), width + 3) + 1):
+        for index in range(len(secondary_tokens) - candidate_width + 1):
+            window = secondary_tokens[index : index + candidate_width]
+            ratio = SequenceMatcher(None, primary_tokens, window).ratio()
+            boundary_score = int(window[0] == primary_tokens[0]) + int(
+                window[-1] == primary_tokens[-1]
+            )
+            if (ratio, boundary_score) > (best_ratio, best_boundary_score):
+                best_ratio = ratio
+                best_boundary_score = boundary_score
+                best_bounds = (index, index + candidate_width)
+    if best_ratio < 0.82:
+        return None
+    assert best_bounds is not None
+    start_index, end_index = best_bounds
+    return secondary_text[secondary_spans[start_index][1] : secondary_spans[end_index - 1][2]]
 
 
 def verify_transcript(
@@ -1061,6 +1103,10 @@ def _compare_region_segments(
 
 
 def _normalized_tokens(text: str) -> list[str]:
+    text = _SCORE_RE.sub(
+        lambda match: re.sub(r"\s*(?::|-|zu)\s*", " score ", match.group(0), flags=re.I),
+        text,
+    )
     return [
         _GERMAN_NUMBER_WORDS.get(normalized, normalized)
         for token in _TOKEN_RE.findall(text)
@@ -1073,6 +1119,35 @@ def _normalized_matches(pattern: re.Pattern[str], text: str) -> tuple[str, ...]:
         match.group(0).casefold().replace(" ", "").replace(",", ".")
         for match in pattern.finditer(text)
     )
+
+
+def _normalized_token_spans(text: str) -> list[tuple[str, int, int]]:
+    """Tokenize like ``_normalized_tokens`` while retaining raw text offsets."""
+    spans: list[tuple[str, int, int]] = []
+    cursor = 0
+    for score_match in _SCORE_RE.finditer(text):
+        for token_match in _TOKEN_RE.finditer(text, cursor, score_match.start()):
+            normalized = token_match.group(0).casefold().replace(",", ".")
+            spans.append(
+                (
+                    _GERMAN_NUMBER_WORDS.get(normalized, normalized),
+                    token_match.start(),
+                    token_match.end(),
+                )
+            )
+        for token in _normalized_tokens(score_match.group(0)):
+            spans.append((token, score_match.start(), score_match.end()))
+        cursor = score_match.end()
+    for token_match in _TOKEN_RE.finditer(text, cursor):
+        normalized = token_match.group(0).casefold().replace(",", ".")
+        spans.append(
+            (
+                _GERMAN_NUMBER_WORDS.get(normalized, normalized),
+                token_match.start(),
+                token_match.end(),
+            )
+        )
+    return spans
 
 
 def _name_candidates(text: str) -> set[str]:
@@ -1103,3 +1178,12 @@ def _semantic_roles_differ(primary_text: str, secondary_text: str) -> bool:
     primary_words = set(_normalized_tokens(primary_text))
     secondary_words = set(_normalized_tokens(secondary_text))
     return bool(primary_words & _ROLE_VERBS) and bool(secondary_words & _ROLE_VERBS)
+
+
+def _opposing_claims_differ(primary_words: set[str], secondary_words: set[str]) -> bool:
+    for positive, negative in _OPPOSING_CLAIM_GROUPS:
+        if (primary_words & positive and secondary_words & negative) or (
+            primary_words & negative and secondary_words & positive
+        ):
+            return True
+    return False

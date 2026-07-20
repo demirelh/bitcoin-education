@@ -861,16 +861,22 @@ def _needed_adaptation_operations(story, text: str, allowed_operations: list[str
     return needed
 
 
-_ADAPT_NUMBER_RE = re.compile(r"(?<!\w)\d+(?:[.,:%-]\d+)*(?!\w)")
 _ADAPT_NAME_RE = re.compile(r"(?<![.!?]\s)\b[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğıöşü'-]{2,}\b")
 _ADAPT_GENERIC_NAMES = {
+    "bakan",
+    "başkan",
     "bundeskanzler",
     "bundeskanzlerin",
     "bundespräsident",
+    "birlik",
+    "hükümet",
     "kanzler",
+    "meclis",
     "minister",
+    "parti",
     "präsident",
     "şansölye",
+    "yeşil",
 }
 
 
@@ -883,36 +889,116 @@ def _adaptation_fidelity_risks(
 ) -> list[str]:
     """Protect exact factual tokens during same-language adaptation."""
     risks: list[str] = []
-    if Counter(_ADAPT_NUMBER_RE.findall(source_text)) != Counter(
-        _ADAPT_NUMBER_RE.findall(adapted_text)
-    ):
-        risks.append("numbers_dates_or_scores")
-    name_source_text = (
-        _strip_anchor_handoff_text(source_text) if allow_anchor_unify else source_text
+    from btcedu.core.translation_qa import extract_numeric_facts
+
+    source_numbers = Counter((fact.kind, fact.value) for fact in extract_numeric_facts(source_text))
+    adapted_numbers = Counter(
+        (fact.kind, fact.value) for fact in extract_numeric_facts(adapted_text)
     )
-    source_names = {
-        stem
-        for name in _ADAPT_NAME_RE.findall(name_source_text)
-        if (stem := _adapt_name_stem(name)).casefold() not in _ADAPT_GENERIC_NAMES
-    }
-    for removable_name in removable_names or []:
-        source_names.difference_update(
-            _adapt_name_stem(name) for name in _ADAPT_NAME_RE.findall(removable_name)
-        )
-    adapted_names = {
-        stem
-        for name in _ADAPT_NAME_RE.findall(adapted_text)
-        if (stem := _adapt_name_stem(name)).casefold() not in _ADAPT_GENERIC_NAMES
-    }
-    missing_names = sorted(source_names - adapted_names)
-    if missing_names:
-        risks.append("names:" + ",".join(missing_names))
+    for counter in (source_numbers, adapted_numbers):
+        for key in list(counter):
+            if key[0] == "number":
+                counter[key] = 1
+    if source_numbers != adapted_numbers:
+        risks.append("numbers_dates_or_scores")
     return risks
 
 
 def _adapt_name_stem(name: str) -> str:
     """Normalize Turkish apostrophe suffixes while preserving the proper-name stem."""
     return re.split(r"['’]", name, maxsplit=1)[0]
+
+
+def _adapt_name_candidates(text: str) -> set[str]:
+    """Return unambiguous single-token names, excluding sentence-initial words."""
+    candidates: set[str] = set()
+    matches = list(_ADAPT_NAME_RE.finditer(text))
+    for index, match in enumerate(matches):
+        if _is_sentence_initial(text, match.start()):
+            continue
+        if index + 1 < len(matches) and not text[match.end() : matches[index + 1].start()].strip():
+            continue
+        stem = _adapt_name_stem(match.group(0))
+        if stem.isupper() or (len(stem) <= 5 and sum(char.isupper() for char in stem) >= 2):
+            continue
+        if not _is_generic_adapt_name(stem) and not _is_inflected_turkish_plural(stem):
+            candidates.add(stem)
+    return candidates
+
+
+def _is_inflected_turkish_plural(name: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:lar|ler)(?:ın|in|un|ün|dan|den|a|e|ı|i|u|ü)?$",
+            name.casefold(),
+        )
+    )
+
+
+def _is_generic_adapt_name(name: str) -> bool:
+    """Reject capitalized common nouns, including ordinary Turkish inflections."""
+    normalized = name.casefold()
+    candidates = {normalized}
+    pending = [normalized]
+    suffixes = (
+        "ının",
+        "inin",
+        "unun",
+        "ünün",
+        "nın",
+        "nin",
+        "nun",
+        "nün",
+        "lar",
+        "ler",
+        "ın",
+        "in",
+        "un",
+        "ün",
+        "ı",
+        "i",
+        "u",
+        "ü",
+    )
+    while pending:
+        value = pending.pop()
+        for suffix in suffixes:
+            if len(value) <= len(suffix) + 2 or not value.endswith(suffix):
+                continue
+            base = value[: -len(suffix)]
+            variants = {base}
+            if base.endswith(("ğ", "b", "c", "d")):
+                variants.add(base[:-1] + {"ğ": "k", "b": "p", "c": "ç", "d": "t"}[base[-1]])
+            for variant in variants - candidates:
+                candidates.add(variant)
+                pending.append(variant)
+    return bool(candidates & _ADAPT_GENERIC_NAMES)
+
+
+def _is_sentence_initial(text: str, start: int) -> bool:
+    index = start - 1
+    while index >= 0 and (text[index].isspace() or text[index] in "\"'“”„«»"):
+        index -= 1
+    return index < 0 or text[index] in ".!?:"
+
+
+def _handoff_names(text: str) -> set[str]:
+    """Extract reporter names from explicit handoff and thank-you phrases."""
+    names: set[str] = set()
+    for sentence in re.split(r"(?<=[.!?])\s+", text):
+        if re.search(r"\b(?:muhabirimiz|meslektaşımız|teşekkürler)\b", sentence, re.IGNORECASE):
+            names.update(
+                _adapt_name_stem(match.group(0)) for match in _ADAPT_NAME_RE.finditer(sentence)
+            )
+    pattern = re.compile(
+        r"\b(?:muhabirimiz|meslektaşımız|teşekkürler)\s*[,;:-]?\s+"
+        r"([A-ZÇĞİÖŞÜ][\wÇĞİÖŞÜçğıöşü'-]+)"
+        r"(?:\s+([A-ZÇĞİÖŞÜ][\wÇĞİÖŞÜçğıöşü'-]+))?",
+        re.IGNORECASE,
+    )
+    for match in pattern.finditer(text):
+        names.update(_adapt_name_stem(value) for value in match.groups() if value)
+    return names
 
 
 def _strip_anchor_handoff_text(text: str) -> str:
@@ -922,7 +1008,7 @@ def _strip_anchor_handoff_text(text: str) -> str:
         r"şimdi sözü|sözü .* bırakıyoruz)[^.!?]*[.!?]?",
         re.IGNORECASE,
     )
-    return removable.sub("", text)
+    return re.sub(r"\s+", " ", removable.sub(". ", text))
 
 
 def _is_adaptation_current(

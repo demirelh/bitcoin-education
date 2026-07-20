@@ -947,7 +947,11 @@ def _translation_fidelity_risks(source_text: str, translated_text: str) -> list[
     from btcedu.core.translation_qa import extract_numeric_facts
 
     source_numbers = Counter(fact.value for fact in extract_numeric_facts(source_text))
-    translated_numbers = Counter(fact.value for fact in extract_numeric_facts(translated_text))
+    translated_numbers = Counter(
+        fact.value
+        for fact in extract_numeric_facts(translated_text)
+        if any(ch.isdigit() for ch in fact.raw)
+    )
     if translated_numbers - source_numbers:
         risks.append("numbers")
 

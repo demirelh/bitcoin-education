@@ -93,6 +93,21 @@ def _seed_episode(db_session, tmp_path: Path, document: TranscriptDocument, *, v
     return episode
 
 
+def test_common_german_nouns_are_not_proper_name_variants():
+    document = _document(
+        _segment("seg-0001", "Es geht um Milliarden neuer Schulden."),
+        _segment("seg-0002", "Die Schulden belasten den Haushalt."),
+        _segment("seg-0003", "Das Geld fehlt den Schulen."),
+    )
+
+    result = _analyze_document(document, {})
+
+    assert all(
+        "inconsistent_proper_name_spelling" not in segment.reasons
+        for segment in result.suspicious_segments
+    )
+
+
 def test_marks_incomplete_sentence_conservatively():
     analysis = _analyze_document(
         _document(_segment("seg-0001", "Die Verhandlungen dauern an und")),

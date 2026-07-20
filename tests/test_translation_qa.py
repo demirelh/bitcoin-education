@@ -16,6 +16,7 @@ from btcedu.core.translation_qa import (
 )
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
+from btcedu.prompts.glossary_loader import load_glossary
 
 
 def _story(
@@ -181,6 +182,15 @@ def test_changed_numeric_facts_are_reported(source, target, category):
     assert category in _categories(document)
 
 
+def test_repeated_plain_number_may_be_consolidated_during_adaptation():
+    document = _evaluate(
+        "Thomas holt Platz 3. Der Podiumsplatz 3 ist gesichert.",
+        "Thomas üçüncülüğü garantiledi.",
+    )
+
+    assert "number_mismatch" not in _categories(document)
+
+
 def test_quantity_word_precision_is_preserved():
     correct = _evaluate("Tausend Waffen wurden gefunden.", "Bin silah bulundu.")
     wrong = _evaluate("Tausend Waffen wurden gefunden.", "Binlerce silah bulundu.")
@@ -216,6 +226,29 @@ def test_nachspielzeit_is_not_verlaengerung():
         glossary=glossary,
     )
     assert "protected_term_violation" in _categories(document)
+
+
+def test_news_glossary_covers_fraktion_bewaehrung_and_title_defense():
+    glossary = load_glossary("tagesschau_tr")
+
+    assert glossary is not None
+    assert glossary["terms"]["Fraktion"] == "meclis grubu"
+    assert "denetimli serbestlik" in glossary["protected_terms"]["Bewährung"]["allowed_targets"]
+    assert (
+        "şampiyonluğu savunma"
+        in glossary["protected_terms"]["Titelverteidigung"]["allowed_targets"]
+    )
+    assert (
+        "şampiyonluk savunması"
+        in glossary["protected_terms"]["Titelverteidigung"]["allowed_targets"]
+    )
+    assert (
+        "kuvvetli suç şüphesi"
+        in glossary["protected_terms"]["dringender Tatverdacht"]["allowed_targets"]
+    )
+    assert glossary["phrases"]["Das war es für [Person/Rolle]"].endswith(
+        "süreç veya turnuva sona erdi"
+    )
 
 
 def test_entity_with_turkish_suffix_is_accepted():
@@ -335,7 +368,120 @@ def test_numeric_extractor_normalizes_turkish_scaled_thousands():
 
 
 def test_numeric_extractor_does_not_split_turkish_compound_number():
-    assert extract_numeric_facts("Yirmi iki yaşında seçildi.") == []
+    facts = extract_numeric_facts("Yirmi iki yaşında seçildi.")
+
+    assert [(fact.kind, fact.value) for fact in facts] == [("number", "22")]
+
+
+def test_numeric_extractor_matches_german_and_turkish_cardinals():
+    source = extract_numeric_facts("Zwei Männer schoben einen Kinderwagen.")
+    target = extract_numeric_facts("İki erkek bir bebek arabasını itti.")
+
+    assert [(fact.kind, fact.value) for fact in source] == [("number", "2")]
+    assert [(fact.kind, fact.value) for fact in target] == [("number", "2")]
+
+
+def test_numeric_extractor_expands_spoken_compound_score():
+    facts = extract_numeric_facts("Der Rechtsaußen sorgte im Spiel für das 3 und 4 zu 0.")
+
+    assert [(fact.kind, fact.value) for fact in facts] == [
+        ("score", "3-0"),
+        ("score", "4-0"),
+    ]
+
+
+def test_numeric_extractor_normalizes_percent_ranges():
+    source = extract_numeric_facts("Die Ware ist 30-70% günstiger.")
+    target = extract_numeric_facts("Ürünler yüzde 30-70 daha ucuz.")
+
+    assert [(fact.kind, fact.value) for fact in source] == [
+        ("percent", "30"),
+        ("percent", "70"),
+    ]
+    assert [(fact.kind, fact.value) for fact in target] == [
+        ("percent", "30"),
+        ("percent", "70"),
+    ]
+
+
+def test_numeric_extractor_normalizes_spoken_turkish_percent_ranges():
+    source = extract_numeric_facts("Die Ware ist 30-70% günstiger.")
+    target = extract_numeric_facts("Ürünler yüzde 30 ila 70 daha ucuz.")
+
+    assert [(fact.kind, fact.value) for fact in source] == [
+        ("percent", "30"),
+        ("percent", "70"),
+    ]
+    assert [(fact.kind, fact.value) for fact in target] == [
+        ("percent", "30"),
+        ("percent", "70"),
+    ]
+
+
+def test_numeric_extractor_normalizes_temperature_ranges():
+    source = extract_numeric_facts("In der Nacht 16 bis 6°.")
+    target = extract_numeric_facts("Gece 6 ila 16 derece.")
+
+    assert {(fact.kind, fact.value) for fact in source} == {
+        ("temperature", "6"),
+        ("temperature", "16"),
+    }
+    assert {(fact.kind, fact.value) for fact in target} == {
+        ("temperature", "6"),
+        ("temperature", "16"),
+    }
+
+
+def test_numeric_extractor_normalizes_turkish_compounds_and_inflections():
+    facts = extract_numeric_facts("On iki desteğin dördü ayakta kaldı. İkincilik ve üçüncülük.")
+
+    assert [(fact.kind, fact.value) for fact in facts] == [
+        ("number", "12"),
+        ("number", "4"),
+        ("number", "2"),
+        ("number", "3"),
+    ]
+
+
+def test_numeric_extractor_matches_german_both_to_turkish_two():
+    source = extract_numeric_facts("Die Hymnen der beiden Teams. Diese beiden feiern.")
+    target = extract_numeric_facts("İki takımın marşları. Bu ikisi kutlama yapıyor.")
+
+    assert [(fact.kind, fact.value) for fact in source] == [
+        ("number", "2"),
+        ("number", "2"),
+    ]
+    assert [(fact.kind, fact.value) for fact in target] == [
+        ("number", "2"),
+        ("number", "2"),
+    ]
+
+
+def test_weather_clause_classifies_all_values_as_temperatures():
+    facts = extract_numeric_facts("Gündüz sıcaklıklar Harz'da 16, Hochrhein'da 27 derece.")
+
+    assert [(fact.kind, fact.value) for fact in facts] == [
+        ("temperature", "27"),
+        ("temperature", "16"),
+    ]
+
+
+def test_numeric_range_bis_is_not_treated_as_chronology():
+    document = _evaluate(
+        "In der Nacht 16 bis 6°.",
+        "Gece sıcaklıklar 6 ila 16 derece arasında.",
+    )
+
+    assert "chronology_suspicion" not in _categories(document)
+
+
+def test_absolute_date_can_preserve_tomorrow_reference():
+    document = _evaluate(
+        "Die Vorhersage für morgen, Montag, den 20. Juli.",
+        "20 Temmuz Pazartesi günü için hava tahmini.",
+    )
+
+    assert "chronology_suspicion" not in _categories(document)
 
 
 def test_numeric_context_does_not_label_elapsed_time_as_casualties():

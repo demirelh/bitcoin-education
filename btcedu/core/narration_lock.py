@@ -107,6 +107,50 @@ def compose_chapter_narration(chapters) -> str:
     return "\n".join(_narration_text_of(ch) for ch in chapters)
 
 
+def restore_minor_narration_drift(
+    approved_text: str,
+    chapters,
+    *,
+    max_changed_characters: int = 5,
+) -> bool:
+    """Restore exact approved text when chapter boundaries are already trustworthy.
+
+    This only repairs equal-length, character-level model drift and refuses
+    insertions, deletions, broad rewrites, or boundaries that no longer align
+    with spaces in the approved narration.
+    """
+    approved = normalize_narration_text(approved_text)
+    composed = normalize_narration_text(compose_chapter_narration(chapters))
+    if len(approved) != len(composed):
+        return False
+    changed = sum(left != right for left, right in zip(approved, composed, strict=True))
+    if changed == 0 or changed > max_changed_characters:
+        return False
+
+    lengths = [len(normalize_narration_text(_narration_text_of(chapter))) for chapter in chapters]
+    restored: list[str] = []
+    cursor = 0
+    for index, length in enumerate(lengths):
+        restored.append(approved[cursor : cursor + length])
+        cursor += length
+        if index < len(lengths) - 1:
+            if approved[cursor : cursor + 1] != " " or composed[cursor : cursor + 1] != " ":
+                return False
+            cursor += 1
+    if cursor != len(approved):
+        return False
+
+    for chapter, text in zip(chapters, restored, strict=True):
+        narration = getattr(chapter, "narration", None)
+        if narration is None and isinstance(chapter, dict):
+            narration = chapter.get("narration")
+        if isinstance(narration, dict):
+            narration["text"] = text
+        else:
+            narration.text = text
+    return check_narration_lock(approved, compose_chapter_narration(chapters)).matches
+
+
 @dataclass
 class NarrationLockResult:
     """Outcome of comparing composed chapter narration to approved narration."""

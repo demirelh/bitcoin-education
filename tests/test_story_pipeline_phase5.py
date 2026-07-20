@@ -170,6 +170,23 @@ def test_translation_precheck_defers_missing_written_number_to_full_qa():
     assert _translation_fidelity_risks(source, translation) == []
 
 
+def test_translation_precheck_defers_ambiguous_written_cardinals_to_full_qa():
+    source = "Zwei Männer stehen neben einem Kinderwagen."
+    translation = "İki erkek bir bebek arabasının yanında duruyor."
+
+    assert _translation_fidelity_risks(source, translation) == []
+
+
+def test_translation_precheck_accepts_source_word_as_target_digit():
+    assert (
+        _translation_fidelity_risks(
+            "Es gab zwölf Einsätze.",
+            "12 görev yapıldı.",
+        )
+        == []
+    )
+
+
 def test_translation_matches_german_and_turkish_ordinals():
     source = "Seit 2025 war er der zweitwichtigste Mann."
     translation = "2025'ten beri en önemli ikinci isimdi."
@@ -248,21 +265,37 @@ def test_intro_outro_may_remove_program_time_during_cleaning():
     assert len(responses) == 1
 
 
-@pytest.mark.parametrize(
-    ("adapted", "expected"),
-    [
-        ("Başbakan Scholz, 13 Temmuz'da Berlin'e gitti.", "numbers_dates_or_scores"),
-        ("Başbakan, 12 Temmuz'da Berlin'e gitti.", "names:Scholz"),
-    ],
-)
-def test_adaptation_rejects_changed_dates_and_names(adapted, expected):
+def test_adaptation_rejects_changed_dates():
     source = "Başbakan Scholz, 12 Temmuz'da Berlin'e gitti."
-    assert expected in _adaptation_fidelity_risks(source, adapted)
+    adapted = "Başbakan Scholz, 13 Temmuz'da Berlin'e gitti."
+
+    assert "numbers_dates_or_scores" in _adaptation_fidelity_risks(source, adapted)
+
+
+def test_adaptation_defers_name_semantics_to_translation_qa():
+    source = "AfD açıklama yaptı."
+    adapted = "Almanya için Alternatif açıklama yaptı."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
 
 
 def test_adaptation_accepts_turkish_apostrophe_suffix_variants():
     source = "Açıklama Berlin'den geldi."
     adapted = "Açıklama Berlin’den geldi."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_ignores_ambiguous_sentence_initial_capitalization():
+    source = "Şimdi ürünlerin fiyatları düşebilir. Nihatschabu bunu bekliyor."
+    adapted = "Ürünlerin fiyatları şimdi düşebilir. Nihatschabu bunu bekliyor."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_ignores_sentence_initial_word_after_quote():
+    source = 'Bu karlı olabilir." Şimdi üreticilerden talepleri bekliyor.'
+    adapted = "Bu karlı olabilir. Üreticilerden talepleri şimdi bekliyor."
 
     assert _adaptation_fidelity_risks(source, adapted) == []
 
@@ -284,6 +317,102 @@ def test_anchor_unify_may_remove_reporter_handoff_name():
         removable_names=["Jens"],
     )
     assert risks == []
+
+
+def test_explicit_reporter_handoff_name_is_inherently_removable():
+    source = "ABD'de muhabirimiz Gudrun Engel var. Teşekkürler Gudrun Engel."
+    adapted = "ABD'deki gelişmeler aktarıldı."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_reporter_name_remains_removable_when_addressed_later():
+    source = (
+        "ABD'de muhabirimiz Gudrun Engel var. Final nasıl olacak Gudrun? Teşekkürler Gudrun Engel."
+    )
+    adapted = "ABD'deki final öncesi atmosfer aktarıldı."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_allows_omitting_name_during_compression():
+    source = "Başbakan Scholz, 12 Temmuz'da Berlin'e gitti."
+    adapted = "Başbakan 12 Temmuz'da Berlin'e gitti."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_accepts_equivalent_score_punctuation():
+    source = "İngiltere maçı 6-4 kazandı."
+    adapted = "İngiltere karşılaşmayı 6:4 kazandı."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_allows_consolidating_repeated_plain_number():
+    source = "Thomas üçüncülüğü aldı. Podyumda üçüncülüğü garantiledi."
+    adapted = "Thomas üçüncülüğü garantiledi."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_reporter_name_after_comma_in_thank_you_is_removable():
+    source = "ABD'de Gudrun Engel bekliyor. Teşekkürler, Gudrun Engel."
+    adapted = "ABD'deki gelişmeler aktarıldı."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_reporter_name_after_location_in_thank_you_is_removable():
+    source = (
+        "East Rutherford stadyumu önünde Gudrun Engel bekliyor. "
+        "Teşekkürler, East Rutherford'dan Gudrun Engel."
+    )
+    adapted = "East Rutherford stadyumu önündeki atmosfer aktarıldı."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_does_not_treat_turkish_demonym_plural_as_name():
+    source = "Sayıca Arjantinliler artık üstün durumda."
+    adapted = "Arjantin taraftarları artık sayıca üstün."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_does_not_treat_inflected_turkish_demonym_plural_as_name():
+    source = "Amerikalıların bu gösteriye ilgisi yüksek."
+    adapted = "ABD halkı bu gösteriye büyük ilgi duyuyor."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_does_not_treat_inflected_turkish_common_noun_as_name():
+    source = "Bu görüntü hafızalarda kalıyor ve Birliğin güvenilirliğine zarar veriyor."
+    adapted = "Bu görüntü kalıcı oluyor ve siyasi ittifakın güvenilirliğini zedeliyor."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_allows_omitting_given_name_when_surname_is_preserved():
+    source = "Biliyoruz ki Friedrich Merz'in pek çok güvendiği kişisi yok."
+    adapted = "Merz'in güvendiği kişi sayısının az olduğu biliniyor."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_ignores_capitalized_clause_after_colon():
+    source = "Benim için önemli olan şu: Politikaya güven yeniden kazandırılmalı."
+    adapted = "Siyasete duyulan güven yeniden sağlanmalı."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
+
+
+def test_adaptation_does_not_protect_acronyms_or_inflected_titles_as_people():
+    source = "ARD röportajında Parti Başkanının açıklaması yayınlandı."
+    adapted = "Röportajda parti liderinin açıklaması aktarıldı."
+
+    assert _adaptation_fidelity_risks(source, adapted) == []
 
 
 def test_story_adaptation_preserves_story_id_and_prepares_narration_hash(tmp_path):

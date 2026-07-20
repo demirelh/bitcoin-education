@@ -104,6 +104,7 @@ def _enforce_narration_lock(
         check_narration_lock,
         compose_chapter_narration,
         normalize_narration_text,
+        restore_minor_narration_drift,
     )
     from btcedu.core.qa_reviewer import canonical_narration, load_quality_gate
 
@@ -118,6 +119,14 @@ def _enforce_narration_lock(
 
     composed_text = compose_chapter_narration(final_chapter_doc.chapters)
     result = check_narration_lock(approved_text, composed_text)
+    if not result.matches and restore_minor_narration_drift(
+        approved_text, final_chapter_doc.chapters
+    ):
+        logger.warning(
+            "Restored minor chapter narration drift from approved text for %s", episode_id
+        )
+        composed_text = compose_chapter_narration(final_chapter_doc.chapters)
+        result = check_narration_lock(approved_text, composed_text)
 
     approved_sha = hashlib.sha256(
         normalize_narration_text(approved_text).encode("utf-8")

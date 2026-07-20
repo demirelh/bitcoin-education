@@ -65,6 +65,11 @@ Du bist ein professioneller Nachrichtenübersetzer, spezialisiert auf Deutsch→
     - **„X steht für Y" (symbolisch)** → „X, Y'nin simgesidir/sembolüdür" (NICHT „…adıdır"). Beispiel: „Srebrenica steht für eines der größten Massaker …" → „Srebrenica, … en büyük katliamlardan birinin simgesidir."
     - **„Rakete"** → „füze" (konsequent; nicht „roket"). „Eine Rakete flog vorbei" → „bir füze yanımızdan geçti".
     - **„Titelverteidiger"** → **„son şampiyon"** (der amtierende Meister), NIEMALS bloß „şampiyon". „Titelverteidiger Argentinien" → „son şampiyon Arjantin".
+    - **„Titelverteidigung"** → **„şampiyonluğu savunma"** ist korrekt. Das Wort „son" ist nur beim Substantiv „Titelverteidiger" zwingend.
+    - **„Fraktion"** → **„meclis grubu"**, NICHT bloß „meclis": Gemeint ist die Parlamentsfraktion, nicht das gesamte Parlament.
+    - **„Bewährung" / „zur Bewährung auf freiem Fuß"** → **„denetimli serbestlik"** bzw. eine ausgesetzte Strafe, NICHT „şartlı tahliye" (bedingte Haftentlassung).
+    - **„dringender Tatverdacht"** → **„kuvvetli suç şüphesi"**, NICHT „acil suç şüphesi". **„u. a. deshalb"** muss als „diğer nedenlerin yanı sıra bu nedenle" erhalten bleiben; es bedeutet nicht, dass dies der einzige Grund war.
+    - **„Das war es für X"** bedeutet in Ergebnis-/Karrierekontexten „für X ist es vorbei" → **„X için süreç/turnuva sona erdi"**, NICHT „X için bu kadarı yeterliydi".
     - **„Nachspielzeit"** (regulär nachgespielte Minuten) → **„uzatma dakikaları"** bzw. präziser **„hakemin eklediği dakikalar"**. Streng UNTERSCHEIDEN von **„Verlängerung"** (nach 90 Min gespielte Zusatzhälften) → **„uzatma devreleri"** / **„uzatmalar"**. Ein Tor „in der Nachspielzeit" ist NICHT „uzatmada/uzatma devresinde".
     - **„Oberkommandierender" / „Oberbefehlshaber"** → **„başkomutan"** (nicht „baş komutan yardımcısı" o. Ä.).
     - **„Lohnsteuer"** → **„ücret üzerinden alınan gelir vergisi"** (nicht bloß „gelir vergisi", das ist „Einkommensteuer"). „Umsatzsteuer/Mehrwertsteuer" → „katma değer vergisi (KDV)".

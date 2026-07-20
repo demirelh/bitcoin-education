@@ -805,7 +805,15 @@ def _finalize_correction_segments(
             flags = list(dict.fromkeys([*flags, "possible_free_reconstruction"]))
             reason = "Zu starke freie Rekonstruktion wurde verworfen; Originaltext beibehalten."
 
-        verification_risks = {risk for item in verifications for risk in item.get("risk_types", [])}
+        verification_risks = {
+            risk
+            for item in verifications
+            if item.get("status") == "success"
+            for risk in compare_transcripts(
+                original,
+                str(item.get("secondary_text") or ""),
+            ).risk_types
+        }
         failed_verification = any(item.get("status") == "failed" for item in verifications)
         if failed_verification or (verification_risks and not verification_supports_correction):
             blocking = verification_risks & {
@@ -844,9 +852,27 @@ def _finalize_correction_segments(
             )
 
         analysis = source.get("analysis")
+        analysis_reasons = set((analysis or {}).get("reasons", []))
+        factual_flags = {
+            "number_disagreement",
+            "date_disagreement",
+            "time_disagreement",
+            "casualty_disagreement",
+            "score_disagreement",
+            "negation_disagreement",
+            "possible_name_disagreement",
+            "semantic_role_disagreement",
+            "conflicting_transcriptions",
+        }
+        if corrected == original and not failed_verification:
+            supported_flags = analysis_reasons | verification_risks
+            flags = [flag for flag in flags if flag not in factual_flags or flag in supported_flags]
+            if not supported_flags and not flags and status in {"unresolved", "uncertain"}:
+                status = "verified"
+                severity = "none"
+                reason = None
         if analysis and not verifications:
-            analysis_reasons = analysis.get("reasons", [])
-            flags = list(dict.fromkeys([*flags, *analysis_reasons]))
+            flags = list(dict.fromkeys([*flags, *sorted(analysis_reasons)]))
             if analysis.get("severity") == "critical" or "incomplete_sentence" in analysis_reasons:
                 status = "unresolved"
                 severity = "critical" if analysis.get("severity") == "critical" else "major"

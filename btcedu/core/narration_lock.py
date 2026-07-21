@@ -151,6 +151,43 @@ def restore_minor_narration_drift(
     return check_narration_lock(approved, compose_chapter_narration(chapters)).matches
 
 
+def restore_truncated_narration_suffix(
+    approved_text: str,
+    chapters,
+    *,
+    max_missing_ratio: float = 0.1,
+    max_missing_characters: int = 2_000,
+) -> bool:
+    """Restore an exact approved suffix omitted from the final chapter.
+
+    This repair is allowed only when the composed narration is an exact,
+    substantial prefix of the approved narration. It never asks a model to
+    regenerate approved words and cannot alter existing chapter narration.
+    """
+    approved = normalize_narration_text(approved_text)
+    composed = normalize_narration_text(compose_chapter_narration(chapters))
+    if not approved or not composed or not chapters or not approved.startswith(composed):
+        return False
+
+    missing = approved[len(composed) :]
+    if not missing or len(missing) > max_missing_characters:
+        return False
+    if len(missing) / len(approved) > max_missing_ratio:
+        return False
+
+    final_chapter = chapters[-1]
+    narration = getattr(final_chapter, "narration", None)
+    if narration is None and isinstance(final_chapter, dict):
+        narration = final_chapter.get("narration")
+    current_text = _narration_text_of(final_chapter).rstrip()
+    restored_text = current_text + missing
+    if isinstance(narration, dict):
+        narration["text"] = restored_text
+    else:
+        narration.text = restored_text
+    return check_narration_lock(approved, compose_chapter_narration(chapters)).matches
+
+
 @dataclass
 class NarrationLockResult:
     """Outcome of comparing composed chapter narration to approved narration."""

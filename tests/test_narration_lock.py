@@ -17,6 +17,7 @@ from btcedu.core.narration_lock import (
     compose_chapter_narration,
     normalize_narration_text,
     restore_minor_narration_drift,
+    restore_truncated_narration_suffix,
 )
 from btcedu.models.prompt_version import PromptVersion  # noqa: F401 (table registration)
 
@@ -92,6 +93,34 @@ def test_restore_minor_narration_drift_uses_approved_partition():
 
     assert restore_minor_narration_drift(approved, chapters) is True
     assert normalize_narration_text(compose_chapter_narration(chapters)) == approved
+
+
+def test_restore_truncated_final_suffix_from_approved_narration():
+    chapters = [
+        {"narration": {"text": "Birinci haber tamamlandı."}},
+        {"narration": {"text": "Yarın hava serin olacak."}},
+    ]
+    approved = (
+        "Birinci haber tamamlandı. Yarın hava serin olacak. "
+        "Sıcaklık 20 derecenin altında kalacak. Alp eteklerinde yağmur bekleniyor."
+    )
+
+    assert (
+        restore_truncated_narration_suffix(
+            approved,
+            chapters,
+            max_missing_ratio=0.7,
+        )
+        is True
+    )
+    assert check_narration_lock(approved, compose_chapter_narration(chapters)).matches
+
+
+def test_restore_truncated_suffix_rejects_non_prefix_rewrite():
+    chapters = [{"narration": {"text": "Birinci haber değiştirildi."}}]
+    approved = "Birinci haber tamamlandı. Son cümle."
+
+    assert restore_truncated_narration_suffix(approved, chapters) is False
 
 
 def test_restore_minor_narration_drift_rejects_rewrite():

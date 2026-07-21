@@ -105,6 +105,7 @@ def _enforce_narration_lock(
         compose_chapter_narration,
         normalize_narration_text,
         restore_minor_narration_drift,
+        restore_truncated_narration_suffix,
     )
     from btcedu.core.qa_reviewer import canonical_narration, load_quality_gate
 
@@ -119,14 +120,33 @@ def _enforce_narration_lock(
 
     composed_text = compose_chapter_narration(final_chapter_doc.chapters)
     result = check_narration_lock(approved_text, composed_text)
-    if not result.matches and restore_minor_narration_drift(
-        approved_text, final_chapter_doc.chapters
-    ):
-        logger.warning(
-            "Restored minor chapter narration drift from approved text for %s", episode_id
-        )
-        composed_text = compose_chapter_narration(final_chapter_doc.chapters)
-        result = check_narration_lock(approved_text, composed_text)
+    if not result.matches:
+        repair = None
+        if restore_minor_narration_drift(approved_text, final_chapter_doc.chapters):
+            repair = "minor character drift"
+        elif restore_truncated_narration_suffix(
+            approved_text,
+            final_chapter_doc.chapters,
+        ):
+            repair = "truncated final suffix"
+        if repair:
+            logger.warning(
+                "Restored %s from approved narration for %s",
+                repair,
+                episode_id,
+            )
+            for chapter in final_chapter_doc.chapters:
+                word_count = len(chapter.narration.text.split())
+                chapter.narration.word_count = word_count
+                chapter.narration.estimated_duration_seconds = _compute_duration_estimate(
+                    word_count
+                )
+            final_chapter_doc.estimated_duration_seconds = sum(
+                chapter.narration.estimated_duration_seconds
+                for chapter in final_chapter_doc.chapters
+            )
+            composed_text = compose_chapter_narration(final_chapter_doc.chapters)
+            result = check_narration_lock(approved_text, composed_text)
 
     approved_sha = hashlib.sha256(
         normalize_narration_text(approved_text).encode("utf-8")

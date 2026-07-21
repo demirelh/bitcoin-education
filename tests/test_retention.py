@@ -122,3 +122,24 @@ def test_prune_protects_episode_with_running_stage(db_session, tmp_path):
     assert result.deleted == 0
     assert result.protected == 1
     assert db_session.query(Episode).filter_by(episode_id=old.episode_id).one()
+
+
+def test_prune_keeps_database_record_when_file_deletion_is_blocked(
+    db_session, tmp_path, monkeypatch
+):
+    settings = _settings(tmp_path)
+    now = datetime(2026, 7, 21, 12, tzinfo=UTC)
+    old = _episode("blocked-old-episode", now - timedelta(days=11))
+    db_session.add(old)
+    db_session.commit()
+
+    def deny_delete(*args, **kwargs):
+        raise PermissionError("root-owned artifact")
+
+    monkeypatch.setattr("btcedu.core.retention._delete_episode_files", deny_delete)
+
+    result = prune_expired_episodes(db_session, settings, now=now)
+
+    assert result.deleted == 0
+    assert result.blocked == 1
+    assert db_session.query(Episode).filter_by(episode_id=old.episode_id).one()

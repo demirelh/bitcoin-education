@@ -1,5 +1,6 @@
 """Episode retention and artifact cleanup."""
 
+import logging
 import shutil
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -15,11 +16,14 @@ from btcedu.models.media_asset import MediaAsset
 from btcedu.models.publish_job import PublishJob
 from btcedu.models.review import ReviewTask
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class RetentionResult:
     deleted: int = 0
     protected: int = 0
+    blocked: int = 0
 
 
 def retention_days(settings: Settings, profile_name: str | None = None) -> int:
@@ -105,7 +109,15 @@ def prune_expired_episodes(
             result.protected += 1
             continue
 
-        _delete_episode_files(settings, episode.episode_id)
+        try:
+            _delete_episode_files(settings, episode.episode_id)
+        except PermissionError:
+            logger.exception(
+                "Retention cannot delete artifacts for episode %s due to file ownership",
+                episode.episode_id,
+            )
+            result.blocked += 1
+            continue
         _delete_episode_records(session, episode)
         result.deleted += 1
 

@@ -119,11 +119,13 @@ def detect_episodes(
     from btcedu.core.retention import prune_expired_episodes, retention_cutoff
 
     retention = prune_expired_episodes(session, settings)
-    if retention.deleted or retention.protected:
+    if retention.deleted or retention.protected or retention.blocked:
         logger.info(
-            "Episode retention deleted %d expired episode(s); protected %d active episode(s)",
+            "Episode retention deleted %d expired episode(s); protected %d active episode(s); "
+            "blocked %d episode(s)",
             retention.deleted,
             retention.protected,
+            retention.blocked,
         )
 
     resolved_channel_id = _resolve_channel_id(session, settings, channel_id)

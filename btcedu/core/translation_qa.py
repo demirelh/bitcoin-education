@@ -77,6 +77,10 @@ _TIME_RE = re.compile(
     r"\b(?:saat\s*)?([01]?\d|2[0-3])(?:[:.]([0-5]\d)|\s*uhr)\b",
     re.IGNORECASE,
 )
+_TURKISH_HOUR_RE = re.compile(
+    r"\bsaat\s*([01]?\d|2[0-3])(?:['’](?:den|dan|de|da|ye|ya|e|a))?(?![\w.:])",
+    re.IGNORECASE,
+)
 _NUMERIC_TOKEN = r"(?:\d{1,3}(?:[.\u00a0\u202f ]\d{3})+(?:,\d+)?|\d+(?:[.,]\d+)?)"
 _PERCENT_RE = re.compile(
     rf"(?<!\w)({_NUMERIC_TOKEN})\s*(?:%|prozent\b|yüzde\b)",
@@ -961,6 +965,11 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
         "time",
         lambda match: f"{int(match.group(1)):02d}:{int(match.group(2) or 0):02d}",
     )
+    collect(
+        _TURKISH_HOUR_RE,
+        "time",
+        lambda match: f"{int(match.group(1)):02d}:00",
+    )
     for match in _PERCENT_RANGE_RE.finditer(text):
         left = match.group(1) or match.group(3)
         right = match.group(2) or match.group(4)
@@ -1235,9 +1244,7 @@ def _compare_numeric_facts(
             story=story,
             source_excerpt=_claim_text(source_text, source_fact.claim_index),
             target_excerpt=target_text,
-            structural_invariant=(
-                source_fact.kind in _EXACT_STRUCTURAL_KINDS and source_fact.confidence == "high"
-            ),
+            structural_invariant=source_fact.kind in _HARM_KINDS,
         )
     for target_fact in target_remaining:
         category = _kind_category(target_fact.kind)
@@ -1250,9 +1257,7 @@ def _compare_numeric_facts(
             story=story,
             source_excerpt=source_text,
             target_excerpt=_claim_text(target_text, target_fact.claim_index),
-            structural_invariant=(
-                target_fact.kind in _EXACT_STRUCTURAL_KINDS and target_fact.confidence == "high"
-            ),
+            structural_invariant=target_fact.kind in _HARM_KINDS,
         )
     return matched
 
@@ -1295,7 +1300,8 @@ def _numeric_qualifier(text: str, start: int, end: int) -> str:
             return qualifier
     suffix = _normalize(text[end : min(len(text), end + 30)])
     if re.match(
-        r"(?:['’]?[a-zçğıöşü]+\s+|\w+(?:dan|den)?\s+)?(?:fazla|aşkın)\b",
+        r"(?:['’]?[a-zçğıöşü]+\s+|\w+(?:dan|den)?\s+)?"
+        r"(?:fazla|aşkın|üzerinde(?:ki)?|üstünde(?:ki)?)\b",
         suffix,
     ):
         return "more_than"

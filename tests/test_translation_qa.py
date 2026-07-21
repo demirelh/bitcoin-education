@@ -133,6 +133,11 @@ def test_wrong_story_order_is_reported():
     [
         ("Das Treffen ist am 12. Juli.", "Görüşme 12 Temmuz'da."),
         ("Die Sendung beginnt um 20 Uhr.", "Yayın saat 20.00'de başlıyor."),
+        ("Sie war noch vor 12 Uhr fertig.", "Henüz saat 12'den önce bitirmişti."),
+        (
+            "Der Preis liegt bei mehr als 2 Euro.",
+            "Fiyat 2 Euro'nun üzerinde.",
+        ),
         ("Das Spiel endete 2 zu 1.", "Maç 2-1 sona erdi."),
         ("Der Anteil beträgt 5 Prozent.", "Oran yüzde 5."),
         ("Die Hilfe beträgt 1,5 Millionen Euro.", "Yardım 1,5 milyon Euro."),

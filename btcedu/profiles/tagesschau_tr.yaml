@@ -118,3 +118,4 @@ ingest:
   # Ingest the main 20:00 Uhr broadcast and the "100 Sekunden" edition;
   # skip 16:00 Uhr, tagesthemen, nachtmagazin and other formats.
   title_include: "(?i)tagesschau.*(20[:.]?00\\s*Uhr|100\\s*Sekunden)"
+  retention_days: 10

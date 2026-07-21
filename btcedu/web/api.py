@@ -1037,6 +1037,7 @@ def list_episodes():
     session = _get_session()
     settings = _get_settings()
     try:
+        from btcedu.core.retention import episode_is_expired
         from btcedu.models.review import ReviewStatus, ReviewTask
 
         # Support optional channel and profile filters
@@ -1050,7 +1051,11 @@ def list_episodes():
         if profile_filter:
             query = query.filter(Episode.content_profile == profile_filter)
 
-        episodes = query.order_by(Episode.published_at.desc().nullslast()).all()
+        episodes = [
+            episode
+            for episode in query.order_by(Episode.published_at.desc().nullslast()).all()
+            if not episode_is_expired(episode, settings)
+        ]
 
         # Batch query: fetch all pending/in_review tasks in one query (avoids N+1)
         pending_tasks = (

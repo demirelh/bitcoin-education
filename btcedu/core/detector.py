@@ -116,6 +116,16 @@ def detect_episodes(
             "No feed URL configured. Set PODCAST_YOUTUBE_CHANNEL_ID or PODCAST_RSS_URL."
         )
 
+    from btcedu.core.retention import prune_expired_episodes, retention_cutoff
+
+    retention = prune_expired_episodes(session, settings)
+    if retention.deleted or retention.protected:
+        logger.info(
+            "Episode retention deleted %d expired episode(s); protected %d active episode(s)",
+            retention.deleted,
+            retention.protected,
+        )
+
     resolved_channel_id = _resolve_channel_id(session, settings, channel_id)
 
     # Backfill channel_id on existing episodes that have NULL channel_id
@@ -130,6 +140,20 @@ def detect_episodes(
 
     feed_content = fetch_feed(feed_url)
     episodes = parse_feed(feed_content, settings.source_type)
+
+    cutoff = retention_cutoff(
+        settings,
+        profile_name=settings.default_content_profile,
+    )
+    before_retention = len(episodes)
+    episodes = [
+        ep
+        for ep in episodes
+        if cutoff is None or ep.published_at is None or ep.published_at >= cutoff
+    ]
+    skipped_expired = before_retention - len(episodes)
+    if skipped_expired:
+        logger.info("Retention filter skipped %d expired feed episode(s)", skipped_expired)
 
     title_filter = _resolve_title_filter(settings)
     if title_filter is not None:

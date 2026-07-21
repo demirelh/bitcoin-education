@@ -226,6 +226,7 @@ class Settings(BaseSettings):
 
     # Output
     outputs_dir: str = "data/outputs"
+    episode_retention_days: int = 0  # 0 disables global cleanup; profiles may override
 
     # Reports & Logs
     reports_dir: str = "data/reports"

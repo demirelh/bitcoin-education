@@ -178,6 +178,33 @@ def test_translation_allows_turkish_thousands_separator():
     assert _translation_fidelity_risks(source, translation) == []
 
 
+def test_translation_allows_turkish_compound_thousands_and_avro():
+    source = (
+        "Die Digitalsparte beschäftigt 5.500 Mitarbeiter. "
+        "Der Umsatz stieg von 11 Milliarden Euro auf 14 Milliarden Euro."
+    )
+    translation = (
+        "Dijital bölümü 5 bin 500 çalışanı istihdam ediyor. "
+        "Ciro 11 milyar avrodan 14 milyar avroya yükseldi."
+    )
+
+    assert _translation_fidelity_risks(source, translation) == []
+
+
+def test_translation_allows_turkish_compound_thousands_money():
+    source = "Das Projekt kostet 5.500 Euro."
+    translation = "Proje 5 bin 500 avroya mal oluyor."
+
+    assert _translation_fidelity_risks(source, translation) == []
+
+
+def test_translation_does_not_find_death_inside_bolumu():
+    source = "Die Digitalsparte beschäftigt neue Mitarbeiter."
+    translation = "Şirketin dijital bölümü yeni çalışanları istihdam ediyor."
+
+    assert "invented_casualty" not in _translation_fidelity_risks(source, translation)
+
+
 def test_translation_allows_written_turkish_list_numbers():
     source = "2. Punkt ist der Wahlkampf. 3. Der Kanzler reagierte. Ich nenne 2 Beispiele."
     translation = "İkincisi seçim kampanyası. Üçüncüsü şansölyenin tepkisi. İki örnek vereyim."
@@ -254,6 +281,116 @@ def test_translation_retries_missing_news_headline():
         )
     assert output.translated_headline == "Futbol Dünya Kupası"
     assert len(responses) == 2
+
+
+def test_translation_uses_independent_adjudicator_replacement(tmp_path):
+    story = _normalize_story_inventory(_story_document(), _corrected_document()).stories[1]
+    story.source_text = "Bei dem Unfall wurden 5 Menschen verletzt."
+    invalid_payload = {
+        "story_id": story.story_id,
+        "source_segment_ids": story.source_segment_ids,
+        "translated_headline": "Kaza",
+        "translated_text": "Kazada 6 kişi yaralandı.",
+    }
+    corrected_payload = {
+        **invalid_payload,
+        "translated_text": "Kazada 5 kişi yaralandı.",
+    }
+    producer = MagicMock(
+        text=json.dumps(invalid_payload),
+        input_tokens=10,
+        output_tokens=10,
+        cost_usd=0,
+        model="producer",
+    )
+    adjudicator = MagicMock(
+        text=json.dumps(
+            {
+                "decision": "use_replacement",
+                "reason": "The casualty value must remain five.",
+                "replacement": corrected_payload,
+            }
+        ),
+        input_tokens=10,
+        output_tokens=10,
+        cost_usd=0,
+        model="copilot/gpt-5.6-sol",
+    )
+    audit_path = tmp_path / "translate_adjudication.json"
+
+    with patch(
+        "btcedu.core.translator.call_claude",
+        side_effect=[producer, producer, adjudicator],
+    ) as mock_call:
+        output, responses = _call_story_translation(
+            story,
+            "system",
+            "user",
+            MagicMock(),
+            None,
+            adjudication_route={"provider": "copilot_cli", "model": "gpt-5.6-sol"},
+            adjudication_path=audit_path,
+        )
+
+    assert output.translated_text == "Kazada 5 kişi yaralandı."
+    assert len(responses) == 3
+    assert mock_call.call_args.kwargs["provider_override"] == "copilot_cli"
+    assert mock_call.call_args.kwargs["model_override"] == "gpt-5.6-sol"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit["decision"] == "use_replacement"
+    assert audit["selected"]["translated_text"] == "Kazada 5 kişi yaralandı."
+
+
+def test_translation_adjudicator_can_accept_false_positive(tmp_path):
+    story = _normalize_story_inventory(_story_document(), _corrected_document()).stories[1]
+    payload = {
+        "story_id": story.story_id,
+        "source_segment_ids": story.source_segment_ids,
+        "translated_headline": "Dijital bölüm",
+        "translated_text": "Şirketin dijital bölümü büyüyor.",
+    }
+    producer = MagicMock(
+        text=json.dumps(payload),
+        input_tokens=10,
+        output_tokens=10,
+        cost_usd=0,
+        model="producer",
+    )
+    adjudicator = MagicMock(
+        text=json.dumps(
+            {
+                "decision": "accept_candidate",
+                "reason": "The flagged substring is part of bölüm and does not denote death.",
+            }
+        ),
+        input_tokens=10,
+        output_tokens=10,
+        cost_usd=0,
+        model="copilot/gpt-5.6-sol",
+    )
+
+    with (
+        patch(
+            "btcedu.core.translator.call_claude",
+            side_effect=[producer, producer, adjudicator],
+        ),
+        patch(
+            "btcedu.core.translator._translation_fidelity_risks",
+            return_value=["invented_casualty"],
+        ),
+    ):
+        output, responses = _call_story_translation(
+            story,
+            "system",
+            "user",
+            MagicMock(),
+            None,
+            adjudication_route={"provider": "copilot_cli", "model": "gpt-5.6-sol"},
+            adjudication_path=tmp_path / "accept.json",
+        )
+
+    assert output.translated_text == "Şirketin dijital bölümü büyüyor."
+    assert len(responses) == 3
 
 
 def test_intro_outro_may_remove_program_time_during_cleaning():

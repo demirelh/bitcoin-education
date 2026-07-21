@@ -97,7 +97,12 @@ _MONEY_RE = re.compile(
     rf"(?<!\w)({_NUMERIC_TOKEN})\s*"
     r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
     r"yüz|bin(?:i|e|den|in)?|milyon|milyar)?\s*"
-    r"(euro|eur|€|dollar|usd|\$|tl|lira|₺)(?!\w)",
+    r"(euro|avro(?:dan|den|ya|ye|nun|nün)?|eur|€|dollar|usd|\$|tl|lira|₺)(?!\w)",
+    re.IGNORECASE,
+)
+_TURKISH_COMPOUND_THOUSANDS_MONEY_RE = re.compile(
+    rf"(?<!\w)({_NUMERIC_TOKEN})\s+bin\s+({_NUMERIC_TOKEN})\s*"
+    r"(euro|avro(?:dan|den|ya|ye|nun|nün)?|eur|€|dollar|usd|\$|tl|lira|₺)(?!\w)",
     re.IGNORECASE,
 )
 _SCALED_NUMBER_RE = re.compile(
@@ -124,6 +129,10 @@ _COMPOUND_SCORE_RE = re.compile(
 _TURKISH_COMPOUND_NUMBER_RE = re.compile(
     r"\b(on|yirmi|otuz|kırk|elli|altmış|yetmiş|seksen|doksan)\s+"
     r"(iki|üç|dört|beş|altı|yedi|sekiz|dokuz)\b",
+    re.IGNORECASE,
+)
+_TURKISH_COMPOUND_THOUSANDS_RE = re.compile(
+    rf"(?<!\w)({_NUMERIC_TOKEN})\s+bin\s+({_NUMERIC_TOKEN})(?!\w)",
     re.IGNORECASE,
 )
 _TURKISH_TENS = {
@@ -978,6 +987,11 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
         occupied.append(match.span())
     collect(_PERCENT_RE, "percentage", lambda match: _decimal(match.group(1)))
     collect(_PERCENT_PREFIX_RE, "percentage", lambda match: _decimal(match.group(1)))
+    for match in _TURKISH_COMPOUND_THOUSANDS_MONEY_RE.finditer(text):
+        value = str(
+            int(Decimal(_decimal(match.group(1))) * 1_000) + int(Decimal(_decimal(match.group(2))))
+        )
+        append_fact(match, "money", f"{value}:{_currency(match.group(3))}")
     collect(
         _MONEY_RE,
         "money",
@@ -1016,6 +1030,13 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
         )
         occupied.append(match.span())
     collect(_TEMP_RE, "temperature", lambda match: _decimal(match.group(1)))
+    for match in _TURKISH_COMPOUND_THOUSANDS_RE.finditer(text):
+        if _overlaps(match.span(), occupied):
+            continue
+        value = str(
+            int(Decimal(_decimal(match.group(1))) * 1_000) + int(Decimal(_decimal(match.group(2))))
+        )
+        append_fact(match, _classify_numeric_role(text, match.start(), match.end(), value), value)
     for match in _SCALED_NUMBER_RE.finditer(text):
         if _overlaps(match.span(), occupied):
             continue
@@ -1675,7 +1696,7 @@ def _scaled_decimal(value: str, magnitude: str | None) -> str:
 
 def _currency(value: str) -> str:
     normalized = _normalize(value)
-    if normalized in {"euro", "eur", "€"}:
+    if normalized in {"euro", "eur", "€"} or normalized.startswith("avro"):
         return "EUR"
     if normalized in {"dollar", "usd", "$"}:
         return "USD"

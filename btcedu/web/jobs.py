@@ -1205,7 +1205,8 @@ class JobManager:
                             EpisodeStatus.RENDERED,
                             EpisodeStatus.APPROVED,
                         ]
-                    )
+                    ),
+                    Episode.error_message.is_(None),
                 )
 
                 # Filter by channel if specified

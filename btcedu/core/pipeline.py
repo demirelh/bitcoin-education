@@ -1543,7 +1543,8 @@ def _run_pending_locked(
                     EpisodeStatus.RENDERED,  # Sprint 10: review gate 3
                     EpisodeStatus.APPROVED,  # Sprint 11: publish stage
                 ]
-            )
+            ),
+            Episode.error_message.is_(None),
         )
         .order_by(Episode.published_at.asc())
     )
@@ -1650,7 +1651,8 @@ def _run_latest_locked(
                     EpisodeStatus.RENDERED,  # Sprint 10
                     EpisodeStatus.APPROVED,  # Sprint 11: publish
                 ]
-            )
+            ),
+            Episode.error_message.is_(None),
         )
         .order_by(Episode.published_at.desc())
     )

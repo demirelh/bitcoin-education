@@ -82,6 +82,10 @@ stage_config:
     register: formal_news
     clean_moderator: true
     use_glossary: true
+    validation_adjudication:
+      enabled: true
+      provider: copilot_cli
+      model: gpt-5.6-sol
   tts:
     voice_id: "NsFK0aDGLbVusA7tQfOB"  # Irem (tr, female) — livelier than POLAT
     stability: 0.45

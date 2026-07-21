@@ -463,6 +463,27 @@ class TestRunLatest:
 
         assert result is None
 
+    @patch("btcedu.core.detector.detect_episodes")
+    def test_does_not_automatically_restart_failed_episode(self, mock_detect, db_session, tmp_path):
+        from btcedu.core.detector import DetectResult
+
+        mock_detect.return_value = DetectResult(found=1, new=0, total=1)
+        episode = Episode(
+            episode_id="failed-translate",
+            source="youtube_rss",
+            title="Failed translation",
+            url="https://youtube.com/watch?v=failed",
+            status=EpisodeStatus.SEGMENTED,
+            published_at=datetime(2026, 7, 21, tzinfo=UTC),
+            error_message="Stage 'translate' failed: deterministic validation",
+        )
+        db_session.add(episode)
+        db_session.commit()
+
+        result = run_latest(db_session, _make_settings(tmp_path))
+
+        assert result is None
+
 
 # ── RetryEpisode ─────────────────────────────────────────────────
 

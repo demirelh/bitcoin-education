@@ -202,6 +202,7 @@ def translate_transcript(
             and profile_obj.stage_config.get("translate", {}).get("mode") == "per_story"
         )
     except Exception:
+        profile_obj = None
         profile_namespace = None
         per_story_mode = False
 
@@ -317,6 +318,7 @@ def translate_transcript(
                 session=session,
                 target_story_ids=target_story_ids,
                 structured_findings=structured_findings,
+                adjudication_route=_translation_adjudication_route(profile_obj),
                 budget_check=budget_check,
             )
         else:
@@ -644,6 +646,7 @@ def _translate_per_story(
     session: "Session | None" = None,
     target_story_ids: list[str] | None = None,
     structured_findings: dict[str, list[dict]] | None = None,
+    adjudication_route: dict[str, str] | None = None,
     budget_check: Callable[[float], bool] | None = None,
 ) -> tuple[str, int, int, int, float]:
     """Translate each story in a StoryDocument individually.
@@ -744,6 +747,13 @@ def _translate_per_story(
             user_message=body_user,
             settings=settings,
             dry_run_path=dry_run_path,
+            adjudication_route=adjudication_route,
+            adjudication_path=(
+                Path(settings.outputs_dir)
+                / episode_id
+                / "provenance"
+                / f"translate_adjudication_s{i:02d}.json"
+            ),
             budget_check=(
                 (lambda pending, spent=total_cost: budget_check(spent + pending))
                 if budget_check is not None
@@ -836,6 +846,8 @@ def _call_story_translation(
     user_message: str,
     settings: "Settings",
     dry_run_path: "Path | None",
+    adjudication_route: dict[str, str] | None = None,
+    adjudication_path: "Path | None" = None,
     budget_check: Callable[[float], bool] | None = None,
 ):
     """Request and validate one structured story translation, retrying factual mismatches."""
@@ -844,7 +856,11 @@ def _call_story_translation(
     responses: list[ClaudeResponse] = []
     active_message = user_message
     last_error: Exception | None = None
+    last_translation = None
+    last_risks: list[str] = []
     for attempt in range(2):
+        last_translation = None
+        last_risks = []
         if budget_check is not None and not budget_check(
             sum(response.cost_usd for response in responses)
         ):
@@ -869,17 +885,7 @@ def _call_story_translation(
         try:
             data = _parse_structured_response(response.text)
             translation = StoryTranslationOutput.model_validate(data)
-            if translation.story_id != story.story_id:
-                raise ValueError(
-                    f"Translation returned story_id {translation.story_id!r}, "
-                    f"expected {story.story_id!r}"
-                )
-            if translation.source_segment_ids != story.source_segment_ids:
-                raise ValueError("Translation changed source_segment_ids")
-            if story.story_type not in {"intro", "outro"} and not (
-                translation.translated_headline.strip()
-            ):
-                raise ValueError("Translation omitted the story headline")
+            _validate_story_translation_structure(story, translation)
             risks = (
                 []
                 if story.story_type in {"intro", "outro"}
@@ -889,6 +895,8 @@ def _call_story_translation(
                 )
             )
             if risks:
+                last_translation = translation
+                last_risks = risks
                 detail = ""
                 if "numbers" in risks:
                     from btcedu.core.translation_qa import extract_numeric_facts
@@ -912,7 +920,157 @@ def _call_story_translation(
                     + str(exc)
                     + "\nReturn corrected JSON only. Preserve every protected fact."
                 )
+    if last_translation is not None and last_risks and adjudication_route:
+        translation, adjudication_response = _adjudicate_story_translation(
+            story=story,
+            candidate=last_translation,
+            risks=last_risks,
+            settings=settings,
+            route=adjudication_route,
+            adjudication_path=adjudication_path,
+            budget_check=(
+                (lambda cost: budget_check(sum(r.cost_usd for r in responses) + cost))
+                if budget_check is not None
+                else None
+            ),
+        )
+        responses.append(adjudication_response)
+        return translation, responses
     raise ValueError(f"Story translation failed validation after retry: {last_error}")
+
+
+def _validate_story_translation_structure(story, translation) -> None:
+    if translation.story_id != story.story_id:
+        raise ValueError(
+            f"Translation returned story_id {translation.story_id!r}, expected {story.story_id!r}"
+        )
+    if translation.source_segment_ids != story.source_segment_ids:
+        raise ValueError("Translation changed source_segment_ids")
+    if story.story_type not in {"intro", "outro"} and not (translation.translated_headline.strip()):
+        raise ValueError("Translation omitted the story headline")
+
+
+def _translation_adjudication_route(profile) -> dict[str, str] | None:
+    if profile is None:
+        return None
+    config = profile.stage_config.get("translate", {}).get("validation_adjudication", {}) or {}
+    if not config.get("enabled", False):
+        return None
+    provider = str(config.get("provider") or "").strip()
+    model = str(config.get("model") or "").strip()
+    if not provider or not model:
+        return None
+    return {"provider": provider, "model": model}
+
+
+def _adjudicate_story_translation(
+    *,
+    story,
+    candidate,
+    risks: list[str],
+    settings: "Settings",
+    route: dict[str, str],
+    adjudication_path: "Path | None",
+    budget_check: Callable[[float], bool] | None,
+):
+    """Independently accept a false positive or return a fact-safe replacement."""
+    from btcedu.models.story_schema import StoryTranslationOutput
+    from btcedu.services.errors import ErrorCategory, PipelineError
+
+    if budget_check is not None and not budget_check(0.0):
+        raise PipelineError(
+            "Episode cost limit reached before translation validation adjudication",
+            ErrorCategory.PERMANENT_COST_LIMIT,
+        )
+
+    source_text = story.source_text or story.text_de
+    system_prompt = (
+        "You are an independent German-to-Turkish factual translation adjudicator. "
+        "A producer translation was rejected by deterministic heuristics. Decide from the "
+        "actual meaning, not string matching. Preserve every person, entity, number, unit, "
+        "currency, date, score, casualty claim, negation and chronology statement. "
+        "Return JSON only with decision accept_candidate, use_replacement, or reject; "
+        "a concise reason; and replacement containing the complete StoryTranslationOutput "
+        "when decision is use_replacement. Accept only when the candidate is factually "
+        "equivalent. Replace when a safe correction is possible. Reject only when neither "
+        "candidate nor a reliable correction can be justified."
+    )
+    user_message = json.dumps(
+        {
+            "source": {
+                "story_id": story.story_id,
+                "source_segment_ids": story.source_segment_ids,
+                "headline_de": story.headline_de,
+                "text_de": source_text,
+            },
+            "candidate": candidate.model_dump(mode="json"),
+            "deterministic_risks": risks,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    response = call_claude(
+        system_prompt=system_prompt,
+        user_message=user_message,
+        settings=settings,
+        json_mode=True,
+        provider_override=route["provider"],
+        model_override=route["model"],
+    )
+    data = _parse_structured_response(response.text)
+    decision = str(data.get("decision") or "").strip()
+    reason = str(data.get("reason") or "").strip()
+
+    selected = None
+    if decision == "accept_candidate":
+        selected = candidate
+    elif decision == "use_replacement":
+        selected = StoryTranslationOutput.model_validate(data.get("replacement"))
+        _validate_story_translation_structure(story, selected)
+        replacement_risks = _translation_fidelity_risks(
+            source_text,
+            selected.translated_text,
+        )
+        if replacement_risks:
+            raise ValueError(
+                "Independent translation replacement still changes protected facts: "
+                + ", ".join(replacement_risks)
+            )
+    elif decision != "reject":
+        raise ValueError(f"Invalid translation adjudication decision: {decision!r}")
+
+    if adjudication_path is not None:
+        adjudication_path.parent.mkdir(parents=True, exist_ok=True)
+        adjudication_path.write_text(
+            json.dumps(
+                {
+                    "story_id": story.story_id,
+                    "timestamp": _utcnow().isoformat(),
+                    "deterministic_risks": risks,
+                    "candidate": candidate.model_dump(mode="json"),
+                    "decision": decision,
+                    "reason": reason,
+                    "selected": selected.model_dump(mode="json") if selected is not None else None,
+                    "provider": route["provider"],
+                    "model": response.model,
+                    "input_tokens": response.input_tokens,
+                    "output_tokens": response.output_tokens,
+                    "cost_usd": response.cost_usd,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+    if selected is None:
+        raise ValueError(f"Independent translation adjudication rejected candidate: {reason}")
+    logger.warning(
+        "Independent translation adjudication %s story %s after risks: %s",
+        decision,
+        story.story_id,
+        ", ".join(risks),
+    )
+    return selected, response
 
 
 def _parse_structured_response(response_text: str) -> dict:
@@ -1006,7 +1164,7 @@ def _translation_fidelity_risks(source_text: str, translated_text: str) -> list[
         r"öldürül",
         r"ölen\b",
         r"ölmüş",
-        r"ölüm",
+        r"\bölüm\w*\b",
     )
     if not any(term in source_lower for term in source_casualty_terms) and any(
         re.search(pattern, translated_lower) for pattern in translated_casualty_patterns

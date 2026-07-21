@@ -71,6 +71,20 @@ ESCALATION_TRIGGERS = frozenset(
     }
 )
 
+# Deterministic finding buckets a model dispute may NOT dismiss. These are the
+# safety-critical / structural categories that must always be repaired or
+# reviewed by a human; the independent model can only clear soft-fidelity
+# suspicions (numbers, entities, style, chronology, hallucination heuristics).
+_NON_DISMISSABLE_BUCKETS = frozenset(
+    {
+        "casualty",
+        "legal",
+        "story",
+        "transcript",
+        "cost",
+    }
+)
+
 # Categories the independent model may emit (kept broad but enumerated in prompt).
 _LLM_CATEGORIES = frozenset(
     {
@@ -908,14 +922,25 @@ def _merge_findings(
         bucket = _category_bucket(det["category"])
         det_keys.add((det.get("story_id"), bucket))
         contradiction = bucket in disputed_buckets or det["category"].lower() in disputed
+        # A dispute from the independent QA model (GPT-5.6) clears soft-fidelity
+        # deterministic false positives so a clean translation is not blocked by
+        # heuristic suspicions. Hard categories (casualties/injuries, legal
+        # claims, missing stories, unresolved transcript, cost) always require a
+        # real fix or manual review and can never be dismissed by a dispute.
+        det_status = "open"
+        det_note = None
+        if contradiction and bucket not in _NON_DISMISSABLE_BUCKETS:
+            det_status = "dismissed"
+            det_note = "adjudicated: disputed by independent QA model"
         finding_id, history = _history_and_id(
             det.get("story_id"),
             det["category"],
             "deterministic",
-            "open",
+            det_status,
             det.get("source_excerpt", ""),
             det.get("target_excerpt", ""),
             det["explanation"],
+            det_note,
         )
         findings.append(
             QAFinding(
@@ -929,7 +954,7 @@ def _merge_findings(
                 required_action=det["required_action"],
                 source_segment_ids=det.get("source_segment_ids", []),
                 detector="deterministic",
-                status="open",
+                status=det_status,
                 provider="deterministic",
                 model="translation-qa",
                 retry_generation=generation,

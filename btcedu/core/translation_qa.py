@@ -22,7 +22,15 @@ from btcedu.models.episode import Episode, PipelineRun, PipelineStage, RunStatus
 from btcedu.models.qa_schema import QAFinding, QASummary, TranslationQADocument
 from btcedu.prompts.glossary_loader import load_glossary
 
-DETECTOR_VERSION = "deterministic/translation-qa-v2"
+DETECTOR_VERSION = "deterministic/translation-qa-v3"
+
+# Numeric-kind groups used to reconcile cross-language classification differences
+# in ``_compare_numeric_facts``. A preserved value whose only discrepancy is a
+# harm-kind vs. generic-kind label (German↔Turkish context asymmetry) is not a
+# factual error and must not raise a critical/major mismatch.
+_HARM_KINDS = {"casualty", "injury"}
+_GENERIC_NUMERIC_KINDS = {"number", "temperature"}
+_RECONCILABLE_KINDS = _HARM_KINDS | _GENERIC_NUMERIC_KINDS
 
 _MONTHS = {
     "januar": 1,
@@ -204,6 +212,35 @@ _WORD_VALUES = {
     "üçüncü": "3",
     "üçüncüsü": "3",
 }
+# Spelled-out cardinal numbers (e.g. German "Zwölf Millionen Euro" or Turkish
+# "on milyon Euro") combine with a magnitude word exactly like their digit
+# counterparts above. Without a dedicated pattern, extract_numeric_facts()
+# only recognizes the bare cardinal ("12") and drops the magnitude/currency,
+# producing a false "protected fact changed" mismatch whenever the source
+# spells the number out but the (correct) translation uses digits — see
+# regression tests for story s03 of episode GG18EjVz8x8 ("Zwölf Millionen
+# Euro" vs. translated "12 milyon Euro").
+_WORD_CARDINAL_VALUES = {
+    word: value
+    for word, value in _WORD_VALUES.items()
+    if value.isdigit() and int(value) <= 12 and not word.startswith(("ikinci", "üçüncü"))
+}
+_WORD_CARDINAL_FRAGMENT = "|".join(
+    re.escape(word) for word in sorted(_WORD_CARDINAL_VALUES, key=len, reverse=True)
+)
+_WORD_MONEY_RE = re.compile(
+    rf"(?<!\w)({_WORD_CARDINAL_FRAGMENT})\s+"
+    r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
+    r"yüz|bin(?:i|e|den|in)?|milyon|milyar)\s+"
+    r"(euro|eur|€|dollar|usd|\$|tl|lira|₺)(?!\w)",
+    re.IGNORECASE,
+)
+_WORD_SCALED_NUMBER_RE = re.compile(
+    rf"(?<!\w)({_WORD_CARDINAL_FRAGMENT})\s+"
+    r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
+    r"yüz|bin(?:i|e|den|in)?|milyon|milyar)(?!\w)",
+    re.IGNORECASE,
+)
 _NEGATION_GROUPS = {
     "negative": {
         "de": ("nicht", "kein", "keine", "nie", "weder"),
@@ -790,6 +827,14 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
             f"{_scaled_decimal(match.group(1), match.group(2))}:{_currency(match.group(3))}"
         ),
     )
+    collect(
+        _WORD_MONEY_RE,
+        "money",
+        lambda match: (
+            f"{_scaled_decimal(_WORD_CARDINAL_VALUES[_normalize(match.group(1))], match.group(2))}"
+            f":{_currency(match.group(3))}"
+        ),
+    )
     for match in _TEMP_RANGE_RE.finditer(text):
         facts.extend(
             [
@@ -815,6 +860,26 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
             NumericFact(
                 kind,
                 _scaled_decimal(match.group(1), match.group(2)),
+                match.group(0),
+            )
+        )
+        occupied.append(match.span())
+    for match in _WORD_SCALED_NUMBER_RE.finditer(text):
+        if any(
+            start <= match.start() < end or start < match.end() <= end for start, end in occupied
+        ):
+            continue
+        window = _numeric_context(text, match.start(), match.end())
+        if any(term in window for term in _CASUALTY_CONTEXT):
+            kind = "casualty"
+        elif any(term in window for term in _INJURY_CONTEXT):
+            kind = "injury"
+        else:
+            kind = "number"
+        facts.append(
+            NumericFact(
+                kind,
+                _scaled_decimal(_WORD_CARDINAL_VALUES[_normalize(match.group(1))], match.group(2)),
                 match.group(0),
             )
         )
@@ -903,9 +968,52 @@ def _compare_numeric_facts(
             if key[0] == "number":
                 counter[key] = 1
     matched = sum((source_counter & target_counter).values())
-    for (kind, value), count in (source_counter - target_counter).items():
+    source_only = source_counter - target_counter
+    target_only = target_counter - source_counter
+
+    # Reconcile values that ARE preserved across languages but whose casualty/
+    # injury vs. generic-number classification differs. German→Turkish context
+    # detection is asymmetric (e.g. "75 Jahren" next to "starb" reads as a
+    # casualty, while "75 yaşında" reads as a plain number), which otherwise
+    # produces false *critical* casualty findings even though the numeric value
+    # is intact. Only a harm-kind (casualty/injury) paired with a generic kind
+    # (number/temperature) is reconciled; casualty↔injury remains a real
+    # distinction (killed vs. wounded) and a changed value still mismatches.
+    for (s_kind, s_value) in list(source_only.keys()):
+        if s_kind not in _RECONCILABLE_KINDS or source_only[(s_kind, s_value)] <= 0:
+            continue
+        for (t_kind, t_value) in list(target_only.keys()):
+            if t_kind not in _RECONCILABLE_KINDS or s_value != t_value or s_kind == t_kind:
+                continue
+            pair = {s_kind, t_kind}
+            if not (pair & _HARM_KINDS and pair & _GENERIC_NUMERIC_KINDS):
+                continue
+            take = min(source_only[(s_kind, s_value)], target_only[(t_kind, t_value)])
+            if take <= 0:
+                continue
+            source_only[(s_kind, s_value)] -= take
+            target_only[(t_kind, t_value)] -= take
+            matched += take
+            add(
+                "numeric_classification_note",
+                "info",
+                f"Value {s_value!r} is preserved but classified differently "
+                f"({s_kind} vs {t_kind}); treated as a cross-language context "
+                "difference, not a factual change.",
+                "No action required; verify only if the casualty/number reading "
+                "is genuinely wrong.",
+                story=story,
+                source_excerpt=source_text,
+                target_excerpt=target_text,
+            )
+            if source_only[(s_kind, s_value)] <= 0:
+                break
+    source_only += Counter()  # drop zeroed/negative entries
+    target_only += Counter()
+
+    for (kind, value), count in source_only.items():
         severity: Literal["major", "critical"] = (
-            "critical" if kind in {"casualty", "injury"} else "major"
+            "critical" if kind in _HARM_KINDS else "major"
         )
         add(
             f"{kind}_mismatch",
@@ -916,8 +1024,8 @@ def _compare_numeric_facts(
             source_excerpt=source_text,
             target_excerpt=target_text,
         )
-    for (kind, value), count in (target_counter - source_counter).items():
-        severity = "critical" if kind in {"casualty", "injury"} else "major"
+    for (kind, value), count in target_only.items():
+        severity = "critical" if kind in _HARM_KINDS else "major"
         add(
             f"unexpected_{kind}",
             severity,

@@ -191,6 +191,54 @@ def test_repeated_plain_number_may_be_consolidated_during_adaptation():
     assert "number_mismatch" not in _categories(document)
 
 
+def test_preserved_value_with_asymmetric_casualty_context_is_not_critical():
+    # "75 Jahren" next to "starb" reads as a casualty in German, while the
+    # Turkish "75 yaşında" reads as a plain number. The value 75 is preserved,
+    # so this classification asymmetry must not raise a critical casualty finding.
+    document = _evaluate(
+        "Kevin Keegan ist tot. Er starb im Alter von 75 Jahren.",
+        "Kevin Keegan hayatını kaybetti. 75 yaşında vefat etti.",
+    )
+    categories = _categories(document)
+    assert "casualty_mismatch" not in categories
+    assert "unexpected_number" not in categories
+    assert document.summary.critical_count == 0
+    assert document.status != "red"
+
+
+def test_preserved_casualty_value_classified_as_number_is_not_critical():
+    # Value 5 preserved; German context labels it a plain number while the
+    # Turkish "hayatını kaybetti" labels it a casualty. No critical/unexpected.
+    document = _evaluate(
+        "Eine Drohne traf einen Bus und tötete fünf Menschen.",
+        "Bir insansız hava aracı bir otobüse isabet etti ve beş kişi hayatını kaybetti.",
+    )
+    categories = _categories(document)
+    assert "unexpected_casualty" not in categories
+    assert "number_mismatch" not in categories
+    assert document.summary.critical_count == 0
+
+
+def test_changed_casualty_value_still_reported_after_reconciliation():
+    # A genuine casualty change must still fire even though reconciliation exists.
+    document = _evaluate(
+        "Bei dem Angriff starben 12 Menschen.",
+        "Saldırıda 13 kişi hayatını kaybetti.",
+    )
+    assert "casualty_mismatch" in _categories(document)
+
+
+def test_casualty_vs_injury_same_value_is_still_reported():
+    # Killed vs. wounded is a real distinction; identical value must NOT be
+    # reconciled away.
+    document = _evaluate(
+        "Bei dem Unglück starben drei Menschen.",
+        "Kazada üç kişi yaralandı.",
+    )
+    categories = _categories(document)
+    assert "casualty_mismatch" in categories or "unexpected_injury" in categories
+
+
 def test_quantity_word_precision_is_preserved():
     correct = _evaluate("Tausend Waffen wurden gefunden.", "Bin silah bulundu.")
     wrong = _evaluate("Tausend Waffen wurden gefunden.", "Binlerce silah bulundu.")

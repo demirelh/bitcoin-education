@@ -308,8 +308,36 @@ def test_deterministic_casualty_critical_not_downgraded(db_session, tmp_path):
     assert result.decision == "red"
 
 
-def test_llm_finding_deduped_against_deterministic(db_session, tmp_path):
-    # Deterministic flags a casualty change (3 -> 5). The LLM reports the same
+def test_disputed_soft_finding_is_dismissed_and_unblocks(db_session, tmp_path):
+    # A soft deterministic suspicion (chronology) that GPT-5.6 disputes must be
+    # dismissed so a clean translation proceeds automatically instead of hanging.
+    _, settings = _make_episode(
+        db_session,
+        tmp_path,
+        [
+            (
+                "s01",
+                "Zuvor traf der Minister die Länder, danach sprach er im Bundestag.",
+                "Bakan eyaletlerle görüştü.",
+                True,
+            )
+        ],
+    )
+    with patch("btcedu.core.qa_reviewer.call_claude") as mock_call:
+        mock_call.return_value = _resp(
+            {"findings": [], "disputed_deterministic_categories": ["chronology_suspicion"]}
+        )
+        result = generate_qa_review(db_session, "ep-gate", settings)
+
+    gate = load_quality_gate(settings, "ep-gate")
+    chrono = [f for f in gate["findings"] if f["category"] == "chronology_suspicion"]
+    assert chrono, "deterministic chronology finding expected"
+    assert all(f["status"] == "dismissed" for f in chrono)
+    assert all(f["contradiction"] for f in chrono)
+    assert result.decision == "green"
+
+
+
     # issue; its finding must be deduped (dismissed) rather than double-counted.
     _, settings = _make_episode(
         db_session,

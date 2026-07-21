@@ -20,7 +20,7 @@ Bewerte ausschließlich anhand von Quelle vs. Ziel:
 6. **Eigennamen:** Falsche Namen/Orte/Institutionen? (`name_error`.)
 7. **Neutralisierung/Register/Sprachfluss:** Moderatorenreste, falsches Register, unnatürliche Sprache? (`neutralization_gap`/`register`/`fluency`, meist `minor`.)
 
-Ordne jedes Finding wenn möglich einer `story_id` aus der Struktur zu. Widersprich einem deterministischen Finding nur mit konkreter Begründung; liste die betroffene Kategorie dann in `disputed_deterministic_categories`.
+Ordne jedes Finding wenn möglich einer `story_id` aus der Struktur zu. Widersprich einem deterministischen Finding nur mit konkreter Begründung und liste die betroffene Kategorie in `disputed_deterministic_categories`. Ein Widerspruch VERWIRFT das deterministische Finding und lässt die Pipeline weiterlaufen — widersprich also nur bei echten Fehlalarmen (z. B. gleiche Zahl, nur andere Klassifizierung; Format-/Sprachunterschiede). Sicherheitskritische Kategorien (Opfer-/Verletztenzahlen `casualty`/`injury`, Rechtsvorwürfe `legal`, fehlende Meldungen `missing_story`, ungelöste Transkript-Hinweise, Kostenlimit) kannst du NICHT per Widerspruch aufheben; melde dort bei echtem Fehler ein eigenes Finding.
 
 {{ escalation_note }}
 

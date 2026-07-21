@@ -846,7 +846,44 @@ def _merge_short_chapters(chapters: list, min_seconds: int) -> list:
     def _dur(ch):
         return getattr(ch.narration, "estimated_duration_seconds", 0) or 0
 
+    def _is_weather(ch) -> bool:
+        title = str(getattr(ch, "title", "") or "").casefold()
+        narration = str(getattr(ch.narration, "text", "") or "").casefold()
+        return any(
+            marker in title or marker in narration
+            for marker in ("hava durumu", "hava tahmini", "wettervorhersage", "weather forecast")
+        )
+
+    def _merge_tail_into_previous() -> None:
+        last = merged[-1]
+        prev = merged[-2]
+        prev_text = prev.narration.text.rstrip()
+        new_text = f"{prev_text} {last.narration.text.lstrip()}".strip()
+        new_wc = len(new_text.split())
+        prev.narration.text = new_text
+        prev.narration.word_count = new_wc
+        prev.narration.estimated_duration_seconds = _compute_duration_estimate(new_wc)
+        try:
+            prev.overlays = list(getattr(prev, "overlays", []) or []) + list(
+                getattr(last, "overlays", []) or []
+            )
+        except Exception:
+            pass
+        merged.pop()
+
     for ch in chapters[1:]:
+        if _is_weather(ch):
+            # Close a preceding short bulletin before appending weather. Weather
+            # is a recurring, semantically distinct final Tagesschau chapter.
+            if (
+                len(merged) >= 2
+                and _dur(merged[-1]) < min_seconds
+                and merged[-2].chapter_id != "ch01"
+                and not _is_weather(merged[-1])
+            ):
+                _merge_tail_into_previous()
+            merged.append(ch)
+            continue
         prev = merged[-1] if merged else None
         prev_is_short = prev is not None and prev.chapter_id != "ch01" and _dur(prev) < min_seconds
         if _dur(ch) < min_seconds and prev_is_short:
@@ -867,22 +904,13 @@ def _merge_short_chapters(chapters: list, min_seconds: int) -> list:
             merged.append(ch)
 
     # tail: if last chapter is still short, merge it into predecessor
-    if len(merged) >= 2 and _dur(merged[-1]) < min_seconds and merged[-2].chapter_id != "ch01":
-        last = merged[-1]
-        prev = merged[-2]
-        prev_text = prev.narration.text.rstrip()
-        new_text = f"{prev_text} {last.narration.text.lstrip()}".strip()
-        new_wc = len(new_text.split())
-        prev.narration.text = new_text
-        prev.narration.word_count = new_wc
-        prev.narration.estimated_duration_seconds = _compute_duration_estimate(new_wc)
-        try:
-            prev.overlays = list(getattr(prev, "overlays", []) or []) + list(
-                getattr(last, "overlays", []) or []
-            )
-        except Exception:
-            pass
-        merged.pop()
+    if (
+        len(merged) >= 2
+        and _dur(merged[-1]) < min_seconds
+        and merged[-2].chapter_id != "ch01"
+        and not _is_weather(merged[-1])
+    ):
+        _merge_tail_into_previous()
 
     return merged
 

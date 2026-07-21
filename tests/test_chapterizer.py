@@ -12,6 +12,7 @@ from btcedu.core.chapterizer import (
     _compute_duration_estimate,
     _fix_chapter_data,
     _is_chapterization_current,
+    _merge_short_chapters,
     _parse_json_response,
     _segment_script,
     _split_prompt,
@@ -89,6 +90,38 @@ class TestFixChapterDataBackfill:
         fixed = _fix_chapter_data(data, "ep1")
         assert fixed["chapters"][0]["visual"]["image_prompt"] == "x"
         assert fixed["chapters"][0]["transitions"] == {"in": "fade", "out": "fade"}
+
+
+def test_short_weather_remains_separate_final_chapter():
+    data = {
+        "schema_version": "1.0",
+        "episode_id": "ep1",
+        "title": "T",
+        "total_chapters": 4,
+        "estimated_duration_seconds": 70,
+        "chapters": [
+            _minimal_chapter("ch01", 1, "Giriş"),
+            _minimal_chapter("ch02", 2, "Tren İstasyonları"),
+            _minimal_chapter("ch03", 3, "Spor"),
+            _minimal_chapter("ch04", 4, "Hava Durumu"),
+        ],
+    }
+    durations = [10, 40, 10, 10]
+    for chapter, duration in zip(data["chapters"], durations, strict=True):
+        chapter["narration"]["estimated_duration_seconds"] = duration
+        chapter["narration"]["text"] = (
+            "Yarın için hava tahmini açıklanıyor."
+            if chapter["title"] == "Hava Durumu"
+            else f"{chapter['title']} haber metni."
+        )
+    chapters = ChapterDocument.model_validate(data).chapters
+
+    merged = _merge_short_chapters(chapters, min_seconds=30)
+
+    assert len(merged) == 3
+    assert merged[-1].title == "Hava Durumu"
+    assert "hava tahmini" in merged[-1].narration.text
+    assert "Spor haber metni" in merged[-2].narration.text
 
 
 # ---------------------------------------------------------------------------

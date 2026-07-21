@@ -656,6 +656,10 @@ def chapterize_script(
         # (Phase 8 requirement D): narration -> TTS+render, visual/prompt ->
         # images+render, overlay -> render, structure -> images+TTS+render.
         _mark_downstream_stale(episode_id, settings, previous_components, component_hashes)
+        from btcedu.core.reviewer import supersede_pending_reviews
+
+        for review_stage in ("stock_images", "render", "publish"):
+            supersede_pending_reviews(session, episode_id, review_stage)
 
         logger.info(
             "Chapterized %s (%d chapters, ~%ds, $%.4f)",

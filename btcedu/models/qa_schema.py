@@ -37,6 +37,16 @@ class QAFinding(BaseModel):
     # True when a model finding conflicts with a deterministic finding for the
     # same story/category (both are retained; the deterministic one wins).
     contradiction: bool = False
+    # True only for deterministic invariants whose evidence is structurally
+    # unambiguous (for example a missing story or a locally aligned exact
+    # casualty-count change). Heuristic findings must not trigger auto-repair
+    # after an independent reviewer disputes them.
+    structural_invariant: bool = False
+    # Source evidence overlaps transcript segments that transcript QA marked
+    # unresolved/critical. Such findings are review hints, not certain
+    # translation errors.
+    source_unreliable: bool = False
+    review_required: bool = False
     # Durable status history across retry generations.
     history: list[QAFindingEvent] = Field(default_factory=list)
 

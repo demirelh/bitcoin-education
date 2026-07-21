@@ -71,20 +71,6 @@ ESCALATION_TRIGGERS = frozenset(
     }
 )
 
-# Deterministic finding buckets a model dispute may NOT dismiss. These are the
-# safety-critical / structural categories that must always be repaired or
-# reviewed by a human; the independent model can only clear soft-fidelity
-# suspicions (numbers, entities, style, chronology, hallucination heuristics).
-_NON_DISMISSABLE_BUCKETS = frozenset(
-    {
-        "casualty",
-        "legal",
-        "story",
-        "transcript",
-        "cost",
-    }
-)
-
 # Categories the independent model may emit (kept broad but enumerated in prompt).
 _LLM_CATEGORIES = frozenset(
     {
@@ -600,7 +586,22 @@ def _category_bucket(category: str) -> str:
         return "story"
     if any(k in c for k in ("hallucinat", "invented", "unexpected_")):
         return "hallucination"
-    if any(k in c for k in ("date", "time", "percent", "money", "temperature", "score", "number")):
+    if any(
+        k in c
+        for k in (
+            "date",
+            "time",
+            "percent",
+            "money",
+            "temperature",
+            "score",
+            "number",
+            "age",
+            "year",
+            "duration",
+            "numeric_role",
+        )
+    ):
         return "number"
     if any(k in c for k in ("entity", "name", "protected_term")):
         return "entity"
@@ -627,6 +628,9 @@ def _deterministic_findings(deterministic_qa: dict | None) -> list[dict]:
                 "explanation": finding.get("explanation") or finding.get("category") or "finding",
                 "required_action": finding.get("required_action") or "Review manually.",
                 "source_segment_ids": finding.get("source_segment_ids") or [],
+                "structural_invariant": bool(finding.get("structural_invariant", False)),
+                "source_unreliable": bool(finding.get("source_unreliable", False)),
+                "review_required": bool(finding.get("review_required", False)),
             }
         )
     return findings
@@ -639,7 +643,7 @@ def _transcript_findings(transcript_unresolved: list[dict]) -> list[dict]:
             {
                 "story_id": None,
                 "category": f"unresolved_transcript_{item.get('category', 'item')}",
-                "severity": "major",
+                "severity": "critical" if item.get("severity") == "critical" else "major",
                 "source_excerpt": item.get("message") or "",
                 "target_excerpt": ", ".join(item.get("segment_ids") or []),
                 "explanation": (
@@ -648,6 +652,9 @@ def _transcript_findings(transcript_unresolved: list[dict]) -> list[dict]:
                 ),
                 "required_action": "Resolve the transcript issue before publishing.",
                 "source_segment_ids": item.get("segment_ids") or [],
+                "structural_invariant": False,
+                "source_unreliable": True,
+                "review_required": True,
             }
         )
     return findings
@@ -678,6 +685,7 @@ def _cost_limit_finding() -> dict:
         "explanation": "The cumulative episode cost limit was reached before QA could verify.",
         "required_action": "Raise max_episode_cost_usd or reduce upstream cost, then re-run QA.",
         "source_segment_ids": [],
+        "structural_invariant": True,
     }
 
 
@@ -922,14 +930,11 @@ def _merge_findings(
         bucket = _category_bucket(det["category"])
         det_keys.add((det.get("story_id"), bucket))
         contradiction = bucket in disputed_buckets or det["category"].lower() in disputed
-        # A dispute from the independent QA model (GPT-5.6) clears soft-fidelity
-        # deterministic false positives so a clean translation is not blocked by
-        # heuristic suspicions. Hard categories (casualties/injuries, legal
-        # claims, missing stories, unresolved transcript, cost) always require a
-        # real fix or manual review and can never be dismissed by a dispute.
+        # An independent-model dispute clears heuristic findings. Only evidence
+        # explicitly marked as a structurally safe invariant remains open.
         det_status = "open"
         det_note = None
-        if contradiction and bucket not in _NON_DISMISSABLE_BUCKETS:
+        if contradiction and not det.get("structural_invariant", False):
             det_status = "dismissed"
             det_note = "adjudicated: disputed by independent QA model"
         finding_id, history = _history_and_id(
@@ -959,6 +964,9 @@ def _merge_findings(
                 model="translation-qa",
                 retry_generation=generation,
                 contradiction=contradiction,
+                structural_invariant=bool(det.get("structural_invariant", False)),
+                source_unreliable=bool(det.get("source_unreliable", False)),
+                review_required=bool(det.get("review_required", False)),
                 history=history,
             )
         )
@@ -1011,6 +1019,9 @@ def _merge_findings(
                         bucket in disputed_buckets or model_finding["category"].lower() in disputed
                     )
                 ),
+                structural_invariant=False,
+                source_unreliable=False,
+                review_required=False,
                 history=history,
             )
         )
@@ -1047,6 +1058,9 @@ def _merge_findings(
                     model=prev.get("model"),
                     retry_generation=generation,
                     contradiction=bool(prev.get("contradiction", False)),
+                    structural_invariant=bool(prev.get("structural_invariant", False)),
+                    source_unreliable=bool(prev.get("source_unreliable", False)),
+                    review_required=bool(prev.get("review_required", False)),
                     history=history,
                 )
             )
@@ -1684,6 +1698,10 @@ def build_story_findings(gate: dict) -> dict[str, list[dict]]:
     story_findings: dict[str, list[dict]] = {}
     for finding in gate.get("findings") or []:
         if finding.get("status") != "open":
+            continue
+        if finding.get("contradiction") and not finding.get("structural_invariant"):
+            continue
+        if finding.get("review_required") or finding.get("source_unreliable"):
             continue
         story_id = finding.get("story_id")
         if not story_id:

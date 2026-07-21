@@ -337,7 +337,26 @@ def test_disputed_soft_finding_is_dismissed_and_unblocks(db_session, tmp_path):
     assert result.decision == "green"
 
 
+def test_disputed_heuristic_finding_does_not_trigger_automatic_retry(db_session, tmp_path):
+    _, settings = _make_episode(
+        db_session,
+        tmp_path,
+        [("s01", "Zuvor sprach der Minister.", "Bakan konuştu.", True)],
+    )
+    with (
+        patch("btcedu.core.qa_reviewer.call_claude") as mock_call,
+        patch("btcedu.core.qa_reviewer.apply_targeted_repair") as repair,
+    ):
+        mock_call.return_value = _resp(
+            {"findings": [], "disputed_deterministic_categories": ["chronology_suspicion"]}
+        )
+        result = resolve_translation_quality_gate(db_session, "ep-gate", settings)
 
+    assert result.decision == "green"
+    repair.assert_not_called()
+
+
+def test_llm_finding_deduped_against_deterministic(db_session, tmp_path):
     # issue; its finding must be deduped (dismissed) rather than double-counted.
     _, settings = _make_episode(
         db_session,

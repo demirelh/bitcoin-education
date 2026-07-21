@@ -897,7 +897,7 @@ def _adaptation_fidelity_risks(
     )
     for counter in (source_numbers, adapted_numbers):
         for key in list(counter):
-            if key[0] == "number":
+            if key[0] == "generic_count":
                 counter[key] = 1
     if source_numbers != adapted_numbers:
         risks.append("numbers_dates_or_scores")

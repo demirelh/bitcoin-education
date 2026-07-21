@@ -22,15 +22,25 @@ from btcedu.models.episode import Episode, PipelineRun, PipelineStage, RunStatus
 from btcedu.models.qa_schema import QAFinding, QASummary, TranslationQADocument
 from btcedu.prompts.glossary_loader import load_glossary
 
-DETECTOR_VERSION = "deterministic/translation-qa-v3"
+DETECTOR_VERSION = "deterministic/translation-qa-v4"
 
-# Numeric-kind groups used to reconcile cross-language classification differences
-# in ``_compare_numeric_facts``. A preserved value whose only discrepancy is a
-# harm-kind vs. generic-kind label (German↔Turkish context asymmetry) is not a
-# factual error and must not raise a critical/major mismatch.
-_HARM_KINDS = {"casualty", "injury"}
-_GENERIC_NUMERIC_KINDS = {"number", "temperature"}
-_RECONCILABLE_KINDS = _HARM_KINDS | _GENERIC_NUMERIC_KINDS
+_HARM_KINDS = {"casualty_count", "injury_count"}
+_EXACT_STRUCTURAL_KINDS = {
+    "casualty_count",
+    "injury_count",
+    "age",
+    "date",
+    "time",
+    "year",
+    "score",
+    "money",
+    "percentage",
+}
+_KIND_CATEGORY = {
+    "casualty_count": "casualty",
+    "injury_count": "injury",
+    "generic_count": "number",
+}
 
 _MONTHS = {
     "januar": 1,
@@ -136,6 +146,49 @@ _QUANTITY_WORD_RE = re.compile(
         r"beid\w*|zweit\w*|dritt\w*|ikinci\w*|üçüncü\w*)\b"
     ),
     re.IGNORECASE,
+)
+_CLAIM_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+|\n+")
+_AGE_CONTEXT_RE = re.compile(
+    r"(?:im\s+alter\s+von\s+|)(?:\d+|[\wäöüßçğıöşü]+)\s+"
+    r"(?:jahre(?:n)?\s+alt|jahren\b)"
+    r"|(?:\d+|[\wäöüßçğıöşü]+)\s+yaş(?:ında|indaydı|ındaydı|ında)?\b",
+    re.IGNORECASE,
+)
+_DURATION_UNITS_RE = re.compile(
+    r"\b(?:sekunden?|minuten?|stunden?|tage?|wochen?|monate?|jahre?n?|"
+    r"saniye|dakika|saat|gün|hafta|ay|yıl)(?:dır|dir|dur|dür|dan|den)?\b",
+    re.IGNORECASE,
+)
+_CASUALTY_ROLE_RE = re.compile(
+    r"\b(?:tote[nr]?|getötet(?:e[nr]?)?|tötet\w*|starben|ums\s+leben|opfer|"
+    r"kişi\s+hayatını\s+kaybet\w*|hayatını\s+kaybeden|kişi\s+öldü|"
+    r"ölü(?:m)?|can\s+kaybı)\b",
+    re.IGNORECASE,
+)
+_INJURY_ROLE_RE = re.compile(
+    r"\b(?:verletzte[nr]?|verletzt(?:e[nr]?)?|yaralı|yaralandı|yaralanan)\b",
+    re.IGNORECASE,
+)
+_PERSON_COUNT_RE = re.compile(
+    r"\b(?:menschen?|personen?|tote[nr]?|verletzte[nr]?|kişi|kişinin|"
+    r"insan|insanın|yaralı)\b",
+    re.IGNORECASE,
+)
+_COUNT_NOUN_RE = re.compile(
+    r"\b(?:menschen?|personen?|drohnen?|raketen?|fahrzeuge?|häuser?|plätze?|"
+    r"kişi|insan|insansız\s+hava\s+aracı|füze|araç|ev)\b",
+    re.IGNORECASE,
+)
+_QUALIFIER_PATTERNS = (
+    ("at_least", re.compile(r"\b(?:mindestens|wenigstens|en\s+az)\s*$", re.IGNORECASE)),
+    (
+        "more_than",
+        re.compile(r"\b(?:mehr\s+als|über|fazla|aşkın)\s*$", re.IGNORECASE),
+    ),
+    (
+        "approximate",
+        re.compile(r"\b(?:rund|etwa|ungefähr|circa|ca\.?|yaklaşık)\s*$", re.IGNORECASE),
+    ),
 )
 _SPORT_CONTEXT = {
     "spiel",
@@ -263,15 +316,42 @@ _TR_VERBAL_NEGATION_RE = re.compile(
     re.IGNORECASE,
 )
 _TR_NEITHER_RE = re.compile(r"\bne\b(?:(?![.!?]).){1,80}\bne\s+de\b", re.IGNORECASE)
-_CHRONOLOGY_GROUPS = {
-    "before": {"de": ("vorher", "zuvor", "bevor"), "tr": ("önce", "daha önce")},
-    "after": {"de": ("nachher", "danach", "anschließend"), "tr": ("sonra", "ardından")},
-    "since": {"de": ("seit",), "tr": ("beri", "bu yana", "süredir", "günlerdir")},
-    "until": {"de": ("bis",), "tr": ("kadar", "dek")},
-    "yesterday": {"de": ("gestern",), "tr": ("dün",)},
-    "today": {"de": ("heute",), "tr": ("bugün", "bu gece")},
-    "tomorrow": {"de": ("morgen",), "tr": ("yarın",)},
+_CHRONOLOGY_PATTERNS: dict[str, dict[str, tuple[str, ...]]] = {
+    "before": {
+        "de": (r"\b(?:vorher|zuvor|bevor)\b",),
+        "tr": (r"\b(?:daha\s+önce|önceki|önce)\b",),
+    },
+    "after": {
+        "de": (
+            r"\b(?:nachher|anschließend)\b",
+            r"\bdanach\b(?!\s+gefragt)",
+            r"\bnach\s+(?:ihrem\s+)?sieg\b",
+            r"\bnach\s+einem\s+offiziellen\s+empfang\b",
+            r"\bnach\s+(?:dem\s+)?spiel\b",
+        ),
+        "tr": (r"\b(?:ardından|sonrasında|sonra)\b",),
+    },
+    "since": {
+        "de": (r"\bseit\b",),
+        "tr": (
+            r"\b(?:beri|bu\s+yana|süredir)\b",
+            r"\b\w+(?:ler|lar)?(?:dır|dir|dur|dür|tır|tir|tur|tür)\b",
+        ),
+    },
+    "until": {"de": (r"\bbis\b",), "tr": (r"\b(?:kadar|dek)\b",)},
+    "yesterday": {"de": (r"\bgestern\b",), "tr": (r"\bdün\b",)},
+    "today": {
+        "de": (r"\bheute\b",),
+        "tr": (
+            r"\bbugün\b",
+            r"\bbugüne\s+kadar\b",
+            r"\bbu\s+(?:akşam|gece)\b",
+            r"\bgece\s+saatlerinde\b",
+        ),
+    },
+    "tomorrow": {"de": (r"\bmorgen\b",), "tr": (r"\byarın\b",)},
 }
+_CHRONOLOGY_GROUPS = {group: {"de": (), "tr": ()} for group in _CHRONOLOGY_PATTERNS}
 _ENTITY_ALIASES = {
     "deutschland": ("almanya",),
     "türkei": ("türkiye",),
@@ -350,6 +430,11 @@ class NumericFact:
     kind: str
     value: str
     raw: str
+    qualifier: str = "exact"
+    claim_index: int = 0
+    start: int = 0
+    end: int = 0
+    confidence: Literal["high", "medium", "low"] = "high"
 
 
 @dataclass
@@ -438,11 +523,13 @@ def run_translation_qa(
         source_data = json.loads(source_path.read_text(encoding="utf-8"))
         target_data = json.loads(target_path.read_text(encoding="utf-8"))
         glossary = load_glossary(episode.content_profile) or {}
+        source_unreliable_segment_ids = _load_source_unreliable_segments(settings, episode_id)
         document = evaluate_translation_documents(
             episode_id,
             source_data,
             target_data,
             glossary,
+            source_unreliable_segment_ids,
         )
         qa_path.parent.mkdir(parents=True, exist_ok=True)
         qa_path.write_text(
@@ -508,16 +595,35 @@ def load_translation_qa(settings: Settings, episode_id: str) -> dict | None:
     return document.model_dump(mode="json")
 
 
+def _load_source_unreliable_segments(settings: Settings, episode_id: str) -> set[str]:
+    """Segments whose transcript evidence is unresolved or critical."""
+    try:
+        from btcedu.core.transcript_qa import load_transcript_qa
+
+        document = load_transcript_qa(settings, episode_id)
+    except Exception:  # noqa: BLE001
+        return set()
+    if not document:
+        return set()
+    segments: set[str] = set()
+    for finding in document.get("findings") or []:
+        if finding.get("blocking") or finding.get("severity") in {"critical", "major"}:
+            segments.update(finding.get("segment_ids") or [])
+    return segments
+
+
 def evaluate_translation_documents(
     episode_id: str,
     source_data: dict,
     target_data: dict,
     glossary: dict | None = None,
+    source_unreliable_segment_ids: set[str] | None = None,
 ) -> TranslationQADocument:
     """Evaluate two story documents without database or filesystem access."""
     source_stories = source_data.get("stories") or []
     target_stories = target_data.get("stories") or []
     findings: list[QAFinding] = []
+    unreliable_segments = source_unreliable_segment_ids or set()
 
     def add(
         category: str,
@@ -528,7 +634,16 @@ def evaluate_translation_documents(
         story: dict | None = None,
         source_excerpt: str = "",
         target_excerpt: str = "",
+        structural_invariant: bool = False,
+        review_required: bool = False,
     ) -> None:
+        story_segments = set((story or {}).get("source_segment_ids") or [])
+        affected_unreliable = sorted(story_segments & unreliable_segments)
+        source_unreliable = bool(affected_unreliable)
+        if source_unreliable and severity in {"critical", "major"}:
+            severity = "minor"
+            structural_invariant = False
+            review_required = True
         findings.append(
             QAFinding(
                 finding_id=f"qa-{len(findings) + 1:04d}",
@@ -539,7 +654,14 @@ def evaluate_translation_documents(
                 target_excerpt=target_excerpt[:500],
                 explanation=explanation,
                 required_action=required_action,
-                source_segment_ids=(story or {}).get("source_segment_ids") or [],
+                source_segment_ids=(
+                    affected_unreliable
+                    if source_unreliable
+                    else (story or {}).get("source_segment_ids") or []
+                ),
+                structural_invariant=structural_invariant,
+                source_unreliable=source_unreliable,
+                review_required=review_required,
             )
         )
 
@@ -596,14 +718,15 @@ def evaluate_translation_documents(
             "negation_suspicion",
             add,
         )
-        _check_marker_groups(
-            source_story,
-            source_text,
-            target_text,
-            _CHRONOLOGY_GROUPS,
-            "chronology_suspicion",
-            add,
-        )
+        if source_story.get("story_type") not in {"intro", "outro"}:
+            _check_marker_groups(
+                source_story,
+                source_text,
+                target_text,
+                _CHRONOLOGY_GROUPS,
+                "chronology_suspicion",
+                add,
+            )
         _check_weather_pairs(source_story, source_text, target_text, add)
 
     summary = QASummary(
@@ -626,12 +749,15 @@ def evaluate_translation_documents(
             for kind in (
                 "date",
                 "time",
-                "percent",
+                "percentage",
                 "money",
                 "temperature",
                 "score",
                 "casualty",
                 "injury",
+                "age",
+                "year",
+                "duration",
                 "number",
             )
         ),
@@ -640,12 +766,15 @@ def evaluate_translation_documents(
             for kind in (
                 "date",
                 "time",
-                "percent",
+                "percentage",
                 "money",
                 "temperature",
                 "score",
                 "casualty",
                 "injury",
+                "age",
+                "year",
+                "duration",
                 "number",
             )
         ),
@@ -740,6 +869,7 @@ def _check_story_coverage(source_stories: list[dict], target_stories: list[dict]
             "Restore every missing story in its original position.",
             source_excerpt=", ".join(source_ids),
             target_excerpt=", ".join(target_ids),
+            structural_invariant=True,
         )
     if duplicates:
         add(
@@ -749,6 +879,7 @@ def _check_story_coverage(source_stories: list[dict], target_stories: list[dict]
             "Keep exactly one translated entry per source story.",
             source_excerpt=", ".join(source_ids),
             target_excerpt=", ".join(target_ids),
+            structural_invariant=True,
         )
     if unknown:
         add(
@@ -758,6 +889,7 @@ def _check_story_coverage(source_stories: list[dict], target_stories: list[dict]
             "Remove invented stories or restore the correct source story ID.",
             source_excerpt=", ".join(source_ids),
             target_excerpt=", ".join(target_ids),
+            structural_invariant=True,
         )
     common_target_order = [story_id for story_id in target_ids if story_id in source_set]
     expected_order = [story_id for story_id in source_ids if story_id in target_set]
@@ -769,6 +901,7 @@ def _check_story_coverage(source_stories: list[dict], target_stories: list[dict]
             "Restore the source story order without merging stories.",
             source_excerpt=", ".join(expected_order),
             target_excerpt=", ".join(common_target_order),
+            structural_invariant=True,
         )
     return {
         "source_story_ids": source_ids,
@@ -781,19 +914,30 @@ def _check_story_coverage(source_stories: list[dict], target_stories: list[dict]
 
 
 def extract_numeric_facts(text: str) -> list[NumericFact]:
-    """Extract normalized facts, preferring typed local-context values."""
+    """Extract canonical, claim-local numeric facts from German or Turkish."""
     facts: list[NumericFact] = []
     occupied: list[tuple[int, int]] = []
 
+    def append_fact(match: re.Match, kind: str, value: str) -> None:
+        facts.append(
+            NumericFact(
+                kind=kind,
+                value=value,
+                raw=match.group(0),
+                qualifier=_numeric_qualifier(text, match.start(), match.end()),
+                claim_index=_claim_index(text, match.start()),
+                start=match.start(),
+                end=match.end(),
+                confidence="high",
+            )
+        )
+        occupied.append(match.span())
+
     def collect(pattern: re.Pattern, kind: str, normalizer) -> None:
         for match in pattern.finditer(text):
-            if any(
-                start <= match.start() < end or start < match.end() <= end
-                for start, end in occupied
-            ):
+            if _overlaps(match.span(), occupied):
                 continue
-            facts.append(NumericFact(kind, normalizer(match), match.group(0)))
-            occupied.append(match.span())
+            append_fact(match, kind, normalizer(match))
 
     collect(
         _DATE_RE,
@@ -813,13 +957,27 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
         right = match.group(2) or match.group(4)
         facts.extend(
             [
-                NumericFact("percent", _decimal(left), match.group(0)),
-                NumericFact("percent", _decimal(right), match.group(0)),
+                NumericFact(
+                    "percentage",
+                    _decimal(left),
+                    match.group(0),
+                    claim_index=_claim_index(text, match.start()),
+                    start=match.start(),
+                    end=match.end(),
+                ),
+                NumericFact(
+                    "percentage",
+                    _decimal(right),
+                    match.group(0),
+                    claim_index=_claim_index(text, match.start()),
+                    start=match.start(),
+                    end=match.end(),
+                ),
             ]
         )
         occupied.append(match.span())
-    collect(_PERCENT_RE, "percent", lambda match: _decimal(match.group(1)))
-    collect(_PERCENT_PREFIX_RE, "percent", lambda match: _decimal(match.group(1)))
+    collect(_PERCENT_RE, "percentage", lambda match: _decimal(match.group(1)))
+    collect(_PERCENT_PREFIX_RE, "percentage", lambda match: _decimal(match.group(1)))
     collect(
         _MONEY_RE,
         "money",
@@ -838,61 +996,55 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
     for match in _TEMP_RANGE_RE.finditer(text):
         facts.extend(
             [
-                NumericFact("temperature", _decimal(match.group(1)), match.group(0)),
-                NumericFact("temperature", _decimal(match.group(2)), match.group(0)),
+                NumericFact(
+                    "temperature",
+                    _decimal(match.group(1)),
+                    match.group(0),
+                    claim_index=_claim_index(text, match.start()),
+                    start=match.start(),
+                    end=match.end(),
+                ),
+                NumericFact(
+                    "temperature",
+                    _decimal(match.group(2)),
+                    match.group(0),
+                    claim_index=_claim_index(text, match.start()),
+                    start=match.start(),
+                    end=match.end(),
+                ),
             ]
         )
         occupied.append(match.span())
     collect(_TEMP_RE, "temperature", lambda match: _decimal(match.group(1)))
     for match in _SCALED_NUMBER_RE.finditer(text):
-        if any(
-            start <= match.start() < end or start < match.end() <= end for start, end in occupied
-        ):
+        if _overlaps(match.span(), occupied):
             continue
-        window = _numeric_context(text, match.start(), match.end())
-        if any(term in window for term in _CASUALTY_CONTEXT):
-            kind = "casualty"
-        elif any(term in window for term in _INJURY_CONTEXT):
-            kind = "injury"
-        else:
-            kind = "number"
-        facts.append(
-            NumericFact(
-                kind,
-                _scaled_decimal(match.group(1), match.group(2)),
-                match.group(0),
-            )
-        )
-        occupied.append(match.span())
+        value = _scaled_decimal(match.group(1), match.group(2))
+        append_fact(match, _classify_numeric_role(text, match.start(), match.end(), value), value)
     for match in _WORD_SCALED_NUMBER_RE.finditer(text):
-        if any(
-            start <= match.start() < end or start < match.end() <= end for start, end in occupied
-        ):
+        if _overlaps(match.span(), occupied):
             continue
-        window = _numeric_context(text, match.start(), match.end())
-        if any(term in window for term in _CASUALTY_CONTEXT):
-            kind = "casualty"
-        elif any(term in window for term in _INJURY_CONTEXT):
-            kind = "injury"
-        else:
-            kind = "number"
-        facts.append(
-            NumericFact(
-                kind,
-                _scaled_decimal(_WORD_CARDINAL_VALUES[_normalize(match.group(1))], match.group(2)),
-                match.group(0),
-            )
-        )
-        occupied.append(match.span())
+        value = _scaled_decimal(_WORD_CARDINAL_VALUES[_normalize(match.group(1))], match.group(2))
+        append_fact(match, _classify_numeric_role(text, match.start(), match.end(), value), value)
 
     for match in _COMPOUND_SCORE_RE.finditer(text):
         facts.extend(
             [
                 NumericFact(
-                    "score", f"{int(match.group(1))}-{int(match.group(3))}", match.group(0)
+                    "score",
+                    f"{int(match.group(1))}-{int(match.group(3))}",
+                    match.group(0),
+                    claim_index=_claim_index(text, match.start()),
+                    start=match.start(),
+                    end=match.end(),
                 ),
                 NumericFact(
-                    "score", f"{int(match.group(2))}-{int(match.group(3))}", match.group(0)
+                    "score",
+                    f"{int(match.group(2))}-{int(match.group(3))}",
+                    match.group(0),
+                    claim_index=_claim_index(text, match.start()),
+                    start=match.start(),
+                    end=match.end(),
                 ),
             ]
         )
@@ -901,34 +1053,23 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
     is_sport = _has_sport_context(text)
     if is_sport:
         for match in _SCORE_RE.finditer(text):
-            if any(
-                start <= match.start() < end or start < match.end() <= end
-                for start, end in occupied
-            ):
+            if _overlaps(match.span(), occupied):
                 continue
-            facts.append(
-                NumericFact(
-                    "score",
-                    f"{int(match.group(1))}-{int(match.group(2))}",
-                    match.group(0),
-                )
-            )
-            occupied.append(match.span())
+            append_fact(match, "score", f"{int(match.group(1))}-{int(match.group(2))}")
 
     for match in _TURKISH_COMPOUND_NUMBER_RE.finditer(text):
         value = _TURKISH_TENS[_normalize(match.group(1))] + int(
             _WORD_VALUES[_normalize(match.group(2))]
         )
-        facts.append(NumericFact("number", str(value), match.group(0)))
-        occupied.append(match.span())
+        append_fact(
+            match,
+            _classify_numeric_role(text, match.start(), match.end(), str(value)),
+            str(value),
+        )
 
     for match in list(_NUMBER_RE.finditer(text)) + list(_QUANTITY_WORD_RE.finditer(text)):
-        overlaps_typed_fact = any(
-            start <= match.start() < end or start < match.end() <= end for start, end in occupied
-        )
-        if overlaps_typed_fact:
+        if _overlaps(match.span(), occupied):
             continue
-        window = _numeric_context(text, match.start(), match.end())
         raw = match.group(0)
         normalized_raw = _normalize(raw)
         if normalized_raw.startswith(("beid", "zweit", "ikisi")):
@@ -941,16 +1082,8 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
             value = (
                 _WORD_VALUES[normalized_raw] if normalized_raw in _WORD_VALUES else _decimal(raw)
             )
-        if any(term in window for term in _CASUALTY_CONTEXT):
-            kind = "casualty"
-        elif any(term in window for term in _INJURY_CONTEXT):
-            kind = "injury"
-        elif re.search(r"\b(?:temperatur|sıcaklık)\w*|\b(?:grad|derece)\b|°", window):
-            kind = "temperature"
-        else:
-            kind = "number"
-        facts.append(NumericFact(kind, value, raw))
-    return facts
+        append_fact(match, _classify_numeric_role(text, match.start(), match.end(), value), value)
+    return sorted(facts, key=lambda fact: (fact.start, fact.end, fact.kind))
 
 
 def _compare_numeric_facts(
@@ -961,81 +1094,298 @@ def _compare_numeric_facts(
     target_facts: list[NumericFact],
     add,
 ) -> int:
-    source_counter = Counter((fact.kind, fact.value) for fact in source_facts)
-    target_counter = Counter((fact.kind, fact.value) for fact in target_facts)
-    for counter in (source_counter, target_counter):
-        for key in list(counter):
-            if key[0] == "number":
-                counter[key] = 1
-    matched = sum((source_counter & target_counter).values())
-    source_only = source_counter - target_counter
-    target_only = target_counter - source_counter
+    source_remaining = _dedupe_repeated_claim_facts(source_text, source_facts)
+    target_remaining = _dedupe_repeated_claim_facts(target_text, target_facts)
+    matched = 0
 
-    # Reconcile values that ARE preserved across languages but whose casualty/
-    # injury vs. generic-number classification differs. German→Turkish context
-    # detection is asymmetric (e.g. "75 Jahren" next to "starb" reads as a
-    # casualty, while "75 yaşında" reads as a plain number), which otherwise
-    # produces false *critical* casualty findings even though the numeric value
-    # is intact. Only a harm-kind (casualty/injury) paired with a generic kind
-    # (number/temperature) is reconciled; casualty↔injury remains a real
-    # distinction (killed vs. wounded) and a changed value still mismatches.
-    for (s_kind, s_value) in list(source_only.keys()):
-        if s_kind not in _RECONCILABLE_KINDS or source_only[(s_kind, s_value)] <= 0:
+    # First consume exact role/value/quantifier matches. Nearest claim wins so
+    # repeated values remain attached to their local statements.
+    for source_fact in list(source_remaining):
+        candidate = _nearest_numeric_fact(
+            source_fact,
+            target_remaining,
+            lambda target: (
+                target.kind == source_fact.kind
+                and target.value == source_fact.value
+                and target.qualifier == source_fact.qualifier
+            ),
+        )
+        if candidate is None:
             continue
-        for (t_kind, t_value) in list(target_only.keys()):
-            if t_kind not in _RECONCILABLE_KINDS or s_value != t_value or s_kind == t_kind:
-                continue
-            pair = {s_kind, t_kind}
-            if not (pair & _HARM_KINDS and pair & _GENERIC_NUMERIC_KINDS):
-                continue
-            take = min(source_only[(s_kind, s_value)], target_only[(t_kind, t_value)])
-            if take <= 0:
-                continue
-            source_only[(s_kind, s_value)] -= take
-            target_only[(t_kind, t_value)] -= take
-            matched += take
-            add(
-                "numeric_classification_note",
-                "info",
-                f"Value {s_value!r} is preserved but classified differently "
-                f"({s_kind} vs {t_kind}); treated as a cross-language context "
-                "difference, not a factual change.",
-                "No action required; verify only if the casualty/number reading "
-                "is genuinely wrong.",
-                story=story,
-                source_excerpt=source_text,
-                target_excerpt=target_text,
-            )
-            if source_only[(s_kind, s_value)] <= 0:
-                break
-    source_only += Counter()  # drop zeroed/negative entries
-    target_only += Counter()
+        source_remaining.remove(source_fact)
+        target_remaining.remove(candidate)
+        matched += 1
 
-    for (kind, value), count in source_only.items():
-        severity: Literal["major", "critical"] = (
-            "critical" if kind in _HARM_KINDS else "major"
+    # Pair remaining facts locally by semantic role. A changed value produces
+    # one mismatch finding (never a duplicate missing+unexpected pair).
+    for source_fact in list(source_remaining):
+        target_fact = _nearest_numeric_fact(
+            source_fact,
+            target_remaining,
+            lambda target: target.kind == source_fact.kind,
+            max_claim_distance=1,
         )
+        if target_fact is None:
+            continue
+        source_remaining.remove(source_fact)
+        target_remaining.remove(target_fact)
+        category = _kind_category(source_fact.kind)
+        source_claim = _claim_text(source_text, source_fact.claim_index)
+        target_claim = _claim_text(target_text, target_fact.claim_index)
+        if source_fact.value != target_fact.value:
+            severity = _numeric_mismatch_severity(source_fact)
+            add(
+                f"{category}_mismatch",
+                severity,
+                f"Local {source_fact.kind} changed from {source_fact.value!r} "
+                f"to {target_fact.value!r}.",
+                "Restore the source value in this local claim.",
+                story=story,
+                source_excerpt=source_claim,
+                target_excerpt=target_claim,
+                structural_invariant=(
+                    source_fact.kind in _EXACT_STRUCTURAL_KINDS and source_fact.confidence == "high"
+                ),
+            )
+        elif source_fact.qualifier != target_fact.qualifier:
+            add(
+                f"{category}_quantifier_mismatch",
+                "major" if source_fact.kind in _HARM_KINDS else "minor",
+                f"Value {source_fact.value!r} changed quantifier from "
+                f"{source_fact.qualifier!r} to {target_fact.qualifier!r}.",
+                "Preserve qualifiers such as at least, more than, or approximately.",
+                story=story,
+                source_excerpt=source_claim,
+                target_excerpt=target_claim,
+                review_required=True,
+            )
+        else:
+            matched += 1
+
+    # Same local value but different role is classification uncertainty, not a
+    # factual critical. This is intentionally at most MINOR.
+    for source_fact in list(source_remaining):
+        target_fact = _nearest_numeric_fact(
+            source_fact,
+            target_remaining,
+            lambda target: target.value == source_fact.value,
+            max_claim_distance=1,
+        )
+        if target_fact is None:
+            continue
+        if source_fact.kind in _HARM_KINDS and target_fact.kind in _HARM_KINDS:
+            source_remaining.remove(source_fact)
+            target_remaining.remove(target_fact)
+            add(
+                f"{_kind_category(source_fact.kind)}_mismatch",
+                "critical",
+                f"Local harm role changed from {source_fact.kind} to {target_fact.kind} "
+                f"for value {source_fact.value!r}.",
+                "Preserve whether people were killed or injured.",
+                story=story,
+                source_excerpt=_claim_text(source_text, source_fact.claim_index),
+                target_excerpt=_claim_text(target_text, target_fact.claim_index),
+                structural_invariant=True,
+            )
+            continue
+        source_remaining.remove(source_fact)
+        target_remaining.remove(target_fact)
+        matched += 1
         add(
-            f"{kind}_mismatch",
-            severity,
-            f"Source {kind} value {value!r} is not preserved ({count} occurrence(s)).",
-            "Correct the value in this story without changing its local meaning.",
+            "numeric_role_review",
+            "minor",
+            f"Value {source_fact.value!r} is preserved locally but its role is "
+            f"uncertain ({source_fact.kind} vs {target_fact.kind}).",
+            "Review the numeric role; do not automatically rewrite the translation.",
+            story=story,
+            source_excerpt=_claim_text(source_text, source_fact.claim_index),
+            target_excerpt=_claim_text(target_text, target_fact.claim_index),
+            review_required=True,
+        )
+
+    for source_fact in source_remaining:
+        category = _kind_category(source_fact.kind)
+        add(
+            f"{category}_mismatch",
+            _numeric_mismatch_severity(source_fact),
+            f"Source {source_fact.kind} value {source_fact.value!r} "
+            f"({source_fact.qualifier}) is not preserved in its local claim.",
+            "Restore the source value and qualifier in this local claim.",
+            story=story,
+            source_excerpt=_claim_text(source_text, source_fact.claim_index),
+            target_excerpt=target_text,
+            structural_invariant=(
+                source_fact.kind in _EXACT_STRUCTURAL_KINDS and source_fact.confidence == "high"
+            ),
+        )
+    for target_fact in target_remaining:
+        category = _kind_category(target_fact.kind)
+        add(
+            f"unexpected_{category}",
+            _numeric_mismatch_severity(target_fact),
+            f"Target adds local {target_fact.kind} value {target_fact.value!r} "
+            f"({target_fact.qualifier}).",
+            "Remove invented precision or restore the corresponding source claim.",
             story=story,
             source_excerpt=source_text,
-            target_excerpt=target_text,
-        )
-    for (kind, value), count in target_only.items():
-        severity = "critical" if kind in _HARM_KINDS else "major"
-        add(
-            f"unexpected_{kind}",
-            severity,
-            f"Target adds or changes {kind} value {value!r} ({count} occurrence(s)).",
-            "Remove invented precision or restore the source value.",
-            story=story,
-            source_excerpt=source_text,
-            target_excerpt=target_text,
+            target_excerpt=_claim_text(target_text, target_fact.claim_index),
+            structural_invariant=(
+                target_fact.kind in _EXACT_STRUCTURAL_KINDS and target_fact.confidence == "high"
+            ),
         )
     return matched
+
+
+def _overlaps(span: tuple[int, int], occupied: list[tuple[int, int]]) -> bool:
+    return any(span[0] < end and start < span[1] for start, end in occupied)
+
+
+def _claim_spans(text: str) -> list[tuple[int, int]]:
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for match in _CLAIM_SPLIT_RE.finditer(text):
+        if match.start() > start:
+            spans.append((start, match.start()))
+        start = match.end()
+    if start < len(text):
+        spans.append((start, len(text)))
+    return spans or [(0, len(text))]
+
+
+def _claim_index(text: str, position: int) -> int:
+    for index, (start, end) in enumerate(_claim_spans(text)):
+        if start <= position <= end:
+            return index
+    return max(0, len(_claim_spans(text)) - 1)
+
+
+def _claim_text(text: str, index: int) -> str:
+    spans = _claim_spans(text)
+    if not spans:
+        return text
+    start, end = spans[min(max(index, 0), len(spans) - 1)]
+    return text[start:end].strip()
+
+
+def _numeric_qualifier(text: str, start: int, end: int) -> str:
+    prefix = _normalize(text[max(0, start - 30) : start])
+    for qualifier, pattern in _QUALIFIER_PATTERNS:
+        if pattern.search(prefix):
+            return qualifier
+    suffix = _normalize(text[end : min(len(text), end + 30)])
+    if re.match(
+        r"(?:['’]?[a-zçğıöşü]+\s+|\w+(?:dan|den)?\s+)?(?:fazla|aşkın)\b",
+        suffix,
+    ):
+        return "more_than"
+    if re.match(r"\s+(?:civarında|yaklaşık)\b", suffix):
+        return "approximate"
+    return "exact"
+
+
+def _classify_numeric_role(text: str, start: int, end: int, value: str) -> str:
+    claim = _numeric_context(text, start, end)
+    raw = _normalize(text[start:end])
+
+    # Age always wins over nearby death language. "Er starb im Alter von 75
+    # Jahren" and "75 yaşında vefat etti" are age claims, never casualty counts.
+    if (
+        re.search(rf"\bim\s+alter\s+von\s+{re.escape(raw)}\s+jahren?\b", claim)
+        or re.search(rf"\b{re.escape(raw)}\s+jahre?\s+alt\b", claim)
+        or re.search(rf"\b{re.escape(raw)}\s+yaş(?:ında|indaydı|ındaydı|ında)?\b", claim)
+    ):
+        return "age"
+
+    person_linked = bool(_PERSON_COUNT_RE.search(claim))
+    casualty_linked = bool(_CASUALTY_ROLE_RE.search(claim))
+    if casualty_linked and (
+        person_linked or any(term in claim for term in ("can kaybı", "opfer", "tote"))
+    ):
+        return "casualty_count"
+    if person_linked and _INJURY_ROLE_RE.search(claim):
+        return "injury_count"
+
+    if value.isdigit() and 1900 <= int(value) <= 2099 and not _COUNT_NOUN_RE.search(claim):
+        return "year"
+
+    if _DURATION_UNITS_RE.search(claim) and any(
+        marker in claim
+        for marker in (
+            "seit",
+            "lang",
+            "dauert",
+            "dauerte",
+            "länger",
+            "süredir",
+            "sürdü",
+            "sürüyor",
+            "boyunca",
+            "daha uzun",
+            "fazla",
+        )
+    ):
+        return "duration"
+
+    if re.search(r"\b(?:temperatur|sıcaklık)\w*|\b(?:grad|derece)\b|°", claim):
+        return "temperature"
+    return "generic_count"
+
+
+def _dedupe_repeated_claim_facts(text: str, facts: list[NumericFact]) -> list[NumericFact]:
+    """Collapse verbatim repeated claims while retaining distinct local claims."""
+    seen_claims: dict[tuple[str, str, str, str], int] = {}
+    result: list[NumericFact] = []
+    for fact in facts:
+        key = (
+            _normalize(_claim_text(text, fact.claim_index)),
+            fact.kind,
+            fact.value,
+            fact.qualifier,
+        )
+        if key in seen_claims and seen_claims[key] != fact.claim_index:
+            continue
+        seen_claims.setdefault(key, fact.claim_index)
+        result.append(fact)
+    return result
+
+
+def _nearest_numeric_fact(
+    source: NumericFact,
+    candidates: list[NumericFact],
+    predicate,
+    *,
+    max_claim_distance: int | None = None,
+) -> NumericFact | None:
+    eligible = [candidate for candidate in candidates if predicate(candidate)]
+    if max_claim_distance is not None:
+        eligible = [
+            candidate
+            for candidate in eligible
+            if abs(candidate.claim_index - source.claim_index) <= max_claim_distance
+        ]
+    if not eligible:
+        return None
+    return min(
+        eligible,
+        key=lambda candidate: (
+            abs(candidate.claim_index - source.claim_index),
+            abs(candidate.start - source.start),
+        ),
+    )
+
+
+def _kind_category(kind: str) -> str:
+    return _KIND_CATEGORY.get(kind, kind)
+
+
+def _numeric_mismatch_severity(
+    fact: NumericFact,
+) -> Literal["minor", "major", "critical"]:
+    if fact.confidence != "high":
+        return "minor"
+    if fact.kind in _HARM_KINDS:
+        return "critical"
+    return "major"
 
 
 def _check_protected_terms(
@@ -1121,6 +1471,40 @@ def _check_marker_groups(
     source_normalized = _normalize(source_text)
     target_normalized = _normalize(target_text)
     for group, language_terms in groups.items():
+        if category == "chronology_suspicion":
+            chronology_source = source_normalized
+            if group == "until":
+                chronology_source = re.sub(
+                    r"\b\d+(?:[.,]\d+)?\s+bis\s+\d+(?:[.,]\d+)?\b",
+                    "",
+                    chronology_source,
+                )
+            source_present = _chronology_marker_present(chronology_source, group, "de")
+            if not source_present:
+                continue
+            target_present = _chronology_marker_present(target_normalized, group, "tr")
+            if group in {"today", "tomorrow", "yesterday"}:
+                source_dates = {
+                    fact.value for fact in extract_numeric_facts(source_text) if fact.kind == "date"
+                }
+                target_dates = {
+                    fact.value for fact in extract_numeric_facts(target_text) if fact.kind == "date"
+                }
+                if source_dates and source_dates == target_dates:
+                    target_present = True
+            if target_present:
+                continue
+            add(
+                category,
+                "minor",
+                f"Source marker group {group!r} has no clear Turkish counterpart.",
+                "Review the local sentence for a possible timeline change.",
+                story=story,
+                source_excerpt=source_text,
+                target_excerpt=target_text,
+                review_required=True,
+            )
+            continue
         marker_source = source_normalized
         if group == "until":
             marker_source = re.sub(
@@ -1152,13 +1536,20 @@ def _check_marker_groups(
             continue
         add(
             category,
-            "major" if category == "chronology_suspicion" else "minor",
+            "minor",
             f"Source marker group {group!r} has no clear Turkish counterpart.",
             "Review the sentence for a possible meaning or timeline change.",
             story=story,
             source_excerpt=source_text,
             target_excerpt=target_text,
         )
+
+
+def _chronology_marker_present(text: str, group: str, language: str) -> bool:
+    return any(
+        re.search(pattern, text)
+        for pattern in _CHRONOLOGY_PATTERNS.get(group, {}).get(language, ())
+    )
 
 
 def _check_weather_pairs(story: dict, source_text: str, target_text: str, add) -> None:

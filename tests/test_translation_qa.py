@@ -69,9 +69,16 @@ def _evaluate(
     target_text: str,
     *,
     glossary: dict | None = None,
+    source_unreliable_segment_ids: set[str] | None = None,
 ):
     source, target = _documents([_story("s01", source_text, target_text, lead=True)])
-    return evaluate_translation_documents("ep-qa", source, target, glossary)
+    return evaluate_translation_documents(
+        "ep-qa",
+        source,
+        target,
+        glossary,
+        source_unreliable_segment_ids,
+    )
 
 
 def _categories(document) -> list[str]:
@@ -89,6 +96,7 @@ def test_missing_lead_story_is_critical():
     document = evaluate_translation_documents("ep-qa", source, target)
     finding = next(f for f in document.findings if f.category == "missing_story_ids")
     assert finding.severity == "critical"
+    assert finding.structural_invariant is True
     assert document.story_coverage["missing_story_ids"] == ["s01"]
 
 
@@ -182,13 +190,13 @@ def test_changed_numeric_facts_are_reported(source, target, category):
     assert category in _categories(document)
 
 
-def test_repeated_plain_number_may_be_consolidated_during_adaptation():
+def test_distinct_local_number_claims_are_not_globally_consolidated():
     document = _evaluate(
         "Thomas holt Platz 3. Der Podiumsplatz 3 ist gesichert.",
         "Thomas üçüncülüğü garantiledi.",
     )
 
-    assert "number_mismatch" not in _categories(document)
+    assert "number_mismatch" in _categories(document)
 
 
 def test_preserved_value_with_asymmetric_casualty_context_is_not_critical():
@@ -237,6 +245,115 @@ def test_casualty_vs_injury_same_value_is_still_reported():
     )
     categories = _categories(document)
     assert "casualty_mismatch" in categories or "unexpected_injury" in categories
+
+
+def test_two_local_casualty_fives_match_two_local_turkish_fives():
+    document = _evaluate(
+        "Eine Drohne tötete fünf Menschen. Mindestens fünf Menschen wurden getötet.",
+        "Bir insansız hava aracı nedeniyle beş kişi hayatını kaybetti. "
+        "En az beş kişi daha hayatını kaybetti.",
+    )
+    assert not {
+        "casualty_mismatch",
+        "unexpected_casualty",
+        "number_mismatch",
+    }.intersection(_categories(document))
+
+
+def test_casualty_quantifier_is_preserved():
+    document = _evaluate(
+        "Mindestens fünf Menschen wurden getötet.",
+        "En az beş kişi hayatını kaybetti.",
+    )
+    assert document.findings == []
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("Rund 400 Menschen warteten.", "Yaklaşık 400 kişi bekledi."),
+        ("Über 400 Menschen warteten.", "400'ü aşkın kişi bekledi."),
+        ("Mehr als vier Jahre dauerte es.", "Dört yıldan fazla sürdü."),
+    ],
+)
+def test_numeric_quantifier_variants_are_preserved(source, target):
+    assert _evaluate(source, target).findings == []
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        (
+            "Moskau wurde mit 400 Drohnen angegriffen.",
+            "Moskova 400 insansız hava aracıyla vuruldu.",
+        ),
+        ("Das Spiel endete 1 zu 0.", "Maç 1-0 sona erdi."),
+    ],
+)
+def test_requested_numeric_equivalents_are_local_and_canonical(source, target):
+    assert _evaluate(source, target).findings == []
+
+
+def test_real_casualty_change_is_one_critical_finding():
+    document = _evaluate(
+        "Bei dem Angriff wurden fünf Menschen getötet.",
+        "Saldırıda altı kişi hayatını kaybetti.",
+    )
+    open_findings = [finding for finding in document.findings if finding.status == "open"]
+    assert [(finding.category, finding.severity) for finding in open_findings] == [
+        ("casualty_mismatch", "critical")
+    ]
+
+
+def test_casualty_count_in_year_range_remains_casualty_critical():
+    document = _evaluate(
+        "Bei dem Angriff wurden 2000 Menschen getötet.",
+        "Saldırıda 2001 kişi hayatını kaybetti.",
+    )
+    assert [(finding.category, finding.severity) for finding in document.findings] == [
+        ("casualty_mismatch", "critical")
+    ]
+
+
+def test_real_age_change_is_detected_as_age_not_casualty():
+    document = _evaluate(
+        "Er starb im Alter von 75 Jahren.",
+        "76 yaşında vefat etti.",
+    )
+    assert [(finding.category, finding.severity) for finding in document.findings] == [
+        ("age_mismatch", "major")
+    ]
+
+
+def test_unreliable_source_downgrades_derived_translation_finding():
+    document = _evaluate(
+        "Bei dem Angriff wurden fünf Menschen getötet.",
+        "Saldırıda altı kişi hayatını kaybetti.",
+        source_unreliable_segment_ids={"seg-0001"},
+    )
+    finding = document.findings[0]
+    assert finding.severity == "minor"
+    assert finding.source_unreliable is True
+    assert finding.review_required is True
+    assert finding.structural_invariant is False
+
+
+@pytest.mark.parametrize(
+    ("source", "target"),
+    [
+        ("Heute berät das Kabinett.", "Kabine bugün görüşüyor."),
+        ("Heute Abend wird beraten.", "Bu akşam görüşme yapılacak."),
+        ("Nach dem Sieg kehrte das Team zurück.", "Takım zaferinin ardından döndü."),
+        ("Seit Stunden warten die Fans.", "Taraftarlar saatlerdir bekliyor."),
+        ("Zuvor sprach der Minister.", "Bakan daha önce konuştu."),
+        (
+            "Der Krieg dauert inzwischen seit mehr als vier Jahren.",
+            "Savaş artık dört yıldan fazla süredir devam ediyor.",
+        ),
+    ],
+)
+def test_chronology_semantic_variants_are_recognized(source, target):
+    assert "chronology_suspicion" not in _categories(_evaluate(source, target))
 
 
 def test_quantity_word_precision_is_preserved():
@@ -406,27 +523,27 @@ def test_numeric_extractor_classifies_all_required_types():
         "20 Grad und das Spiel endete 2 zu 1."
     )
     kinds = {fact.kind for fact in facts}
-    assert {"date", "time", "percent", "money", "temperature", "score"} <= kinds
+    assert {"date", "time", "percentage", "money", "temperature", "score"} <= kinds
 
 
 def test_numeric_extractor_normalizes_turkish_scaled_thousands():
     facts = extract_numeric_facts("Resmi can kaybı 5 bine yükseldi.")
 
-    assert [(fact.kind, fact.value) for fact in facts] == [("casualty", "5000")]
+    assert [(fact.kind, fact.value) for fact in facts] == [("casualty_count", "5000")]
 
 
 def test_numeric_extractor_does_not_split_turkish_compound_number():
     facts = extract_numeric_facts("Yirmi iki yaşında seçildi.")
 
-    assert [(fact.kind, fact.value) for fact in facts] == [("number", "22")]
+    assert [(fact.kind, fact.value) for fact in facts] == [("age", "22")]
 
 
 def test_numeric_extractor_matches_german_and_turkish_cardinals():
     source = extract_numeric_facts("Zwei Männer schoben einen Kinderwagen.")
     target = extract_numeric_facts("İki erkek bir bebek arabasını itti.")
 
-    assert [(fact.kind, fact.value) for fact in source] == [("number", "2")]
-    assert [(fact.kind, fact.value) for fact in target] == [("number", "2")]
+    assert [(fact.kind, fact.value) for fact in source] == [("generic_count", "2")]
+    assert [(fact.kind, fact.value) for fact in target] == [("generic_count", "2")]
 
 
 def test_numeric_extractor_expands_spoken_compound_score():
@@ -443,12 +560,12 @@ def test_numeric_extractor_normalizes_percent_ranges():
     target = extract_numeric_facts("Ürünler yüzde 30-70 daha ucuz.")
 
     assert [(fact.kind, fact.value) for fact in source] == [
-        ("percent", "30"),
-        ("percent", "70"),
+        ("percentage", "30"),
+        ("percentage", "70"),
     ]
     assert [(fact.kind, fact.value) for fact in target] == [
-        ("percent", "30"),
-        ("percent", "70"),
+        ("percentage", "30"),
+        ("percentage", "70"),
     ]
 
 
@@ -457,12 +574,12 @@ def test_numeric_extractor_normalizes_spoken_turkish_percent_ranges():
     target = extract_numeric_facts("Ürünler yüzde 30 ila 70 daha ucuz.")
 
     assert [(fact.kind, fact.value) for fact in source] == [
-        ("percent", "30"),
-        ("percent", "70"),
+        ("percentage", "30"),
+        ("percentage", "70"),
     ]
     assert [(fact.kind, fact.value) for fact in target] == [
-        ("percent", "30"),
-        ("percent", "70"),
+        ("percentage", "30"),
+        ("percentage", "70"),
     ]
 
 
@@ -484,10 +601,10 @@ def test_numeric_extractor_normalizes_turkish_compounds_and_inflections():
     facts = extract_numeric_facts("On iki desteğin dördü ayakta kaldı. İkincilik ve üçüncülük.")
 
     assert [(fact.kind, fact.value) for fact in facts] == [
-        ("number", "12"),
-        ("number", "4"),
-        ("number", "2"),
-        ("number", "3"),
+        ("generic_count", "12"),
+        ("generic_count", "4"),
+        ("generic_count", "2"),
+        ("generic_count", "3"),
     ]
 
 
@@ -496,12 +613,12 @@ def test_numeric_extractor_matches_german_both_to_turkish_two():
     target = extract_numeric_facts("İki takımın marşları. Bu ikisi kutlama yapıyor.")
 
     assert [(fact.kind, fact.value) for fact in source] == [
-        ("number", "2"),
-        ("number", "2"),
+        ("generic_count", "2"),
+        ("generic_count", "2"),
     ]
     assert [(fact.kind, fact.value) for fact in target] == [
-        ("number", "2"),
-        ("number", "2"),
+        ("generic_count", "2"),
+        ("generic_count", "2"),
     ]
 
 
@@ -509,8 +626,8 @@ def test_weather_clause_classifies_all_values_as_temperatures():
     facts = extract_numeric_facts("Gündüz sıcaklıklar Harz'da 16, Hochrhein'da 27 derece.")
 
     assert [(fact.kind, fact.value) for fact in facts] == [
-        ("temperature", "27"),
         ("temperature", "16"),
+        ("temperature", "27"),
     ]
 
 

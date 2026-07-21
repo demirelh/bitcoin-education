@@ -20,7 +20,7 @@ Prüfe streng entlang von Quelle vs. Ziel:
 6. **Neutralisierung:** Moderatorennamen, Sendungsnamen, Verabschiedungen, Ich-Form der Reporter noch vorhanden. (`neutralization_gap`, meist `minor`.)
 7. **Eigennamen & Sprachfluss:** Falsche Namen/Orte/Institutionen; unnatürliches Türkisch. (`name_error`/`register`/`fluency`.)
 
-Ordne jedes Finding wenn möglich einer `story_id` aus der Struktur zu. Widersprich einem deterministischen Finding nur mit konkreter Begründung und liste die betroffene Kategorie in `disputed_deterministic_categories`. Ein Widerspruch VERWIRFT das deterministische Finding und lässt die Pipeline weiterlaufen — widersprich also nur bei echten Fehlalarmen (z. B. gleiche Zahl, nur andere Klassifizierung; Format-/Sprachunterschiede). Sicherheitskritische Kategorien (Opfer-/Verletztenzahlen `casualty`/`injury`, Rechtsvorwürfe `legal`, fehlende Meldungen `missing_story`, ungelöste Transkript-Hinweise, Kostenlimit) kannst du NICHT per Widerspruch aufheben; melde dort bei echtem Fehler ein eigenes Finding.
+Ordne jedes Finding wenn möglich einer `story_id` aus der Struktur zu. Widersprich einem deterministischen Finding nur mit konkreter Begründung und liste die betroffene Kategorie in `disputed_deterministic_categories`. Ein Widerspruch verwirft heuristische Findings (z. B. gleiche Zahl, falsche Rollenklassifizierung, Format-/Sprachunterschiede) und verhindert automatische Reparaturen. Strukturell sichere Invarianten — lokal eindeutig geänderte Opferzahlen, fehlende Meldungen, ungelöste Transkript-Hinweise und Kostenlimits — bleiben trotz Widerspruch reviewpflichtig. Melde einen tatsächlichen Fehler zusätzlich als eigenes Finding.
 
 {{ escalation_note }}
 

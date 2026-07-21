@@ -131,6 +131,28 @@ def test_translation_regressions_are_rejected(source, translation, expected_risk
     assert expected_risk in _translation_fidelity_risks(source, translation)
 
 
+def test_faithful_kill_verb_is_not_invented_casualty():
+    # Threats/killing in the source ("umbringen", "vernichten", "Mordanschlag")
+    # faithfully rendered with the Turkish active kill verb "öldürmek" must NOT
+    # be flagged: "öldü" (died) must not match inside "öldür-" (to kill).
+    source = (
+        "Iran würde im Falle eines Mordanschlags komplett vernichtet werden. "
+        "Wenn die wirklich vorhaben, mich umzubringen, werden wir Iran zerstören."
+    )
+    translation = (
+        "Bir suikast girişimi olursa İran tamamen yok edilecek. "
+        "Beni gerçekten öldürmek istiyorlarsa İran'ı yok edeceğiz."
+    )
+    assert "invented_casualty" not in _translation_fidelity_risks(source, translation)
+
+
+def test_faithful_death_when_source_mentions_killing_is_not_invented():
+    # Source reports killings via "getötet"; a Turkish death rendering is faithful.
+    source = "Bei dem Angriff wurden Menschen getötet."
+    translation = "Saldırıda insanlar hayatını kaybetti."
+    assert "invented_casualty" not in _translation_fidelity_risks(source, translation)
+
+
 def test_translation_accepts_required_news_terms():
     source = (
         "Titelverteidiger Argentinien spielt am 12. Juli bei der Fußball-WM. "

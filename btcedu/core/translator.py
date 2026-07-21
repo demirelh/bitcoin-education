@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import re
 import time
 from collections import Counter
 from collections.abc import Callable
@@ -967,15 +968,48 @@ def _translation_fidelity_risks(source_text: str, translated_text: str) -> list[
         risks.append("nachspielzeit_as_extra_time")
     if "tausend waffen" in source_lower and "binlerce silah" in translated_lower:
         risks.append("tausend_as_thousands")
-    source_casualty_terms = ("tot", "getötet", "starb", "opfer", "todes")
-    translated_casualty_terms = (
-        "hayatını kaybet",
-        "öldü",
-        "öldürüldü",
-        "can kaybı",
+    # Source signals that death, killing, or lethal violence is already present.
+    # If any of these appear, a Turkish death/kill rendering is faithful rather
+    # than invented — the German list is deliberately broad (kill/attack verbs,
+    # not only literal deaths) so legitimate conflict reporting is not rejected.
+    source_casualty_terms = (
+        "tot",
+        "töt",
+        "getötet",
+        "starb",
+        "gestorb",
+        "sterb",
+        "ums leben",
+        "umgekomm",
+        "umbring",
+        "umgebracht",
+        "mord",
+        "ermord",
+        "opfer",
+        "todes",
+        "leiche",
+        "erschoss",
+        "gefallen",
+        "vernicht",
+        "attentat",
+        "anschlag",
+    )
+    # Turkish patterns that denote an actual death in the target. Crucially,
+    # "öldü" (died) must NOT match inside "öldür-" (to kill, active/hypothetical),
+    # which is a faithful rendering of threats like "umbringen"/"vernichten".
+    translated_casualty_patterns = (
+        r"hayat[ıi]n[ıi] kaybet",
+        r"hayat[ıi]n[ıi] yitir",
+        r"yaşam[ıi]n[ıi] yitir",
+        r"can kayb[ıi]",
+        r"öldü(?!r)",
+        r"öldürül",
+        r"ölen\b",
+        r"ölmüş",
+        r"ölüm",
     )
     if not any(term in source_lower for term in source_casualty_terms) and any(
-        term in translated_lower for term in translated_casualty_terms
+        re.search(pattern, translated_lower) for pattern in translated_casualty_patterns
     ):
         risks.append("invented_casualty")
     return sorted(set(risks))

@@ -696,8 +696,38 @@ def _adapt_per_story(
                 removable_names=[story.reporter] if story.reporter else [],
             )
             if risks:
-                raise ValueError(
-                    f"Story {story.story_id} adaptation changed protected facts: {risks}"
+                rejected_output = output
+                output = StoryAdaptationOutput(
+                    story_id=story.story_id,
+                    adapted_text=source_text,
+                    operations_applied=[],
+                )
+                audit_path = (
+                    Path(settings.outputs_dir)
+                    / episode_id
+                    / "provenance"
+                    / f"adapt_validation_{story.story_id}.json"
+                )
+                audit_path.parent.mkdir(parents=True, exist_ok=True)
+                audit_path.write_text(
+                    json.dumps(
+                        {
+                            "story_id": story.story_id,
+                            "decision": "fallback_to_verified_translation",
+                            "risks": risks,
+                            "source_translation": source_text,
+                            "rejected_adaptation": rejected_output.model_dump(mode="json"),
+                        },
+                        ensure_ascii=False,
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                logger.warning(
+                    "Rejected unsafe adaptation for story %s (%s); "
+                    "using verified translation unchanged",
+                    story.story_id,
+                    ", ".join(risks),
                 )
 
         story_data = story.model_dump(mode="json")

@@ -644,6 +644,74 @@ def test_story_adaptation_preserves_story_id_and_prepares_narration_hash(tmp_pat
     assert diff["adaptations"][0]["story_id"] == "s01"
 
 
+def test_story_adaptation_falls_back_when_protected_facts_change(tmp_path):
+    story_doc = StoryDocument.model_validate(
+        {
+            "episode_id": "ep-story",
+            "broadcast_date": "2026-07-12",
+            "source_attribution": {"source": "tagesschau"},
+            "total_stories": 1,
+            "total_duration_seconds": 20,
+            "stories": [
+                {
+                    "story_id": "s01",
+                    "order": 1,
+                    "headline_de": "Bundestag",
+                    "category": "politik",
+                    "story_type": "meldung",
+                    "text_de": "Der Bundestag beschloss 5 Maßnahmen.",
+                    "word_count": 5,
+                    "estimated_duration_seconds": 20,
+                    "source_segment_ids": ["seg-0001"],
+                    "text_tr": "Bundestag 5 önlemi kabul etti.",
+                }
+            ],
+        }
+    )
+    outputs = tmp_path / "outputs" / "ep-story"
+    outputs.mkdir(parents=True)
+    translated_path = outputs / "stories_translated.json"
+    adapted_path = outputs / "stories_adapted.json"
+    translated_path.write_text(story_doc.model_dump_json(), encoding="utf-8")
+    response = MagicMock(
+        text=json.dumps(
+            {
+                "story_id": "s01",
+                "adapted_text": "Bundestag (Almanya Federal Meclisi) 6 önlemi kabul etti.",
+                "operations_applied": ["institution_explanation"],
+            },
+            ensure_ascii=False,
+        ),
+        input_tokens=20,
+        output_tokens=20,
+        cost_usd=0.001,
+    )
+    settings = MagicMock(outputs_dir=str(tmp_path / "outputs"), dry_run=False)
+
+    with patch("btcedu.core.adapter.call_claude", return_value=response):
+        text, diff, *_ = _adapt_per_story(
+            stories_translated_path=translated_path,
+            stories_adapted_path=adapted_path,
+            episode_id="ep-story",
+            system_prompt="system",
+            user_template="{{ translation }}\n{{ original_german }}",
+            settings=settings,
+            mode="conditional",
+            allowed_operations=["institution_explanation"],
+        )
+
+    adapted = json.loads(adapted_path.read_text(encoding="utf-8"))["stories"][0]
+    assert adapted["text_adapted_tr"] == "Bundestag 5 önlemi kabul etti."
+    assert adapted["adaptation_operations"] == []
+    assert "Bundestag 5 önlemi kabul etti." in text
+    assert diff["adaptations"] == []
+    audit = json.loads(
+        (outputs / "provenance" / "adapt_validation_s01.json").read_text(encoding="utf-8")
+    )
+    assert audit["decision"] == "fallback_to_verified_translation"
+    assert audit["risks"] == ["numbers_dates_or_scores"]
+
+
 def test_legacy_story_document_remains_readable():
     legacy = _story_document().model_dump(mode="json")
     for story in legacy["stories"]:

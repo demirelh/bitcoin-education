@@ -1013,7 +1013,10 @@ def test_unrelated_pending_review_does_not_suppress_red_gate_task(db_session, tm
     )
 
 
-def test_review_gate_2_tagesschau_autoapprove_red_still_blocks(db_session, tmp_path):
+def test_review_gate_2_tagesschau_autoapprove_red_auto_adjudicates(db_session, tmp_path):
+    # tagesschau_tr enables gate_adjudication with block_on_hold=false, so a RED
+    # factual gate is adjudicated by the independent model and the pipeline
+    # continues automatically instead of halting.
     episode, settings = _make_episode(
         db_session, tmp_path, [("s01", "Text.", "Metin.", True)], profile="tagesschau_tr"
     )
@@ -1026,10 +1029,70 @@ def test_review_gate_2_tagesschau_autoapprove_red_still_blocks(db_session, tmp_p
         "explanation": "invented",
         "required_action": "remove",
     }
-    with patch("btcedu.core.qa_reviewer.call_claude") as mock_call:
-        mock_call.return_value = _qa([halluc])
+    adjudication = _resp(
+        {"verdict": "approve", "reason": "false positive", "findings": []}
+    )
+
+    def _side_effect(*args, **kwargs):
+        system_prompt = kwargs.get("system_prompt", args[0] if args else "")
+        if "final independent editorial decision-maker" in system_prompt:
+            return adjudication
+        return _qa([halluc])
+
+    with patch("btcedu.core.qa_reviewer.call_claude", side_effect=_side_effect):
         result = _run_gate(db_session, episode, settings)
-    # Auto-approve profiles must NOT bypass a RED factual gate.
+
+    assert result.status == "success"
+    task = (
+        db_session.query(ReviewTask)
+        .filter(
+            ReviewTask.episode_id == "ep-gate",
+            ReviewTask.stage == "translation_qa",
+            ReviewTask.status == ReviewStatus.APPROVED.value,
+        )
+        .first()
+    )
+    assert task is not None
+    audit = tmp_path / "outputs" / "ep-gate" / "gate_adjudication.json"
+    assert audit.exists()
+
+
+def test_review_gate_2_red_blocks_when_adjudication_holds(db_session, tmp_path):
+    # With block_on_hold enforced, a "hold" verdict from the adjudicator must
+    # still block on a review task (the independent model can decide to escalate).
+    episode, settings = _make_episode(
+        db_session, tmp_path, [("s01", "Text.", "Metin.", True)], profile="tagesschau_tr"
+    )
+    halluc = {
+        "story_id": "s01",
+        "category": "hallucination",
+        "severity": "critical",
+        "source_excerpt": "",
+        "target_excerpt": "",
+        "explanation": "invented",
+        "required_action": "remove",
+    }
+    hold = _resp({"verdict": "hold", "reason": "genuine error", "findings": []})
+
+    def _side_effect(*args, **kwargs):
+        system_prompt = kwargs.get("system_prompt", args[0] if args else "")
+        if "final independent editorial decision-maker" in system_prompt:
+            return hold
+        return _qa([halluc])
+
+    with (
+        patch("btcedu.core.qa_reviewer.call_claude", side_effect=_side_effect),
+        patch(
+            "btcedu.core.qa_reviewer._gate_adjudication_route",
+            return_value={
+                "provider": "copilot_cli",
+                "model": "gpt-5.6-sol",
+                "block_on_hold": True,
+            },
+        ),
+    ):
+        result = _run_gate(db_session, episode, settings)
+
     assert result.status == "review_pending"
     task = (
         db_session.query(ReviewTask)
@@ -1037,6 +1100,115 @@ def test_review_gate_2_tagesschau_autoapprove_red_still_blocks(db_session, tmp_p
         .first()
     )
     assert task is not None
+
+
+def _seed_red_gate(db_session, episode, settings, halluc):
+    from btcedu.core.qa_reviewer import generate_qa_review
+
+    with patch("btcedu.core.qa_reviewer.call_claude", return_value=_qa([halluc])):
+        res = generate_qa_review(db_session, episode.episode_id, settings)
+    assert res.decision == "red"
+
+
+_HALLUC = {
+    "story_id": "s01",
+    "category": "hallucination",
+    "severity": "critical",
+    "source_excerpt": "",
+    "target_excerpt": "",
+    "explanation": "invented",
+    "required_action": "remove",
+}
+
+
+def test_adjudicate_quality_gate_approve(db_session, tmp_path):
+    from btcedu.core.qa_reviewer import adjudicate_quality_gate
+
+    episode, settings = _make_episode(
+        db_session, tmp_path, [("s01", "Text.", "Metin.", True)], profile="tagesschau_tr"
+    )
+    _seed_red_gate(db_session, episode, settings, _HALLUC)
+    approve = _resp(
+        {
+            "verdict": "approve",
+            "reason": "false positives",
+            "findings": [{"finding_id": "qa-0001", "decision": "dismiss", "reason": "x"}],
+        }
+    )
+    with patch("btcedu.core.qa_reviewer.call_claude", return_value=approve):
+        result = adjudicate_quality_gate(db_session, episode.episode_id, settings)
+    assert result.performed and result.approved and result.verdict == "approve"
+    assert result.open_finding_count >= 1
+    assert (Path(settings.outputs_dir) / "ep-gate" / "gate_adjudication.json").exists()
+
+
+def test_adjudicate_quality_gate_hold_never_blocks_when_configured(db_session, tmp_path):
+    from btcedu.core.qa_reviewer import adjudicate_quality_gate
+
+    episode, settings = _make_episode(
+        db_session, tmp_path, [("s01", "Text.", "Metin.", True)], profile="tagesschau_tr"
+    )
+    _seed_red_gate(db_session, episode, settings, _HALLUC)
+    hold = _resp({"verdict": "hold", "reason": "real error", "findings": []})
+    with patch("btcedu.core.qa_reviewer.call_claude", return_value=hold):
+        result = adjudicate_quality_gate(db_session, episode.episode_id, settings)
+    assert result.performed and result.verdict == "hold" and result.approved is True
+
+
+def test_adjudicate_quality_gate_invalid_response_honours_block_on_hold(db_session, tmp_path):
+    from btcedu.core.qa_reviewer import adjudicate_quality_gate
+
+    episode, settings = _make_episode(
+        db_session, tmp_path, [("s01", "Text.", "Metin.", True)], profile="tagesschau_tr"
+    )
+    _seed_red_gate(db_session, episode, settings, _HALLUC)
+    garbage = _resp("not json at all")
+    with patch("btcedu.core.qa_reviewer.call_claude", return_value=garbage):
+        result = adjudicate_quality_gate(db_session, episode.episode_id, settings)
+    assert result.performed and result.approved is True and result.error is not None
+
+    with patch(
+        "btcedu.core.qa_reviewer._gate_adjudication_route",
+        return_value={"provider": "p", "model": "m", "block_on_hold": True},
+    ):
+        with patch("btcedu.core.qa_reviewer.call_claude", return_value=garbage):
+            strict = adjudicate_quality_gate(db_session, episode.episode_id, settings)
+    assert strict.performed and strict.approved is False
+
+
+def test_adjudicate_quality_gate_disabled_route(db_session, tmp_path):
+    from btcedu.core.qa_reviewer import adjudicate_quality_gate
+
+    episode, settings = _make_episode(db_session, tmp_path, [("s01", "Text.", "Metin.", True)])
+    _seed_red_gate(db_session, episode, settings, _HALLUC)
+    result = adjudicate_quality_gate(db_session, episode.episode_id, settings)
+    assert result.performed is False and result.approved is False
+
+
+def test_gate_adjudication_approval_unblocks_chapterize(db_session, tmp_path):
+    from btcedu.core.chapterizer import _enforce_translation_quality_gate
+    from btcedu.core.qa_reviewer import adjudicate_quality_gate, gate_review_artifacts
+    from btcedu.core.reviewer import approve_stage_for_artifacts
+
+    episode, settings = _make_episode(
+        db_session, tmp_path, [("s01", "Text.", "Metin.", True)], profile="tagesschau_tr"
+    )
+    _seed_red_gate(db_session, episode, settings, _HALLUC)
+    with pytest.raises(ValueError):
+        _enforce_translation_quality_gate(db_session, "ep-gate", settings)
+
+    approve = _resp({"verdict": "approve", "reason": "ok", "findings": []})
+    with patch("btcedu.core.qa_reviewer.call_claude", return_value=approve):
+        result = adjudicate_quality_gate(db_session, "ep-gate", settings)
+    assert result.approved
+    approve_stage_for_artifacts(
+        db_session,
+        "ep-gate",
+        "translation_qa",
+        gate_review_artifacts(settings, "ep-gate"),
+        notes="auto",
+    )
+    _enforce_translation_quality_gate(db_session, "ep-gate", settings)
 
 
 def test_review_gate_2_manual_approval_allows_continue(db_session, tmp_path):

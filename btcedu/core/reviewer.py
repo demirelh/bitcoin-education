@@ -940,6 +940,53 @@ def has_pending_review_for_artifacts(
     return task is not None and review_task_matches_artifacts(task, artifact_paths)
 
 
+def approve_stage_for_artifacts(
+    session: Session,
+    episode_id: str,
+    stage: str,
+    artifact_paths: list[str],
+    *,
+    notes: str = "auto-approved",
+) -> ReviewTask:
+    """Supersede pending tasks and record a fresh APPROVED review bound to artifacts.
+
+    Unlike :func:`auto_approve_stage` (which no-ops when *any* approved review for
+    the stage exists), this always creates an approval bound to the *current*
+    ``artifact_paths`` + content hash, so :func:`has_approved_review_for_artifacts`
+    matches even when a prior approval referenced stale artifacts. Used by the
+    automatic gate adjudicator so downstream stages (chapterize) see the exact
+    same artifact-bound approval a human would produce.
+    """
+    supersede_pending_reviews(session, episode_id, stage)
+    task = ReviewTask(
+        episode_id=episode_id,
+        stage=stage,
+        status=ReviewStatus.APPROVED.value,
+        artifact_paths=json.dumps(artifact_paths),
+        artifact_hash=_compute_artifact_hash(artifact_paths),
+        reviewed_at=_utcnow(),
+        reviewer_notes=notes,
+    )
+    session.add(task)
+    session.flush()
+    session.add(
+        ReviewDecision(
+            review_task_id=task.id,
+            decision="approved",
+            notes=notes,
+        )
+    )
+    session.commit()
+    logger.info(
+        "Recorded artifact-bound approval for episode %s stage '%s' (task %d): %s",
+        episode_id,
+        stage,
+        task.id,
+        notes,
+    )
+    return task
+
+
 def pending_review_count(session: Session) -> int:
     """Count of PENDING + IN_REVIEW tasks. Used for dashboard badge."""
     return (

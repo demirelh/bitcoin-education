@@ -56,6 +56,15 @@ stage_config:
       block_on_missing_story: true
       block_on_unresolved_transcript: true
       max_minor_findings: 4
+    # Automatic adjudication of a non-green gate. GPT-5.6 reviews the open
+    # findings and decides; block_on_hold=false means the pipeline never halts
+    # at review_gate_2 and continues automatically (decisions are recorded in
+    # gate_adjudication.json).
+    gate_adjudication:
+      enabled: true
+      provider: copilot_cli
+      model: gpt-5.6-sol
+      block_on_hold: false
   segment:
     enabled: true
   adapt:

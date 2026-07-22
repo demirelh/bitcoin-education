@@ -391,6 +391,17 @@ def _default_qa_config(settings: Settings) -> dict:
             "block_on_unresolved_transcript": True,
             "max_minor_findings": 5,
         },
+        # Optional LLM adjudication of a non-green gate. When enabled the pipeline
+        # asks an independent model to decide, per open finding, whether the gate
+        # should still block. ``block_on_hold`` controls whether a "hold" verdict
+        # (or an adjudication failure) still blocks: False = fully automatic
+        # (never halts), True = only auto-continue on an explicit "approve".
+        "gate_adjudication": {
+            "enabled": False,
+            "provider": provider,
+            "model": model,
+            "block_on_hold": True,
+        },
     }
 
 
@@ -419,7 +430,7 @@ def resolve_qa_config(settings: Settings, episode: Episode) -> dict:
         config["enabled"] = bool(profile_qa["enabled"])
     if "deterministic_checks" in profile_qa:
         config["deterministic_checks"] = bool(profile_qa["deterministic_checks"])
-    for key in ("standard", "escalation", "quality_gate"):
+    for key in ("standard", "escalation", "quality_gate", "gate_adjudication"):
         override = profile_qa.get(key)
         if isinstance(override, dict):
             config[key] = {**config[key], **override}
@@ -1989,3 +2000,246 @@ def resolve_translation_quality_gate(
         )
         gate = load_quality_gate(settings, episode_id) or {}
     return result
+
+
+GATE_ADJUDICATION_ARTIFACT = "gate_adjudication.json"
+
+
+@dataclass
+class GateAdjudicationResult:
+    """Outcome of an independent LLM adjudication of a non-green quality gate."""
+
+    performed: bool = False
+    approved: bool = False
+    verdict: str = ""
+    reason: str = ""
+    block_on_hold: bool = True
+    open_finding_count: int = 0
+    finding_decisions: list[dict] = field(default_factory=list)
+    provider: str = ""
+    model: str = ""
+    cost_usd: float = 0.0
+    audit_path: str = ""
+    error: str | None = None
+
+
+def _gate_adjudication_route(config: dict) -> dict | None:
+    """Return the enabled gate-adjudication route from a resolved QA config."""
+    adj = config.get("gate_adjudication", {}) or {}
+    if not adj.get("enabled", False):
+        return None
+    provider = str(adj.get("provider") or "").strip()
+    model = str(adj.get("model") or "").strip()
+    if not provider or not model:
+        return None
+    return {
+        "provider": provider,
+        "model": model,
+        "block_on_hold": bool(adj.get("block_on_hold", True)),
+    }
+
+
+def _parse_gate_adjudication(text: str) -> dict | None:
+    """Validate the adjudicator JSON: {verdict, reason, findings:[...]}."""
+    try:
+        data = json.loads(_extract_json_object(text))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    verdict = str(data.get("verdict") or "").strip().lower()
+    if verdict not in ("approve", "hold"):
+        return None
+    findings_raw = data.get("findings")
+    if findings_raw is None:
+        findings_raw = []
+    if not isinstance(findings_raw, list):
+        return None
+    decisions: list[dict] = []
+    for item in findings_raw:
+        if not isinstance(item, dict):
+            return None
+        decision = str(item.get("decision") or "").strip().lower()
+        if decision not in ("uphold", "dismiss"):
+            return None
+        decisions.append(
+            {
+                "finding_id": str(item.get("finding_id") or "").strip(),
+                "decision": decision,
+                "reason": str(item.get("reason") or "").strip()[:500],
+            }
+        )
+    return {
+        "verdict": verdict,
+        "reason": str(data.get("reason") or "").strip()[:1000],
+        "findings": decisions,
+    }
+
+
+_GATE_ADJUDICATION_SYSTEM_PROMPT = (
+    "You are the final independent editorial decision-maker for an automated "
+    "German-to-Turkish news video pipeline. A factual quality gate produced findings "
+    "against the Turkish narration. Adjudicate every OPEN finding and decide whether the "
+    "pipeline may proceed automatically without human review. Judge by the actual meaning "
+    "of source and target, not string matching or heuristic contradictions. Uphold a "
+    "finding only when it marks a genuine problem that would mislead viewers: a reversed or "
+    "distorted meaning, a wrong or missing casualty count, number, name, date or place, an "
+    "invented fact, or a missing key story. Dismiss deterministic false positives, benign "
+    "rephrasings, and pure style or fluency nits. Set verdict to 'approve' when the "
+    "narration is safe to publish as-is, or 'hold' when a human must intervene. "
+    "Return JSON only: {\"verdict\": \"approve\"|\"hold\", \"reason\": string, "
+    "\"findings\": [{\"finding_id\": string, \"decision\": \"uphold\"|\"dismiss\", "
+    "\"reason\": string}]}."
+)
+
+
+def adjudicate_quality_gate(
+    session: Session,
+    episode_id: str,
+    settings: Settings,
+    *,
+    gate: dict | None = None,
+) -> GateAdjudicationResult:
+    """Ask an independent model to adjudicate a non-green gate.
+
+    Writes an audit trail to ``gate_adjudication.json`` and returns a decision.
+    When ``block_on_hold`` is False the pipeline continues regardless of the
+    verdict (fully automatic operation); when True it continues only on an
+    explicit ``approve``. An adjudication failure honours ``block_on_hold`` too.
+    The gate document itself is never mutated — approval is recorded by the
+    caller as an artifact-bound review, exactly like a manual approval.
+    """
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    config = resolve_qa_config(settings, episode) if episode else _default_qa_config(settings)
+    route = _gate_adjudication_route(config)
+    if route is None:
+        return GateAdjudicationResult(
+            performed=False, approved=False, reason="adjudication disabled"
+        )
+
+    block_on_hold = route["block_on_hold"]
+    if gate is None:
+        gate = load_quality_gate(settings, episode_id) or {}
+    open_findings = [
+        f for f in gate.get("findings", []) if isinstance(f, dict) and f.get("status") == "open"
+    ]
+    result = GateAdjudicationResult(
+        performed=True,
+        block_on_hold=block_on_hold,
+        open_finding_count=len(open_findings),
+        provider=route["provider"],
+        model=route["model"],
+    )
+
+    if not open_findings:
+        result.approved = True
+        result.verdict = "approve"
+        result.reason = "no open findings to adjudicate"
+        _write_gate_adjudication_audit(settings, episode_id, result)
+        return result
+
+    if episode is not None and _cost_exceeded(session, episode, settings):
+        result.approved = not block_on_hold
+        result.error = "cost limit reached before gate adjudication"
+        result.reason = result.error
+        _write_gate_adjudication_audit(settings, episode_id, result)
+        return result
+
+    _, target_narration = canonical_narration(settings, episode_id)
+    findings_payload = [
+        {
+            "finding_id": f.get("finding_id"),
+            "severity": f.get("severity"),
+            "category": f.get("category"),
+            "story_id": f.get("story_id"),
+            "contradiction": bool(f.get("contradiction")),
+            "source_excerpt": str(f.get("source_excerpt") or "")[:600],
+            "target_excerpt": str(f.get("target_excerpt") or "")[:600],
+            "explanation": str(f.get("explanation") or "")[:600],
+            "required_action": str(f.get("required_action") or "")[:400],
+        }
+        for f in open_findings
+    ]
+    user_message = json.dumps(
+        {
+            "episode_id": episode_id,
+            "gate_decision": gate.get("decision"),
+            "gate_reasons": gate.get("reasons", []),
+            "target_narration": target_narration[:12000],
+            "open_findings": findings_payload,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+    try:
+        response = call_claude(
+            system_prompt=_GATE_ADJUDICATION_SYSTEM_PROMPT,
+            user_message=user_message,
+            settings=settings,
+            max_tokens=4000,
+            json_mode=True,
+            provider_override=route["provider"],
+            model_override=route["model"],
+        )
+    except Exception as exc:  # noqa: BLE001
+        result.approved = not block_on_hold
+        result.error = f"gate adjudication call failed: {exc}"
+        result.reason = result.error
+        _write_gate_adjudication_audit(settings, episode_id, result)
+        logger.warning("Gate adjudication call failed for %s: %s", episode_id, exc)
+        return result
+
+    result.cost_usd = response.cost_usd
+    result.model = response.model or route["model"]
+    parsed = _parse_gate_adjudication(response.text)
+    if parsed is None:
+        result.approved = not block_on_hold
+        result.error = "gate adjudication returned an invalid response"
+        result.reason = result.error
+        _write_gate_adjudication_audit(settings, episode_id, result)
+        logger.warning("Gate adjudication returned invalid JSON for %s", episode_id)
+        return result
+
+    result.verdict = parsed["verdict"]
+    result.reason = parsed["reason"]
+    result.finding_decisions = parsed["findings"]
+    result.approved = result.verdict == "approve" or not block_on_hold
+    _write_gate_adjudication_audit(settings, episode_id, result)
+    logger.info(
+        "Gate adjudication for %s: verdict=%s approved=%s (block_on_hold=%s)",
+        episode_id,
+        result.verdict,
+        result.approved,
+        block_on_hold,
+    )
+    return result
+
+
+def _write_gate_adjudication_audit(
+    settings: Settings, episode_id: str, result: GateAdjudicationResult
+) -> None:
+    path = Path(settings.outputs_dir) / episode_id / GATE_ADJUDICATION_ARTIFACT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "episode_id": episode_id,
+                "timestamp": _utcnow().isoformat(),
+                "provider": result.provider,
+                "model": result.model,
+                "verdict": result.verdict,
+                "approved": result.approved,
+                "block_on_hold": result.block_on_hold,
+                "reason": result.reason,
+                "open_finding_count": result.open_finding_count,
+                "finding_decisions": result.finding_decisions,
+                "cost_usd": result.cost_usd,
+                "error": result.error,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    result.audit_path = str(path)

@@ -697,6 +697,7 @@ def _run_stage(
 
         elif stage_name == "review_gate_2":
             from btcedu.core.reviewer import (
+                approve_stage_for_artifacts,
                 auto_approve_stage,
                 create_review_task,
                 has_approved_review,
@@ -750,6 +751,36 @@ def _run_stage(
                 manual_ok = has_approved_review_for_artifacts(
                     session, episode.episode_id, "translation_qa", artifacts
                 )
+
+                # Optional automatic adjudication: when the gate is non-green and
+                # not already human-approved, let an independent model decide
+                # whether to auto-continue. On approval we record an
+                # artifact-bound translation_qa approval — exactly what a human
+                # reviewer produces — so downstream chapterize proceeds too.
+                if qa_result.decision != "green" and not manual_ok:
+                    from btcedu.core.qa_reviewer import adjudicate_quality_gate
+
+                    adjudication = adjudicate_quality_gate(
+                        session, episode.episode_id, settings
+                    )
+                    if adjudication.performed and adjudication.approved:
+                        approve_stage_for_artifacts(
+                            session,
+                            episode.episode_id,
+                            "translation_qa",
+                            artifacts,
+                            notes=(
+                                "auto-adjudicated "
+                                f"({adjudication.verdict or 'approve'}) via "
+                                f"{adjudication.model}: {adjudication.reason}"[:480]
+                            ),
+                        )
+                        manual_ok = True
+                        logger.info(
+                            "  review_gate_2 auto-adjudicated %s → continue (%s)",
+                            adjudication.verdict or "approve",
+                            episode.episode_id,
+                        )
 
                 if qa_result.decision == "green" or manual_ok:
                     if qa_result.decision == "green":

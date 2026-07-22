@@ -670,8 +670,14 @@ def _call_structured_correction(
     responses.append(retry)
     response_sink.append(retry)
     budget_check(sum(item.cost_usd for item in responses))
-    parsed = _parse_correction_response(retry.text)
-    _validate_response_segments(parsed, payload)
+    try:
+        parsed = _parse_correction_response(retry.text)
+        _validate_response_segments(parsed, payload)
+    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+        raise PipelineError(
+            f"Correction model returned an invalid response after retry: {exc}",
+            ErrorCategory.TRANSIENT_SERVER,
+        ) from exc
     return parsed, responses
 
 
@@ -710,6 +716,8 @@ def _parse_correction_response(text: str) -> _ModelCorrectionResponse:
         last = cleaned.rfind("}")
         if first >= 0 and last > first:
             cleaned = cleaned[first : last + 1]
+    if not cleaned:
+        raise ValueError("Correction model returned an empty response")
     data = json.loads(cleaned)
     return _ModelCorrectionResponse.model_validate(data)
 

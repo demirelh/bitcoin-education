@@ -726,6 +726,26 @@ class TestReviewerFeedbackInjection:
         assert call.call_count == 2
         assert Path(result.structured_path).exists()
 
+    def test_empty_response_both_attempts_raises_categorized_error(
+        self, db_session, transcribed_episode, mock_settings
+    ):
+        """An empty model response on both the initial call and the retry must surface
+        as a categorized, retryable PipelineError rather than a raw '[unknown]'
+        json.JSONDecodeError ('Expecting value: line 1 column 1 (char 0)')."""
+        mock_settings.dry_run = False
+        responses = [
+            ClaudeResponse("", 1, 1, 0.001, "test-model"),
+            ClaudeResponse("", 1, 1, 0.001, "test-model"),
+        ]
+
+        with patch("btcedu.core.corrector.call_claude", side_effect=responses) as call:
+            with pytest.raises(PipelineError) as excinfo:
+                correct_transcript(db_session, "ep_test", mock_settings)
+
+        assert call.call_count == 2
+        assert excinfo.value.category == ErrorCategory.TRANSIENT_SERVER
+        assert "invalid response after retry" in str(excinfo.value)
+
     def test_no_feedback_placeholder_removed(self, db_session, transcribed_episode, mock_settings):
         """When no feedback exists, {{ reviewer_feedback }} is replaced with empty string."""
         captured_prompts = []

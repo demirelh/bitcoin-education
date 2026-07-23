@@ -1740,12 +1740,17 @@ def _run_latest_locked(
 
     candidates = candidates_query.all()
 
-    # Filter out episodes with active review tasks
+    # Filter out episodes with active review tasks — except unattended profiles
+    # (auto_approve_reviews), whose gates auto-approve/auto-adjudicate. Those
+    # must be resumed so the gate can decide and supersede its own (possibly
+    # stale) pending review instead of wedging the episode forever.
     from btcedu.core.reviewer import has_pending_review
 
     episode = None
     for candidate in candidates:
-        if not has_pending_review(session, candidate.episode_id):
+        if _profile_pipeline_flags(settings, candidate)[0] or not has_pending_review(
+            session, candidate.episode_id
+        ):
             episode = candidate
             break
 

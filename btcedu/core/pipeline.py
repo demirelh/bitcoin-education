@@ -1628,11 +1628,21 @@ def _run_pending_locked(
 
     episodes = query.all()
 
-    # Filter out episodes with active review tasks to avoid wasteful re-processing
+    # Filter out episodes with active review tasks to avoid wasteful
+    # re-processing — EXCEPT episodes on unattended profiles
+    # (auto_approve_reviews), whose review gates auto-approve or auto-adjudicate
+    # via an independent model. For those we must resume so the gate can decide
+    # and supersede its own (possibly stale) pending review; otherwise a review
+    # created before adjudication was enabled would wedge the episode forever.
     if episodes:
         from btcedu.core.reviewer import has_pending_review
 
-        episodes = [ep for ep in episodes if not has_pending_review(session, ep.episode_id)]
+        episodes = [
+            ep
+            for ep in episodes
+            if _profile_pipeline_flags(settings, ep)[0]
+            or not has_pending_review(session, ep.episode_id)
+        ]
 
     if not episodes:
         logger.info("No pending episodes to process.")

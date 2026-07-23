@@ -386,6 +386,60 @@ class TestRunPending:
         mock_run.assert_called_once()
 
     @patch("btcedu.core.pipeline.run_episode_pipeline")
+    def test_skips_pending_review_on_manual_profile(self, mock_run, db_session, tmp_path):
+        """Episodes on human-review profiles are skipped while a review is open."""
+        ep = Episode(
+            episode_id="ep_manual",
+            source="youtube_rss",
+            title="Manual",
+            url="https://youtube.com/watch?v=manual",
+            status=EpisodeStatus.ADAPTED,
+            pipeline_version=2,
+            content_profile="bitcoin_podcast",
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
+        )
+        db_session.add(ep)
+        db_session.commit()
+
+        settings = _make_settings(tmp_path)
+        with (
+            patch("btcedu.core.reviewer.has_pending_review", return_value=True),
+            patch("btcedu.core.pipeline._profile_pipeline_flags", return_value=(False, True)),
+        ):
+            reports = run_pending(db_session, settings)
+
+        assert reports == []
+        mock_run.assert_not_called()
+
+    @patch("btcedu.core.pipeline.run_episode_pipeline")
+    def test_resumes_pending_review_on_unattended_profile(self, mock_run, db_session, tmp_path):
+        """Unattended profiles resume despite a pending review so the gate can
+        auto-adjudicate and supersede a stale review."""
+        ep = Episode(
+            episode_id="ep_auto",
+            source="youtube_rss",
+            title="Auto",
+            url="https://youtube.com/watch?v=auto",
+            status=EpisodeStatus.ADAPTED,
+            pipeline_version=2,
+            content_profile="tagesschau_tr",
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
+        )
+        db_session.add(ep)
+        db_session.commit()
+
+        mock_run.return_value = PipelineReport(episode_id="ep_auto", title="Auto", success=True)
+        settings = _make_settings(tmp_path)
+        with (
+            patch("btcedu.core.reviewer.has_pending_review", return_value=True),
+            patch("btcedu.core.pipeline._profile_pipeline_flags", return_value=(True, True)),
+        ):
+            reports = run_pending(db_session, settings)
+
+        assert len(reports) == 1
+        mock_run.assert_called_once()
+
+    @patch("btcedu.core.pipeline.run_episode_pipeline")
     def test_skips_published_episodes(self, mock_run, db_session, tmp_path):
         ep = Episode(
             episode_id="ep_done",

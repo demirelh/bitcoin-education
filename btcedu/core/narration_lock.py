@@ -25,6 +25,7 @@ produce a mismatch and fail the lock closed.
 
 from __future__ import annotations
 
+import difflib
 import re
 import unicodedata
 from collections import Counter
@@ -151,6 +152,16 @@ def restore_minor_narration_drift(
     return check_narration_lock(approved, compose_chapter_narration(chapters)).matches
 
 
+def _set_narration_text(chapter, text: str) -> None:
+    narration = getattr(chapter, "narration", None)
+    if narration is None and isinstance(chapter, dict):
+        narration = chapter.get("narration")
+    if isinstance(narration, dict):
+        narration["text"] = text
+    else:
+        narration.text = text
+
+
 def restore_truncated_narration_suffix(
     approved_text: str,
     chapters,
@@ -176,16 +187,91 @@ def restore_truncated_narration_suffix(
         return False
 
     final_chapter = chapters[-1]
-    narration = getattr(final_chapter, "narration", None)
-    if narration is None and isinstance(final_chapter, dict):
-        narration = final_chapter.get("narration")
     current_text = _narration_text_of(final_chapter).rstrip()
-    restored_text = current_text + missing
-    if isinstance(narration, dict):
-        narration["text"] = restored_text
-    else:
-        narration.text = restored_text
+    _set_narration_text(final_chapter, current_text + missing)
     return check_narration_lock(approved, compose_chapter_narration(chapters)).matches
+
+
+def restore_narration_from_approved(
+    approved_text: str,
+    chapters,
+    *,
+    max_omitted_ratio: float = 0.5,
+) -> bool:
+    """Rebuild chapter narration from the approved narration when the composed
+    narration is a faithful *subsequence* of it.
+
+    Chapterization models frequently re-case the approved narration (e.g. lower
+    a sentence-initial word that the approved text capitalised mid-flow) and may
+    omit words when the JSON output hits the token budget. Both are safe to undo
+    deterministically: the approved narration is the QA-gated source of truth, so
+    we restore the exact approved words — every fact, number, name and casing —
+    partitioned along the chapter boundaries the model proposed. The lock then
+    passes by construction.
+
+    This is intentionally strict. It accepts ONLY when the composed narration is
+    an order-preserving subsequence of the approved narration under case folding,
+    i.e. the model *only* re-cased and/or dropped words. It refuses (returns
+    False → fail closed) on any inserted word (hallucination) or changed
+    word/number/name (a real content edit), which are precisely the cases that
+    warrant human review — never silently "repaired".
+    """
+    approved = normalize_narration_text(approved_text)
+    if not approved or not chapters:
+        return False
+    approved_words = approved.split()
+    chapter_word_lists = [
+        normalize_narration_text(_narration_text_of(chapter)).split() for chapter in chapters
+    ]
+    if any(len(words) == 0 for words in chapter_word_lists):
+        return False
+    composed_words = [word for words in chapter_word_lists for word in words]
+    if not composed_words or len(composed_words) > len(approved_words):
+        return False
+
+    omitted = len(approved_words) - len(composed_words)
+    if approved_words and omitted / len(approved_words) > max_omitted_ratio:
+        return False
+
+    matcher = difflib.SequenceMatcher(
+        a=[word.casefold() for word in composed_words],
+        b=[word.casefold() for word in approved_words],
+        autojunk=False,
+    )
+    composed_to_approved: list[int | None] = [None] * len(composed_words)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        # 'a' is composed, 'b' is approved.
+        #   equal   → composed word matches approved (possibly different casing)
+        #   insert  → approved has extra words (model omission — allowed, restored)
+        #   delete  → composed has words absent from approved (hallucination)
+        #   replace → composed word differs from approved (changed content)
+        if tag in ("delete", "replace"):
+            return False
+        if tag == "equal":
+            for offset in range(i2 - i1):
+                composed_to_approved[i1 + offset] = j1 + offset
+    if any(index is None for index in composed_to_approved):
+        return False
+
+    # Each chapter owns the approved span from its first composed word up to the
+    # next chapter's first composed word; omitted approved words fall inside a
+    # span and are absorbed, so concatenation reproduces the approved narration.
+    starts: list[int] = []
+    prev = 0
+    cursor = 0
+    for chapter_index, words in enumerate(chapter_word_lists):
+        start = 0 if chapter_index == 0 else max(composed_to_approved[cursor], prev)
+        starts.append(start)
+        prev = start
+        cursor += len(words)
+
+    for chapter_index, chapter in enumerate(chapters):
+        start = starts[chapter_index]
+        end = starts[chapter_index + 1] if chapter_index + 1 < len(starts) else len(approved_words)
+        end = max(end, start)
+        _set_narration_text(chapter, " ".join(approved_words[start:end]))
+
+    return check_narration_lock(approved_text, compose_chapter_narration(chapters)).matches
 
 
 @dataclass

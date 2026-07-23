@@ -133,6 +133,80 @@ def test_restore_minor_narration_drift_rejects_rewrite():
     assert restore_minor_narration_drift(approved, chapters) is False
 
 
+def test_restore_from_approved_heals_casing_only_drift():
+    from btcedu.core.narration_lock import restore_narration_from_approved
+
+    # Model lowercased a mid-sentence "Bir" the approved text capitalised.
+    chapters = [
+        {"narration": {"text": "Ekonomik durumun yanı sıra bir de mali sıkıntı var."}},
+        {"narration": {"text": "Tahran'da enflasyon yüzde 68 olabilir."}},
+    ]
+    approved = (
+        "Ekonomik durumun yanı sıra Bir de mali sıkıntı var. "
+        "Tahran'da enflasyon yüzde 68 olabilir."
+    )
+
+    assert restore_narration_from_approved(approved, chapters) is True
+    assert check_narration_lock(approved, compose_chapter_narration(chapters)).matches
+    # exact approved casing restored
+    assert "Bir de mali" in compose_chapter_narration(chapters)
+
+
+def test_restore_from_approved_heals_omitted_words():
+    from btcedu.core.narration_lock import restore_narration_from_approved
+
+    # Model dropped words ("neredeyse", "yüzde 68'lik") when the JSON hit budget.
+    chapters = [
+        {"narration": {"text": "Çarşıda hiç hareketlilik yok."}},
+        {"narration": {"text": "Uzmanlar enflasyon öngörüyor."}},
+    ]
+    approved = (
+        "Çarşıda neredeyse hiç hareketlilik yok. "
+        "Uzmanlar yüzde 68'lik enflasyon öngörüyor."
+    )
+
+    assert restore_narration_from_approved(approved, chapters) is True
+    result = check_narration_lock(approved, compose_chapter_narration(chapters))
+    assert result.matches
+    # dropped facts restored
+    composed = compose_chapter_narration(chapters)
+    assert "neredeyse" in composed and "68" in composed
+
+
+def test_restore_from_approved_rejects_changed_number():
+    from btcedu.core.narration_lock import restore_narration_from_approved
+
+    chapters = [{"narration": {"text": "Zam 35 derece oldu."}}]
+    approved = "Zam 25 derece oldu."
+
+    # A genuine content change (25 → 35) must fail closed, never be "repaired".
+    assert restore_narration_from_approved(approved, chapters) is False
+
+
+def test_restore_from_approved_rejects_hallucinated_insertion():
+    from btcedu.core.narration_lock import restore_narration_from_approved
+
+    chapters = [
+        {"narration": {"text": "Bitcoin bir para birimidir. Kanala abone olun."}},
+    ]
+    approved = "Bitcoin bir para birimidir."
+
+    # An inserted (hallucinated) sentence is not in approved → fail closed.
+    assert restore_narration_from_approved(approved, chapters) is False
+
+
+def test_restore_from_approved_rejects_when_too_much_omitted():
+    from btcedu.core.narration_lock import restore_narration_from_approved
+
+    chapters = [{"narration": {"text": "Bir iki."}}]
+    approved = "Bir iki üç dört beş altı yedi sekiz."
+
+    # Losing more than half the words is not a safe auto-repair.
+    assert (
+        restore_narration_from_approved(approved, chapters, max_omitted_ratio=0.5) is False
+    )
+
+
 # ---------------------------------------------------------------------------
 # Canonical narration source (shared by QA hash and chapterize lock)
 # ---------------------------------------------------------------------------

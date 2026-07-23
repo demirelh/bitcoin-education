@@ -105,6 +105,7 @@ def _enforce_narration_lock(
         compose_chapter_narration,
         normalize_narration_text,
         restore_minor_narration_drift,
+        restore_narration_from_approved,
         restore_truncated_narration_suffix,
     )
     from btcedu.core.qa_reviewer import canonical_narration, load_quality_gate
@@ -129,6 +130,8 @@ def _enforce_narration_lock(
             final_chapter_doc.chapters,
         ):
             repair = "truncated final suffix"
+        elif restore_narration_from_approved(approved_text, final_chapter_doc.chapters):
+            repair = "recased/omitted words restored from approved narration"
         if repair:
             logger.warning(
                 "Restored %s from approved narration for %s",

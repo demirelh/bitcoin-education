@@ -451,3 +451,120 @@ def test_one_verification_region_produces_one_qa_finding():
     assert len(document.findings) == 1
     assert document.findings[0].segment_ids == [item.segment_id for item in segments]
     assert document.summary.major_count == 1
+
+
+def _tagesschau_blocking_episode(db_session, qa_settings):
+    """A CORRECTED tagesschau_tr episode whose transcript QA gate is blocking."""
+    transcript_path = Path(qa_settings.transcripts_dir) / "ep_qa" / "transcript.clean.de.txt"
+    transcript_path.parent.mkdir(parents=True, exist_ok=True)
+    transcript_path.write_text("Es gab zwölf Opfer.", encoding="utf-8")
+    episode = Episode(
+        episode_id="ep_qa",
+        source="youtube_rss",
+        title="Transcript QA",
+        url="https://example.com/ep_qa",
+        status=EpisodeStatus.CORRECTED,
+        pipeline_version=2,
+        content_profile="tagesschau_tr",
+        transcript_path=str(transcript_path),
+    )
+    db_session.add(episode)
+    db_session.commit()
+    _write_corrected(
+        qa_settings,
+        flags=["casualty_disagreement"],
+        status="unresolved",
+        severity="critical",
+    )
+    evaluate_transcript_qa(db_session, "ep_qa", qa_settings)
+    qa = load_transcript_qa(qa_settings, "ep_qa")
+    assert qa and qa.get("blocked")
+    return episode
+
+
+def _adj_resp(payload):
+    from btcedu.services.claude_service import ClaudeResponse
+
+    text = payload if isinstance(payload, str) else json.dumps(payload, ensure_ascii=False)
+    return ClaudeResponse(text=text, input_tokens=10, output_tokens=10, cost_usd=0.0, model="m")
+
+
+def test_transcript_gate_auto_adjudicates_and_continues(db_session, qa_settings):
+    from unittest.mock import patch
+
+    episode = _tagesschau_blocking_episode(db_session, qa_settings)
+    approve = _adj_resp(
+        {
+            "verdict": "approve",
+            "reason": "false positives",
+            "findings": [
+                {"finding_id": "transcript-qa-0001", "decision": "dismiss", "reason": "x"}
+            ],
+        }
+    )
+    with patch("btcedu.core.qa_reviewer.call_claude", return_value=approve):
+        result = _run_stage(db_session, episode, qa_settings, "review_gate_transcript_qa")
+
+    assert result.status == "success"
+    task = (
+        db_session.query(ReviewTask)
+        .filter_by(episode_id="ep_qa", stage="transcript_qa")
+        .one()
+    )
+    assert task.status == ReviewStatus.APPROVED.value
+    assert (
+        Path(qa_settings.outputs_dir) / "ep_qa" / "gate_adjudication_transcript_qa.json"
+    ).exists()
+
+
+def test_transcript_gate_hold_never_blocks_when_configured(db_session, qa_settings):
+    from unittest.mock import patch
+
+    from btcedu.core.qa_reviewer import adjudicate_transcript_qa_gate
+
+    _tagesschau_blocking_episode(db_session, qa_settings)
+    qa = load_transcript_qa(qa_settings, "ep_qa")
+    hold = _adj_resp({"verdict": "hold", "reason": "real error", "findings": []})
+    with patch("btcedu.core.qa_reviewer.call_claude", return_value=hold):
+        result = adjudicate_transcript_qa_gate(db_session, "ep_qa", qa_settings, qa=qa)
+    # tagesschau_tr sets block_on_hold=false → hold still approves (never halts).
+    assert result.performed and result.verdict == "hold" and result.approved is True
+
+
+def test_transcript_gate_invalid_response_honours_block_on_hold(db_session, qa_settings):
+    from unittest.mock import patch
+
+    from btcedu.core.qa_reviewer import adjudicate_transcript_qa_gate
+
+    _tagesschau_blocking_episode(db_session, qa_settings)
+    qa = load_transcript_qa(qa_settings, "ep_qa")
+    garbage = _adj_resp("not json at all")
+    with patch("btcedu.core.qa_reviewer.call_claude", return_value=garbage):
+        auto = adjudicate_transcript_qa_gate(db_session, "ep_qa", qa_settings, qa=qa)
+    assert auto.performed and auto.approved is True and auto.error is not None
+
+    with patch(
+        "btcedu.core.qa_reviewer._gate_adjudication_route",
+        return_value={"provider": "p", "model": "m", "block_on_hold": True},
+    ):
+        with patch("btcedu.core.qa_reviewer.call_claude", return_value=garbage):
+            strict = adjudicate_transcript_qa_gate(db_session, "ep_qa", qa_settings, qa=qa)
+    assert strict.performed and strict.approved is False
+
+
+def test_transcript_gate_disabled_route_falls_through_to_review(
+    db_session, corrected_episode, qa_settings
+):
+    # bitcoin_podcast has no gate_adjudication → adjudication not performed →
+    # the gate still creates a blocking review (legacy behaviour preserved).
+    _write_corrected(
+        qa_settings,
+        flags=["casualty_disagreement"],
+        status="unresolved",
+        severity="critical",
+    )
+    evaluate_transcript_qa(db_session, "ep_qa", qa_settings)
+    result = _run_stage(db_session, corrected_episode, qa_settings, "review_gate_transcript_qa")
+    assert result.status == "review_pending"
+    task = db_session.query(ReviewTask).filter_by(episode_id="ep_qa").one()
+    assert task.status == ReviewStatus.PENDING.value

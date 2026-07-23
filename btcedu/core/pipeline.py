@@ -528,6 +528,7 @@ def _run_stage(
 
         elif stage_name == "review_gate_transcript_qa":
             from btcedu.core.reviewer import (
+                approve_stage_for_artifacts,
                 create_review_task,
                 has_approved_review_for_artifacts,
                 has_pending_review_for_artifacts,
@@ -575,6 +576,42 @@ def _run_stage(
                     elapsed,
                     detail="awaiting transcript QA review",
                 )
+
+            # Optional automatic adjudication: when the transcript QA gate is
+            # blocking and not already human-approved, let an independent model
+            # decide whether to auto-continue. On approval we record an
+            # artifact-bound transcript_qa approval — exactly what a human
+            # reviewer produces.
+            from btcedu.core.qa_reviewer import adjudicate_transcript_qa_gate
+
+            adjudication = adjudicate_transcript_qa_gate(
+                session, episode.episode_id, settings, qa=qa
+            )
+            if adjudication.performed and adjudication.approved:
+                approve_stage_for_artifacts(
+                    session,
+                    episode.episode_id,
+                    "transcript_qa",
+                    artifacts,
+                    notes=(
+                        "auto-adjudicated "
+                        f"({adjudication.verdict or 'approve'}) via "
+                        f"{adjudication.model}: {adjudication.reason}"[:480]
+                    ),
+                )
+                elapsed = time.monotonic() - t0
+                logger.info(
+                    "  review_gate_transcript_qa auto-adjudicated %s → continue (%s)",
+                    adjudication.verdict or "approve",
+                    episode.episode_id,
+                )
+                return StageResult(
+                    "review_gate_transcript_qa",
+                    "success",
+                    elapsed,
+                    detail="transcript QA auto-adjudicated",
+                )
+
             create_review_task(
                 session,
                 episode.episode_id,

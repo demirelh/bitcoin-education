@@ -2093,6 +2093,96 @@ _GATE_ADJUDICATION_SYSTEM_PROMPT = (
 )
 
 
+def _perform_gate_adjudication(
+    settings: Settings,
+    episode_id: str,
+    *,
+    route: dict,
+    gate_kind: str,
+    gate_decision: str | None,
+    gate_reasons: list,
+    findings_payload: list[dict],
+    context: dict,
+    artifact_name: str,
+) -> GateAdjudicationResult:
+    """Shared LLM adjudication used by every blocking review gate.
+
+    Builds the prompt, calls the independent model, parses the verdict, writes an
+    audit file and returns the decision. ``block_on_hold`` (from ``route``)
+    controls whether a "hold" verdict or an adjudication failure still blocks.
+    """
+    block_on_hold = route["block_on_hold"]
+    result = GateAdjudicationResult(
+        performed=True,
+        block_on_hold=block_on_hold,
+        open_finding_count=len(findings_payload),
+        provider=route["provider"],
+        model=route["model"],
+    )
+    if not findings_payload:
+        result.approved = True
+        result.verdict = "approve"
+        result.reason = "no open findings to adjudicate"
+        _write_gate_adjudication_audit(settings, episode_id, result, artifact_name)
+        return result
+
+    user_message = json.dumps(
+        {
+            "episode_id": episode_id,
+            "gate_kind": gate_kind,
+            "gate_decision": gate_decision,
+            "gate_reasons": list(gate_reasons or []),
+            **context,
+            "open_findings": findings_payload,
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+    try:
+        response = call_claude(
+            system_prompt=_GATE_ADJUDICATION_SYSTEM_PROMPT,
+            user_message=user_message,
+            settings=settings,
+            max_tokens=4000,
+            json_mode=True,
+            provider_override=route["provider"],
+            model_override=route["model"],
+        )
+    except Exception as exc:  # noqa: BLE001
+        result.approved = not block_on_hold
+        result.error = f"gate adjudication call failed: {exc}"
+        result.reason = result.error
+        _write_gate_adjudication_audit(settings, episode_id, result, artifact_name)
+        logger.warning("Gate adjudication (%s) call failed for %s: %s", gate_kind, episode_id, exc)
+        return result
+
+    result.cost_usd = response.cost_usd
+    result.model = response.model or route["model"]
+    parsed = _parse_gate_adjudication(response.text)
+    if parsed is None:
+        result.approved = not block_on_hold
+        result.error = "gate adjudication returned an invalid response"
+        result.reason = result.error
+        _write_gate_adjudication_audit(settings, episode_id, result, artifact_name)
+        logger.warning("Gate adjudication (%s) returned invalid JSON for %s", gate_kind, episode_id)
+        return result
+
+    result.verdict = parsed["verdict"]
+    result.reason = parsed["reason"]
+    result.finding_decisions = parsed["findings"]
+    result.approved = result.verdict == "approve" or not block_on_hold
+    _write_gate_adjudication_audit(settings, episode_id, result, artifact_name)
+    logger.info(
+        "Gate adjudication (%s) for %s: verdict=%s approved=%s (block_on_hold=%s)",
+        gate_kind,
+        episode_id,
+        result.verdict,
+        result.approved,
+        block_on_hold,
+    )
+    return result
+
+
 def adjudicate_quality_gate(
     session: Session,
     episode_id: str,
@@ -2100,7 +2190,7 @@ def adjudicate_quality_gate(
     *,
     gate: dict | None = None,
 ) -> GateAdjudicationResult:
-    """Ask an independent model to adjudicate a non-green gate.
+    """Ask an independent model to adjudicate a non-green translation gate.
 
     Writes an audit trail to ``gate_adjudication.json`` and returns a decision.
     When ``block_on_hold`` is False the pipeline continues regardless of the
@@ -2160,66 +2250,101 @@ def adjudicate_quality_gate(
         }
         for f in open_findings
     ]
-    user_message = json.dumps(
-        {
-            "episode_id": episode_id,
-            "gate_decision": gate.get("decision"),
-            "gate_reasons": gate.get("reasons", []),
-            "target_narration": target_narration[:12000],
-            "open_findings": findings_payload,
-        },
-        ensure_ascii=False,
-        indent=2,
-    )
-
-    try:
-        response = call_claude(
-            system_prompt=_GATE_ADJUDICATION_SYSTEM_PROMPT,
-            user_message=user_message,
-            settings=settings,
-            max_tokens=4000,
-            json_mode=True,
-            provider_override=route["provider"],
-            model_override=route["model"],
-        )
-    except Exception as exc:  # noqa: BLE001
-        result.approved = not block_on_hold
-        result.error = f"gate adjudication call failed: {exc}"
-        result.reason = result.error
-        _write_gate_adjudication_audit(settings, episode_id, result)
-        logger.warning("Gate adjudication call failed for %s: %s", episode_id, exc)
-        return result
-
-    result.cost_usd = response.cost_usd
-    result.model = response.model or route["model"]
-    parsed = _parse_gate_adjudication(response.text)
-    if parsed is None:
-        result.approved = not block_on_hold
-        result.error = "gate adjudication returned an invalid response"
-        result.reason = result.error
-        _write_gate_adjudication_audit(settings, episode_id, result)
-        logger.warning("Gate adjudication returned invalid JSON for %s", episode_id)
-        return result
-
-    result.verdict = parsed["verdict"]
-    result.reason = parsed["reason"]
-    result.finding_decisions = parsed["findings"]
-    result.approved = result.verdict == "approve" or not block_on_hold
-    _write_gate_adjudication_audit(settings, episode_id, result)
-    logger.info(
-        "Gate adjudication for %s: verdict=%s approved=%s (block_on_hold=%s)",
+    return _perform_gate_adjudication(
+        settings,
         episode_id,
-        result.verdict,
-        result.approved,
-        block_on_hold,
+        route=route,
+        gate_kind="translation_qa",
+        gate_decision=gate.get("decision"),
+        gate_reasons=gate.get("reasons", []),
+        findings_payload=findings_payload,
+        context={"target_narration": target_narration[:12000]},
+        artifact_name=GATE_ADJUDICATION_ARTIFACT,
     )
-    return result
+
+
+TRANSCRIPT_GATE_ADJUDICATION_ARTIFACT = "gate_adjudication_transcript_qa.json"
+
+
+def adjudicate_transcript_qa_gate(
+    session: Session,
+    episode_id: str,
+    settings: Settings,
+    *,
+    qa: dict | None = None,
+) -> GateAdjudicationResult:
+    """Independently adjudicate a blocking transcript-QA gate.
+
+    Uses the same ``qa.gate_adjudication`` route/config as the translation gate
+    so a single switch governs automatic gate decisions. Returns a decision the
+    caller records as an artifact-bound ``transcript_qa`` approval.
+    """
+    from btcedu.core.transcript_qa import load_transcript_qa
+
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    config = resolve_qa_config(settings, episode) if episode else _default_qa_config(settings)
+    route = _gate_adjudication_route(config)
+    if route is None:
+        return GateAdjudicationResult(
+            performed=False, approved=False, reason="adjudication disabled"
+        )
+
+    if qa is None:
+        qa = load_transcript_qa(settings, episode_id) or {}
+    findings = [
+        f
+        for f in qa.get("findings", [])
+        if isinstance(f, dict) and (f.get("blocking") or f.get("severity") in {"major", "critical"})
+    ]
+    if episode is not None and _cost_exceeded(session, episode, settings):
+        block_on_hold = route["block_on_hold"]
+        result = GateAdjudicationResult(
+            performed=True,
+            block_on_hold=block_on_hold,
+            open_finding_count=len(findings),
+            provider=route["provider"],
+            model=route["model"],
+            approved=not block_on_hold,
+            error="cost limit reached before gate adjudication",
+            reason="cost limit reached before gate adjudication",
+        )
+        _write_gate_adjudication_audit(
+            settings, episode_id, result, TRANSCRIPT_GATE_ADJUDICATION_ARTIFACT
+        )
+        return result
+
+    findings_payload = [
+        {
+            "finding_id": f.get("finding_id"),
+            "severity": f.get("severity"),
+            "category": f.get("category"),
+            "blocking": bool(f.get("blocking")),
+            "message": str(f.get("message") or "")[:600],
+            "primary_text": str(f.get("primary_text") or "")[:600],
+            "corrected_text": str(f.get("corrected_text") or "")[:600],
+        }
+        for f in findings
+    ]
+    return _perform_gate_adjudication(
+        settings,
+        episode_id,
+        route=route,
+        gate_kind="transcript_qa",
+        gate_decision=qa.get("status"),
+        gate_reasons=[],
+        findings_payload=findings_payload,
+        context={},
+        artifact_name=TRANSCRIPT_GATE_ADJUDICATION_ARTIFACT,
+    )
 
 
 def _write_gate_adjudication_audit(
-    settings: Settings, episode_id: str, result: GateAdjudicationResult
+    settings: Settings,
+    episode_id: str,
+    result: GateAdjudicationResult,
+    artifact_name: str = GATE_ADJUDICATION_ARTIFACT,
 ) -> None:
-    path = Path(settings.outputs_dir) / episode_id / GATE_ADJUDICATION_ARTIFACT
+    path = Path(settings.outputs_dir) / episode_id / artifact_name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(

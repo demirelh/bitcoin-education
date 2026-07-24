@@ -551,6 +551,14 @@ def test_numeric_extractor_matches_german_and_turkish_cardinals():
     assert [(fact.kind, fact.value) for fact in target] == [("generic_count", "2")]
 
 
+def test_numeric_extractor_matches_german_and_turkish_dollar():
+    source = extract_numeric_facts("Der Preis ist auf 100 Dollar gestiegen.")
+    target = extract_numeric_facts("Fiyat 100 dolara yükseldi.")
+
+    assert [(fact.kind, fact.value) for fact in source] == [("money", "100:USD")]
+    assert [(fact.kind, fact.value) for fact in target] == [("money", "100:USD")]
+
+
 def test_numeric_extractor_expands_spoken_compound_score():
     facts = extract_numeric_facts("Der Rechtsaußen sorgte im Spiel für das 3 und 4 zu 0.")
 

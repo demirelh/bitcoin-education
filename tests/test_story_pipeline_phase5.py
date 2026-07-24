@@ -131,6 +131,15 @@ def test_translation_regressions_are_rejected(source, translation, expected_risk
     assert expected_risk in _translation_fidelity_risks(source, translation)
 
 
+def test_month_term_ignores_person_names_containing_juli():
+    # "Julian"/"Julia" contain the substring "juli" but are names, not the month.
+    # A faithful translation keeps the name and must NOT be forced to contain
+    # "temmuz" — see tagesschau episode G7vylxQQv2I (Julian Nagelsmann / Julia).
+    source = "Der Nachfolger von Julian Nagelsmann. Julia Nihari-Kassen fragt warum."
+    translation = "Julian Nagelsmann'ın halefi. Julia Nihari-Kassen nedenini soruyor."
+    assert "juli" not in _translation_fidelity_risks(source, translation)
+
+
 def test_faithful_kill_verb_is_not_invented_casualty():
     # Threats/killing in the source ("umbringen", "vernichten", "Mordanschlag")
     # faithfully rendered with the Turkish active kill verb "öldürmek" must NOT

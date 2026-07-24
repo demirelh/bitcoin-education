@@ -1117,7 +1117,7 @@ def _translation_fidelity_risks(source_text: str, translated_text: str) -> list[
     source_lower = source_text.casefold()
     translated_lower = translated_text.casefold()
     for source_term, allowed_targets in _TRANSLATION_TERMS.items():
-        if source_term in source_lower and not any(
+        if re.search(rf"\b{re.escape(source_term)}\b", source_lower) and not any(
             target in translated_lower for target in allowed_targets
         ):
             risks.append(source_term)

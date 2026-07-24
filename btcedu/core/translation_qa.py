@@ -97,16 +97,25 @@ _PERCENT_RANGE_RE = re.compile(
     rf"({_NUMERIC_TOKEN})(?!\w)",
     re.IGNORECASE,
 )
+# German and Turkish currency words share this alternation so that a faithful
+# translation ("100 Dollar" -> "100 dolar") maps to the same canonical currency
+# instead of degrading to a bare generic_count and triggering a false "numbers"
+# mismatch. Turkish "dolar" carries the usual case suffixes (dolara/dolardan/...).
+_CURRENCY_FRAGMENT = (
+    r"euro|avro(?:dan|den|ya|ye|nun|nün)?|eur|€|"
+    r"dollar|dolar(?:a|dan|ı|ın|lık|ları)?|usd|\$|"
+    r"tl|lira(?:sı|ya|dan|nın)?|₺"
+)
 _MONEY_RE = re.compile(
     rf"(?<!\w)({_NUMERIC_TOKEN})\s*"
     r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
     r"yüz|bin(?:i|e|den|in)?|milyon|milyar)?\s*"
-    r"(euro|avro(?:dan|den|ya|ye|nun|nün)?|eur|€|dollar|usd|\$|tl|lira|₺)(?!\w)",
+    rf"({_CURRENCY_FRAGMENT})(?!\w)",
     re.IGNORECASE,
 )
 _TURKISH_COMPOUND_THOUSANDS_MONEY_RE = re.compile(
     rf"(?<!\w)({_NUMERIC_TOKEN})\s+bin\s+({_NUMERIC_TOKEN})\s*"
-    r"(euro|avro(?:dan|den|ya|ye|nun|nün)?|eur|€|dollar|usd|\$|tl|lira|₺)(?!\w)",
+    rf"({_CURRENCY_FRAGMENT})(?!\w)",
     re.IGNORECASE,
 )
 _SCALED_NUMBER_RE = re.compile(
@@ -298,7 +307,7 @@ _WORD_MONEY_RE = re.compile(
     rf"(?<!\w)({_WORD_CARDINAL_FRAGMENT})\s+"
     r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
     r"yüz|bin(?:i|e|den|in)?|milyon|milyar)\s+"
-    r"(euro|eur|€|dollar|usd|\$|tl|lira|₺)(?!\w)",
+    rf"({_CURRENCY_FRAGMENT})(?!\w)",
     re.IGNORECASE,
 )
 _WORD_SCALED_NUMBER_RE = re.compile(
@@ -1704,7 +1713,7 @@ def _currency(value: str) -> str:
     normalized = _normalize(value)
     if normalized in {"euro", "eur", "€"} or normalized.startswith("avro"):
         return "EUR"
-    if normalized in {"dollar", "usd", "$"}:
+    if normalized in {"dollar", "usd", "$"} or normalized.startswith("dolar"):
         return "USD"
     return "TRY"
 

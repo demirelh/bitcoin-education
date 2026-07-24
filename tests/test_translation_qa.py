@@ -559,6 +559,17 @@ def test_numeric_extractor_matches_german_and_turkish_dollar():
     assert [(fact.kind, fact.value) for fact in target] == [("money", "100:USD")]
 
 
+def test_numeric_extractor_matches_half_million_across_languages():
+    source = extract_numeric_facts("Mehr als eine halbe Million Zuschauer.")
+    digit_target = extract_numeric_facts("500 binden fazla seyirci.")
+    word_target = extract_numeric_facts("Yarım milyondan fazla seyirci.")
+
+    assert [fact.value for fact in source] == ["500000"]
+    assert [fact.value for fact in digit_target] == ["500000"]
+    assert [fact.value for fact in word_target] == ["500000"]
+    assert [fact.value for fact in extract_numeric_facts("eine halbe Milliarde")] == ["500000000"]
+
+
 def test_numeric_extractor_expands_spoken_compound_score():
     facts = extract_numeric_facts("Der Rechtsaußen sorgte im Spiel für das 3 und 4 zu 0.")
 

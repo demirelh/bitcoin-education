@@ -124,6 +124,17 @@ _SCALED_NUMBER_RE = re.compile(
     r"yüz|bin(?:i|e|den|in)?|milyon|milyar)(?!\w)",
     re.IGNORECASE,
 )
+# "eine halbe Million" (DE) / "yarım milyon" (TR) express a magnitude that carries
+# no digit and no cardinal word, so it was silently dropped on the source side.
+# A faithful translation that spells it as "500 bin"/"500.000" then looked like an
+# invented number. Capture the German and Turkish "half" forms as 0.5 * magnitude
+# so both sides agree — see tagesschau episode G7vylxQQv2I ("eine halbe Million
+# Zuschauer").
+_HALF_SCALED_RE = re.compile(
+    r"(?<!\w)(?:eine?\s+)?(?:halbe?|yarım)\s+"
+    r"(million(?:en)?|milliarden?|milyon(?:dan|u|a|un)?|milyar(?:dan|ı|a|ın)?)(?!\w)",
+    re.IGNORECASE,
+)
 _TEMP_RE = re.compile(
     rf"(?<!\w)(-?{_NUMERIC_TOKEN})\s*"
     rf"(?:°(?:\s*c)?|grad|derece(?:ye|yi|de|den|nin)?)(?!\w)",
@@ -1060,6 +1071,11 @@ def extract_numeric_facts(text: str) -> list[NumericFact]:
             continue
         value = _scaled_decimal(match.group(1), match.group(2))
         append_fact(match, _classify_numeric_role(text, match.start(), match.end(), value), value)
+    for match in _HALF_SCALED_RE.finditer(text):
+        if _overlaps(match.span(), occupied):
+            continue
+        value = _scaled_decimal("0,5", match.group(1))
+        append_fact(match, _classify_numeric_role(text, match.start(), match.end(), value), value)
     for match in _WORD_SCALED_NUMBER_RE.finditer(text):
         if _overlaps(match.span(), occupied):
             continue
@@ -1690,6 +1706,10 @@ def _scaled_decimal(value: str, magnitude: str | None) -> str:
     normalized_magnitude = _normalize(magnitude or "").rstrip(".")
     if normalized_magnitude.startswith("bin"):
         normalized_magnitude = "bin"
+    elif normalized_magnitude.startswith("milyon"):
+        normalized_magnitude = "milyon"
+    elif normalized_magnitude.startswith("milyar"):
+        normalized_magnitude = "milyar"
     multiplier = Decimal(
         {
             "hundert": 100,

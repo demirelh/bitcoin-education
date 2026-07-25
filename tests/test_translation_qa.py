@@ -570,6 +570,14 @@ def test_numeric_extractor_matches_half_million_across_languages():
     assert [fact.value for fact in extract_numeric_facts("eine halbe Milliarde")] == ["500000000"]
 
 
+def test_numeric_extractor_matches_scaled_magnitude_with_turkish_suffix():
+    source = extract_numeric_facts("Mehr als 1,5 Mio. Radsportfans waren am Berg.")
+    target = extract_numeric_facts("Dağda 1,5 milyondan fazla bisiklet tutkunu vardı.")
+
+    assert [(fact.kind, fact.value) for fact in source] == [("generic_count", "1500000")]
+    assert [(fact.kind, fact.value) for fact in target] == [("generic_count", "1500000")]
+
+
 def test_numeric_extractor_expands_spoken_compound_score():
     facts = extract_numeric_facts("Der Rechtsaußen sorgte im Spiel für das 3 und 4 zu 0.")
 

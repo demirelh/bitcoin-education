@@ -106,10 +106,15 @@ _CURRENCY_FRAGMENT = (
     r"dollar|dolar(?:a|dan|ı|ın|lık|ları)?|usd|\$|"
     r"tl|lira(?:sı|ya|dan|nın)?|₺"
 )
+_MAGNITUDE_FRAGMENT = (
+    r"hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
+    r"yüz|bin(?:i|e|den|in)?|"
+    r"milyon(?:dan|den|u|ü|ı|i|a|e|un|ün|ın|in|luk|lük|lık|lik|lar|ler)?|"
+    r"milyar(?:dan|den|u|ü|ı|i|a|e|un|ün|ın|in|luk|lük|lık|lik|lar|ler)?"
+)
 _MONEY_RE = re.compile(
     rf"(?<!\w)({_NUMERIC_TOKEN})\s*"
-    r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
-    r"yüz|bin(?:i|e|den|in)?|milyon|milyar)?\s*"
+    rf"({_MAGNITUDE_FRAGMENT})?\s*"
     rf"({_CURRENCY_FRAGMENT})(?!\w)",
     re.IGNORECASE,
 )
@@ -120,8 +125,7 @@ _TURKISH_COMPOUND_THOUSANDS_MONEY_RE = re.compile(
 )
 _SCALED_NUMBER_RE = re.compile(
     rf"(?<!\w)({_NUMERIC_TOKEN})\s*"
-    r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
-    r"yüz|bin(?:i|e|den|in)?|milyon|milyar)(?!\w)",
+    rf"({_MAGNITUDE_FRAGMENT})(?!\w)",
     re.IGNORECASE,
 )
 # "eine halbe Million" (DE) / "yarım milyon" (TR) express a magnitude that carries
@@ -316,15 +320,13 @@ _WORD_CARDINAL_FRAGMENT = "|".join(
 )
 _WORD_MONEY_RE = re.compile(
     rf"(?<!\w)({_WORD_CARDINAL_FRAGMENT})\s+"
-    r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
-    r"yüz|bin(?:i|e|den|in)?|milyon|milyar)\s+"
+    rf"({_MAGNITUDE_FRAGMENT})\s+"
     rf"({_CURRENCY_FRAGMENT})(?!\w)",
     re.IGNORECASE,
 )
 _WORD_SCALED_NUMBER_RE = re.compile(
     rf"(?<!\w)({_WORD_CARDINAL_FRAGMENT})\s+"
-    r"(hundert|tausend|million(?:en)?|milliarden?|mio\.?|mrd\.?|"
-    r"yüz|bin(?:i|e|den|in)?|milyon|milyar)(?!\w)",
+    rf"({_MAGNITUDE_FRAGMENT})(?!\w)",
     re.IGNORECASE,
 )
 _NEGATION_GROUPS = {

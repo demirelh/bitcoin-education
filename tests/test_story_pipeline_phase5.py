@@ -327,10 +327,16 @@ def test_translation_uses_independent_adjudicator_replacement(tmp_path):
     )
     audit_path = tmp_path / "translate_adjudication.json"
 
-    with patch(
-        "btcedu.core.translator.call_claude",
-        side_effect=[producer, producer, adjudicator],
-    ) as mock_call:
+    with (
+        patch(
+            "btcedu.core.translator.call_claude",
+            side_effect=[producer, producer, adjudicator],
+        ) as mock_call,
+        patch(
+            "btcedu.core.translator._translation_fidelity_risks",
+            return_value=["numbers"],
+        ),
+    ):
         output, responses = _call_story_translation(
             story,
             "system",
@@ -348,6 +354,7 @@ def test_translation_uses_independent_adjudicator_replacement(tmp_path):
     audit = json.loads(audit_path.read_text(encoding="utf-8"))
     assert audit["decision"] == "use_replacement"
     assert audit["selected"]["translated_text"] == "Kazada 5 kişi yaralandı."
+    assert audit["residual_deterministic_risks"] == ["numbers"]
 
 
 def test_translation_adjudicator_can_accept_false_positive(tmp_path):

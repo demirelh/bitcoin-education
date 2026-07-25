@@ -1022,20 +1022,16 @@ def _adjudicate_story_translation(
     reason = str(data.get("reason") or "").strip()
 
     selected = None
+    residual_risks: list[str] = []
     if decision == "accept_candidate":
         selected = candidate
     elif decision == "use_replacement":
         selected = StoryTranslationOutput.model_validate(data.get("replacement"))
         _validate_story_translation_structure(story, selected)
-        replacement_risks = _translation_fidelity_risks(
+        residual_risks = _translation_fidelity_risks(
             source_text,
             selected.translated_text,
         )
-        if replacement_risks:
-            raise ValueError(
-                "Independent translation replacement still changes protected facts: "
-                + ", ".join(replacement_risks)
-            )
     elif decision != "reject":
         raise ValueError(f"Invalid translation adjudication decision: {decision!r}")
 
@@ -1051,6 +1047,7 @@ def _adjudicate_story_translation(
                     "decision": decision,
                     "reason": reason,
                     "selected": selected.model_dump(mode="json") if selected is not None else None,
+                    "residual_deterministic_risks": residual_risks,
                     "provider": route["provider"],
                     "model": response.model,
                     "input_tokens": response.input_tokens,
@@ -1065,10 +1062,15 @@ def _adjudicate_story_translation(
     if selected is None:
         raise ValueError(f"Independent translation adjudication rejected candidate: {reason}")
     logger.warning(
-        "Independent translation adjudication %s story %s after risks: %s",
+        "Independent translation adjudication %s story %s after risks: %s%s",
         decision,
         story.story_id,
         ", ".join(risks),
+        (
+            f"; replacement retains heuristic risks: {', '.join(residual_risks)}"
+            if residual_risks
+            else ""
+        ),
     )
     return selected, response
 

@@ -6,6 +6,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import json_repair
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 
 # Texts longer than this (in characters) are split into segments
 SEGMENT_CHAR_LIMIT = 15_000
+MIN_LOCKED_NARRATION_ALIGNMENT = 0.2
 
 
 def _utcnow() -> datetime:
@@ -76,6 +78,54 @@ def _write_narration_lock_diagnostic(
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         logger.warning("Could not write narration lock diagnostic for %s", episode_id)
+
+
+def _restore_locked_segment_narration(segment: str, chapter_doc: ChapterDocument) -> bool:
+    """Replace model narration with the exact approved input paragraphs.
+
+    News profiles define one adapted story paragraph per chapter. When that
+    structural invariant holds, the model is only responsible for chapter
+    metadata; its copied narration is not trusted because models may summarize,
+    omit a middle section, or introduce a typo. Restoring the exact segment
+    paragraphs preserves the approved narration by construction while retaining
+    the model's titles, visuals, overlays, transitions, and notes.
+
+    A count mismatch is not guessed around: callers fall back to the strict
+    narration lock and its existing conservative repairs.
+    """
+    paragraphs = [paragraph.strip() for paragraph in segment.split("\n\n") if paragraph.strip()]
+    if len(paragraphs) != len(chapter_doc.chapters):
+        return False
+
+    from btcedu.core.narration_lock import normalize_narration_text
+
+    paragraph_words = [
+        normalize_narration_text(paragraph).casefold().split() for paragraph in paragraphs
+    ]
+    for index, chapter in enumerate(chapter_doc.chapters):
+        chapter_words = normalize_narration_text(chapter.narration.text).casefold().split()
+        if not chapter_words:
+            return False
+        scores = [
+            SequenceMatcher(a=chapter_words, b=words, autojunk=False).ratio()
+            for words in paragraph_words
+        ]
+        assigned_score = scores[index]
+        if assigned_score < MIN_LOCKED_NARRATION_ALIGNMENT or assigned_score < max(scores):
+            # Do not hide a model reorder/regrouping by attaching correct narration
+            # to metadata that describes another story.
+            return False
+
+    for chapter, paragraph in zip(chapter_doc.chapters, paragraphs, strict=True):
+        chapter.narration.text = paragraph
+        word_count = len(paragraph.split())
+        chapter.narration.word_count = word_count
+        chapter.narration.estimated_duration_seconds = _compute_duration_estimate(word_count)
+
+    chapter_doc.estimated_duration_seconds = sum(
+        chapter.narration.estimated_duration_seconds for chapter in chapter_doc.chapters
+    )
+    return True
 
 
 def _enforce_narration_lock(
@@ -281,6 +331,9 @@ def chapterize_script(
     # translation_qa review is approved. This runs even with force so a stale or
     # non-green factual gate cannot be silently bypassed.
     _enforce_translation_quality_gate(session, episode_id, settings)
+    from btcedu.core.qa_reviewer import load_quality_gate
+
+    narration_locked = load_quality_gate(settings, episode_id) is not None
 
     # Determine if this is a story-mode episode (tagesschau news profiles)
     # Story mode: stories_translated.json exists AND adapt was skipped (no adapted script).
@@ -496,6 +549,23 @@ def chapterize_script(
                 chapter_data = _fix_chapter_data(chapter_data, episode_id)
                 # Validate retry
                 chapter_doc = ChapterDocument.model_validate(chapter_data)
+
+            if narration_locked:
+                if _restore_locked_segment_narration(segment, chapter_doc):
+                    logger.info(
+                        "Restored approved narration for chapterize segment %d/%d",
+                        i + 1,
+                        len(segments),
+                    )
+                else:
+                    logger.warning(
+                        "Could not map %d approved paragraphs to %d model chapters "
+                        "for segment %d/%d; narration lock will validate the model partition",
+                        len([p for p in segment.split("\n\n") if p.strip()]),
+                        len(chapter_doc.chapters),
+                        i + 1,
+                        len(segments),
+                    )
 
             # For multi-segment: merge chapters
             if len(segments) > 1:

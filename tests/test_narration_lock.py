@@ -310,7 +310,7 @@ def _chapter_doc(chapters):
     }
 
 
-def _setup_locked_episode(db_session, tmp_path, model_chapters):
+def _setup_locked_episode(db_session, tmp_path, model_chapters, canonical=_CANONICAL):
     """Create an ADAPTED episode with a GREEN gate and mock the chapterize model."""
     from btcedu.core.qa_reviewer import narration_sha256
     from btcedu.models.episode import Episode, EpisodeStatus
@@ -325,7 +325,7 @@ def _setup_locked_episode(db_session, tmp_path, model_chapters):
 
     ep_dir = Path(settings.outputs_dir) / "ep_lock"
     ep_dir.mkdir(parents=True)
-    (ep_dir / "script.adapted.tr.md").write_text(_CANONICAL, encoding="utf-8")
+    (ep_dir / "script.adapted.tr.md").write_text(canonical, encoding="utf-8")
 
     # A GREEN translation quality gate locked to the current canonical narration.
     gate = {
@@ -458,6 +458,63 @@ def test_chapterize_passes_when_narration_is_faithful_partition(
     )
     assert prov["narration_locked"] is True
     assert prov["approved_narration_sha256"] == prov["composed_narration_sha256"]
+
+
+@patch("btcedu.core.chapterizer.call_claude")
+@patch("btcedu.core.chapterizer.PromptRegistry")
+def test_chapterize_restores_locked_story_paragraphs_instead_of_model_copy(
+    mock_registry, mock_claude, db_session, tmp_path
+):
+    from btcedu.core.chapterizer import chapterize_script
+    from btcedu.core.narration_lock import compose_chapter_narration, normalize_narration_text
+    from btcedu.models.chapter_schema import ChapterDocument
+
+    canonical = (
+        "Jürgen Klopp göreve geldi. Sözleşmesi 2030 yılına kadar devam edecek.\n\n"
+        "Kuzeybatıda kuvvetli sağanak yağış bekleniyor."
+    )
+    model_chapters = [
+        _chapter("ch01", 1, "Jürgen Klopp göreve geldi."),
+        _chapter("ch02", 2, "Kuneybatıda kuvvetli sağanak yağış bekleniyor."),
+    ]
+    settings, mock_response = _setup_locked_episode(
+        db_session,
+        tmp_path,
+        model_chapters,
+        canonical=canonical,
+    )
+    mock_claude.return_value = mock_response
+    _patch_registry(mock_registry)
+
+    chapterize_script(db_session, "ep_lock", settings, force=True)
+
+    chapter_data = json.loads(
+        (Path(settings.outputs_dir) / "ep_lock" / "chapters.json").read_text(encoding="utf-8")
+    )
+    document = ChapterDocument.model_validate(chapter_data)
+    assert normalize_narration_text(compose_chapter_narration(document.chapters)) == (
+        normalize_narration_text(canonical)
+    )
+    assert "2030" in document.chapters[0].narration.text
+    assert "Kuzeybatıda" in document.chapters[-1].narration.text
+    assert "Kuneybatıda" not in document.chapters[-1].narration.text
+
+
+def test_locked_story_restoration_refuses_reordered_model_chapters():
+    from btcedu.core.chapterizer import _restore_locked_segment_narration
+    from btcedu.models.chapter_schema import ChapterDocument
+
+    first = "Jürgen Klopp göreve geldi ve sözleşmesini imzaladı."
+    second = "Kuzeybatıda kuvvetli sağanak yağış bekleniyor."
+    chapters = [
+        _chapter("ch01", 1, second),
+        _chapter("ch02", 2, first),
+    ]
+    document = ChapterDocument.model_validate(_chapter_doc(chapters))
+
+    assert not _restore_locked_segment_narration(f"{first}\n\n{second}", document)
+    assert document.chapters[0].narration.text == second
+    assert document.chapters[1].narration.text == first
 
 
 @patch("btcedu.core.chapterizer.call_claude")

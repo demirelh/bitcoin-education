@@ -637,6 +637,58 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: 
         session.close()
 
 
+@cli.command(name="regression-run")
+@click.option(
+    "--from-stage",
+    required=True,
+    help="Earliest stage to rerun; execution stops after chapterize.",
+)
+@click.option("--profile", default="tagesschau_tr", show_default=True)
+@click.option("--count", default=3, show_default=True, type=click.IntRange(min=1))
+@click.pass_context
+def regression_run(
+    ctx: click.Context,
+    from_stage: str,
+    profile: str,
+    count: int,
+) -> None:
+    """Run recent episodes stage-by-stage through chapterize in isolation."""
+    from btcedu.core.regression_runner import run_recent_episode_regression
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        result = run_recent_episode_regression(
+            session,
+            settings,
+            from_stage=from_stage,
+            profile=profile,
+            count=count,
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        session.close()
+
+    click.echo("Episodes: " + ", ".join(result.episode_ids))
+    failed = False
+    for stage in result.stages:
+        stage_results = [item for item in result.results if item.stage == stage]
+        if not stage_results:
+            continue
+        click.echo(f"\n{stage}:")
+        for item in stage_results:
+            marker = "OK" if item.status != "failed" else "FAIL"
+            click.echo(f"  [{marker}] {item.episode_id}: {item.detail}")
+            failed = failed or item.status == "failed"
+        if failed:
+            break
+
+    if failed:
+        raise click.ClickException("3-episode regression failed")
+    click.echo("\nRegression passed through chapterize.")
+
+
 @cli.command(name="run-latest")
 @click.option(
     "--profile",

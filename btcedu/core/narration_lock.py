@@ -15,6 +15,7 @@ Allowed technical normalizations (and ONLY these):
   * Unicode NFKC canonicalization
   * typographic quotes  → straight ASCII quotes
   * typographic dashes  → ASCII hyphen-minus
+  * ellipsis runs (``...`` / ``…``) → a word boundary
   * whitespace / newline runs collapsed to a single space
   * whitespace removed *before* punctuation (punctuation spacing)
 
@@ -78,6 +79,11 @@ def normalize_narration_text(text: str) -> str:
         return ""
     out = unicodedata.normalize("NFKC", str(text))
     out = out.translate(_QUOTE_DASH_TABLE)
+    # Ellipses mark a pause rather than spoken content. Models commonly replace
+    # a leading continuation marker ("...tekrar") with a plain word boundary.
+    # Treat both forms identically without weakening checks for words, numbers,
+    # names, sentence punctuation, or ordering.
+    out = re.sub(r"(?:\.{2,}|…+)", " ", out)
     # Collapse every run of whitespace (spaces, tabs, newlines) to one space.
     out = re.sub(r"\s+", " ", out)
     # Remove whitespace directly before common punctuation (spacing only).

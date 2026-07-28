@@ -41,6 +41,14 @@ def test_normalize_is_nfkc_but_preserves_digits_and_case():
     assert normalize_narration_text("Scholz") != normalize_narration_text("scholz")
 
 
+def test_normalize_treats_ellipsis_as_word_boundary():
+    approved = "...tekrar geri dönebildi. Bunlar onbinlerce kişi."
+    composed = " tekrar geri dönebildi. Bunlar onbinlerce kişi."
+
+    assert normalize_narration_text(approved) == normalize_narration_text(composed)
+    assert check_narration_lock(approved, composed).matches
+
+
 def test_lock_matches_after_technical_normalization_only():
     approved = "Berlin'de bugün 25 derece. „Hava güzel\u201d dedi."
     # same content, different whitespace + typographic quotes + em dash spacing

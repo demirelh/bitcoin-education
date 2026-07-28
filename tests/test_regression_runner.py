@@ -1,11 +1,15 @@
+import json
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from unittest.mock import patch
 
 from btcedu.config import Settings
 from btcedu.core.pipeline import StageResult
 from btcedu.core.regression_runner import run_recent_episode_regression
+from btcedu.core.reviewer import _compute_artifact_hash, has_approved_review_for_artifacts
 from btcedu.db import get_session_factory, init_db
 from btcedu.models.episode import Episode, EpisodeStatus
+from btcedu.models.review import ReviewStatus, ReviewTask
 
 
 def test_regression_run_is_stage_major_and_isolated(tmp_path):
@@ -35,6 +39,20 @@ def test_regression_run_is_stage_major_and_isolated(tmp_path):
         episode_dir = outputs / episode_id
         episode_dir.mkdir(parents=True)
         (episode_dir / "marker.txt").write_text("production", encoding="utf-8")
+        gate_path = episode_dir / "translation_quality_gate.json"
+        narration_path = episode_dir / "script.adapted.tr.md"
+        gate_path.write_text('{"status":"red"}', encoding="utf-8")
+        narration_path.write_text("Onaylı anlatım.", encoding="utf-8")
+        artifacts = [str(gate_path), str(narration_path)]
+        session.add(
+            ReviewTask(
+                episode_id=episode_id,
+                stage="translation_qa",
+                status=ReviewStatus.APPROVED.value,
+                artifact_paths=json.dumps(artifacts),
+                artifact_hash=_compute_artifact_hash(artifacts),
+            )
+        )
     session.commit()
 
     settings = Settings(
@@ -49,6 +67,24 @@ def test_regression_run_is_stage_major_and_isolated(tmp_path):
     def fake_run_stage(isolated_session, episode, isolated_settings, stage_name, force=False):
         assert isolated_settings.outputs_dir != str(outputs)
         assert force is True
+        isolated_artifacts = [
+            str(
+                Path(isolated_settings.outputs_dir)
+                / episode.episode_id
+                / "translation_quality_gate.json"
+            ),
+            str(
+                Path(isolated_settings.outputs_dir)
+                / episode.episode_id
+                / "script.adapted.tr.md"
+            ),
+        ]
+        assert has_approved_review_for_artifacts(
+            isolated_session,
+            episode.episode_id,
+            "translation_qa",
+            isolated_artifacts,
+        )
         calls.append((stage_name, episode.episode_id))
         return StageResult(stage_name, "success", 0.0, detail="ok")
 

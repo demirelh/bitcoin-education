@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import shutil
 import sqlite3
 import tempfile
@@ -13,6 +14,7 @@ from sqlalchemy.orm import Session
 from btcedu.config import Settings
 from btcedu.db import get_session_factory
 from btcedu.models.episode import Episode
+from btcedu.models.review import ReviewTask
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,50 @@ def _clone_database(source_url: str, target_path: Path) -> str:
     with sqlite3.connect(source_path) as source, sqlite3.connect(target_path) as target:
         source.backup(target)
     return f"sqlite:///{target_path}"
+
+
+def _rebind_review_artifacts(
+    session: Session,
+    source_settings: Settings,
+    isolated_settings: Settings,
+) -> None:
+    """Rebind copied review tasks to equivalent files in the isolated workspace."""
+    from btcedu.core.reviewer import _compute_artifact_hash
+
+    roots = [
+        (Path(source_settings.outputs_dir).resolve(), Path(isolated_settings.outputs_dir)),
+        (Path(source_settings.transcripts_dir).resolve(), Path(isolated_settings.transcripts_dir)),
+        (Path(source_settings.raw_data_dir).resolve(), Path(isolated_settings.raw_data_dir)),
+        (Path(source_settings.reports_dir).resolve(), Path(isolated_settings.reports_dir)),
+    ]
+
+    for task in session.query(ReviewTask).all():
+        try:
+            artifact_paths = json.loads(task.artifact_paths or "[]")
+        except (json.JSONDecodeError, TypeError):
+            continue
+        rebound: list[str] = []
+        changed = False
+        for artifact_path in artifact_paths:
+            resolved = Path(artifact_path).resolve()
+            mapped = None
+            for source_root, isolated_root in roots:
+                try:
+                    relative = resolved.relative_to(source_root)
+                except ValueError:
+                    continue
+                mapped = isolated_root / relative
+                break
+            if mapped is None:
+                rebound.append(artifact_path)
+                continue
+            rebound.append(str(mapped))
+            changed = True
+        if not changed or not all(Path(path).exists() for path in rebound):
+            continue
+        task.artifact_paths = json.dumps(rebound)
+        task.artifact_hash = _compute_artifact_hash(rebound)
+    session.commit()
 
 
 def _recent_episode_ids(
@@ -133,6 +179,7 @@ def run_recent_episode_regression(
 
         session = get_session_factory(database_url)()
         try:
+            _rebind_review_artifacts(session, settings, isolated_settings)
             episode_by_id = {
                 episode.episode_id: episode
                 for episode in session.query(Episode)

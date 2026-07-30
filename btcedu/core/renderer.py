@@ -158,6 +158,10 @@ def render_video(
     _eff_intro_show_name = str(
         _rc("intro_show_name", getattr(settings, "render_intro_show_name", ""))
     )
+    _eff_intro_enabled = bool(
+        _rc("intro_enabled", getattr(settings, "render_intro_enabled", False))
+    )
+    _eff_intro_audio = str(_rc("intro_audio", "") or "")
     _eff_outro_text = str(_rc("outro_text", getattr(settings, "render_outro_text", "")))
     _eff_font = str(_rc("font", getattr(settings, "render_font", "")))
     _eff_music_bed = str(_rc("music_bed", getattr(settings, "render_music_bed", "")))
@@ -202,12 +206,21 @@ def render_video(
 
     # Compute content hash (for idempotency) — includes enhancement flags
     _enh_hash_data = {}
+    _intro_audio_bytes: bytes | None = None
+    if _eff_intro_audio and Path(_eff_intro_audio).exists():
+        _intro_audio_bytes = Path(_eff_intro_audio).read_bytes()
     try:
         _enh_hash_data = {
             "ken_burns": _eff_ken_burns,
             "lower_thirds_animated": _eff_lower_thirds,
             "ticker": _eff_ticker,
-            "intro": bool(settings.render_intro_enabled),
+            "intro": _eff_intro_enabled,
+            "intro_audio": _eff_intro_audio,
+            "intro_audio_sha256": (
+                hashlib.sha256(_intro_audio_bytes).hexdigest()
+                if _intro_audio_bytes is not None
+                else None
+            ),
             "outro": bool(settings.render_outro_enabled),
             "color_correction": bool(settings.render_color_correction_enabled),
             "font": _eff_font,
@@ -295,6 +308,12 @@ def render_video(
 
         # Create render directories
         segments_dir.mkdir(parents=True, exist_ok=True)
+        _intro_audio_snapshot: Path | None = None
+        if _intro_audio_bytes is not None:
+            inputs_dir = render_dir / "inputs"
+            inputs_dir.mkdir(parents=True, exist_ok=True)
+            _intro_audio_snapshot = inputs_dir / "intro.mp3"
+            _intro_audio_snapshot.write_bytes(_intro_audio_bytes)
 
         # Render each chapter segment
         segment_entries: list[RenderSegmentEntry] = []
@@ -560,7 +579,7 @@ def render_video(
         ]
 
         # Prepend intro if enabled
-        if getattr(settings, "render_intro_enabled", False) is True:
+        if _eff_intro_enabled:
             intro_path = segments_dir / "intro.mp4"
             _ep_date = ""
             if hasattr(episode, "published_at") and episode.published_at:
@@ -571,6 +590,7 @@ def render_video(
                 show_name=_eff_intro_show_name or settings.render_intro_show_name,
                 episode_title=_ep_title,
                 episode_date=_ep_date,
+                audio_path=str(_intro_audio_snapshot) if _intro_audio_snapshot else None,
                 duration=settings.render_intro_duration,
                 resolution=settings.render_resolution,
                 fps=settings.render_fps,
@@ -907,6 +927,7 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
 
     _enh_hash_data: dict = {}
     try:
+        intro_audio = str(_rc("intro_audio", "") or "")
         _enh_hash_data = {
             "ken_burns": bool(
                 _rc("ken_burns_enabled", getattr(settings, "render_ken_burns_enabled", False))
@@ -920,7 +941,15 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
             "ticker": bool(
                 _rc("ticker_enabled", getattr(settings, "render_ticker_enabled", False))
             ),
-            "intro": bool(settings.render_intro_enabled),
+            "intro": bool(
+                _rc("intro_enabled", getattr(settings, "render_intro_enabled", False))
+            ),
+            "intro_audio": intro_audio,
+            "intro_audio_sha256": (
+                hashlib.sha256(Path(intro_audio).read_bytes()).hexdigest()
+                if intro_audio and Path(intro_audio).exists()
+                else None
+            ),
             "outro": bool(settings.render_outro_enabled),
             "color_correction": bool(settings.render_color_correction_enabled),
             "font": str(_rc("font", getattr(settings, "render_font", ""))),

@@ -4,6 +4,7 @@ import json
 import logging
 import queue
 import re
+import tempfile
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -25,6 +26,13 @@ api_bp = Blueprint("api", __name__)
 _sse_clients: list[queue.Queue] = []
 _sse_lock = threading.Lock()
 _SSE_MAX_CLIENTS = 10  # Limit for Raspberry Pi
+_INTRO_AUDIO_MAX_BYTES = 20 * 1024 * 1024
+
+
+def _tagesschau_intro_audio_path() -> Path:
+    settings = current_app.config["settings"]
+    data_root = Path(settings.raw_data_dir).resolve().parent
+    return data_root / "assets" / "tagesschau_tr" / "intro.mp3"
 
 
 def broadcast_sse(event_type: str, data: dict) -> None:
@@ -113,6 +121,115 @@ def health():
             "git_commit": get_git_commit(),
         }
     )
+
+
+@api_bp.route("/intro-audio", methods=["GET"])
+def intro_audio_status():
+    """Return metadata for the Tagesschau intro MP3."""
+    path = _tagesschau_intro_audio_path()
+    if not path.exists():
+        return jsonify({"exists": False, "max_size_mb": 20})
+
+    from btcedu.services.ffmpeg_service import probe_media
+
+    try:
+        media = probe_media(str(path))
+    except RuntimeError:
+        logger.exception("Configured intro audio is unreadable: %s", path)
+        return jsonify({"error": "The stored intro MP3 is unreadable."}), 500
+
+    return jsonify(
+        {
+            "exists": True,
+            "filename": path.name,
+            "size_bytes": path.stat().st_size,
+            "duration_seconds": media.duration_seconds,
+            "codec": media.codec_audio,
+            "updated_at": datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat(),
+            "url": "api/intro-audio/file",
+            "max_size_mb": 20,
+        }
+    )
+
+
+@api_bp.route("/intro-audio/file")
+def intro_audio_file():
+    """Stream the currently configured Tagesschau intro MP3."""
+    from flask import send_file
+
+    path = _tagesschau_intro_audio_path()
+    if not path.exists():
+        return jsonify({"error": "No intro MP3 has been uploaded."}), 404
+    return send_file(str(path.resolve()), mimetype="audio/mpeg", conditional=True)
+
+
+@api_bp.route("/intro-audio", methods=["POST"])
+def upload_intro_audio():
+    """Validate and atomically replace the Tagesschau intro MP3."""
+    uploaded = request.files.get("file")
+    if uploaded is None or not uploaded.filename:
+        return jsonify({"error": "Select an MP3 file to upload."}), 400
+    if Path(uploaded.filename).suffix.casefold() != ".mp3":
+        return jsonify({"error": "Only .mp3 files are accepted."}), 400
+    if request.content_length and request.content_length > _INTRO_AUDIO_MAX_BYTES:
+        return jsonify({"error": "The MP3 must not exceed 20 MB."}), 413
+
+    from btcedu.services.ffmpeg_service import probe_media
+
+    target = _tagesschau_intro_audio_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="intro-",
+            suffix=".mp3",
+            dir=target.parent,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            uploaded.save(temporary)
+
+        if temporary_path.stat().st_size == 0:
+            return jsonify({"error": "The uploaded MP3 is empty."}), 400
+        if temporary_path.stat().st_size > _INTRO_AUDIO_MAX_BYTES:
+            return jsonify({"error": "The MP3 must not exceed 20 MB."}), 413
+
+        media = probe_media(str(temporary_path))
+        if not media.codec_audio:
+            return jsonify({"error": "The uploaded file contains no audio stream."}), 400
+        if "mp3" not in media.format_name.casefold():
+            return jsonify({"error": "The uploaded file is not a valid MP3."}), 400
+
+        temporary_path.replace(target)
+        temporary_path = None
+        logger.info(
+            "Tagesschau intro MP3 uploaded (%d bytes, %.2fs)",
+            target.stat().st_size,
+            media.duration_seconds,
+        )
+        return jsonify(
+            {
+                "ok": True,
+                "filename": target.name,
+                "size_bytes": target.stat().st_size,
+                "duration_seconds": media.duration_seconds,
+                "codec": media.codec_audio,
+            }
+        )
+    except RuntimeError as exc:
+        return jsonify({"error": f"Invalid MP3: {exc}"}), 400
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
+@api_bp.route("/intro-audio", methods=["DELETE"])
+def delete_intro_audio():
+    """Remove the configured Tagesschau intro MP3."""
+    path = _tagesschau_intro_audio_path()
+    existed = path.exists()
+    path.unlink(missing_ok=True)
+    return jsonify({"ok": True, "deleted": existed})
 
 
 @api_bp.route("/pipeline-health")

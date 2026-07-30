@@ -103,6 +103,40 @@ body {
 }
 .btn-sm { padding: 2px 8px; font-size: 11px; }
 
+.modal-help {
+    color: var(--text-dim);
+    font-size: 12px;
+    margin: 8px 0 16px;
+}
+.intro-audio-modal { max-width: 560px; }
+.intro-audio-status {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    margin-bottom: 12px;
+}
+.intro-audio-modal audio {
+    width: 100%;
+    margin-bottom: 16px;
+}
+.intro-audio-form {
+    display: grid;
+    gap: 10px;
+}
+.intro-audio-form input[type="file"] {
+    padding: 10px;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    background: var(--bg);
+    color: var(--text);
+}
+.intro-audio-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
 /* Layout */
 .main {
     display: grid;

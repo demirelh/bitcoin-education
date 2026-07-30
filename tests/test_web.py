@@ -3,6 +3,7 @@
 import json
 import threading
 import time
+from io import BytesIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -134,6 +135,52 @@ class TestHealthAndStaticAssets:
         assert data["status"] == "ok"
         assert "time" in data
         assert data["version"] == "0.1.0"
+
+    def test_intro_audio_status_when_missing(self, client):
+        r = client.get("/api/intro-audio")
+
+        assert r.status_code == 200
+        assert r.get_json()["exists"] is False
+
+    def test_upload_preview_and_delete_intro_audio(self, client, test_settings):
+        media = MagicMock(
+            duration_seconds=4.5,
+            codec_audio="mp3",
+            format_name="mp3",
+        )
+        with patch("btcedu.services.ffmpeg_service.probe_media", return_value=media):
+            uploaded = client.post(
+                "/api/intro-audio",
+                data={"file": (BytesIO(b"valid-mp3"), "intro.mp3")},
+                content_type="multipart/form-data",
+            )
+            status = client.get("/api/intro-audio")
+
+        assert uploaded.status_code == 200
+        assert uploaded.get_json()["ok"] is True
+        assert status.status_code == 200
+        assert status.get_json()["exists"] is True
+        stored = Path(test_settings.raw_data_dir).parent / "assets/tagesschau_tr/intro.mp3"
+        assert stored.read_bytes() == b"valid-mp3"
+
+        preview = client.get("/api/intro-audio/file")
+        assert preview.status_code == 200
+        assert preview.data == b"valid-mp3"
+
+        deleted = client.delete("/api/intro-audio")
+        assert deleted.status_code == 200
+        assert deleted.get_json()["deleted"] is True
+        assert not stored.exists()
+
+    def test_intro_audio_rejects_non_mp3_extension(self, client):
+        r = client.post(
+            "/api/intro-audio",
+            data={"file": (BytesIO(b"not-mp3"), "intro.wav")},
+            content_type="multipart/form-data",
+        )
+
+        assert r.status_code == 400
+        assert "Only .mp3" in r.get_json()["error"]
 
     def test_index_returns_html(self, client):
         r = client.get("/")

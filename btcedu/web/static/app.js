@@ -2023,6 +2023,61 @@
   }
   window.refresh = refresh;
 
+  // ── Tagesschau intro MP3 ────────────────────────────────────
+  async function loadIntroAudioStatus() {
+    const status = document.getElementById("intro-audio-status");
+    const player = document.getElementById("intro-audio-player");
+    const deleteButton = document.getElementById("intro-audio-delete");
+    status.textContent = "Loading...";
+    const data = await GET("/intro-audio");
+    if (data.error) {
+      status.textContent = data.error;
+      player.style.display = "none";
+      deleteButton.style.display = "none";
+      return;
+    }
+    if (!data.exists) {
+      status.textContent = "Noch keine Intro-MP3 hochgeladen.";
+      player.style.display = "none";
+      player.removeAttribute("src");
+      deleteButton.style.display = "none";
+      return;
+    }
+    const mb = (data.size_bytes / 1024 / 1024).toFixed(2);
+    status.textContent =
+      `${data.filename} · ${mb} MB · ${data.duration_seconds.toFixed(1)} Sekunden`;
+    player.src = `${data.url}?v=${encodeURIComponent(data.updated_at)}`;
+    player.style.display = "block";
+    deleteButton.style.display = "inline-block";
+  }
+
+  function showIntroAudio() {
+    document.getElementById("intro-audio-modal").style.display = "flex";
+    loadIntroAudioStatus();
+  }
+  window.showIntroAudio = showIntroAudio;
+
+  function closeIntroAudio() {
+    const modal = document.getElementById("intro-audio-modal");
+    const player = document.getElementById("intro-audio-player");
+    player.pause();
+    modal.style.display = "none";
+  }
+  window.closeIntroAudio = closeIntroAudio;
+
+  async function deleteIntroAudio() {
+    if (!window.confirm("Intro-MP3 wirklich löschen?")) return;
+    const response = await fetch("api/intro-audio", { method: "DELETE" });
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      toast(data.error || "Löschen fehlgeschlagen", false);
+      return;
+    }
+    toast("Intro-MP3 gelöscht");
+    loadIntroAudioStatus();
+  }
+  window.deleteIntroAudio = deleteIntroAudio;
+
   function showError(msg) {
     const tbody = document.getElementById("ep-tbody");
     tbody.innerHTML = `<tr><td colspan="5" class="empty" style="color:var(--red)">${esc(msg)}</td></tr>`;
@@ -3103,6 +3158,31 @@
     document.getElementById("filter-status").onchange = applyFilters;
     document.getElementById("filter-search").oninput = applyFilters;
     document.getElementById("channel-select").onchange = onChannelChange;
+    document.getElementById("intro-audio-form").onsubmit = async (event) => {
+      event.preventDefault();
+      const input = document.getElementById("intro-audio-file");
+      if (!input.files.length) return;
+      const formData = new FormData();
+      formData.append("file", input.files[0]);
+      const submit = event.currentTarget.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      try {
+        const response = await fetch("api/intro-audio", {
+          method: "POST",
+          body: formData,
+        });
+        const data = await response.json();
+        if (!response.ok || data.error) {
+          toast(data.error || "Upload fehlgeschlagen", false);
+          return;
+        }
+        input.value = "";
+        toast("Intro-MP3 gespeichert");
+        loadIntroAudioStatus();
+      } finally {
+        submit.disabled = false;
+      }
+    };
 
     // Mobile view detection
     updateMobileView();

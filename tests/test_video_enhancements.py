@@ -339,6 +339,24 @@ class TestIntroOutro:
         assert "color=" in " ".join(cmd)
         assert "anullsrc=" in " ".join(cmd)
 
+    def test_create_intro_segment_uses_uploaded_audio(self, tmp_path):
+        audio_path = tmp_path / "intro.mp3"
+        audio_path.write_bytes(b"test-audio")
+
+        result = create_intro_segment(
+            output_path=str(tmp_path / "intro.mp4"),
+            show_name="Tagesschau Türkçe",
+            episode_title="Test Episode",
+            episode_date="30.07.2026",
+            audio_path=str(audio_path),
+            dry_run=True,
+        )
+
+        cmd = result.ffmpeg_command
+        assert str(audio_path) in cmd
+        assert "-stream_loop" in cmd
+        assert "anullsrc=" not in " ".join(cmd)
+
     def test_intro_contains_show_name(self, tmp_path):
         result = create_intro_segment(
             output_path=str(tmp_path / "intro.mp4"),

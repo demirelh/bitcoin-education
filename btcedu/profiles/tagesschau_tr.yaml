@@ -112,6 +112,8 @@ stage_config:
   render:
     accent_color: "#004B87"
     ticker_enabled: true
+    intro_enabled: true
+    intro_audio: "data/assets/tagesschau_tr/intro.mp3"
     intro_show_name: "Tagesschau Türkçe"
     outro_text: "Kaynak: ARD Tagesschau — Türkçe altyazı & çeviri"
     font: "Roboto-Condensed-Bold"

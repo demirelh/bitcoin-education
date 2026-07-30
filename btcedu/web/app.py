@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
+from werkzeug.exceptions import RequestEntityTooLarge
 
 from btcedu.config import get_settings
 from btcedu.db import get_session_factory, init_db
@@ -23,6 +24,9 @@ def create_app(settings=None) -> Flask:
         settings: Optional Settings override (used in tests).
     """
     app = Flask(__name__)
+    # Reject oversized multipart bodies before Flask parses/spools request.files.
+    # The intro MP3 itself is limited to 20 MB; 1 MB covers multipart overhead.
+    app.config["MAX_CONTENT_LENGTH"] = 21 * 1024 * 1024
 
     if settings is None:
         settings = get_settings()
@@ -77,6 +81,10 @@ def create_app(settings=None) -> Flask:
 
         # Return generic error response
         return jsonify({"error": "Internal server error", "details": str(e)}), 500
+
+    @app.errorhandler(RequestEntityTooLarge)
+    def handle_oversized_upload(_error):
+        return jsonify({"error": "The upload must not exceed 20 MB."}), 413
 
     @app.before_request
     def _start_timer():

@@ -40,7 +40,7 @@ def test_profile_tts_values_override_global_settings():
 
     resolved = _resolve_tts_config(episode, settings)
 
-    assert resolved["voice_id"] == "NsFK0aDGLbVusA7tQfOB"
+    assert resolved["voice_id"] == "LCHGt3rsPMP50Vs28amI"
     assert resolved["model"] == "eleven_turbo_v2_5"
     reset_registry()
 

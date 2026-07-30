@@ -1,0 +1,42 @@
+<svg viewBox="0 0 400 520" xmlns="http://www.w3.org/2000/svg">
+  <!--
+    Simplified Germany silhouette for weather region display.
+    Created as original geometric approximation for the btcedu project.
+    License: Project-internal use, original work.
+  -->
+  <!-- Germany outline (simplified geometric approximation) -->
+  <path id="germany-outline"
+        d="M185,15 L220,20 L255,30 L285,25 L310,40 L330,55 L345,80 L350,110
+           L355,140 L360,170 L355,200 L350,230 L360,260 L355,290 L340,320
+           L330,350 L310,375 L290,395 L270,420 L250,440 L230,455 L210,470
+           L195,480 L175,475 L155,460 L135,440 L115,415 L100,390 L85,365
+           L75,340 L70,310 L65,280 L60,250 L55,220 L60,190 L65,160
+           L75,130 L85,100 L100,75 L120,55 L145,35 L165,22 Z"
+        fill="rgba(255,255,255,0.06)"
+        stroke="rgba(255,255,255,0.3)"
+        stroke-width="1.5"/>
+
+  <!-- Region anchor points (for overlaying weather icons/labels) -->
+  <!-- North -->
+  <circle id="anchor-north" cx="220" cy="70" r="0" fill="none" data-region="north"/>
+  <!-- Northeast -->
+  <circle id="anchor-northeast" cx="310" cy="100" r="0" fill="none" data-region="northeast"/>
+  <!-- Northwest -->
+  <circle id="anchor-northwest" cx="120" cy="90" r="0" fill="none" data-region="northwest"/>
+  <!-- Central -->
+  <circle id="anchor-central" cx="210" cy="240" r="0" fill="none" data-region="central"/>
+  <!-- East -->
+  <circle id="anchor-east" cx="330" cy="220" r="0" fill="none" data-region="east"/>
+  <!-- West -->
+  <circle id="anchor-west" cx="80" cy="240" r="0" fill="none" data-region="west"/>
+  <!-- South -->
+  <circle id="anchor-south" cx="210" cy="410" r="0" fill="none" data-region="south"/>
+  <!-- Southeast -->
+  <circle id="anchor-southeast" cx="290" cy="380" r="0" fill="none" data-region="southeast"/>
+  <!-- Southwest -->
+  <circle id="anchor-southwest" cx="130" cy="400" r="0" fill="none" data-region="southwest"/>
+  <!-- Coast -->
+  <circle id="anchor-coast" cx="200" cy="40" r="0" fill="none" data-region="coast"/>
+  <!-- Alps -->
+  <circle id="anchor-alps" cx="220" cy="465" r="0" fill="none" data-region="alps"/>
+</svg>

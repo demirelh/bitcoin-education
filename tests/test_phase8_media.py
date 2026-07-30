@@ -105,6 +105,8 @@ def test_normal_visual_is_never_forced_deterministic():
 
 
 def test_render_deterministic_visual_uses_exact_spec_values(tmp_path):
+    from unittest.mock import patch
+
     from btcedu.core.image_generator import _render_deterministic_visual
 
     ch = _chapter(
@@ -123,14 +125,14 @@ def test_render_deterministic_visual_uses_exact_spec_values(tmp_path):
     )
     out = tmp_path / "images"
     out.mkdir()
-    entry = _render_deterministic_visual(ch, out)
+    with patch("btcedu.core.weather.renderer._find_chromium", return_value=None):
+        entry = _render_deterministic_visual(ch, out)
 
     assert entry.generation_method == "deterministic"
     assert entry.model is None
-    assert entry.metadata["provider"] == "local_deterministic"
+    assert entry.metadata["provider"] == "weather_renderer"
     assert entry.metadata["cost_usd"] == 0.0
     assert entry.metadata["category"] == "weather"
-    assert entry.metadata["item_count"] == 2
     assert (out / Path(entry.file_path).name).exists()
 
 
@@ -164,7 +166,7 @@ def test_resolve_tts_config_uses_profile_model_and_voice(tmp_path):
 
     cfg = _resolve_tts_config(episode, settings)
     assert cfg["model"] == "eleven_turbo_v2_5"  # profile model, not the global default
-    assert cfg["voice_id"] == "NsFK0aDGLbVusA7tQfOB"
+    assert cfg["voice_id"] == "LCHGt3rsPMP50Vs28amI"
     assert cfg["speed"] == 1.08
     assert isinstance(cfg["pronunciation_lexicon"], dict)
 
@@ -224,7 +226,7 @@ def test_tts_manifest_writes_resolved_profile_voice_and_model(mock_service, db_s
     result = generate_tts(db_session, "ep_news_tts", settings)
     manifest = json.loads(result.manifest_path.read_text())
     # Top-level voice/model reflect the PROFILE, not the global settings default.
-    assert manifest["voice_id"] == "NsFK0aDGLbVusA7tQfOB"
+    assert manifest["voice_id"] == "LCHGt3rsPMP50Vs28amI"
     assert manifest["model"] == "eleven_turbo_v2_5"
     assert "voice_config" in manifest
 

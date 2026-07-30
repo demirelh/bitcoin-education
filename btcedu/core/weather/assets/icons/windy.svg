@@ -1,0 +1,6 @@
+<svg viewBox="0 0 56 56" xmlns="http://www.w3.org/2000/svg">
+  <!-- Windy icon -->
+  <path d="M8 20 Q20 18 28 22 Q36 26 44 20" fill="none" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M12 30 Q24 27 32 31 Q40 35 48 30" fill="none" stroke="#64748b" stroke-width="2.5" stroke-linecap="round"/>
+  <path d="M8 40 Q20 37 28 41 Q36 45 44 40" fill="none" stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"/>
+</svg>

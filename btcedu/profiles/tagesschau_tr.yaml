@@ -118,6 +118,31 @@ stage_config:
     outro_text: "Kaynak: ARD Tagesschau — Türkçe altyazı & çeviri"
     font: "Roboto-Condensed-Bold"
     music_bed: "data/assets/music/news_bed.mp3"
+  weather:
+    enabled: true
+    detection:
+      min_confidence: 0.75
+    extraction:
+      provider: deterministic
+      require_source_spans: true
+      allow_external_weather_data: false
+    rendering:
+      engine: html_svg_chromium
+      resolution:
+        width: 1920
+        height: 1080
+      template: germany_news_v1
+    branding:
+      title: "Hava Durumu"
+      accent_color: "#004B87"
+      show_channel_logo: true
+    fallback:
+      allow_generic_weather_template: true
+      allow_general_story_fallback: true
+      prohibit_blank_frames: true
+    review:
+      block_on_unsupported_claim: true
+      block_on_blank_visual: true
 youtube:
   category_id: "25"
   default_language: tr

@@ -147,7 +147,10 @@ def _detect_exact_data_category(visual) -> str | None:
         str(getattr(visual, attr, "") or "") for attr in ("description", "image_prompt")
     ).lower()
     for category, keywords in _EXACT_DATA_KEYWORDS.items():
-        if any(kw in haystack for kw in keywords):
+        if any(
+            re.search(rf"(?<!\w){re.escape(keyword.strip())}(?!\w)", haystack)
+            for keyword in keywords
+        ):
             return category
     return None
 
@@ -347,6 +350,8 @@ def generate_images(
     except Exception:
         pass
 
+    _weather_cfg: dict = (_profile.stage_config.get("weather", {}) if _profile else {}) or {}
+
     output_dir = Path(settings.outputs_dir) / episode_id / "images"
     manifest_path = output_dir / "manifest.json"
     provenance_path = (
@@ -355,7 +360,7 @@ def generate_images(
 
     # Load chapters
     chapters_doc = _load_chapters(chapters_path)
-    chapters_hash = _compute_chapters_content_hash(chapters_doc)
+    chapters_hash = _compute_chapters_content_hash(chapters_doc, weather_config=_weather_cfg)
 
     # Load and register prompt (profile can override template file)
     registry = PromptRegistry(session)
@@ -519,15 +524,23 @@ def generate_images(
             # model — so numbers/labels/boundaries are never hallucinated. This
             # never affects narration and, on error, degrades to a failed entry.
             if _should_render_deterministic(visual, _imagegen_cfg):
+                deterministic_category = _detect_exact_data_category(visual)
                 try:
                     image_entry = _render_deterministic_visual(
-                        chapter, output_dir, accent_color=_profile_accent
+                        chapter,
+                        output_dir,
+                        accent_color=_profile_accent,
+                        weather_config=_weather_cfg,
                     )
                     deterministic_count += 1
                 except Exception as e:  # noqa: BLE001 - image failure never blocks narration
                     logger.error(
                         f"Deterministic visual failed for chapter {chapter.chapter_id}: {e}"
                     )
+                    if deterministic_category == "weather":
+                        raise RuntimeError(
+                            f"Weather visual failed for chapter {chapter.chapter_id}: {e}"
+                        ) from e
                     image_entry = _failed_image_entry(chapter, str(e))
                     failed_count += 1
                 image_entries.append(image_entry)
@@ -724,34 +737,79 @@ def _load_chapters(chapters_path: Path) -> ChapterDocument:
         raise ValueError(f"Invalid chapters.json at {chapters_path}: {e}") from e
 
 
-def _compute_chapters_content_hash(chapters_doc: ChapterDocument) -> str:
-    """Compute SHA-256 hash of relevant chapter fields for change detection."""
+def _compute_chapters_content_hash(
+    chapters_doc: ChapterDocument,
+    *,
+    weather_config: dict | None = None,
+) -> str:
+    """Compute SHA-256 hash of relevant chapter fields for change detection.
+
+    For weather chapters, includes the weather schema/renderer version so that
+    renderer upgrades invalidate the cache and re-run imagegen.
+    """
+    from btcedu.core.weather.models import RENDERER_VERSION as WEATHER_RENDERER_VERSION
+    from btcedu.core.weather.models import SCHEMA_VERSION as WEATHER_SCHEMA_VERSION
+
     # Hash only fields that affect image generation
     relevant_data = {
         "schema_version": chapters_doc.schema_version,
-        "chapters": [
-            {
-                "chapter_id": ch.chapter_id,
-                "title": ch.title,
-                "visual": (
-                    {
-                        "type": ch.visual.type,
-                        "description": ch.visual.description,
-                        # image_prompt drives the generated image; include it so a
-                        # prompt-only edit (manual or from chapterize) re-runs
-                        # imagegen even when type/description are unchanged.
-                        "image_prompt": ch.visual.image_prompt,
-                        "deterministic": _visual_deterministic_spec(ch.visual),
-                    }
-                    if ch.visual
-                    else None
-                ),
-            }
-            for ch in chapters_doc.chapters
-        ],
+        "chapters": [],
     }
+    for ch in chapters_doc.chapters:
+        chapter_entry: dict = {
+            "chapter_id": ch.chapter_id,
+            "title": ch.title,
+            "visual": (
+                {
+                    "type": ch.visual.type,
+                    "description": ch.visual.description,
+                    "image_prompt": ch.visual.image_prompt,
+                    "deterministic": _visual_deterministic_spec(ch.visual),
+                }
+                if ch.visual
+                else None
+            ),
+        }
+        # For weather chapters, include narration text and renderer version
+        # so narration changes or renderer upgrades re-run imagegen.
+        is_weather = False
+        if ch.visual:
+            cat = _detect_exact_data_category(ch.visual)
+            if cat == "weather":
+                is_weather = True
+        if is_weather:
+            narr_text = ""
+            if hasattr(ch, "narration") and ch.narration:
+                narr_text = getattr(ch.narration, "text", "") or ""
+            chapter_entry["_weather_narration_hash"] = hashlib.sha256(
+                narr_text.encode()
+            ).hexdigest()[:16]
+            chapter_entry["_weather_renderer_version"] = WEATHER_RENDERER_VERSION
+            chapter_entry["_weather_schema_version"] = WEATHER_SCHEMA_VERSION
+            chapter_entry["_weather_renderer_fingerprint"] = _weather_renderer_fingerprint(
+                weather_config
+            )
+        relevant_data["chapters"].append(chapter_entry)
+
     content_str = json.dumps(relevant_data, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(content_str.encode("utf-8")).hexdigest()
+
+
+def _weather_renderer_fingerprint(weather_config: dict | None) -> str:
+    """Hash weather config, template, and local SVG assets for imagegen invalidation."""
+    weather_dir = Path(__file__).parent / "weather"
+    paths = [weather_dir / "templates" / "weather_card.html"]
+    paths.extend(sorted((weather_dir / "assets").rglob("*.svg")))
+
+    digest = hashlib.sha256()
+    digest.update(
+        json.dumps(weather_config or {}, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    )
+    for path in paths:
+        digest.update(str(path.relative_to(weather_dir)).encode("utf-8"))
+        if path.is_file():
+            digest.update(path.read_bytes())
+    return digest.hexdigest()[:16]
 
 
 def _is_image_gen_current(
@@ -1021,7 +1079,7 @@ def _create_template_placeholder(
 
 
 def _render_deterministic_visual(
-    chapter, output_dir: Path, accent_color: str = "#004B87"
+    chapter, output_dir: Path, accent_color: str = "#004B87", weather_config: dict | None = None
 ) -> ImageEntry:
     """Render an exact-data visual locally — never via a generative model.
 
@@ -1030,7 +1088,28 @@ def _render_deterministic_visual(
     chapter title/description). Numbers, names and boundaries are therefore never
     invented. When exact cartographic boundaries cannot be drawn safely, this
     labeled information card is the documented safe fallback (Phase 8 req B).
+
+    Weather chapters are routed to the specialized weather renderer for
+    branded map/region/temperature visuals.
     """
+    category = _detect_exact_data_category(chapter.visual) or "generic"
+
+    # Route weather chapters to the specialized weather renderer
+    if category == "weather" and (weather_config or {}).get("enabled", True):
+        from btcedu.core.weather.detector import detect_weather_story
+
+        narration_text = getattr(getattr(chapter, "narration", None), "text", "") or ""
+        detection = detect_weather_story(
+            title=chapter.title or "",
+            narration_text=narration_text,
+            min_confidence=((weather_config or {}).get("detection", {}) or {}).get(
+                "min_confidence", 0.75
+            ),
+        )
+        if detection.is_weather_story:
+            return _render_weather_chapter(chapter, output_dir, accent_color, weather_config)
+        category = "generic"
+
     from PIL import Image, ImageDraw, ImageFont
 
     def _hex_to_rgb(h: str) -> tuple[int, int, int]:
@@ -1103,6 +1182,154 @@ def _render_deterministic_visual(
             "cost_usd": 0.0,
             "source": "deterministic_spec" if spec else "chapter_text",
             "item_count": len([i for i in items if isinstance(i, dict)]),
+            "generated_at": _utcnow().isoformat(),
+        },
+    )
+
+
+def _render_weather_chapter(
+    chapter, output_dir: Path, accent_color: str = "#004B87", weather_config: dict | None = None
+) -> ImageEntry:
+    """Render a weather chapter using the specialized weather renderer.
+
+    Detects weather content, extracts structured data from the chapter narration,
+    validates claims, and renders a branded weather visual. Falls back through
+    progressively simpler visuals — never produces blank output.
+
+    Raises RuntimeError if:
+    - validation has publish_blocked findings (unsupported/invented claims)
+    - render result is not successful
+    - render result has publish_blocked findings
+    Generic grounded fallback is allowed when extraction produces no regions.
+    """
+    from btcedu.core.weather.detector import detect_weather_story
+    from btcedu.core.weather.extractor import extract_weather_data
+    from btcedu.core.weather.models import FindingType
+    from btcedu.core.weather.renderer import render_weather_visual
+    from btcedu.core.weather.scene_planner import plan_weather_scenes
+    from btcedu.core.weather.validator import validate_weather_data
+
+    narration_text = ""
+    duration_seconds = 30.0
+    if hasattr(chapter, "narration") and chapter.narration:
+        narration_text = getattr(chapter.narration, "text", "") or ""
+        duration_seconds = float(getattr(chapter.narration, "estimated_duration_seconds", 30) or 30)
+
+    # Resolve config: use weather config branding accent if provided
+    _wcfg = weather_config or {}
+    _branding = _wcfg.get("branding", {}) or {}
+    effective_accent = _branding.get("accent_color") or accent_color
+
+    # Detect (confirmation — we already routed here based on keywords)
+    detection = detect_weather_story(
+        title=chapter.title or "",
+        narration_text=narration_text,
+        min_confidence=(_wcfg.get("detection", {}) or {}).get("min_confidence", 0.75),
+    )
+
+    # Extract weather data
+    weather_data = extract_weather_data(
+        narration_text,
+        story_id=chapter.chapter_id,
+    )
+
+    # Validate
+    validation = validate_weather_data(weather_data, narration_text)
+
+    # Reject if validation has publish-blocking findings (unsupported/invented claims)
+    # BUT allow through if extraction simply found no regions (generic fallback OK)
+    if validation.publish_blocked:
+        blocking_findings = [f for f in validation.findings if f.publish_blocked]
+        # Filter: if all blockers are just "low confidence" or "unresolved" that's
+        # not an invented claim, it's absence — allow generic fallback.
+        unsupported_blockers = [
+            f
+            for f in blocking_findings
+            if f.type
+            not in (
+                FindingType.UNRESOLVED_WEATHER_CLAIM,
+                FindingType.WEATHER_EXTRACTION_LOW_CONFIDENCE,
+            )
+        ]
+        if unsupported_blockers:
+            findings_detail = "; ".join(
+                f"[{f.severity.value}] {f.type.value}: {f.message}" for f in unsupported_blockers
+            )
+            raise RuntimeError(
+                f"Weather validation blocked publish for chapter "
+                f"'{chapter.chapter_id}': {findings_detail}"
+            )
+
+    # Plan scenes
+    scene_plan = plan_weather_scenes(weather_data, duration_seconds, story_id=chapter.chapter_id)
+
+    # Render
+    filename = f"{chapter.chapter_id}_weather.png"
+    target_path = output_dir / filename
+    result = render_weather_visual(
+        weather_data,
+        scene_plan,
+        target_path,
+        accent_color=effective_accent,
+        profile=json.dumps(_wcfg, sort_keys=True, ensure_ascii=False),
+    )
+
+    # Reject if render failed or has publish-blocking findings
+    if not result.success:
+        findings_detail = (
+            "; ".join(f"[{f.severity.value}] {f.message}" for f in result.findings)
+            if result.findings
+            else "unknown render failure"
+        )
+        raise RuntimeError(
+            f"Weather render failed for chapter '{chapter.chapter_id}': {findings_detail}"
+        )
+
+    result_blockers = [f for f in result.findings if f.publish_blocked]
+    if result_blockers:
+        findings_detail = "; ".join(
+            f"[{f.severity.value}] {f.type.value}: {f.message}" for f in result_blockers
+        )
+        raise RuntimeError(
+            f"Weather render produced publish-blocked output for chapter "
+            f"'{chapter.chapter_id}': {findings_detail}"
+        )
+
+    if not target_path.exists():
+        raise RuntimeError(f"Weather render produced no output file: {target_path}")
+
+    file_size = target_path.stat().st_size
+
+    # Clean up temporary HTML file left by renderer (unless debug)
+    html_path = target_path.with_suffix(".html")
+    if html_path.exists():
+        import os
+
+        if not os.environ.get("BTCEDU_DEBUG_WEATHER"):
+            html_path.unlink(missing_ok=True)
+
+    return ImageEntry(
+        chapter_id=chapter.chapter_id,
+        chapter_title=chapter.title,
+        visual_type=chapter.visual.type if chapter.visual else "b_roll",
+        file_path=f"images/{filename}",
+        prompt=None,
+        generation_method="deterministic",
+        model=None,
+        size="1920x1080",
+        mime_type="image/png",
+        size_bytes=file_size,
+        metadata={
+            "provider": "weather_renderer",
+            "category": "weather",
+            "cost_usd": 0.0,
+            "source": "weather_narration",
+            "fallback_level": result.fallback_level,
+            "renderer_version": result.renderer_version,
+            "cache_key": result.cache_key,
+            "detection_confidence": detection.confidence,
+            "region_count": len(weather_data.regions),
+            "validation_valid": validation.valid,
             "generated_at": _utcnow().isoformat(),
         },
     )

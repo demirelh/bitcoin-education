@@ -2437,3 +2437,89 @@ def credits_cmd(ctx: click.Context, as_json: bool) -> None:
         if s.error:
             click.echo(f"    ⚠ Error: {s.error}")
         click.echo()
+
+
+@cli.command(name="weather-render")
+@click.argument("episode_id")
+@click.option("--force", is_flag=True, default=False, help="Force re-render even if current.")
+@click.option("--chapter-id", default=None, help="Render a specific chapter only.")
+@click.option(
+    "--narration",
+    default=None,
+    help="Override narration text (for testing/preview without an episode).",
+)
+@click.pass_context
+def weather_render_cmd(
+    ctx: click.Context,
+    episode_id: str,
+    force: bool,
+    chapter_id: str | None,
+    narration: str | None,
+) -> None:
+    """Render weather visual for a specific episode or test narration.
+
+    Uses the deterministic weather renderer: detect → extract → validate →
+    plan → render. Outputs a branded 1920x1080 weather card.
+
+    Episode mode delegates to generate_images() for proper manifest/provenance/
+    downstream invalidation. Direct --narration mode exits nonzero when
+    validation blocks.
+    """
+    settings = ctx.obj["settings"]
+
+    if narration:
+        # Direct narration mode (testing/preview) — standalone, no manifest
+        from btcedu.core.weather.extractor import extract_weather_data
+        from btcedu.core.weather.renderer import render_weather_visual
+        from btcedu.core.weather.scene_planner import plan_weather_scenes
+        from btcedu.core.weather.validator import validate_weather_data
+
+        output_dir = Path(settings.outputs_dir) / episode_id / "images"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        weather_data = extract_weather_data(narration, story_id=chapter_id or "weather_test")
+        validation = validate_weather_data(weather_data, narration)
+        scene_plan = plan_weather_scenes(weather_data, 30.0)
+        target = output_dir / f"{chapter_id or 'weather_test'}_weather.png"
+        result = render_weather_visual(
+            weather_data,
+            scene_plan,
+            target,
+            force=force,
+        )
+        click.echo("Detection: weather narration provided directly")
+        click.echo(f"Regions: {len(weather_data.regions)}")
+        click.echo(f"Validation: {'PASS' if validation.valid else 'BLOCKED'}")
+        click.echo(f"Render: {result.fallback_level} → {result.output_path}")
+        if result.findings:
+            for finding in result.findings:
+                click.echo(f"  [{finding.severity.value}] {finding.message}")
+        # Exit nonzero when validation/render blocked
+        if validation.publish_blocked or not result.success:
+            ctx.exit(1)
+        return
+
+    # Episode mode: delegate to generate_images for proper manifest/provenance
+    session_factory = ctx.obj["session_factory"]
+    session = session_factory()
+    try:
+        from btcedu.core.image_generator import generate_images
+
+        result = generate_images(
+            session,
+            episode_id,
+            settings,
+            force=force,
+            chapter_id=chapter_id,
+        )
+        click.echo(
+            f"Image generation complete: {result.image_count} images "
+            f"({result.deterministic_count} deterministic, "
+            f"{result.generated_count} generated, {result.failed_count} failed)"
+        )
+        if result.failed_count > 0:
+            ctx.exit(1)
+    except (ValueError, FileNotFoundError, RuntimeError) as e:
+        raise click.ClickException(str(e))
+    finally:
+        session.close()

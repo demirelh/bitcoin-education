@@ -96,7 +96,7 @@ stage_config:
       provider: copilot_cli
       model: gpt-5.6-sol
   tts:
-    voice_id: "NsFK0aDGLbVusA7tQfOB"  # Irem (tr, female) — livelier than POLAT
+    voice_id: "LCHGt3rsPMP50Vs28amI"  # Mehmet Derindag
     stability: 0.45
     similarity_boost: 0.75
     style: 0.35

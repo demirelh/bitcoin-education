@@ -16,6 +16,7 @@ import hashlib
 import logging
 import re
 
+from btcedu.core.weather.lexicon import CONDITION_LEXICON_TR
 from btcedu.core.weather.models import (
     ForecastReference,
     RegionId,
@@ -70,38 +71,6 @@ _REGION_LABELS_TR: dict[RegionId, str] = {
     RegionId.CENTRAL: "Orta",
     RegionId.COAST: "Kıyı",
     RegionId.ALPS: "Alpler",
-}
-
-# Condition lexicon: Turkish keyword → WeatherCondition
-_CONDITION_LEXICON_TR: dict[str, WeatherCondition] = {
-    "güneşli": WeatherCondition.SUNNY,
-    "güneş": WeatherCondition.SUNNY,
-    "açık": WeatherCondition.SUNNY,
-    "çoğunlukla güneşli": WeatherCondition.MOSTLY_SUNNY,
-    "parçalı bulutlu": WeatherCondition.PARTLY_CLOUDY,
-    "bulutlu": WeatherCondition.CLOUDY,
-    "kapalı": WeatherCondition.OVERCAST,
-    "yağmur": WeatherCondition.RAIN,
-    "yağmurlu": WeatherCondition.RAIN,
-    "yağış": WeatherCondition.RAIN,
-    "sağanak": WeatherCondition.SHOWERS,
-    "sağanak yağış": WeatherCondition.SHOWERS,
-    "şiddetli yağış": WeatherCondition.HEAVY_RAIN,
-    "şiddetli yağmur": WeatherCondition.HEAVY_RAIN,
-    "gök gürültülü": WeatherCondition.THUNDERSTORMS,
-    "fırtına": WeatherCondition.STORM,
-    "fırtınalı": WeatherCondition.STORM,
-    "kar": WeatherCondition.SNOW,
-    "kar yağışı": WeatherCondition.SNOW,
-    "sis": WeatherCondition.FOG,
-    "sisli": WeatherCondition.FOG,
-    "rüzgârlı": WeatherCondition.WINDY,
-    "rüzgarlı": WeatherCondition.WINDY,
-    "rüzgâr": WeatherCondition.WINDY,
-    "rüzgar": WeatherCondition.WINDY,
-    "sıcak": WeatherCondition.HOT,
-    "serin": WeatherCondition.COLD,
-    "soğuk": WeatherCondition.COLD,
 }
 
 # Temperature regex: supports signed values like "-5 ile 2 derece", "20 ile 29 derece"
@@ -203,11 +172,11 @@ def _find_conditions_in_text(text: str) -> list[WeatherCondition]:
     conditions = []
     remaining = text.lower()
     # Check longer phrases first
-    for phrase in sorted(_CONDITION_LEXICON_TR.keys(), key=len, reverse=True):
+    for phrase in sorted(CONDITION_LEXICON_TR, key=len, reverse=True):
         pattern = re.compile(rf"(?<!\w){re.escape(phrase)}(?!\w)", re.IGNORECASE)
         match = pattern.search(remaining)
         if match:
-            cond = _CONDITION_LEXICON_TR[phrase]
+            cond = CONDITION_LEXICON_TR[phrase]
             if cond not in conditions:
                 conditions.append(cond)
                 remaining = (

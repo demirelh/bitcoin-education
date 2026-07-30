@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 
 from btcedu.core.weather.detector import detect_weather_story
 from btcedu.core.weather.extractor import extract_weather_data
+from btcedu.core.weather.lexicon import CONDITION_LEXICON_TR
 from btcedu.core.weather.models import (
     SCHEMA_VERSION,
     FindingType,
@@ -245,6 +246,30 @@ class TestWeatherValidation:
         # Should not have unsupported claims
         blocking = [f for f in result.findings if f.publish_blocked]
         assert len(blocking) == 0
+
+    def test_every_extractor_phrase_is_grounded_by_validator(self):
+        """Extractor and validator must share exactly the same condition vocabulary."""
+        for phrase, expected_condition in CONDITION_LEXICON_TR.items():
+            text = f"Kuzeyde {phrase} hava bekleniyor."
+            data = extract_weather_data(text)
+            north = next(region for region in data.regions if region.region_id == RegionId.NORTH)
+            assert expected_condition in north.conditions, phrase
+            validation = validate_weather_data(data, text)
+            unsupported = [
+                finding
+                for finding in validation.findings
+                if finding.type == FindingType.UNSUPPORTED_WEATHER_CLAIM
+            ]
+            assert unsupported == [], phrase
+
+    def test_tagesschau_thunderstorm_phrase_is_grounded(self):
+        text = "Bu gece sağanak ve gök gürültülü sağanaklar kuzeydoğu yönünde ilerliyor."
+        data = extract_weather_data(text)
+        northeast = next(
+            region for region in data.regions if region.region_id == RegionId.NORTHEAST
+        )
+        assert WeatherCondition.THUNDERSTORMS in northeast.conditions
+        assert validate_weather_data(data, text).publish_blocked is False
 
 
 # ============================================================

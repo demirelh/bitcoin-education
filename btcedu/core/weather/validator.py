@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 import re
 
+from btcedu.core.weather.lexicon import CONDITION_KEYWORDS_TR
 from btcedu.core.weather.models import (
     FindingSeverity,
     FindingType,
@@ -184,30 +185,9 @@ def _temp_in_narration(temp_value: int, narration_text: str) -> bool:
     return False
 
 
-# Reverse map: condition value → Turkish keywords that indicate it
-_CONDITION_KEYWORDS: dict[str, list[str]] = {
-    "sunny": ["güneş", "güneşli", "açık"],
-    "mostly_sunny": ["güneşli", "çoğunlukla"],
-    "partly_cloudy": ["parçalı bulutlu"],
-    "cloudy": ["bulutlu"],
-    "overcast": ["kapalı"],
-    "rain": ["yağmur", "yağış"],
-    "showers": ["sağanak"],
-    "heavy_rain": ["şiddetli yağış", "şiddetli yağmur"],
-    "thunderstorms": ["gök gürültü"],
-    "snow": ["kar"],
-    "fog": ["sis"],
-    "windy": ["rüzgâr", "rüzgar"],
-    "storm": ["fırtına"],
-    "hot": ["sıcak"],
-    "cold": ["serin", "soğuk"],
-    "mixed": ["değişken", "karışık"],
-}
-
-
 def _condition_in_text(condition_value: str, text: str) -> bool:
     """Check if a condition is evidenced by keywords in the given text."""
-    keywords = _CONDITION_KEYWORDS.get(condition_value, [])
+    keywords = CONDITION_KEYWORDS_TR.get(condition_value, ())
     return any(
         re.search(rf"(?<!\w){re.escape(keyword)}(?!\w)", text, re.IGNORECASE)
         for keyword in keywords

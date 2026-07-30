@@ -1371,6 +1371,12 @@ def _render_weather_chapter(
 
     # Validate
     validation = validate_weather_data(weather_data, narration_text)
+    weather_data_path = output_dir / f"{chapter.chapter_id}_weather.json"
+    validation_path = output_dir / f"{chapter.chapter_id}_weather_validation.json"
+    detection_path = output_dir / f"{chapter.chapter_id}_weather_detection.json"
+    weather_data_path.write_text(weather_data.model_dump_json(indent=2), encoding="utf-8")
+    validation_path.write_text(validation.model_dump_json(indent=2), encoding="utf-8")
+    detection_path.write_text(detection.model_dump_json(indent=2), encoding="utf-8")
 
     # Reject if validation has publish-blocking findings (unsupported/invented claims)
     # BUT allow through if extraction simply found no regions (generic fallback OK)
@@ -1399,14 +1405,8 @@ def _render_weather_chapter(
     # Plan scenes
     scene_plan = plan_weather_scenes(weather_data, duration_seconds, story_id=chapter.chapter_id)
 
-    weather_data_path = output_dir / f"{chapter.chapter_id}_weather.json"
     scene_plan_path = output_dir / f"{chapter.chapter_id}_weather_scenes.json"
-    validation_path = output_dir / f"{chapter.chapter_id}_weather_validation.json"
-    detection_path = output_dir / f"{chapter.chapter_id}_weather_detection.json"
-    weather_data_path.write_text(weather_data.model_dump_json(indent=2), encoding="utf-8")
     scene_plan_path.write_text(scene_plan.model_dump_json(indent=2), encoding="utf-8")
-    validation_path.write_text(validation.model_dump_json(indent=2), encoding="utf-8")
-    detection_path.write_text(detection.model_dump_json(indent=2), encoding="utf-8")
 
     # Render
     filename = f"{chapter.chapter_id}_weather.png"

@@ -797,9 +797,7 @@ def _run_stage(
                 if qa_result.decision != "green" and not manual_ok:
                     from btcedu.core.qa_reviewer import adjudicate_quality_gate
 
-                    adjudication = adjudicate_quality_gate(
-                        session, episode.episode_id, settings
-                    )
+                    adjudication = adjudicate_quality_gate(session, episode.episode_id, settings)
                     if adjudication.performed and adjudication.approved:
                         approve_stage_for_artifacts(
                             session,
@@ -1246,6 +1244,78 @@ def _run_stage(
                 generate_metadata_suggestion(session, episode.episode_id, settings)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("Gate 3 metadata suggestion failed: %s", exc)
+
+            # Run deterministic weather video checks (blank/freeze/stale).
+            # CRITICAL findings with publish_blocked prevent approval.
+            # Fail closed: a checker crash means we cannot safely approve.
+            _final_review_blocked = False
+            _final_review_detail = ""
+            _fr_output = (
+                Path(settings.outputs_dir)
+                / episode.episode_id
+                / "render"
+                / "final_review_findings.json"
+            )
+            try:
+                from btcedu.core.final_review import run_weather_video_checks
+
+                _fr_result = run_weather_video_checks(episode.episode_id, settings.outputs_dir)
+                if _fr_result.publish_blocked:
+                    _final_review_blocked = True
+                    _blocking = [f for f in _fr_result.findings if f.publish_blocked]
+                    _final_review_detail = (
+                        f"weather video checks blocked publish: "
+                        f"{len(_blocking)} critical finding(s)"
+                    )
+                    logger.warning(
+                        "Final review blocked for %s: %s",
+                        episode.episode_id,
+                        "; ".join(f.message for f in _blocking),
+                    )
+                    # Persist findings for dashboard visibility
+                    _fr_output.parent.mkdir(parents=True, exist_ok=True)
+                    _fr_output.write_text(
+                        json.dumps(
+                            [f.model_dump() for f in _fr_result.findings],
+                            indent=2,
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+                elif _fr_result.findings:
+                    # Non-blocking findings: persist for visibility
+                    _fr_output.parent.mkdir(parents=True, exist_ok=True)
+                    _fr_output.write_text(
+                        json.dumps(
+                            [f.model_dump() for f in _fr_result.findings],
+                            indent=2,
+                            ensure_ascii=False,
+                        ),
+                        encoding="utf-8",
+                    )
+                else:
+                    # No findings: clear stale findings file from previous runs
+                    if _fr_output.exists():
+                        _fr_output.unlink()
+            except Exception as exc:
+                # Fail closed: checker crash blocks the gate so review cannot
+                # safely approve. This is intentional — never silently skip.
+                _final_review_blocked = True
+                _final_review_detail = f"weather video checker crashed: {exc}"
+                logger.error(
+                    "Final review weather checks crashed for %s (fail-closed): %s",
+                    episode.episode_id,
+                    exc,
+                )
+
+            if _final_review_blocked:
+                elapsed = time.monotonic() - t0
+                return StageResult(
+                    "review_gate_3",
+                    "failed",
+                    elapsed,
+                    detail=_final_review_detail,
+                )
 
             if auto_approve or has_approved_review(session, episode.episode_id, "render"):
                 if auto_approve:

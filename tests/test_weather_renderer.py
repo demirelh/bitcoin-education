@@ -20,6 +20,7 @@ from btcedu.core.weather.renderer import (
     _compute_cache_key,
     _render_pillow_fallback,
     _validate_output,
+    render_weather_scene_video,
     render_weather_visual,
 )
 from btcedu.core.weather.scene_planner import plan_weather_scenes
@@ -147,6 +148,18 @@ class TestWeatherExtraction:
         assert north is not None
         assert WeatherCondition.SHOWERS in north.conditions
 
+    def test_date_wind_and_following_day_outlook(self):
+        text = (
+            "31 Temmuz Perşembe günü kuzeyde rüzgarlı hava bekleniyor. "
+            "Ertesi gün yağışlar azalacak."
+        )
+        data = extract_weather_data(text)
+        north = next(r for r in data.regions if r.region_id == RegionId.NORTH)
+        assert data.forecast_reference.date_text == "31 Temmuz Perşembe"
+        assert data.forecast_reference.day_reference == "following_day"
+        assert north.wind == "rüzgarlı"
+        assert data.outlook == ["Ertesi gün yağışlar azalacak"]
+
     def test_source_spans_present(self):
         """All regions have source spans."""
         text = "Kuzeyde yağmur. Güneyde güneş."
@@ -259,6 +272,23 @@ class TestScenePlanning:
         plan = plan_weather_scenes(data, 20.0)
         for scene in plan.scenes:
             assert scene.end - scene.start >= 2.0
+
+    def test_short_duration_does_not_create_one_second_scene(self):
+        data = extract_weather_data("Kuzeyde yağmur bekleniyor.")
+        plan = plan_weather_scenes(data, 3.0)
+        assert len(plan.scenes) == 1
+        assert plan.scenes[0].end - plan.scenes[0].start == 3.0
+
+    def test_scene_order_follows_narration_claim_order(self):
+        data = extract_weather_data(
+            "Sıcaklıklar 20 ile 29 derece arasında. Kuzeyde yağmur bekleniyor."
+        )
+        plan = plan_weather_scenes(data, 12)
+        assert [scene.type.value for scene in plan.scenes] == [
+            "weather_title",
+            "weather_temperature",
+            "weather_regions",
+        ]
 
     def test_scenes_fill_duration(self):
         """Scenes cover full duration."""
@@ -389,6 +419,65 @@ class TestWeatherRendering:
         k2 = _compute_cache_key(data2, plan2)
         assert k1 != k2
 
+    def test_scene_video_uses_planned_durations(self, tmp_path):
+        text = "Kuzeyde yağmur. Güneyde güneş. Sıcaklıklar 20 ile 29 derece."
+        data = extract_weather_data(text)
+        plan = plan_weather_scenes(data, 12)
+        output = tmp_path / "weather.mp4"
+
+        def fake_render(_data, _plan, path, **_kwargs):
+            path.write_bytes(b"png")
+            from btcedu.core.weather.models import WeatherRenderResult
+
+            return WeatherRenderResult(success=True, output_path=str(path))
+
+        def fake_run(command, **_kwargs):
+            output.write_bytes(b"video")
+            completed = MagicMock()
+            completed.returncode = 0
+            completed.stderr = ""
+            completed.args = command
+            return completed
+
+        with (
+            patch(
+                "btcedu.core.weather.renderer.render_weather_visual",
+                side_effect=fake_render,
+            ),
+            patch("btcedu.core.weather.renderer.subprocess.run", side_effect=fake_run) as run,
+            patch("btcedu.core.weather.renderer._write_provenance"),
+        ):
+            result = render_weather_scene_video(data, plan, output)
+
+        assert result.success is True
+        assert result.metadata["method"] == "ffmpeg_scene_video"
+        assert len(result.metadata["scene_assets"]) == len(plan.scenes)
+        command = run.call_args.args[0]
+        for scene in plan.scenes:
+            assert f"{scene.end - scene.start:.3f}" in command
+
+    def test_title_scene_fallback_is_neutral(self, tmp_path):
+        data = extract_weather_data("Kuzeyde yağmur bekleniyor.")
+        output = tmp_path / "title.png"
+        with patch("btcedu.core.weather.renderer._find_chromium", return_value=None):
+            result = render_weather_visual(
+                data.model_copy(update={"regions": []}),
+                None,
+                output,
+                force=True,
+                render_empty_template=True,
+            )
+        assert result.success is True
+        assert result.metadata["method"] == "pillow_title"
+
+    def test_empty_generic_fallback_has_no_sun_symbol(self, tmp_path):
+        from PIL import Image
+
+        output = tmp_path / "generic.png"
+        assert _render_pillow_fallback(WeatherData(), output, fallback_level="generic")
+        image = Image.open(output).convert("RGB")
+        assert (255, 200, 50) not in set(image.get_flattened_data())
+
 
 # ============================================================
 # 6. Integration with Image Generator
@@ -417,6 +506,17 @@ class TestImageGeneratorIntegration:
         visual.description = "A photo of the Bundestag building"
         visual.image_prompt = "Bundestag Berlin"
         assert _detect_exact_data_category(visual) != "weather"
+
+    def test_title_and_narration_detect_weather_with_neutral_visual(self):
+        from btcedu.core.image_generator import _weather_detection_for_chapter
+
+        chapter = MagicMock()
+        chapter.title = "Hava Durumu"
+        chapter.narration.text = "Kuzeyde yağmur bekleniyor."
+        chapter.story_type = None
+        chapter.source_text = ""
+        chapter.metadata = {}
+        assert _weather_detection_for_chapter(chapter).is_weather_story is True
 
     def test_render_weather_chapter_function(self, tmp_path):
         """_render_weather_chapter produces a valid image entry."""
@@ -625,6 +725,46 @@ class TestWeatherImagegenInvalidation:
         )
         assert first != second
 
+    def test_weather_override_changes_content_hash(self):
+        from btcedu.core.image_generator import _compute_chapters_content_hash
+        from btcedu.models.chapter_schema import ChapterDocument
+        from tests.test_image_generator import _make_chapters_json
+
+        document = ChapterDocument.model_validate(
+            _make_chapters_json(
+                visual_type="diagram",
+                image_prompt="Weather map",
+            )
+        )
+        automatic = _compute_chapters_content_hash(document)
+        forced_normal = _compute_chapters_content_hash(
+            document,
+            weather_overrides={"ch01": "normal"},
+        )
+        assert automatic != forced_normal
+
+    def test_forced_weather_hash_includes_narration(self):
+        from btcedu.core.image_generator import _compute_chapters_content_hash
+        from btcedu.models.chapter_schema import ChapterDocument
+        from tests.test_image_generator import _make_chapters_json
+
+        first_data = _make_chapters_json(
+            visual_type="diagram",
+            image_prompt="Neutral information card",
+        )
+        second_data = json.loads(json.dumps(first_data))
+        first_data["chapters"][0]["narration"]["text"] = "Kuzeyde yağmur bekleniyor."
+        second_data["chapters"][0]["narration"]["text"] = "Güneyde güneş bekleniyor."
+        first = _compute_chapters_content_hash(
+            ChapterDocument.model_validate(first_data),
+            weather_overrides={"ch01": "weather"},
+        )
+        second = _compute_chapters_content_hash(
+            ChapterDocument.model_validate(second_data),
+            weather_overrides={"ch01": "weather"},
+        )
+        assert first != second
+
     def test_accent_color_changes_renderer_cache_key(self):
         data = extract_weather_data("Kuzeyde yağmur bekleniyor.")
         plan = plan_weather_scenes(data, 10)
@@ -680,6 +820,13 @@ class TestWeatherImagegenInvalidation:
         text = "Batıda alınan karar yarın açıklanacak."
         data = extract_weather_data(text)
         assert data.regions == []
+
+    def test_ise_keeps_region_condition_in_same_claim(self):
+        text = "Güneybatıda ise güneşli bir hava hakim olacak."
+        data = extract_weather_data(text)
+        southwest = next(r for r in data.regions if r.region_id == RegionId.SOUTHWEST)
+        assert southwest.conditions == [WeatherCondition.SUNNY]
+        assert data.unresolved_claims == []
 
     def test_ambiguous_no_region_goes_unresolved(self):
         """Conditions without clear region association go to unresolved."""

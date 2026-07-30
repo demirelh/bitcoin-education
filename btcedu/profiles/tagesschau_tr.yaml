@@ -131,7 +131,9 @@ stage_config:
       resolution:
         width: 1920
         height: 1080
+      fps: 25
       template: germany_news_v1
+      animation_level: subtle
     branding:
       title: "Hava Durumu"
       accent_color: "#004B87"

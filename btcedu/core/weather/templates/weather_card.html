@@ -140,7 +140,7 @@ body {
 </head>
 <body>
 <div class="header">
-    <h1>{{ weather.forecast_reference.date_text or 'Hava Durumu' }}</h1>
+    <h1>{{ weather.forecast_reference.date_text or title }}</h1>
     <span class="brand">Tagesschau Türkçe</span>
 </div>
 
@@ -217,6 +217,22 @@ body {
         <div class="temperature-bar">
             <div class="temp-range">{{ weather.overview.temperature_min_c }}°C – {{ weather.overview.temperature_max_c }}°C</div>
             <div class="temp-label">Sıcaklık Aralığı</div>
+        </div>
+        {% endif %}
+        {% if weather.warnings %}
+        <div class="region-card">
+            <div>
+                <div class="label">Uyarı</div>
+                <div class="condition">{{ weather.warnings[0].text }}</div>
+            </div>
+        </div>
+        {% endif %}
+        {% if weather.outlook %}
+        <div class="region-card">
+            <div>
+                <div class="label">Görünüm</div>
+                <div class="condition">{{ weather.outlook[0] }}</div>
+            </div>
         </div>
         {% endif %}
     </div>

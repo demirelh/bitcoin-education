@@ -129,16 +129,19 @@ def render_video(
 
     # Load profile for profile-aware rendering (accent color, feature toggles etc.)
     _render_cfg: dict = {}
+    _weather_cfg: dict = {}
+    _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
     try:
         from btcedu.profiles import get_registry as _get_profile_registry
 
-        _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
         _profile = _get_profile_registry(settings).get(_profile_name)
         _render_cfg = (_profile.stage_config.get("render", {}) if _profile else {}) or {}
+        _weather_cfg = (_profile.stage_config.get("weather", {}) if _profile else {}) or {}
         _accent_color = _render_cfg.get("accent_color") or "#F7931A"
     except Exception:
         _profile = None
         _render_cfg = {}
+        _weather_cfg = {}
         _accent_color = "#F7931A"
 
     # Helper to prefer profile override, else fall back to global setting.
@@ -248,6 +251,7 @@ def render_video(
             "color_blue_shift": settings.render_color_blue_shift,
             "episode_title": episode.title,
             "episode_published_at": str(episode.published_at),
+            "weather": _weather_cfg,
         }
     except (AttributeError, TypeError):
         pass  # settings may lack these attrs (backward compat / mocks)
@@ -394,6 +398,72 @@ def render_video(
                     f"Cannot render complete episode: chapter {chapter.chapter_id} "
                     f"has unresolved media: {e}"
                 ) from e
+
+            image_entry = next(
+                (
+                    entry
+                    for entry in image_manifest.get("images", [])
+                    if entry.get("chapter_id") == chapter.chapter_id
+                ),
+                None,
+            )
+            if (
+                image_entry
+                and (image_entry.get("metadata") or {}).get("category") == "weather"
+                and (_weather_cfg.get("rendering", {}) or {}).get("animation_level", "subtle")
+                != "none"
+            ):
+                from btcedu.core.weather.models import WeatherData
+                from btcedu.core.weather.renderer import render_weather_scene_video
+                from btcedu.core.weather.scene_planner import plan_weather_scenes
+
+                weather_data_path = base_dir / (image_entry.get("metadata") or {}).get(
+                    "weather_data_path",
+                    f"images/{chapter.chapter_id}_weather.json",
+                )
+                if weather_data_path.exists():
+                    weather_data = WeatherData.model_validate_json(
+                        weather_data_path.read_text(encoding="utf-8")
+                    )
+                    actual_scene_plan = plan_weather_scenes(
+                        weather_data,
+                        duration,
+                        story_id=chapter.chapter_id,
+                    )
+                    actual_scene_plan_path = (
+                        base_dir / "images" / f"{chapter.chapter_id}_weather_scenes.json"
+                    )
+                    actual_scene_plan_path.write_text(
+                        actual_scene_plan.model_dump_json(indent=2),
+                        encoding="utf-8",
+                    )
+                    weather_rendering = _weather_cfg.get("rendering", {}) or {}
+                    weather_resolution = weather_rendering.get("resolution", {}) or {}
+                    weather_branding = _weather_cfg.get("branding", {}) or {}
+                    weather_video_path = base_dir / "images" / f"{chapter.chapter_id}_weather.mp4"
+                    weather_video_result = render_weather_scene_video(
+                        weather_data,
+                        actual_scene_plan,
+                        weather_video_path,
+                        accent_color=weather_branding.get("accent_color") or _accent_color,
+                        profile=json.dumps(
+                            {"name": _profile_name, "weather": _weather_cfg},
+                            sort_keys=True,
+                            ensure_ascii=False,
+                        ),
+                        width=int(weather_resolution.get("width", 1920)),
+                        height=int(weather_resolution.get("height", 1080)),
+                        fps=int(weather_rendering.get("fps", settings.render_fps)),
+                        title=weather_branding.get("title") or "Hava Durumu",
+                    )
+                    if weather_video_result.success and weather_video_path.exists():
+                        media_path = weather_video_path
+                        asset_type = "video"
+                    else:
+                        logger.warning(
+                            "Timed weather video failed for %s; using static weather card",
+                            chapter.chapter_id,
+                        )
 
             # Convert overlays to OverlaySpec (profile-aware accent color + font)
             overlay_specs = _chapter_to_overlay_specs(
@@ -911,14 +981,17 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
 
     episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     _render_cfg: dict = {}
+    _weather_cfg: dict = {}
     try:
         from btcedu.profiles import get_registry as _get_profile_registry
 
         _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
         _profile = _get_profile_registry(settings).get(_profile_name)
         _render_cfg = (_profile.stage_config.get("render", {}) if _profile else {}) or {}
+        _weather_cfg = (_profile.stage_config.get("weather", {}) if _profile else {}) or {}
     except Exception:  # noqa: BLE001
         _render_cfg = {}
+        _weather_cfg = {}
 
     def _rc(key: str, default):
         if key in _render_cfg and _render_cfg[key] is not None:
@@ -941,9 +1014,7 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
             "ticker": bool(
                 _rc("ticker_enabled", getattr(settings, "render_ticker_enabled", False))
             ),
-            "intro": bool(
-                _rc("intro_enabled", getattr(settings, "render_intro_enabled", False))
-            ),
+            "intro": bool(_rc("intro_enabled", getattr(settings, "render_intro_enabled", False))),
             "intro_audio": intro_audio,
             "intro_audio_sha256": (
                 hashlib.sha256(Path(intro_audio).read_bytes()).hexdigest()
@@ -979,6 +1050,7 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
             "color_blue_shift": settings.render_color_blue_shift,
             "episode_title": getattr(episode, "title", None),
             "episode_published_at": str(getattr(episode, "published_at", None)),
+            "weather": _weather_cfg,
         }
     except (AttributeError, TypeError):
         _enh_hash_data = {}

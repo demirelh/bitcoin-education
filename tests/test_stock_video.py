@@ -1441,6 +1441,12 @@ class TestRendererWithVideos:
         settings.render_transition_duration = 0.5
         settings.render_timeout_segment = 300
         settings.render_timeout_concat = 600
+        settings.render_intro_enabled = False
+        settings.render_outro_enabled = False
+        settings.render_ken_burns_enabled = False
+        settings.render_lower_thirds_animated = False
+        settings.render_ticker_enabled = False
+        settings.render_color_correction_enabled = False
         settings.dry_run = True
 
         with (

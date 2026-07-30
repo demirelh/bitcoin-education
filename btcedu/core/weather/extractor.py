@@ -116,6 +116,7 @@ _TEMP_SINGLE_RE = re.compile(r"([−\-]?\d{1,2})\s*(?:derece|grad|°\s*[cC]?)", 
 
 # Day reference patterns
 _DAY_REF_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\b(?:ertesi|sonraki)\s+gün\b", re.IGNORECASE), "following_day"),
     (re.compile(r"\byarın\b", re.IGNORECASE), "tomorrow"),
     (re.compile(r"\bbugün\b", re.IGNORECASE), "today"),
     (re.compile(r"\bhafta\s*sonu\b", re.IGNORECASE), "weekend"),
@@ -127,6 +128,18 @@ _DAY_REF_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bcumartesi\b", re.IGNORECASE), "saturday"),
     (re.compile(r"\bpazar\b", re.IGNORECASE), "sunday"),
 ]
+
+_DATE_TEXT_RE = re.compile(
+    r"\b\d{1,2}\s+"
+    r"(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)"
+    r"(?:\s+(?:pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar))?\b",
+    re.IGNORECASE,
+)
+
+_OUTLOOK_RE = re.compile(
+    r"\b(?:önümüzdeki\s+günlerde|ertesi\s+gün|sonraki\s+gün|hafta\s+sonunda)\b",
+    re.IGNORECASE,
+)
 
 # Warning keywords
 _WARNING_KEYWORDS = {
@@ -141,9 +154,9 @@ _WARNING_KEYWORDS = {
 # Sentence splitter
 _SENTENCE_RE = re.compile(r"[.!?]+\s*|\n+")
 
-# Clause splitter: commas and semicolons separate clauses within a sentence.
-# Also split on "ise" (Turkish contrast marker) when surrounded by spaces.
-_CLAUSE_SPLIT_RE = re.compile(r",\s*|;\s*|\s+ise\s+", re.IGNORECASE)
+# Commas and semicolons separate claims. Turkish "ise" stays inside the claim
+# because it commonly connects a region to its condition ("Güneyde ise güneşli").
+_CLAUSE_SPLIT_RE = re.compile(r",\s*|;\s*", re.IGNORECASE)
 
 # Shared-region connector: "X ve Y kesimlerinde" or "X ve Y'de"
 _SHARED_REGION_RE = re.compile(
@@ -248,6 +261,9 @@ def extract_weather_data(
 
     # Extract forecast time reference
     forecast_ref = ForecastReference()
+    date_match = _DATE_TEXT_RE.search(narration_text)
+    if date_match:
+        forecast_ref.date_text = date_match.group(0)
     for pattern, ref_name in _DAY_REF_PATTERNS:
         if pattern.search(narration_text):
             forecast_ref.day_reference = ref_name
@@ -261,6 +277,11 @@ def extract_weather_data(
         t2 = _parse_signed_temp(temp_match.group(2))
         overview.temperature_min_c = min(t1, t2)
         overview.temperature_max_c = max(t1, t2)
+        overview.source_span = SourceSpan(
+            text=temp_match.group(0),
+            start=temp_match.start(),
+            end=temp_match.end(),
+        )
 
     # Parse sentences for regional forecasts using clause-level association
     sentences = _split_sentences(narration_text)
@@ -294,6 +315,7 @@ def extract_weather_data(
 
     # Extract warnings
     warnings: list[WeatherWarning] = []
+    outlook = [sentence for sentence, _, _ in sentences if _OUTLOOK_RE.search(sentence)]
     narr_lower = narration_text.lower()
     for keyword, warning_type in _WARNING_KEYWORDS.items():
         if keyword in narr_lower:
@@ -315,9 +337,13 @@ def extract_weather_data(
         story_id=story_id,
         language=language,
         source_text_hash=text_hash,
+        source_language_text_hash=(
+            hashlib.sha256(source_text.encode()).hexdigest()[:16] if source_text else None
+        ),
         forecast_reference=forecast_ref,
         overview=overview,
         regions=regions,
+        outlook=outlook,
         warnings=warnings,
         unresolved_claims=unresolved,
     )
@@ -358,6 +384,24 @@ def _process_clause(
                 conditions=found_conditions,
                 temperature_min_c=temp_min,
                 temperature_max_c=temp_max,
+                wind=(
+                    next(
+                        (
+                            match.group(0)
+                            for keyword in ("rüzgârlı", "rüzgarlı", "rüzgâr", "rüzgar")
+                            if (
+                                match := re.search(
+                                    rf"(?<!\w){re.escape(keyword)}(?!\w)",
+                                    clause,
+                                    re.IGNORECASE,
+                                )
+                            )
+                        ),
+                        None,
+                    )
+                    if WeatherCondition.WINDY in found_conditions
+                    else None
+                ),
                 source_span=SourceSpan(text=clause, start=start, end=end),
                 confidence=0.95 if len(found_regions) == 1 else 0.85,
             )

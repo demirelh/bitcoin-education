@@ -1083,15 +1083,24 @@ class TestV2PipelineE2E:
         assert stage_statuses.get("adapt") == "success"
         assert stage_statuses.get("review_gate_2") == "review_pending"
 
+    @patch("btcedu.core.final_review.run_weather_video_checks")
     @patch("btcedu.core.pipeline._run_stage")
     def test_full_pipeline_new_to_published(
-        self, mock_stage, db_session, v2_episode, v2_settings, v2_files
+        self,
+        mock_stage,
+        mock_final_review,
+        db_session,
+        v2_episode,
+        v2_settings,
+        v2_files,
     ):
         """Full pipeline: NEW → review_gate_1 → review_gate_2 → review_gate_3 → PUBLISHED."""
+        from btcedu.core.final_review import FinalReviewResult
         from btcedu.core.reviewer import approve_review
         from btcedu.models.review import ReviewTask
 
         mock_stage.side_effect = self._make_stage_side_effect(db_session)
+        mock_final_review.return_value = FinalReviewResult()
 
         # Run 1: pauses at gate 1
         run_episode_pipeline(db_session, v2_episode, v2_settings)

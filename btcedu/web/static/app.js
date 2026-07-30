@@ -362,6 +362,9 @@
     html += tab("chapters", "Chapters", f.chapters);
     html += tab("stock_images", "Stock Images", false);
     html += tab("images", "Images", false);
+    if (isTagesschau) {
+      html += tab("weather", "Weather", false);
+    }
     html += tab("tts_audio", "TTS Audio", false);
     html += tab("video", "Video", false);
     html += `</div>`;
@@ -633,6 +636,13 @@
       return;
     }
 
+    if (type === "weather") {
+      viewer.classList.remove("log-viewer");
+      viewer.innerHTML = "Loading weather data...";
+      await loadWeatherPanel();
+      return;
+    }
+
     if (type === "tts_audio") {
       viewer.classList.remove("log-viewer");
       viewer.innerHTML = "Loading TTS data...";
@@ -739,6 +749,200 @@
         </div>`;
     }
   }
+
+  // ── Weather Panel ─────────────────────────────────────────────
+  async function loadWeatherPanel() {
+    if (!selected) return;
+    const viewer = document.getElementById("viewer");
+
+    try {
+      const data = await GET(`/episodes/${selected.episode_id}/weather`);
+      if (data.error) {
+        viewer.innerHTML = `<div class="weather-panel"><p class="weather-empty">${esc(data.error)}</p></div>`;
+        return;
+      }
+
+      if (data.weather_count === 0) {
+        viewer.innerHTML = `<div class="weather-panel"><p class="weather-empty">No weather chapters detected in this episode.</p></div>`;
+        return;
+      }
+
+      let html = `<div class="weather-panel">`;
+      html += `<div class="weather-summary">
+        <strong>Weather Chapters:</strong> ${data.weather_count} / ${data.total_chapters} chapters
+      </div>`;
+
+      data.weather_chapters.forEach(wc => {
+        const confPct = Math.round((wc.detection.confidence || 0) * 100);
+        const validClass = wc.validation.valid ? "badge-success" : "badge-failed";
+        const validLabel = wc.validation.valid ? "VALID" : "BLOCKED";
+        const cacheClass = wc.cache_status === "hit" ? "badge-cache-hit"
+                         : wc.cache_status === "stale" ? "badge-cache-stale"
+                         : "badge-cache-miss";
+
+        html += `<div class="weather-chapter-card">`;
+        html += `<div class="weather-chapter-header">
+          <h4>${esc(wc.title)} <span class="weather-chapter-id">${esc(wc.chapter_id)}</span></h4>
+          <div class="weather-badges">
+            <span class="badge badge-weather-conf">Detection ${confPct}%</span>
+            <span class="badge ${validClass}">${validLabel}</span>
+            <span class="badge ${cacheClass}">Cache: ${esc(wc.cache_status)}</span>
+            ${wc.fallback_level && wc.fallback_level !== "none" ? `<span class="badge badge-fallback">${esc(wc.fallback_level)}</span>` : ""}
+            ${wc.renderer_version ? `<span class="badge badge-renderer">v${esc(wc.renderer_version)}</span>` : ""}
+          </div>
+        </div>`;
+
+        // Preview (video or image)
+        html += `<div class="weather-preview-row">`;
+        if (wc.video_url) {
+          html += `<div class="weather-preview">
+            <video controls preload="none" style="max-width:100%;border-radius:4px">
+              <source src="${esc(wc.video_url)}" type="video/mp4">
+            </video>
+          </div>`;
+        } else if (wc.image_url) {
+          html += `<div class="weather-preview">
+            <img src="${esc(wc.image_url)}" alt="Weather visual" loading="lazy"
+                 style="max-width:100%;border-radius:4px;cursor:pointer"
+                 onclick="window.open('${esc(wc.image_url)}','_blank')">
+          </div>`;
+        } else {
+          html += `<div class="weather-preview weather-no-asset"><span>No visual rendered yet</span></div>`;
+        }
+
+        // Narration text
+        html += `<div class="weather-narration">
+          <h5>Approved Narration</h5>
+          <p class="weather-narration-text">${esc(wc.narration_text || "(empty)")}</p>
+        </div>`;
+        html += `</div>`; // end preview-row
+
+        // Weather data summary
+        const wd = wc.weather_data;
+        if (wd && wd.regions && wd.regions.length > 0) {
+          html += `<div class="weather-data-section">
+            <h5>Extracted Weather JSON</h5>
+            <table class="weather-data-table">
+              <thead><tr><th>Region</th><th>Conditions</th><th>Temp</th><th>Confidence</th></tr></thead>
+              <tbody>`;
+          wd.regions.forEach(r => {
+            const conds = (r.conditions || []).join(", ");
+            const temp = r.temperature_min_c != null
+              ? `${r.temperature_min_c}–${r.temperature_max_c}°C` : "—";
+            const conf = r.confidence != null ? `${Math.round(r.confidence * 100)}%` : "—";
+            html += `<tr><td>${esc(r.label_tr || r.region_id)}</td><td>${esc(conds)}</td><td>${esc(temp)}</td><td>${esc(conf)}</td></tr>`;
+          });
+          html += `</tbody></table>`;
+          if (wd.overview && (wd.overview.temperature_min_c != null)) {
+            html += `<p class="weather-temp-range">Overall: ${wd.overview.temperature_min_c}–${wd.overview.temperature_max_c}°C</p>`;
+          }
+          html += `</div>`;
+        }
+
+        // Source spans
+        if (wc.source_spans && wc.source_spans.some(s => s)) {
+          html += `<div class="weather-data-section">
+            <h5>Source Spans</h5>
+            <ul class="weather-spans-list">`;
+          wc.source_spans.forEach(s => {
+            if (s) {
+              html += `<li><code>[${s.start}:${s.end}]</code> ${esc(s.text)}</li>`;
+            }
+          });
+          html += `</ul></div>`;
+        }
+
+        // Validation findings
+        if (wc.validation.findings && wc.validation.findings.length > 0) {
+          html += `<div class="weather-data-section">
+            <h5>Validation Findings</h5>
+            <ul class="weather-findings-list">`;
+          wc.validation.findings.forEach(f => {
+            const sevClass = f.severity === "CRITICAL" ? "finding-critical"
+                           : f.severity === "MAJOR" ? "finding-major"
+                           : f.severity === "WARNING" ? "finding-warning"
+                           : "finding-info";
+            html += `<li class="${sevClass}">
+              <span class="finding-severity">${esc(f.severity)}</span>
+              <span class="finding-type">${esc(f.type)}</span>: ${esc(f.message)}
+              ${f.publish_blocked ? '<span class="finding-blocked">BLOCKS PUBLISH</span>' : ""}
+            </li>`;
+          });
+          html += `</ul></div>`;
+        }
+
+        // Scene plan
+        if (wc.scene_plan && wc.scene_plan.scenes && wc.scene_plan.scenes.length > 0) {
+          html += `<div class="weather-data-section">
+            <h5>Scene Plan <span class="weather-duration">(${wc.scene_plan.duration_seconds.toFixed(1)}s)</span></h5>
+            <div class="weather-scenes-bar">`;
+          const totalDur = wc.scene_plan.duration_seconds || 1;
+          wc.scene_plan.scenes.forEach(sc => {
+            const widthPct = ((sc.end - sc.start) / totalDur * 100).toFixed(1);
+            const scType = (sc.type || "").replace("weather_", "");
+            html += `<div class="scene-segment scene-${esc(scType)}" style="width:${widthPct}%" title="${esc(scType)} ${sc.start.toFixed(1)}s–${sc.end.toFixed(1)}s">${esc(scType)}</div>`;
+          });
+          html += `</div></div>`;
+        }
+
+        // Actions
+        html += `<div class="weather-actions">
+          <button class="btn btn-sm" onclick="rerenderWeather('${esc(wc.chapter_id)}')">
+            ⟳ Re-render chapter
+          </button>`;
+        if (wc.image_url) {
+          html += ` <button class="btn btn-sm" onclick="window.open('${esc(wc.image_url)}','_blank')">
+            Open Image
+          </button>`;
+        }
+        if (wc.video_url) {
+          html += ` <button class="btn btn-sm" onclick="window.open('${esc(wc.video_url)}','_blank')">
+            Open Video
+          </button>`;
+        }
+        // Override controls
+        const curOverride = wc.override || null;
+        html += `<span class="weather-override-group">`;
+        html += ` <button class="btn btn-sm ${curOverride === 'weather' ? 'btn-active' : ''}" onclick="setWeatherOverride('${esc(wc.chapter_id)}','weather')" title="Force weather renderer">☀ Weather</button>`;
+        html += ` <button class="btn btn-sm ${curOverride === 'normal' ? 'btn-active' : ''}" onclick="setWeatherOverride('${esc(wc.chapter_id)}','normal')" title="Force normal pipeline">📷 Normal</button>`;
+        if (curOverride) {
+          html += ` <button class="btn btn-sm btn-dim" onclick="setWeatherOverride('${esc(wc.chapter_id)}',null)" title="Clear override (auto-detect)">✕ Clear</button>`;
+        }
+        html += `</span>`;
+        if (curOverride) {
+          html += ` <span class="badge badge-override">Override: ${esc(curOverride)}</span>`;
+        }
+        html += `</div>`;
+
+        html += `</div>`; // end weather-chapter-card
+      });
+
+      html += `</div>`;
+      viewer.innerHTML = html;
+    } catch (err) {
+      viewer.innerHTML = `<div class="weather-panel"><p style="color:var(--red)">Failed to load weather data: ${esc(err.message)}</p></div>`;
+    }
+  }
+
+  window.rerenderWeather = function (chapterId) {
+    if (!selected) return;
+    submitJob(
+      "Re-render Weather",
+      `/episodes/${selected.episode_id}/weather/${chapterId}/rerender`,
+      { force: true }
+    );
+  };
+
+  window.setWeatherOverride = async function (chapterId, value) {
+    if (!selected) return;
+    const data = await POST(`/episodes/${selected.episode_id}/weather/${chapterId}/override`, { value });
+    if (data.error) {
+      toast(data.error, false);
+    } else {
+      toast(`Override ${value ? "set to " + value : "cleared"}`, true);
+      await loadWeatherPanel();
+    }
+  };
 
   // ── Stock Images Panel ─────────────────────────────────────
   async function loadStockImagesPanel() {

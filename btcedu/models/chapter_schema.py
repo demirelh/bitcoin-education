@@ -120,6 +120,13 @@ class Chapter(BaseModel):
     overlays: list[Overlay] = Field(default_factory=list, description="Overlays (can be empty)")
     transitions: Transitions = Field(..., description="Transitions")
     notes: str | None = Field(None, description="Production notes (optional)")
+    story_type: str | None = Field(None, description="Optional source story classification")
+    source_text: str | None = Field(
+        None, description="Optional approved source-language text for traceability"
+    )
+    metadata: dict[str, object] = Field(
+        default_factory=dict, description="Optional source-format metadata"
+    )
 
 
 class ChapterDocument(BaseModel):

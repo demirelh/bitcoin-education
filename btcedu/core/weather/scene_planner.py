@@ -52,38 +52,65 @@ def plan_weather_scenes(
     )
     current_time += title_dur
     remaining -= title_dur
+    if remaining < MIN_SCENE_DURATION:
+        scenes[0].end = duration_seconds
+        return WeatherScenePlan(
+            story_id=story_id or weather_data.story_id,
+            duration_seconds=duration_seconds,
+            scenes=scenes,
+        )
 
     # Collect content segments to distribute remaining time
     segments: list[dict] = []
 
-    # Region scenes — group adjacent regions with same conditions
+    # Region scenes — group regions grounded in the same source claim.
     if weather_data.regions:
-        # Group regions into batches of max 3 for readability
-        region_batches: list[list[RegionId]] = []
-        batch: list[RegionId] = []
+        grouped_regions: dict[int, list[RegionId]] = {}
         for region in weather_data.regions:
-            batch.append(region.region_id)
-            if len(batch) >= 3:
-                region_batches.append(batch)
-                batch = []
-        if batch:
-            region_batches.append(batch)
-
-        for rb in region_batches:
-            segments.append({"type": "regions", "regions": rb})
+            position = region.source_span.start if region.source_span else 10**9
+            grouped_regions.setdefault(position, []).append(region.region_id)
+        for position, region_ids in grouped_regions.items():
+            for index in range(0, len(region_ids), 3):
+                segments.append(
+                    {
+                        "type": "regions",
+                        "regions": region_ids[index : index + 3],
+                        "position": position,
+                    }
+                )
 
     # Temperature scene (if available)
     if (
         weather_data.overview.temperature_min_c is not None
         and weather_data.overview.temperature_max_c is not None
     ):
-        segments.append({"type": "temperature"})
+        segments.append(
+            {
+                "type": "temperature",
+                "position": (
+                    weather_data.overview.source_span.start
+                    if weather_data.overview.source_span
+                    else 10**9
+                ),
+            }
+        )
 
     # Outlook / warnings
     if weather_data.warnings:
-        segments.append({"type": "warning"})
+        segments.append(
+            {
+                "type": "warning",
+                "position": (
+                    weather_data.warnings[0].source_span.start
+                    if weather_data.warnings[0].source_span
+                    else 10**9
+                ),
+            }
+        )
     elif weather_data.outlook:
-        segments.append({"type": "outlook"})
+        segments.append({"type": "outlook", "position": 10**9})
+
+    segments.sort(key=lambda segment: segment["position"])
 
     # Distribute remaining time proportionally
     if not segments:

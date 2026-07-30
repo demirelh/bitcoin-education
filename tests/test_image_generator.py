@@ -1,6 +1,7 @@
 """Tests for Sprint 7: IMAGE_GEN stage implementation."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -83,8 +84,7 @@ class TestSlugifyFilenamePart:
     def test_turkish_chars_transliterated(self):
         # ü→u, ı→i, ğ→g, ş→s must be preserved (not stripped)
         assert (
-            _slugify_filename_part("selamlama ve gündem tanıtımı")
-            == "selamlama_ve_gundem_tanitimi"
+            _slugify_filename_part("selamlama ve gündem tanıtımı") == "selamlama_ve_gundem_tanitimi"
         )
 
     def test_apostrophe_and_comma_removed(self):
@@ -575,6 +575,105 @@ class TestGenerateImagesValidation:
         )
         with pytest.raises(FileNotFoundError, match="Chapters file not found"):
             generate_images(db_session, "ep_no_ch", settings)
+
+
+@pytest.mark.parametrize("complete_manifest", [True, False])
+def test_targeted_regeneration_keeps_complete_manifest(db_session, tmp_path, complete_manifest):
+    """Targeted rerender preserves complete manifests and rebuilds incomplete ones."""
+    from btcedu.config import Settings
+    from btcedu.core.image_generator import generate_images
+
+    episode_id = "ep_targeted"
+    ep = Episode(
+        episode_id=episode_id,
+        source="youtube_rss",
+        title="Targeted",
+        url="https://youtube.com/watch?v=targeted",
+        status=EpisodeStatus.IMAGES_GENERATED,
+        pipeline_version=2,
+    )
+    db_session.add(ep)
+    db_session.commit()
+
+    settings = Settings(
+        anthropic_api_key="test",
+        outputs_dir=str(tmp_path / "outputs"),
+    )
+    episode_dir = Path(settings.outputs_dir) / episode_id
+    episode_dir.mkdir(parents=True)
+    (episode_dir / "chapters.json").write_text(
+        json.dumps(
+            _make_chapters_json(
+                episode_id=episode_id,
+                visual_type="title_card",
+                num_chapters=2,
+            )
+        )
+    )
+    images_dir = episode_dir / "images"
+    images_dir.mkdir()
+    untouched_path = images_dir / "ch02.png"
+    untouched_path.write_bytes(b"existing")
+    manifest_entries = [
+        {
+            "chapter_id": "ch01",
+            "chapter_title": "Chapter 1",
+            "visual_type": "title_card",
+            "file_path": "images/ch01.png",
+            "prompt": None,
+            "generation_method": "template",
+            "model": None,
+            "size": "1792x1024",
+            "mime_type": "image/png",
+            "size_bytes": 1,
+            "metadata": {},
+        }
+    ]
+    if complete_manifest:
+        manifest_entries.append(
+            {
+                "chapter_id": "ch02",
+                "chapter_title": "Chapter 2",
+                "visual_type": "title_card",
+                "file_path": "images/ch02.png",
+                "prompt": None,
+                "generation_method": "template",
+                "model": None,
+                "size": "1792x1024",
+                "mime_type": "image/png",
+                "size_bytes": untouched_path.stat().st_size,
+                "metadata": {"preserved": True},
+            }
+        )
+    (images_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "episode_id": episode_id,
+                "schema_version": "1.0",
+                "images": manifest_entries,
+            }
+        )
+    )
+
+    with (
+        patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
+        patch("btcedu.core.image_generator._create_media_asset_record"),
+    ):
+        result = generate_images(
+            db_session,
+            episode_id,
+            settings,
+            force=True,
+            chapter_id="ch01",
+        )
+
+    manifest = json.loads(result.manifest_path.read_text())
+    assert [entry["chapter_id"] for entry in manifest["images"]] == ["ch01", "ch02"]
+    if complete_manifest:
+        assert manifest["images"][1]["metadata"] == {"preserved": True}
+        assert untouched_path.read_bytes() == b"existing"
+    else:
+        assert manifest["images"][1]["metadata"] != {"preserved": True}
 
 
 if __name__ == "__main__":

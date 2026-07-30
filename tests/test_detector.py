@@ -255,8 +255,9 @@ class TestDetectAllActiveChannels:
             db_session, "tagesschau", "https://feeds.example/tagesschau", "tagesschau_tr"
         )
 
-        with patch(
-            "btcedu.core.detector.fetch_feed", return_value=self._TAGESSCHAU_FEED
+        with (
+            patch("btcedu.core.detector.fetch_feed", return_value=self._TAGESSCHAU_FEED),
+            patch("btcedu.core.retention.retention_cutoff", return_value=None),
         ):
             result = detect_all_active_channels(db_session, settings)
 
@@ -434,6 +435,7 @@ class TestDownloadEpisode:
         ep_yes = SimpleNamespace(content_profile="x")
         ep_no = SimpleNamespace(content_profile="y")
         with patch("btcedu.profiles.get_registry") as mock_reg:
+
             def _get(name):
                 cfg = "gemini_frame_edit" if name == "x" else "generative"
                 return SimpleNamespace(stage_config={"imagegen": {"provider": cfg}})
@@ -811,7 +813,8 @@ class TestIngestTitleFilter:
 
         reset_registry()
         mock_fetch.return_value = self._mixed_feed()
-        result = detect_episodes(db_session, self._settings("tagesschau_tr"))
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = detect_episodes(db_session, self._settings("tagesschau_tr"))
 
         assert result.new == 2
         ids = sorted(e.episode_id for e in db_session.query(Episode).all())
@@ -857,7 +860,8 @@ class TestIngestTitleFilter:
             ),
         ]
         settings = _make_backfill_settings(default_content_profile="tagesschau_tr")
-        result = backfill_episodes(db_session, settings)
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = backfill_episodes(db_session, settings)
 
         assert result.new == 2
         ids = sorted(e.episode_id for e in db_session.query(Episode).all())

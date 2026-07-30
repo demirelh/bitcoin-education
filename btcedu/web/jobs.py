@@ -53,6 +53,7 @@ class Job:
     dry_run: bool = False
     top_k: int = 16
     privacy: str | None = None
+    chapter_id: str | None = None
     created_at: datetime = field(default_factory=_utcnow)
     updated_at: datetime = field(default_factory=_utcnow)
     result: dict | None = None
@@ -111,6 +112,7 @@ class JobManager:
         dry_run: bool = False,
         top_k: int = 16,
         privacy: str | None = None,
+        chapter_id: str | None = None,
     ) -> Job:
         job_id = uuid.uuid4().hex[:12]
         job = Job(
@@ -121,6 +123,7 @@ class JobManager:
             dry_run=dry_run,
             top_k=top_k,
             privacy=privacy,
+            chapter_id=chapter_id,
         )
         with self._lock:
             self._jobs[job_id] = job
@@ -547,7 +550,13 @@ class JobManager:
 
             self._update(job, stage="generating_images")
             self._log(job, "Generating images...")
-            result = generate_images(session, job.episode_id, settings, force=job.force)
+            result = generate_images(
+                session,
+                job.episode_id,
+                settings,
+                force=job.force,
+                chapter_id=job.chapter_id,
+            )
             self._update(
                 job,
                 result={

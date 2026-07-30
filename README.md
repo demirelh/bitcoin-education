@@ -31,6 +31,10 @@ the narration but cannot rewrite it. Review gates create artifact-bound
 segments, conditional fact-preserving adaptation, profile-routed image/TTS
 providers, and `auto_publish: false`.
 
+Tagesschau weather chapters use a grounded local HTML/SVG renderer with timed
+FFmpeg scenes instead of generative weather images. See
+[docs/weather-renderer.md](docs/weather-renderer.md).
+
 ## Quickstart
 
 ```bash

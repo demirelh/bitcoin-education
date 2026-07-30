@@ -16,6 +16,7 @@ from btcedu.core.renderer import (
     _compute_render_content_hash,
     _is_render_current,
     _resolve_chapter_media,
+    render_is_current,
     render_video,
 )
 from btcedu.db import Base
@@ -733,6 +734,155 @@ def test_render_video_non_dry_run(db_session, settings, tmp_path):
     )
     assert asset is not None
     assert asset.size_bytes > 0
+
+
+def test_render_weather_video_uses_actual_tts_duration(db_session, settings, tmp_path):
+    """Timed weather scenes are planned from the TTS manifest, not chapter estimates."""
+    from btcedu.core.weather.models import WeatherRenderResult
+
+    settings.outputs_dir = str(tmp_path / "outputs")
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        pipeline_version=2,
+        content_profile="tagesschau_tr",
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    chapters_path = _create_test_chapters_json("ep001", Path(settings.outputs_dir))
+    chapters_data = json.loads(chapters_path.read_text())
+    chapters_data["chapters"][0]["narration"]["estimated_duration_seconds"] = 17.0
+    chapters_data["estimated_duration_seconds"] = 77.0
+    chapters_path.write_text(json.dumps(chapters_data))
+
+    image_manifest_path = _create_test_image_manifest("ep001", Path(settings.outputs_dir))
+    image_manifest = json.loads(image_manifest_path.read_text())
+    image_manifest["images"][0]["metadata"] = {
+        "category": "weather",
+        "weather_data_path": "images/ch01_weather.json",
+    }
+    image_manifest_path.write_text(json.dumps(image_manifest))
+
+    tts_manifest_path = _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
+    tts_manifest = json.loads(tts_manifest_path.read_text())
+    tts_manifest["segments"][0]["duration_seconds"] = 42.5
+    tts_manifest_path.write_text(json.dumps(tts_manifest))
+
+    base = Path(settings.outputs_dir) / "ep001"
+    fixture = Path(__file__).parent / "fixtures" / "weather_fixture_data.json"
+    (base / "images" / "ch01_weather.json").write_text(fixture.read_text())
+    captured = {}
+
+    def mock_weather_video(weather_data, scene_plan, output_path, **kwargs):
+        captured["duration"] = scene_plan.duration_seconds
+        Path(output_path).write_bytes(b"weather video")
+        return WeatherRenderResult(success=True, output_path=str(output_path))
+
+    def mock_create_segment(image_path, audio_path, output_path, duration, **kwargs):
+        return _mock_segment_result(output_path, duration=duration)
+
+    def mock_create_video_segment(video_path, audio_path, output_path, duration, **kwargs):
+        captured["video_path"] = video_path
+        return _mock_segment_result(output_path, duration=duration)
+
+    with (
+        patch(
+            "btcedu.core.weather.renderer.render_weather_scene_video",
+            side_effect=mock_weather_video,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.create_segment",
+            side_effect=mock_create_segment,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.create_video_segment",
+            side_effect=mock_create_video_segment,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.concatenate_segments",
+            side_effect=lambda segment_paths, output_path, **kwargs: _mock_concat_result(
+                output_path, segment_count=len(segment_paths)
+            ),
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.get_ffmpeg_version",
+            return_value="ffmpeg version 6.0-mock",
+        ),
+    ):
+        render_video(db_session, "ep001", settings)
+
+    assert captured["duration"] == 42.5
+    assert captured["video_path"].endswith("images/ch01_weather.mp4")
+    scene_plan = json.loads((base / "images" / "ch01_weather_scenes.json").read_text())
+    assert scene_plan["duration_seconds"] == 42.5
+    assert render_is_current(db_session, "ep001", settings) == (True, "render is current")
+
+
+def test_render_weather_video_failure_uses_static_card(db_session, settings, tmp_path):
+    """A failed timed weather render falls back to the persisted weather PNG."""
+    from btcedu.core.weather.models import WeatherRenderResult
+
+    settings.outputs_dir = str(tmp_path / "outputs")
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        pipeline_version=2,
+        content_profile="tagesschau_tr",
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    _create_test_chapters_json("ep001", Path(settings.outputs_dir))
+    image_manifest_path = _create_test_image_manifest("ep001", Path(settings.outputs_dir))
+    image_manifest = json.loads(image_manifest_path.read_text())
+    image_manifest["images"][0]["metadata"] = {
+        "category": "weather",
+        "weather_data_path": "images/ch01_weather.json",
+    }
+    image_manifest_path.write_text(json.dumps(image_manifest))
+    _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
+
+    base = Path(settings.outputs_dir) / "ep001"
+    fixture = Path(__file__).parent / "fixtures" / "weather_fixture_data.json"
+    (base / "images" / "ch01_weather.json").write_text(fixture.read_text())
+    rendered_images = []
+
+    def mock_create_segment(image_path, audio_path, output_path, duration, **kwargs):
+        rendered_images.append(image_path)
+        return _mock_segment_result(output_path, duration=duration)
+
+    with (
+        patch(
+            "btcedu.core.weather.renderer.render_weather_scene_video",
+            return_value=WeatherRenderResult(success=False),
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.create_segment",
+            side_effect=mock_create_segment,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.create_video_segment",
+        ) as create_video_segment,
+        patch(
+            "btcedu.services.ffmpeg_service.concatenate_segments",
+            side_effect=lambda segment_paths, output_path, **kwargs: _mock_concat_result(
+                output_path, segment_count=len(segment_paths)
+            ),
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.get_ffmpeg_version",
+            return_value="ffmpeg version 6.0-mock",
+        ),
+    ):
+        render_video(db_session, "ep001", settings)
+
+    assert str(base / "images" / "ch01.png") in rendered_images
+    create_video_segment.assert_not_called()
 
 
 def test_render_rerenders_stale_segments(db_session, settings, tmp_path):

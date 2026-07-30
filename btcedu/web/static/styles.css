@@ -2584,3 +2584,60 @@ body {
 .qa-story ul { margin: 2px 0 0 18px; }
 .qa-story li { font-size: 12px; color: var(--text-dim); margin: 2px 0; }
 .qa-raw pre { font-size: 11px; white-space: pre-wrap; color: var(--text-dim); margin-top: 6px; }
+
+
+/* ── Weather Panel ─────────────────────────────────────────────── */
+.weather-panel { padding: 16px 0; }
+.weather-summary { font-size: 14px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.weather-empty { color: var(--text-dim); font-size: 14px; }
+.weather-chapter-card { background: var(--card-bg, var(--bg)); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+.weather-chapter-header { margin-bottom: 12px; }
+.weather-chapter-header h4 { margin: 0 0 8px 0; font-size: 15px; }
+.weather-chapter-id { font-size: 12px; color: var(--text-dim); font-weight: 400; }
+.weather-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.badge-weather-conf { background: #3b82f622; color: var(--accent); font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.badge-cache-hit { background: #22c55e22; color: #22c55e; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.badge-cache-stale { background: #f59e0b22; color: #f59e0b; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.badge-cache-miss { background: #64748b22; color: #64748b; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.badge-fallback { background: #a855f722; color: #a855f7; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.badge-renderer { background: #06b6d422; color: #06b6d4; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.badge-success { background: #22c55e22; color: #22c55e; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.badge-failed { background: #ef444422; color: #ef4444; font-size: 11px; padding: 2px 8px; border-radius: 4px; }
+.weather-preview-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px; }
+@media (max-width: 768px) { .weather-preview-row { grid-template-columns: 1fr; } }
+.weather-preview { border-radius: 6px; overflow: hidden; background: #111; display: flex; align-items: center; justify-content: center; min-height: 120px; }
+.weather-preview img, .weather-preview video { max-width: 100%; max-height: 300px; }
+.weather-no-asset { background: var(--border); color: var(--text-dim); font-size: 13px; padding: 32px; }
+.weather-narration h5 { margin: 0 0 4px; font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+.weather-narration-text { font-size: 13px; line-height: 1.6; color: var(--text); margin: 0; white-space: pre-wrap; }
+.weather-data-section { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.weather-data-section h5 { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+.weather-duration { font-weight: 400; color: var(--text-dim); font-size: 12px; }
+.weather-data-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.weather-data-table th { text-align: left; padding: 4px 8px; color: var(--text-dim); border-bottom: 1px solid var(--border); }
+.weather-data-table td { padding: 4px 8px; }
+.weather-temp-range { font-size: 13px; color: var(--accent); margin: 8px 0 0; font-weight: 600; }
+.weather-spans-list { list-style: none; padding: 0; margin: 0; font-size: 12px; }
+.weather-spans-list li { padding: 3px 0; color: var(--text-dim); }
+.weather-spans-list code { background: var(--border); padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+.weather-findings-list { list-style: none; padding: 0; margin: 0; }
+.weather-findings-list li { padding: 4px 0; font-size: 12px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.finding-severity { font-weight: 700; font-size: 10px; text-transform: uppercase; min-width: 56px; }
+.finding-type { color: var(--text-dim); font-family: monospace; font-size: 11px; }
+.finding-blocked { background: #ef444433; color: #ef4444; font-size: 10px; padding: 1px 5px; border-radius: 3px; font-weight: 600; }
+.finding-critical .finding-severity { color: #ef4444; }
+.finding-major .finding-severity { color: #f59e0b; }
+.finding-warning .finding-severity { color: #eab308; }
+.finding-info .finding-severity { color: #64748b; }
+.weather-scenes-bar { display: flex; height: 28px; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+.scene-segment { display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: #fff; min-width: 24px; text-transform: uppercase; letter-spacing: 0.3px; }
+.scene-title { background: #3b82f6; }
+.scene-regions { background: #22c55e; }
+.scene-temperature { background: #f59e0b; }
+.scene-outlook { background: #8b5cf6; }
+.scene-warning { background: #ef4444; }
+.weather-actions { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); display: flex; gap: 8px; flex-wrap: wrap; }
+.weather-override-group { display: inline-flex; gap: 4px; margin-left: 8px; }
+.badge-override { background: #f97316; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
+.btn-active { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
+.btn-dim { opacity: 0.7; }

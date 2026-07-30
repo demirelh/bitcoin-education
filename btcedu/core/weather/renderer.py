@@ -17,6 +17,7 @@ import json
 import logging
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 from btcedu.core.weather.models import (
@@ -27,7 +28,9 @@ from btcedu.core.weather.models import (
     ValidationFinding,
     WeatherData,
     WeatherRenderResult,
+    WeatherScene,
     WeatherScenePlan,
+    WeatherSceneType,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +66,7 @@ def _compute_cache_key(
     profile: str = "",
     resolution: str = "1920x1080",
     accent_color: str = "#004B87",
+    title: str = "Hava Durumu",
 ) -> str:
     """Compute deterministic cache key for weather render."""
     parts = [
@@ -74,6 +78,7 @@ def _compute_cache_key(
         f"weather_json:{hashlib.sha256(weather_data.model_dump_json().encode()).hexdigest()[:12]}",
         f"resolution:{resolution}",
         f"accent:{accent_color}",
+        f"title:{title}",
         f"assets:{_renderer_assets_hash()}",
     ]
     if scene_plan:
@@ -169,6 +174,7 @@ def _build_weather_html(
     scene_plan: WeatherScenePlan | None,
     *,
     accent_color: str = "#004B87",
+    title: str = "Hava Durumu",
 ) -> str:
     """Build the weather HTML/SVG page from Jinja2 template."""
     try:
@@ -202,6 +208,7 @@ def _build_weather_html(
         condition_labels=_CONDITION_LABELS_TR,
         germany_map=map_svg,
         renderer_version=RENDERER_VERSION,
+        title=title,
     )
 
 
@@ -230,6 +237,9 @@ def _render_pillow_fallback(
     *,
     accent_color: str = "#004B87",
     fallback_level: str = "generic",
+    width: int = 1920,
+    height: int = 1080,
+    title: str = "Hava Durumu",
 ) -> bool:
     """Render a branded weather card using Pillow. Never produces blank output."""
     try:
@@ -247,7 +257,6 @@ def _render_pillow_fallback(
     except Exception:
         accent_rgb = (0, 75, 135)
 
-    width, height = 1920, 1080
     img = Image.new("RGB", (width, height), color=(20, 30, 50))
     draw = ImageDraw.Draw(img)
 
@@ -266,7 +275,7 @@ def _render_pillow_fallback(
         return ImageFont.load_default()
 
     # Title
-    draw.text((60, 50), "Hava Durumu", fill=(255, 255, 255), font=_font(72))
+    draw.text((60, 50), title, fill=(255, 255, 255), font=_font(72))
 
     # Subtitle with renderer version
     draw.text(
@@ -278,10 +287,25 @@ def _render_pillow_fallback(
 
     y = 250
 
-    if fallback_level == "full" and weather_data.regions:
+    if fallback_level == "title":
+        draw.text(
+            (80, y),
+            "Tagesschau Türkçe",
+            fill=(210, 220, 235),
+            font=_font(52),
+        )
+        draw.rectangle(
+            [(width // 2 - 240, y + 120), (width // 2 + 240, y + 360)],
+            outline=(110, 150, 190),
+            width=6,
+        )
+    elif fallback_level == "full" and weather_data.regions:
         # Full data render
         for region in weather_data.regions[:6]:
-            conditions_str = ", ".join(c.value for c in region.conditions)
+            conditions_str = ", ".join(
+                _CONDITION_LABELS_TR.get(condition.value, condition.value)
+                for condition in region.conditions
+            )
             line = f"{region.label_tr}: {conditions_str}"
             draw.text((80, y), line, fill=(240, 240, 240), font=_font(48))
             y += 80
@@ -298,7 +322,10 @@ def _render_pillow_fallback(
     elif fallback_level == "reduced" and weather_data.regions:
         # Reduced: only confirmed regions
         for region in weather_data.regions[:4]:
-            conditions_str = ", ".join(c.value for c in region.conditions)
+            conditions_str = ", ".join(
+                _CONDITION_LABELS_TR.get(condition.value, condition.value)
+                for condition in region.conditions
+            )
             line = f"{region.label_tr}: {conditions_str}"
             draw.text((80, y), line, fill=(240, 240, 240), font=_font(48))
             y += 80
@@ -312,13 +339,31 @@ def _render_pillow_fallback(
             font=_font(52),
         )
         y += 100
-        # Decorative weather icon area (simple shapes)
-        draw.ellipse(
-            [(width // 2 - 100, y), (width // 2 + 100, y + 200)],
-            fill=(255, 200, 50),
-            outline=(255, 220, 100),
+        # Neutral branded mark: do not imply sun, rain, or any other condition.
+        mark_left = width // 2 - 150
+        draw.rounded_rectangle(
+            [(mark_left, y), (mark_left + 300, y + 170)],
+            radius=28,
+            fill=(35, 50, 72),
+            outline=accent_rgb,
+            width=6,
         )
-        y += 250
+        draw.text(
+            (mark_left + 67, y + 48),
+            "HAVA",
+            fill=(235, 235, 235),
+            font=_font(52),
+        )
+        y += 220
+        excerpt = weather_data.unresolved_claims[0] if weather_data.unresolved_claims else ""
+        if excerpt:
+            draw.text(
+                (80, y),
+                excerpt[:90],
+                fill=(230, 230, 230),
+                font=_font(34),
+            )
+            y += 70
         draw.text(
             (80, y),
             "Detaylar için videoyu izleyin",
@@ -419,6 +464,10 @@ def render_weather_visual(
     accent_color: str = "#004B87",
     profile: str = "",
     force: bool = False,
+    width: int = 1920,
+    height: int = 1080,
+    title: str = "Hava Durumu",
+    render_empty_template: bool = False,
 ) -> WeatherRenderResult:
     """Render weather visual with full fallback chain.
 
@@ -432,7 +481,9 @@ def render_weather_visual(
         weather_data,
         scene_plan,
         profile=profile,
+        resolution=f"{width}x{height}",
         accent_color=accent_color,
+        title=title,
     )
 
     # Check if output already exists and is valid (idempotency)
@@ -460,10 +511,20 @@ def render_weather_visual(
     fallback_level = "full"
 
     # Attempt 1: Full HTML/SVG render
-    has_data = bool(weather_data.regions) or weather_data.overview.temperature_min_c is not None
-    if has_data:
-        html = _build_weather_html(weather_data, scene_plan, accent_color=accent_color)
-        if html and _render_html_to_png(html, output_path):
+    has_data = (
+        bool(weather_data.regions)
+        or weather_data.overview.temperature_min_c is not None
+        or bool(weather_data.warnings)
+        or bool(weather_data.outlook)
+    )
+    if has_data or render_empty_template:
+        html = _build_weather_html(
+            weather_data,
+            scene_plan,
+            accent_color=accent_color,
+            title=title,
+        )
+        if html and _render_html_to_png(html, output_path, width=width, height=height):
             output_findings = _validate_output(output_path)
             if not any(f.publish_blocked for f in output_findings):
                 _write_provenance(output_path, cache_key, "chromium_html", weather_data)
@@ -477,10 +538,39 @@ def render_weather_visual(
                 )
             findings.extend(output_findings)
 
+    if render_empty_template:
+        if _render_pillow_fallback(
+            weather_data,
+            output_path,
+            accent_color=accent_color,
+            fallback_level="title",
+            width=width,
+            height=height,
+            title=title,
+        ):
+            output_findings = _validate_output(output_path)
+            if not any(f.publish_blocked for f in output_findings):
+                _write_provenance(output_path, cache_key, "pillow_title", weather_data)
+                return WeatherRenderResult(
+                    success=True,
+                    output_path=str(output_path),
+                    fallback_level="full",
+                    cache_key=cache_key,
+                    findings=output_findings,
+                    metadata={"method": "pillow_title"},
+                )
+            findings.extend(output_findings)
+
     # Attempt 2: Pillow full data render
     if has_data:
         if _render_pillow_fallback(
-            weather_data, output_path, accent_color=accent_color, fallback_level="full"
+            weather_data,
+            output_path,
+            accent_color=accent_color,
+            fallback_level="full",
+            width=width,
+            height=height,
+            title=title,
         ):
             output_findings = _validate_output(output_path)
             if not any(f.publish_blocked for f in output_findings):
@@ -499,7 +589,13 @@ def render_weather_visual(
     # Attempt 3: Reduced Pillow render
     if weather_data.regions:
         if _render_pillow_fallback(
-            weather_data, output_path, accent_color=accent_color, fallback_level="reduced"
+            weather_data,
+            output_path,
+            accent_color=accent_color,
+            fallback_level="reduced",
+            width=width,
+            height=height,
+            title=title,
         ):
             output_findings = _validate_output(output_path)
             if not any(f.publish_blocked for f in output_findings):
@@ -517,7 +613,13 @@ def render_weather_visual(
 
     # Attempt 4: Generic branded fallback (always works)
     if _render_pillow_fallback(
-        weather_data, output_path, accent_color=accent_color, fallback_level="generic"
+        weather_data,
+        output_path,
+        accent_color=accent_color,
+        fallback_level="generic",
+        width=width,
+        height=height,
+        title=title,
     ):
         output_findings = _validate_output(output_path)
         _write_provenance(output_path, cache_key, "pillow_generic", weather_data)
@@ -557,6 +659,218 @@ def render_weather_visual(
         fallback_level="pillow_fallback",
         cache_key=cache_key,
         findings=findings,
+    )
+
+
+def _weather_data_for_scene(weather_data: WeatherData, scene: WeatherScene) -> WeatherData:
+    """Return a claim-preserving weather subset for one planned scene."""
+    selected = weather_data.model_copy(deep=True)
+    if scene.type == WeatherSceneType.TITLE:
+        selected.regions = []
+        selected.overview.temperature_min_c = None
+        selected.overview.temperature_max_c = None
+        selected.warnings = []
+        selected.outlook = []
+    elif scene.type == WeatherSceneType.REGIONS:
+        region_ids = set(scene.regions)
+        selected.regions = [region for region in selected.regions if region.region_id in region_ids]
+        selected.overview.temperature_min_c = None
+        selected.overview.temperature_max_c = None
+        selected.warnings = []
+        selected.outlook = []
+    elif scene.type == WeatherSceneType.TEMPERATURE:
+        selected.regions = []
+        selected.warnings = []
+        selected.outlook = []
+    elif scene.type == WeatherSceneType.WARNING:
+        selected.regions = []
+        selected.outlook = []
+    elif scene.type == WeatherSceneType.OUTLOOK:
+        selected.regions = []
+        selected.warnings = []
+    return selected
+
+
+def render_weather_scene_video(
+    weather_data: WeatherData,
+    scene_plan: WeatherScenePlan,
+    output_path: Path,
+    *,
+    accent_color: str = "#004B87",
+    profile: str = "",
+    width: int = 1920,
+    height: int = 1080,
+    fps: int = 25,
+    title: str = "Hava Durumu",
+) -> WeatherRenderResult:
+    """Render the deterministic scene plan to a silent H.264 weather clip."""
+    if not scene_plan.scenes:
+        return WeatherRenderResult(
+            success=False,
+            output_path=str(output_path),
+            fallback_level="pillow_fallback",
+            findings=[
+                ValidationFinding(
+                    type=FindingType.WEATHER_SCENE_EMPTY,
+                    severity=FindingSeverity.CRITICAL,
+                    message="Weather scene plan is empty",
+                    publish_blocked=True,
+                )
+            ],
+        )
+
+    cache_key = _compute_cache_key(
+        weather_data,
+        scene_plan,
+        profile=profile,
+        resolution=f"{width}x{height}",
+        accent_color=accent_color,
+        title=title,
+    )
+    provenance_path = output_path.with_suffix(".provenance.json")
+    if output_path.exists() and provenance_path.exists() and output_path.stat().st_size > 5000:
+        try:
+            provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            provenance = {}
+        if provenance.get("cache_key") == cache_key:
+            return WeatherRenderResult(
+                success=True,
+                output_path=str(output_path),
+                fallback_level="full",
+                cache_key=cache_key,
+                metadata={
+                    "method": "ffmpeg_scene_video",
+                    "cached": True,
+                    "duration_seconds": scene_plan.duration_seconds,
+                    "fps": fps,
+                },
+            )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    scene_metadata: list[dict] = []
+    with tempfile.TemporaryDirectory(
+        prefix=f"{output_path.stem}_scenes_", dir=output_path.parent
+    ) as temp_dir:
+        scene_paths: list[Path] = []
+        for index, scene in enumerate(scene_plan.scenes):
+            scene_path = Path(temp_dir) / f"scene_{index:02d}.png"
+            scene_result = render_weather_visual(
+                _weather_data_for_scene(weather_data, scene),
+                None,
+                scene_path,
+                accent_color=accent_color,
+                profile=f"{profile}:scene:{scene.type.value}:{index}",
+                force=True,
+                width=width,
+                height=height,
+                title=scene.headline or title,
+                render_empty_template=scene.type == WeatherSceneType.TITLE,
+            )
+            if not scene_result.success:
+                return scene_result
+            scene_paths.append(scene_path)
+            scene_metadata.append(
+                {
+                    "type": scene.type.value,
+                    "start": scene.start,
+                    "end": scene.end,
+                    "duration": scene.end - scene.start,
+                }
+            )
+
+        command = ["ffmpeg", "-y"]
+        for scene_path, metadata in zip(scene_paths, scene_metadata, strict=True):
+            command.extend(
+                [
+                    "-loop",
+                    "1",
+                    "-t",
+                    f"{metadata['duration']:.3f}",
+                    "-i",
+                    str(scene_path),
+                ]
+            )
+
+        filters: list[str] = []
+        labels: list[str] = []
+        for index, metadata in enumerate(scene_metadata):
+            duration = float(metadata["duration"])
+            fade_out = max(0.0, duration - 0.25)
+            label = f"v{index}"
+            filters.append(
+                f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,"
+                f"fade=t=in:st=0:d=0.25,fade=t=out:st={fade_out:.3f}:d=0.25,"
+                f"fps={fps}[{label}]"
+            )
+            labels.append(f"[{label}]")
+        filters.append(f"{''.join(labels)}concat=n={len(labels)}:v=1:a=0[v]")
+        command.extend(
+            [
+                "-filter_complex",
+                ";".join(filters),
+                "-map",
+                "[v]",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "23",
+                "-pix_fmt",
+                "yuv420p",
+                "-movflags",
+                "+faststart",
+                str(output_path),
+            ]
+        )
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=max(60, int(scene_plan.duration_seconds * 4)),
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return WeatherRenderResult(
+                success=False,
+                output_path=str(output_path),
+                fallback_level="pillow_fallback",
+                findings=[
+                    ValidationFinding(
+                        type=FindingType.WEATHER_RENDER_FAILED,
+                        severity=FindingSeverity.MAJOR,
+                        message=f"Weather scene video failed: {error}",
+                    )
+                ],
+            )
+        if completed.returncode != 0 or not output_path.exists():
+            return WeatherRenderResult(
+                success=False,
+                output_path=str(output_path),
+                fallback_level="pillow_fallback",
+                findings=[
+                    ValidationFinding(
+                        type=FindingType.WEATHER_RENDER_FAILED,
+                        severity=FindingSeverity.MAJOR,
+                        message=f"Weather scene video failed: {completed.stderr[-300:]}",
+                    )
+                ],
+            )
+
+    _write_provenance(output_path, cache_key, "ffmpeg_scene_video", weather_data)
+    return WeatherRenderResult(
+        success=True,
+        output_path=str(output_path),
+        fallback_level="full",
+        cache_key=cache_key,
+        metadata={
+            "method": "ffmpeg_scene_video",
+            "scene_assets": scene_metadata,
+            "duration_seconds": scene_plan.duration_seconds,
+            "fps": fps,
+        },
     )
 
 

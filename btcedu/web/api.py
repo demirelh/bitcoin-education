@@ -1,5 +1,6 @@
 """API blueprint for the btcedu web dashboard."""
 
+import fcntl
 import json
 import logging
 import queue
@@ -25,6 +26,7 @@ api_bp = Blueprint("api", __name__)
 
 _sse_clients: list[queue.Queue] = []
 _sse_lock = threading.Lock()
+_weather_overrides_lock = threading.Lock()
 _SSE_MAX_CLIENTS = 10  # Limit for Raspberry Pi
 _INTRO_AUDIO_MAX_BYTES = 20 * 1024 * 1024
 
@@ -3420,3 +3422,491 @@ def get_credits():
             "generated_at": statuses[0].fetched_at if statuses else None,
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Weather dashboard endpoints
+# ---------------------------------------------------------------------------
+
+
+def _read_json_artifact(path: Path) -> dict | None:
+    """Read and parse a JSON artifact, returning None on error."""
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _weather_chapter_detail(
+    chapter: dict,
+    images_dir: Path,
+    episode_id: str,
+    overrides: dict | None = None,
+) -> dict | None:
+    """Build weather detail for a single chapter, or None if not a weather chapter.
+
+    Prefers persisted JSON artifacts written by the core pipeline. Falls back to
+    recomputation when artifacts are missing (e.g., before first imagegen run).
+    """
+    from btcedu.core.weather.detector import detect_weather_story
+
+    chapter_id = chapter.get("chapter_id", "")
+    title = chapter.get("title", "")
+    narration = chapter.get("narration", {})
+    narration_text = narration.get("text", "") if isinstance(narration, dict) else ""
+    duration = float(
+        narration.get("estimated_duration_seconds", 30) if isinstance(narration, dict) else 30
+    )
+
+    # Check override: "normal" means skip weather display, "weather" forces it
+    _overrides = overrides or {}
+    override_value = _overrides.get(chapter_id)
+
+    if override_value == "normal":
+        return None  # Forced as non-weather
+
+    # Try persisted detection artifact first
+    detection_artifact = _read_json_artifact(images_dir / f"{chapter_id}_weather_detection.json")
+    if detection_artifact:
+        is_weather = detection_artifact.get("is_weather_story", False)
+        detection_dict = detection_artifact
+    else:
+        # Recompute detection
+        detection = detect_weather_story(
+            title=title,
+            narration_text=narration_text,
+        )
+        is_weather = detection.is_weather_story
+        detection_dict = detection.model_dump()
+
+    # Override "weather" forces this chapter as weather regardless of detection
+    if override_value == "weather":
+        is_weather = True
+
+    if not is_weather:
+        return None
+
+    # Try persisted weather data artifact
+    weather_data_artifact = _read_json_artifact(images_dir / f"{chapter_id}_weather.json")
+    if weather_data_artifact:
+        weather_data_dict = weather_data_artifact
+        # Extract source spans from persisted data
+        regions = weather_data_artifact.get("regions", [])
+        source_spans = [r.get("source_span") for r in regions]
+    else:
+        # Recompute extraction
+        from btcedu.core.weather.extractor import extract_weather_data
+
+        weather_data = extract_weather_data(narration_text, story_id=chapter_id)
+        weather_data_dict = weather_data.model_dump(mode="json")
+        source_spans = [
+            r.source_span.model_dump() if r.source_span else None for r in weather_data.regions
+        ]
+
+    # Try persisted validation artifact
+    validation_artifact = _read_json_artifact(images_dir / f"{chapter_id}_weather_validation.json")
+    if validation_artifact:
+        validation_dict = validation_artifact
+    else:
+        # Recompute validation
+        from btcedu.core.weather.extractor import extract_weather_data
+        from btcedu.core.weather.validator import validate_weather_data
+
+        if weather_data_artifact:
+            from btcedu.core.weather.models import WeatherData
+
+            wd = WeatherData.model_validate(weather_data_artifact)
+        else:
+            wd = extract_weather_data(narration_text, story_id=chapter_id)
+        validation = validate_weather_data(wd, narration_text)
+        validation_dict = validation.model_dump(mode="json")
+
+    # Try persisted scene plan artifact
+    scene_plan_artifact = _read_json_artifact(images_dir / f"{chapter_id}_weather_scenes.json")
+    if scene_plan_artifact:
+        scene_plan_dict = scene_plan_artifact
+    else:
+        # Recompute scene plan
+        from btcedu.core.weather.extractor import extract_weather_data
+        from btcedu.core.weather.models import WeatherData
+        from btcedu.core.weather.scene_planner import plan_weather_scenes
+
+        if weather_data_artifact:
+            wd = WeatherData.model_validate(weather_data_artifact)
+        else:
+            wd = extract_weather_data(narration_text, story_id=chapter_id)
+        scene_plan = plan_weather_scenes(wd, duration, story_id=chapter_id)
+        scene_plan_dict = scene_plan.model_dump(mode="json")
+
+    # Check rendered assets (PNG and MP4)
+    weather_png = images_dir / f"{chapter_id}_weather.png"
+    weather_mp4 = images_dir / f"{chapter_id}_weather.mp4"
+    provenance = _read_json_artifact(images_dir / f"{chapter_id}_weather.provenance.json")
+
+    # Determine cache status
+    cache_status = "miss"
+    if provenance:
+        cache_status = "hit" if provenance.get("cache_key") else "stale"
+
+    # Determine asset type and preview URL (relative)
+    image_url = None
+    video_url = None
+    asset_type = "none"
+    if weather_mp4.exists():
+        video_url = f"api/episodes/{episode_id}/weather/{chapter_id}/video"
+        asset_type = "video"
+    if weather_png.exists():
+        image_url = f"api/episodes/{episode_id}/weather/{chapter_id}/image"
+        if asset_type == "none":
+            asset_type = "image"
+
+    return {
+        "chapter_id": chapter_id,
+        "title": title,
+        "detection": detection_dict,
+        "narration_text": narration_text,
+        "weather_data": weather_data_dict,
+        "source_spans": source_spans,
+        "validation": validation_dict,
+        "scene_plan": scene_plan_dict,
+        "image_url": image_url,
+        "video_url": video_url,
+        "asset_type": asset_type,
+        "image_exists": weather_png.exists(),
+        "video_exists": weather_mp4.exists(),
+        "fallback_level": provenance.get("method", "unknown") if provenance else "none",
+        "renderer_version": provenance.get("renderer_version", "unknown") if provenance else None,
+        "cache_status": cache_status,
+        "provenance": provenance,
+        "override": override_value,
+    }
+
+
+@api_bp.route("/episodes/<episode_id>/weather")
+def get_weather_summary(episode_id: str):
+    """Return weather chapter summary for an episode.
+
+    Lists all detected weather chapters with extraction results, validation
+    findings, scene plans, rendered image/video status, fallback level, renderer
+    version, and cache status. Prefers persisted artifacts, falls back to
+    recomputation.
+    """
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    settings = _get_settings()
+
+    # Load chapters.json
+    chapters_path = _validate_episode_path(episode_id, Path(settings.outputs_dir), "chapters.json")
+    if not chapters_path:
+        return jsonify({"error": "Episode not found"}), 404
+    if not chapters_path.exists():
+        return jsonify({"error": "No chapters available (run chapterize first)"}), 404
+
+    try:
+        chapters_doc = json.loads(chapters_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        return jsonify({"error": f"Cannot read chapters: {e}"}), 500
+
+    if isinstance(chapters_doc, list):
+        chapters = chapters_doc
+    else:
+        chapters = chapters_doc.get("chapters", [])
+
+    images_dir = Path(settings.outputs_dir) / episode_id / "images"
+
+    # Load overrides
+    overrides_path = images_dir / "weather_overrides.json"
+    overrides: dict = {}
+    if overrides_path.exists():
+        try:
+            loaded = json.loads(overrides_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                overrides = {k: v for k, v in loaded.items() if v in ("weather", "normal")}
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    weather_chapters = []
+    for ch in chapters:
+        detail = _weather_chapter_detail(ch, images_dir, episode_id, overrides=overrides)
+        if detail:
+            weather_chapters.append(detail)
+
+    return jsonify(
+        {
+            "episode_id": episode_id,
+            "weather_chapters": weather_chapters,
+            "total_chapters": len(chapters),
+            "weather_count": len(weather_chapters),
+            "overrides": overrides,
+        }
+    )
+
+
+@api_bp.route("/episodes/<episode_id>/weather/<chapter_id>/image")
+def get_weather_image(episode_id: str, chapter_id: str):
+    """Serve a rendered weather chapter image (PNG)."""
+    from flask import send_file
+
+    episode_id = secure_filename(episode_id)
+    chapter_id = secure_filename(chapter_id)
+    if not episode_id or not chapter_id:
+        return jsonify({"error": "Invalid parameters"}), 400
+
+    if not _SAFE_PATH_COMPONENT_RE.match(chapter_id):
+        return jsonify({"error": "Invalid chapter ID"}), 400
+
+    settings = _get_settings()
+    filename = f"{chapter_id}_weather.png"
+    img_path = _validate_episode_path(episode_id, Path(settings.outputs_dir), "images", filename)
+    if not img_path:
+        return jsonify({"error": "Episode not found"}), 404
+    if not img_path.exists():
+        return jsonify({"error": "Weather image not rendered yet"}), 404
+
+    return send_file(str(img_path), mimetype="image/png")
+
+
+@api_bp.route("/episodes/<episode_id>/weather/<chapter_id>/video")
+def get_weather_video(episode_id: str, chapter_id: str):
+    """Serve a rendered weather chapter video (MP4)."""
+    from flask import send_file
+
+    episode_id = secure_filename(episode_id)
+    chapter_id = secure_filename(chapter_id)
+    if not episode_id or not chapter_id:
+        return jsonify({"error": "Invalid parameters"}), 400
+
+    if not _SAFE_PATH_COMPONENT_RE.match(chapter_id):
+        return jsonify({"error": "Invalid chapter ID"}), 400
+
+    settings = _get_settings()
+    filename = f"{chapter_id}_weather.mp4"
+    video_path = _validate_episode_path(episode_id, Path(settings.outputs_dir), "images", filename)
+    if not video_path:
+        return jsonify({"error": "Episode not found"}), 404
+    if not video_path.exists():
+        return jsonify({"error": "Weather video not rendered yet"}), 404
+
+    return send_file(str(video_path), mimetype="video/mp4")
+
+
+@api_bp.route("/episodes/<episode_id>/weather/<chapter_id>/rerender", methods=["POST"])
+def rerender_weather(episode_id: str, chapter_id: str):
+    """Re-render a specific weather chapter via the imagegen stage force path.
+
+    Submits a background job to run imagegen with force=True targeting only the
+    specified chapter_id. Does NOT publish.
+    """
+    episode_id = secure_filename(episode_id)
+    chapter_id = secure_filename(chapter_id)
+    if not episode_id or not chapter_id:
+        return jsonify({"error": "Invalid parameters"}), 400
+    if not _SAFE_PATH_COMPONENT_RE.match(chapter_id):
+        return jsonify({"error": "Invalid chapter ID"}), 400
+
+    # Verify episode exists
+    session = _get_session()
+    try:
+        ep = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if not ep:
+            return jsonify({"error": "Episode not found"}), 404
+    finally:
+        session.close()
+
+    return _submit_job("imagegen", episode_id, force=True, chapter_id=chapter_id)
+
+
+@api_bp.route("/episodes/<episode_id>/weather/<chapter_id>/override", methods=["POST"])
+def set_weather_override(episode_id: str, chapter_id: str):
+    """Set or clear a weather override for a specific chapter.
+
+    Body: {"value": "weather"|"normal"|null}
+      - "weather": Force this chapter through the weather renderer
+      - "normal": Force this chapter through the normal image pipeline
+      - null (or absent): Clear the override (use automatic detection)
+
+    Writes to outputs/{episode}/images/weather_overrides.json and marks
+    manifest.json.stale so the next imagegen run picks up the change.
+    Does NOT publish.
+    """
+    episode_id = secure_filename(episode_id)
+    chapter_id = secure_filename(chapter_id)
+    if not episode_id or not chapter_id:
+        return jsonify({"error": "Invalid parameters"}), 400
+    if not _SAFE_PATH_COMPONENT_RE.match(chapter_id):
+        return jsonify({"error": "Invalid chapter ID"}), 400
+
+    body = request.get_json(silent=True) or {}
+    value = body.get("value")
+
+    # Validate enum value
+    if value is not None and value not in ("weather", "normal"):
+        return jsonify({"error": "value must be 'weather', 'normal', or null"}), 400
+
+    settings = _get_settings()
+
+    # Verify episode exists and get images dir path
+    images_dir = _validate_episode_path(episode_id, Path(settings.outputs_dir), "images")
+    if not images_dir:
+        return jsonify({"error": "Episode not found"}), 404
+
+    # Verify chapter exists in chapters.json
+    chapters_path = _validate_episode_path(episode_id, Path(settings.outputs_dir), "chapters.json")
+    if not chapters_path or not chapters_path.exists():
+        return jsonify({"error": "No chapters available"}), 404
+
+    try:
+        chapters_doc = json.loads(chapters_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return jsonify({"error": "Cannot read chapters"}), 500
+
+    if isinstance(chapters_doc, list):
+        chapters = chapters_doc
+    else:
+        chapters = chapters_doc.get("chapters", [])
+
+    chapter_ids = {ch.get("chapter_id") for ch in chapters if ch.get("chapter_id")}
+    if chapter_id not in chapter_ids:
+        return jsonify({"error": f"Chapter not found: {chapter_id}"}), 404
+
+    overrides_path = images_dir / "weather_overrides.json"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = images_dir / ".weather_overrides.lock"
+    with _weather_overrides_lock, lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        overrides: dict = {}
+        if overrides_path.exists():
+            try:
+                loaded = json.loads(overrides_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError) as error:
+                logger.error("Cannot read weather overrides for %s: %s", episode_id, error)
+                return jsonify({"error": "Cannot read weather overrides"}), 500
+            if not isinstance(loaded, dict):
+                return jsonify({"error": "Invalid weather overrides artifact"}), 500
+            overrides = {k: v for k, v in loaded.items() if v in ("weather", "normal")}
+
+        if value is None:
+            overrides.pop(chapter_id, None)
+        else:
+            overrides[chapter_id] = value
+
+        temporary_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                prefix="weather-overrides-",
+                suffix=".json",
+                dir=images_dir,
+                encoding="utf-8",
+                delete=False,
+            ) as temporary:
+                temporary_path = Path(temporary.name)
+                json.dump(overrides, temporary, indent=2, ensure_ascii=False)
+            temporary_path.replace(overrides_path)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                temporary_path.unlink(missing_ok=True)
+
+        # Keep invalidation in the same critical section as the override update.
+        stale_path = images_dir / "manifest.json.stale"
+        stale_path.write_text(
+            json.dumps({"reason": f"weather_override_{chapter_id}", "value": value}),
+            encoding="utf-8",
+        )
+
+    return jsonify(
+        {
+            "ok": True,
+            "chapter_id": chapter_id,
+            "value": value,
+            "overrides": overrides,
+        }
+    )
+
+
+@api_bp.route("/episodes/<episode_id>/weather/overrides")
+def get_weather_overrides(episode_id: str):
+    """Return the current weather_overrides.json for an episode."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    settings = _get_settings()
+    images_dir = _validate_episode_path(episode_id, Path(settings.outputs_dir), "images")
+    if not images_dir:
+        return jsonify({"error": "Episode not found"}), 404
+
+    overrides_path = images_dir / "weather_overrides.json"
+    overrides: dict = {}
+    if overrides_path.exists():
+        try:
+            loaded = json.loads(overrides_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                overrides = {k: v for k, v in loaded.items() if v in ("weather", "normal")}
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    return jsonify({"overrides": overrides})
+
+
+@api_bp.route("/episodes/<episode_id>/weather/<chapter_id>/detail")
+def get_weather_chapter_detail(episode_id: str, chapter_id: str):
+    """Return full weather detail for a single chapter."""
+    episode_id = secure_filename(episode_id)
+    chapter_id = secure_filename(chapter_id)
+    if not episode_id or not chapter_id:
+        return jsonify({"error": "Invalid parameters"}), 400
+    if not _SAFE_PATH_COMPONENT_RE.match(chapter_id):
+        return jsonify({"error": "Invalid chapter ID"}), 400
+
+    settings = _get_settings()
+
+    chapters_path = _validate_episode_path(episode_id, Path(settings.outputs_dir), "chapters.json")
+    if not chapters_path:
+        return jsonify({"error": "Episode not found"}), 404
+    if not chapters_path.exists():
+        return jsonify({"error": "No chapters available"}), 404
+
+    try:
+        chapters_doc = json.loads(chapters_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        return jsonify({"error": f"Cannot read chapters: {e}"}), 500
+
+    if isinstance(chapters_doc, list):
+        chapters = chapters_doc
+    else:
+        chapters = chapters_doc.get("chapters", [])
+
+    images_dir = Path(settings.outputs_dir) / episode_id / "images"
+
+    # Load overrides
+    overrides_path = images_dir / "weather_overrides.json"
+    overrides: dict = {}
+    if overrides_path.exists():
+        try:
+            loaded = json.loads(overrides_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                overrides = {k: v for k, v in loaded.items() if v in ("weather", "normal")}
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    # Find the specific chapter
+    target_ch = None
+    for ch in chapters:
+        if ch.get("chapter_id") == chapter_id:
+            target_ch = ch
+            break
+
+    if not target_ch:
+        return jsonify({"error": f"Chapter not found: {chapter_id}"}), 404
+
+    detail = _weather_chapter_detail(target_ch, images_dir, episode_id, overrides=overrides)
+    if not detail:
+        return jsonify({"error": "Chapter is not a weather story"}), 404
+
+    return jsonify(detail)

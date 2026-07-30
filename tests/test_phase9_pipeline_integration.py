@@ -165,7 +165,15 @@ def test_real_v2_transcript_chain_blocks_at_transcript_qa_gate(db_session, tmp_p
         model="test-model",
     )
 
-    with patch("btcedu.core.corrector.call_claude", return_value=correction_response):
+    from btcedu.core.qa_reviewer import GateAdjudicationResult
+
+    with (
+        patch("btcedu.core.corrector.call_claude", return_value=correction_response),
+        patch(
+            "btcedu.core.qa_reviewer.adjudicate_transcript_qa_gate",
+            return_value=GateAdjudicationResult(performed=False),
+        ),
+    ):
         report = run_episode_pipeline(db_session, episode, settings)
 
     executed = [stage.stage for stage in report.stages if stage.status != "skipped"]

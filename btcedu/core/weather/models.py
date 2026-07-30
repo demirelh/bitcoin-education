@@ -64,6 +64,7 @@ class FindingType(str, Enum):
     """Types of validation findings."""
 
     UNSUPPORTED_WEATHER_CLAIM = "unsupported_weather_claim"
+    UNSUPPORTED_WEATHER_VISUAL_CLAIM = "unsupported_weather_visual_claim"
     UNSUPPORTED_TEMPERATURE = "unsupported_temperature"
     UNSUPPORTED_REGION = "unsupported_region"
     AMBIGUOUS_REGION_CONDITION = "ambiguous_region_condition"
@@ -114,6 +115,7 @@ class WeatherOverview(BaseModel):
     headline: str | None = None
     temperature_min_c: int | None = None
     temperature_max_c: int | None = None
+    source_span: SourceSpan | None = None
 
 
 class WeatherWarning(BaseModel):
@@ -132,6 +134,7 @@ class WeatherData(BaseModel):
     story_id: str | None = None
     language: str = "tr"
     source_text_hash: str = ""
+    source_language_text_hash: str | None = None
     forecast_reference: ForecastReference = Field(default_factory=ForecastReference)
     overview: WeatherOverview = Field(default_factory=WeatherOverview)
     regions: list[WeatherRegion] = Field(default_factory=list)

@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "story_id": "fixture_weather_ch1",
+  "language": "tr",
+  "source_text_hash": "5561b04ca56b848a",
+  "forecast_reference": {
+    "date_text": null,
+    "day_reference": null
+  },
+  "overview": {
+    "headline": null,
+    "temperature_min_c": 20,
+    "temperature_max_c": 29
+  },
+  "regions": [
+    {
+      "region_id": "east",
+      "label_tr": "Doğu",
+      "conditions": [
+        "showers"
+      ],
+      "temperature_min_c": null,
+      "temperature_max_c": null,
+      "wind": null,
+      "source_span": {
+        "text": "Kuzey ve doğu kesimlerinde sağanak yağış bekleniyor",
+        "start": 0,
+        "end": 51
+      },
+      "confidence": 0.85
+    },
+    {
+      "region_id": "north",
+      "label_tr": "Kuzey",
+      "conditions": [
+        "showers"
+      ],
+      "temperature_min_c": null,
+      "temperature_max_c": null,
+      "wind": null,
+      "source_span": {
+        "text": "Kuzey ve doğu kesimlerinde sağanak yağış bekleniyor",
+        "start": 0,
+        "end": 51
+      },
+      "confidence": 0.85
+    },
+    {
+      "region_id": "southwest",
+      "label_tr": "Güneybatı",
+      "conditions": [
+        "sunny"
+      ],
+      "temperature_min_c": null,
+      "temperature_max_c": null,
+      "wind": null,
+      "source_span": {
+        "text": "Güneybatıda ise güneşli bir hava hakim olacak",
+        "start": 53,
+        "end": 98
+      },
+      "confidence": 0.95
+    }
+  ],
+  "outlook": [],
+  "warnings": [],
+  "unresolved_claims": []
+}

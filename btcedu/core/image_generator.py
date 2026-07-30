@@ -1,5 +1,6 @@
 """Image generation: Create visual assets from chapter JSON via DALL-E 3."""
 
+import fcntl
 import hashlib
 import json
 import logging
@@ -29,6 +30,19 @@ logger = logging.getLogger(__name__)
 
 # Visual types that need API generation vs. template/placeholder
 VISUAL_TYPES_NEEDING_GENERATION = {"diagram", "b_roll", "screen_share"}
+
+
+def _read_weather_overrides(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as error:
+        raise ValueError(f"Invalid weather overrides: {path}: {error}") from error
+    if not isinstance(loaded, dict):
+        raise ValueError(f"Invalid weather overrides: {path}: expected an object")
+    return {str(key): str(value) for key, value in loaded.items() if value in {"weather", "normal"}}
+
 
 # Transliteration map for characters that NFKD does not decompose to an ASCII
 # base (Turkish dotless-i, German eszett, etc.). Applied before NFKD so chapter
@@ -170,6 +184,26 @@ def _should_render_deterministic(visual, imagegen_cfg: dict) -> bool:
     return False
 
 
+def _weather_detection_for_chapter(chapter, weather_config: dict | None = None):
+    """Run the canonical multi-signal weather detector for one chapter."""
+    from btcedu.core.weather.detector import detect_weather_story
+
+    narration_text = getattr(getattr(chapter, "narration", None), "text", "") or ""
+    source_text = getattr(chapter, "source_text", None)
+    story_type = getattr(chapter, "story_type", None)
+    metadata = getattr(chapter, "metadata", None)
+    return detect_weather_story(
+        title=getattr(chapter, "title", "") or "",
+        story_type=story_type if isinstance(story_type, str) else None,
+        narration_text=narration_text,
+        source_text=source_text if isinstance(source_text, str) else "",
+        metadata=metadata if isinstance(metadata, dict) else {},
+        min_confidence=((weather_config or {}).get("detection", {}) or {}).get(
+            "min_confidence", 0.75
+        ),
+    )
+
+
 def _load_existing_image_entries(manifest_path: Path) -> dict[str, dict]:
     """Load {chapter_id: entry} from an existing image manifest, or {}."""
     if not manifest_path.exists():
@@ -252,6 +286,7 @@ class ImageEntry:
     mime_type: str
     size_bytes: int
     metadata: dict  # Additional generation params, cost, etc.
+    asset_type: str = "photo"
 
 
 @dataclass
@@ -353,6 +388,12 @@ def generate_images(
     _weather_cfg: dict = (_profile.stage_config.get("weather", {}) if _profile else {}) or {}
 
     output_dir = Path(settings.outputs_dir) / episode_id / "images"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    weather_overrides_path = output_dir / "weather_overrides.json"
+    weather_overrides_lock_path = output_dir / ".weather_overrides.lock"
+    with weather_overrides_lock_path.open("a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_SH)
+        weather_overrides = _read_weather_overrides(weather_overrides_path)
     manifest_path = output_dir / "manifest.json"
     provenance_path = (
         Path(settings.outputs_dir) / episode_id / "provenance" / "imagegen_provenance.json"
@@ -360,7 +401,11 @@ def generate_images(
 
     # Load chapters
     chapters_doc = _load_chapters(chapters_path)
-    chapters_hash = _compute_chapters_content_hash(chapters_doc, weather_config=_weather_cfg)
+    chapters_hash = _compute_chapters_content_hash(
+        chapters_doc,
+        weather_config=_weather_cfg,
+        weather_overrides=weather_overrides,
+    )
 
     # Load and register prompt (profile can override template file)
     registry = PromptRegistry(session)
@@ -443,13 +488,6 @@ def generate_images(
 
         image_service = get_image_service(settings)
 
-        # Filter chapters to process
-        chapters_to_process = chapters_doc.chapters
-        if chapter_id:
-            chapters_to_process = [c for c in chapters_doc.chapters if c.chapter_id == chapter_id]
-            if not chapters_to_process:
-                raise ValueError(f"Chapter {chapter_id} not found in chapters.json")
-
         # Load existing manifest for partial regeneration / chapter recovery
         existing_entries = {}
         if (chapter_id or recover_ids is not None) and manifest_path.exists():
@@ -457,6 +495,28 @@ def generate_images(
             if not existing_entries:
                 logger.warning(
                     f"Could not load existing manifest from {manifest_path}, will regenerate all"
+                )
+
+        # Filter chapters to process. A targeted rerender is safe only when the
+        # existing manifest can supply every untouched chapter; otherwise rebuild
+        # the complete manifest instead of silently dropping entries.
+        chapters_to_process = chapters_doc.chapters
+        if chapter_id:
+            if not any(c.chapter_id == chapter_id for c in chapters_doc.chapters):
+                raise ValueError(f"Chapter {chapter_id} not found in chapters.json")
+            untouched_ids = {
+                chapter.chapter_id
+                for chapter in chapters_doc.chapters
+                if chapter.chapter_id != chapter_id
+            }
+            if existing_entries and untouched_ids.issubset(existing_entries):
+                chapters_to_process = [
+                    c for c in chapters_doc.chapters if c.chapter_id == chapter_id
+                ]
+            elif existing_entries:
+                logger.warning(
+                    "Existing image manifest is incomplete; rebuilding all chapters for %s",
+                    episode_id,
                 )
 
         # Process each chapter
@@ -500,6 +560,9 @@ def generate_images(
                 logger.warning(f"Chapter {chapter.chapter_id} has no visual, skipping")
                 continue
 
+            weather_override = weather_overrides.get(chapter.chapter_id)
+            weather_detection = _weather_detection_for_chapter(chapter, _weather_cfg)
+
             # Reuse the existing entry when this chapter is not the target of a
             # single-chapter regen, or (during recovery) is not one of the
             # failed/missing chapters being retried.
@@ -519,11 +582,33 @@ def generate_images(
                     generated_count += 1
                 continue
 
+            if weather_override == "weather" or (
+                weather_override != "normal" and weather_detection.is_weather_story
+            ):
+                try:
+                    image_entry = _render_weather_chapter(
+                        chapter,
+                        output_dir,
+                        accent_color=_profile_accent,
+                        weather_config=_weather_cfg,
+                    )
+                    deterministic_count += 1
+                except Exception as error:
+                    raise RuntimeError(
+                        f"Weather visual failed for chapter {chapter.chapter_id}: {error}"
+                    ) from error
+                image_entries.append(image_entry)
+                _create_media_asset_record(session, episode_id, image_entry, prompt_version.id)
+                continue
+
             # Exact-data visuals (maps/charts/tables/weather/election/timelines)
             # are rendered locally from their exact spec — never a generative
             # model — so numbers/labels/boundaries are never hallucinated. This
             # never affects narration and, on error, degrades to a failed entry.
-            if _should_render_deterministic(visual, _imagegen_cfg):
+            should_render_deterministic = _should_render_deterministic(visual, _imagegen_cfg)
+            if weather_override == "normal" and _detect_exact_data_category(visual) == "weather":
+                should_render_deterministic = False
+            if should_render_deterministic:
                 deterministic_category = _detect_exact_data_category(visual)
                 try:
                     image_entry = _render_deterministic_visual(
@@ -620,6 +705,15 @@ def generate_images(
             if image_entry.generation_method != "failed":
                 _create_media_asset_record(session, episode_id, image_entry, prompt_version.id)
 
+        if chapter_id and existing_entries:
+            updated_entries = {entry.chapter_id: entry for entry in image_entries}
+            image_entries = [
+                updated_entries.get(chapter.chapter_id)
+                or ImageEntry(**existing_entries[chapter.chapter_id])
+                for chapter in chapters_doc.chapters
+                if chapter.chapter_id in updated_entries or chapter.chapter_id in existing_entries
+            ]
+
         # Write manifest
         manifest_data = {
             "episode_id": episode_id,
@@ -660,9 +754,16 @@ def generate_images(
             json.dumps(provenance_data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
 
-        # This stage is now current: clear any stale marker from cascade
-        # invalidation so a single stale flag doesn't force endless regeneration.
-        _clear_stale_marker(manifest_path.with_suffix(".json.stale"))
+        # Clear invalidation only if no override changed while image generation
+        # was running. The API uses the same inter-process lock.
+        with weather_overrides_lock_path.open("a+", encoding="utf-8") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            current_weather_overrides = _read_weather_overrides(weather_overrides_path)
+            if current_weather_overrides != weather_overrides:
+                raise RuntimeError(
+                    "Weather overrides changed during image generation; rerun imagegen"
+                )
+            _clear_stale_marker(manifest_path.with_suffix(".json.stale"))
 
         # Create ContentArtifact record
         artifact = ContentArtifact(
@@ -741,6 +842,7 @@ def _compute_chapters_content_hash(
     chapters_doc: ChapterDocument,
     *,
     weather_config: dict | None = None,
+    weather_overrides: dict[str, str] | None = None,
 ) -> str:
     """Compute SHA-256 hash of relevant chapter fields for change detection.
 
@@ -770,10 +872,20 @@ def _compute_chapters_content_hash(
                 else None
             ),
         }
+        if weather_overrides and ch.chapter_id in weather_overrides:
+            chapter_entry["_weather_override"] = weather_overrides[ch.chapter_id]
         # For weather chapters, include narration text and renderer version
         # so narration changes or renderer upgrades re-run imagegen.
-        is_weather = False
-        if ch.visual:
+        is_weather = bool(weather_overrides and weather_overrides.get(ch.chapter_id) == "weather")
+        if not is_weather and not (
+            weather_overrides and weather_overrides.get(ch.chapter_id) == "normal"
+        ):
+            is_weather = _weather_detection_for_chapter(ch, weather_config).is_weather_story
+        if (
+            not is_weather
+            and ch.visual
+            and not (weather_overrides and weather_overrides.get(ch.chapter_id) == "normal")
+        ):
             cat = _detect_exact_data_category(ch.visual)
             if cat == "weather":
                 is_weather = True
@@ -784,6 +896,11 @@ def _compute_chapters_content_hash(
             chapter_entry["_weather_narration_hash"] = hashlib.sha256(
                 narr_text.encode()
             ).hexdigest()[:16]
+            chapter_entry["_weather_source_text_hash"] = hashlib.sha256(
+                (getattr(ch, "source_text", None) or "").encode()
+            ).hexdigest()[:16]
+            chapter_entry["_weather_story_type"] = getattr(ch, "story_type", None)
+            chapter_entry["_weather_metadata"] = getattr(ch, "metadata", None) or {}
             chapter_entry["_weather_renderer_version"] = WEATHER_RENDERER_VERSION
             chapter_entry["_weather_schema_version"] = WEATHER_SCHEMA_VERSION
             chapter_entry["_weather_renderer_fingerprint"] = _weather_renderer_fingerprint(
@@ -1099,9 +1216,15 @@ def _render_deterministic_visual(
         from btcedu.core.weather.detector import detect_weather_story
 
         narration_text = getattr(getattr(chapter, "narration", None), "text", "") or ""
+        source_text = getattr(chapter, "source_text", None)
+        story_type = getattr(chapter, "story_type", None)
+        metadata = getattr(chapter, "metadata", None)
         detection = detect_weather_story(
             title=chapter.title or "",
+            story_type=story_type if isinstance(story_type, str) else None,
             narration_text=narration_text,
+            source_text=source_text if isinstance(source_text, str) else "",
+            metadata=metadata if isinstance(metadata, dict) else {},
             min_confidence=((weather_config or {}).get("detection", {}) or {}).get(
                 "min_confidence", 0.75
             ),
@@ -1219,11 +1342,23 @@ def _render_weather_chapter(
     _wcfg = weather_config or {}
     _branding = _wcfg.get("branding", {}) or {}
     effective_accent = _branding.get("accent_color") or accent_color
+    weather_title = _branding.get("title") or "Hava Durumu"
+    _rendering = _wcfg.get("rendering", {}) or {}
+    _resolution = _rendering.get("resolution", {}) or {}
+    width = int(_resolution.get("width", 1920))
+    height = int(_resolution.get("height", 1080))
+    animation_level = str(_rendering.get("animation_level", "subtle"))
 
     # Detect (confirmation — we already routed here based on keywords)
+    source_text = getattr(chapter, "source_text", None)
+    story_type = getattr(chapter, "story_type", None)
+    metadata = getattr(chapter, "metadata", None)
     detection = detect_weather_story(
         title=chapter.title or "",
+        story_type=story_type if isinstance(story_type, str) else None,
         narration_text=narration_text,
+        source_text=source_text if isinstance(source_text, str) else "",
+        metadata=metadata if isinstance(metadata, dict) else {},
         min_confidence=(_wcfg.get("detection", {}) or {}).get("min_confidence", 0.75),
     )
 
@@ -1231,6 +1366,7 @@ def _render_weather_chapter(
     weather_data = extract_weather_data(
         narration_text,
         story_id=chapter.chapter_id,
+        source_text=source_text if isinstance(source_text, str) else "",
     )
 
     # Validate
@@ -1263,6 +1399,15 @@ def _render_weather_chapter(
     # Plan scenes
     scene_plan = plan_weather_scenes(weather_data, duration_seconds, story_id=chapter.chapter_id)
 
+    weather_data_path = output_dir / f"{chapter.chapter_id}_weather.json"
+    scene_plan_path = output_dir / f"{chapter.chapter_id}_weather_scenes.json"
+    validation_path = output_dir / f"{chapter.chapter_id}_weather_validation.json"
+    detection_path = output_dir / f"{chapter.chapter_id}_weather_detection.json"
+    weather_data_path.write_text(weather_data.model_dump_json(indent=2), encoding="utf-8")
+    scene_plan_path.write_text(scene_plan.model_dump_json(indent=2), encoding="utf-8")
+    validation_path.write_text(validation.model_dump_json(indent=2), encoding="utf-8")
+    detection_path.write_text(detection.model_dump_json(indent=2), encoding="utf-8")
+
     # Render
     filename = f"{chapter.chapter_id}_weather.png"
     target_path = output_dir / filename
@@ -1272,6 +1417,9 @@ def _render_weather_chapter(
         target_path,
         accent_color=effective_accent,
         profile=json.dumps(_wcfg, sort_keys=True, ensure_ascii=False),
+        width=width,
+        height=height,
+        title=weather_title,
     )
 
     # Reject if render failed or has publish-blocking findings
@@ -1316,7 +1464,7 @@ def _render_weather_chapter(
         prompt=None,
         generation_method="deterministic",
         model=None,
-        size="1920x1080",
+        size=f"{width}x{height}",
         mime_type="image/png",
         size_bytes=file_size,
         metadata={
@@ -1330,8 +1478,16 @@ def _render_weather_chapter(
             "detection_confidence": detection.confidence,
             "region_count": len(weather_data.regions),
             "validation_valid": validation.valid,
+            "weather_data_path": f"images/{weather_data_path.name}",
+            "scene_plan_path": f"images/{scene_plan_path.name}",
+            "validation_path": f"images/{validation_path.name}",
+            "detection_path": f"images/{detection_path.name}",
+            "scene_count": len(scene_plan.scenes),
+            "animation_level": animation_level,
+            "scene_video_deferred_until_render": animation_level != "none",
             "generated_at": _utcnow().isoformat(),
         },
+        asset_type="photo",
     )
 
 
@@ -1344,7 +1500,9 @@ def _create_media_asset_record(
     """Create MediaAsset database record for generated image."""
     media_asset = MediaAsset(
         episode_id=episode_id,
-        asset_type=MediaAssetType.IMAGE,
+        asset_type=(
+            MediaAssetType.VIDEO if image_entry.asset_type == "video" else MediaAssetType.IMAGE
+        ),
         chapter_id=image_entry.chapter_id,
         file_path=image_entry.file_path,
         mime_type=image_entry.mime_type,

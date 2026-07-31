@@ -541,6 +541,7 @@ class TestWeatherRendering:
         ).read_bytes()
 
     def test_weather_map_is_explicitly_sized_and_high_contrast(self):
+        import re
         from pathlib import Path
 
         map_svg = (
@@ -549,6 +550,45 @@ class TestWeatherRendering:
         assert 'width="760"' in map_svg
         assert 'height="760"' in map_svg
         assert 'stroke="rgba(255,255,255,0.82)"' in map_svg
+        assert "Natural Earth Admin 0" in map_svg
+
+        path = re.search(r'<path[^>]+d="([^"]+)"', map_svg)
+        assert path is not None
+        mainland = path.group(1).split(" Z ", 1)[0]
+        points = [
+            (float(x), float(y))
+            for x, y in re.findall(r"(\d+\.\d+),(\d+\.\d+)", mainland)
+        ]
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        width = max(xs) - min(xs)
+        height = max(ys) - min(ys)
+        area = abs(
+            sum(
+                x1 * y2 - x2 * y1
+                for (x1, y1), (x2, y2) in zip(points, points[1:] + points[:1], strict=True)
+            )
+        ) / 2
+
+        assert 0.70 < width / height < 0.80
+        assert area / (width * height) < 0.90
+
+    def test_weather_map_markers_fit_geographic_outline(self):
+        from pathlib import Path
+
+        template = (
+            Path(__file__).parents[1]
+            / "btcedu"
+            / "core"
+            / "weather"
+            / "templates"
+            / "weather_card.html"
+        ).read_text()
+
+        assert ".marker-coast { left: 49.3%; top: 19.7%; }" in template
+        assert ".marker-central { left: 49.3%; top: 51.6%; }" in template
+        assert ".marker-alps { left: 51.9%; top: 82.5%; }" in template
+        assert "Simplified Germany silhouette" not in template
 
 
 # ============================================================

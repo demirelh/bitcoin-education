@@ -1317,6 +1317,7 @@ def render(
 ) -> None:
     """Render draft video from chapters, images, and TTS audio (v2 pipeline, Sprint 9)."""
     from btcedu.core.renderer import render_video
+    from btcedu.core.runlock import PipelineBusyError, pipeline_lock
 
     settings = ctx.obj["settings"]
     if dry_run:
@@ -1324,19 +1325,23 @@ def render(
 
     session = ctx.obj["session_factory"]()
     try:
-        for eid in episode_ids:
-            try:
-                result = render_video(session, eid, settings, force=force)
-                if result.skipped:
-                    click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
-                else:
-                    click.echo(
-                        f"[OK] {eid} -> {result.segment_count} segments, "
-                        f"{result.total_duration_seconds:.1f}s, "
-                        f"{result.total_size_bytes / 1024 / 1024:.1f}MB"
-                    )
-            except Exception as e:
-                click.echo(f"[FAIL] {eid}: {e}", err=True)
+        try:
+            with pipeline_lock(settings):
+                for eid in episode_ids:
+                    try:
+                        result = render_video(session, eid, settings, force=force)
+                        if result.skipped:
+                            click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
+                        else:
+                            click.echo(
+                                f"[OK] {eid} -> {result.segment_count} segments, "
+                                f"{result.total_duration_seconds:.1f}s, "
+                                f"{result.total_size_bytes / 1024 / 1024:.1f}MB"
+                            )
+                    except Exception as e:
+                        click.echo(f"[FAIL] {eid}: {e}", err=True)
+        except PipelineBusyError as exc:
+            raise click.ClickException(f"Pipeline busy: {exc}") from exc
     finally:
         session.close()
 

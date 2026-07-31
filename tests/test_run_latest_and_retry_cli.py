@@ -53,6 +53,24 @@ def test_run_latest_command_pipeline_busy_exits_nonzero(mock_run_latest, db_sess
     assert "No pending episodes" not in result.output
 
 
+@patch("btcedu.core.runlock.pipeline_lock")
+def test_render_command_pipeline_busy_exits_nonzero(mock_pipeline_lock, db_session, tmp_path):
+    mock_pipeline_lock.side_effect = PipelineBusyError("lock held")
+    runner = CliRunner()
+
+    result = runner.invoke(
+        cli,
+        ["render", "--episode-id", "ep-1"],
+        obj={
+            "settings": Settings(reports_dir=str(tmp_path / "reports")),
+            "session_factory": lambda: db_session,
+        },
+    )
+
+    assert result.exit_code == 1
+    assert "Pipeline busy" in result.output
+
+
 @patch("btcedu.core.pipeline.run_latest")
 def test_run_latest_command_success(mock_run_latest, db_session, tmp_path):
     mock_run_latest.return_value = PipelineReport(

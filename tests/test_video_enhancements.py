@@ -12,6 +12,7 @@ from btcedu.services.ffmpeg_service import (
     create_intro_segment,
     create_outro_segment,
     create_segment,
+    create_topic_intro_segment,
     create_video_segment,
 )
 
@@ -370,6 +371,8 @@ class TestIntroOutro:
             result.ffmpeg_command.index("-filter_complex") + 1
         ]
         assert "Bitcoin Haberleri" in fc
+        assert "afade=t=out" in fc
+        assert "[a]" in fc
 
     def test_intro_has_staggered_timing(self, tmp_path):
         result = create_intro_segment(
@@ -383,10 +386,51 @@ class TestIntroOutro:
         fc = result.ffmpeg_command[
             result.ffmpeg_command.index("-filter_complex") + 1
         ]
-        # Staggered appearance: 0.5s, 1.0s, 1.5s
+        # Staggered appearance for eyebrow, channel, slogan, title, and date.
+        assert "0.3" in fc
         assert "0.5" in fc
-        assert "1.0" in fc
-        assert "1.5" in fc
+        assert "0.9" in fc
+        assert "1.3" in fc
+        assert "1.6" in fc
+
+    def test_intro_contains_channel_slogan(self, tmp_path):
+        result = create_intro_segment(
+            output_path=str(tmp_path / "intro.mp4"),
+            show_name="ALMANYA24",
+            slogan="Almanya'nın nabzı burada atıyor.",
+            episode_title="Günün Haberleri",
+            episode_date="31.07.2026",
+            dry_run=True,
+        )
+
+        fc = result.ffmpeg_command[
+            result.ffmpeg_command.index("-filter_complex") + 1
+        ]
+        assert "ALMANYA24" in fc
+        assert "nabzı burada atıyor" in fc
+        assert "GÜNÜN HABERLERİ" in fc
+
+    def test_topic_intro_contains_title_progress_and_audio_fade(self, tmp_path):
+        audio_path = tmp_path / "intro.mp3"
+        audio_path.write_bytes(b"test-audio")
+
+        result = create_topic_intro_segment(
+            output_path=str(tmp_path / "topic.mp4"),
+            topic_title="Berlin'de yeni ulaşım düzenlemesi",
+            topic_index=2,
+            total_topics=7,
+            audio_path=str(audio_path),
+            dry_run=True,
+        )
+
+        fc = result.ffmpeg_command[
+            result.ffmpeg_command.index("-filter_complex") + 1
+        ]
+        assert "Berlin" in fc
+        assert "02 / 07" in fc
+        assert "ALMANYA24" in fc
+        assert "afade=t=out" in fc
+        assert str(audio_path) in result.ffmpeg_command
 
     def test_create_outro_segment_dry_run(self, tmp_path):
         result = create_outro_segment(

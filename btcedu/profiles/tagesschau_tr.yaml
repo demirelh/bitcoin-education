@@ -114,7 +114,14 @@ stage_config:
     ticker_enabled: true
     intro_enabled: true
     intro_audio: "data/assets/tagesschau_tr/intro.mp3"
-    intro_show_name: "Tagesschau Türkçe"
+    intro_duration: 5.5
+    intro_show_name: "ALMANYA24"
+    intro_slogan: "Almanya'nın nabzı burada atıyor."
+    intro_episode_title: "Almanya Gündemi"
+    topic_intro_enabled: true
+    topic_intro_duration: 2.4
+    topic_intro_label: "GÜNDEM"
+    topic_intro_audio: "data/assets/tagesschau_tr/intro.mp3"
     outro_text: "Kaynak: ARD Tagesschau — Türkçe altyazı & çeviri"
     font: "Roboto-Condensed-Bold"
     music_bed: "data/assets/music/news_bed.mp3"

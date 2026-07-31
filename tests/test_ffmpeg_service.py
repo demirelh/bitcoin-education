@@ -84,7 +84,8 @@ def test_escape_drawtext_colon_and_quotes():
     text = "Text: with 'quotes'"
     escaped = _escape_drawtext(text)
     assert "\\:" in escaped  # Colon escaped
-    assert "'\\''" in escaped  # Quote escaped
+    assert "’quotes’" in escaped
+    assert "'" not in escaped
 
 
 def test_escape_drawtext_turkish_chars():

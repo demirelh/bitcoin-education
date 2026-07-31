@@ -165,6 +165,13 @@ def render_video(
         _rc("intro_enabled", getattr(settings, "render_intro_enabled", False))
     )
     _eff_intro_audio = str(_rc("intro_audio", "") or "")
+    _eff_intro_slogan = str(_rc("intro_slogan", "") or "")
+    _eff_intro_episode_title = str(_rc("intro_episode_title", "") or "")
+    _eff_intro_duration = float(_rc("intro_duration", settings.render_intro_duration))
+    _eff_topic_intro_enabled = bool(_rc("topic_intro_enabled", False))
+    _eff_topic_intro_duration = float(_rc("topic_intro_duration", 2.4))
+    _eff_topic_intro_label = str(_rc("topic_intro_label", "GÜNDEM") or "GÜNDEM")
+    _eff_topic_intro_audio = str(_rc("topic_intro_audio", _eff_intro_audio) or "")
     _eff_outro_text = str(_rc("outro_text", getattr(settings, "render_outro_text", "")))
     _eff_font = str(_rc("font", getattr(settings, "render_font", "")))
     _eff_music_bed = str(_rc("music_bed", getattr(settings, "render_music_bed", "")))
@@ -212,6 +219,9 @@ def render_video(
     _intro_audio_bytes: bytes | None = None
     if _eff_intro_audio and Path(_eff_intro_audio).exists():
         _intro_audio_bytes = Path(_eff_intro_audio).read_bytes()
+    _topic_intro_audio_bytes: bytes | None = None
+    if _eff_topic_intro_audio and Path(_eff_topic_intro_audio).exists():
+        _topic_intro_audio_bytes = Path(_eff_topic_intro_audio).read_bytes()
     try:
         _enh_hash_data = {
             "ken_burns": _eff_ken_burns,
@@ -222,6 +232,18 @@ def render_video(
             "intro_audio_sha256": (
                 hashlib.sha256(_intro_audio_bytes).hexdigest()
                 if _intro_audio_bytes is not None
+                else None
+            ),
+            "intro_slogan": _eff_intro_slogan,
+            "intro_episode_title": _eff_intro_episode_title,
+            "intro_duration": _eff_intro_duration,
+            "topic_intro_enabled": _eff_topic_intro_enabled,
+            "topic_intro_duration": _eff_topic_intro_duration,
+            "topic_intro_label": _eff_topic_intro_label,
+            "topic_intro_audio": _eff_topic_intro_audio,
+            "topic_intro_audio_sha256": (
+                hashlib.sha256(_topic_intro_audio_bytes).hexdigest()
+                if _topic_intro_audio_bytes is not None
                 else None
             ),
             "outro": bool(settings.render_outro_enabled),
@@ -242,7 +264,6 @@ def render_video(
             "ticker_speed": settings.render_ticker_speed,
             "ticker_height": settings.render_ticker_height,
             "ticker_fontsize": settings.render_ticker_fontsize,
-            "intro_duration": settings.render_intro_duration,
             "intro_bg_color": settings.render_intro_bg_color,
             "outro_duration": settings.render_outro_duration,
             "outro_bg_color": settings.render_outro_bg_color,
@@ -302,6 +323,7 @@ def render_video(
             create_intro_segment,
             create_outro_segment,
             create_segment,
+            create_topic_intro_segment,
             create_video_segment,
             get_ffmpeg_version,
             probe_media,
@@ -318,6 +340,12 @@ def render_video(
             inputs_dir.mkdir(parents=True, exist_ok=True)
             _intro_audio_snapshot = inputs_dir / "intro.mp3"
             _intro_audio_snapshot.write_bytes(_intro_audio_bytes)
+        _topic_intro_audio_snapshot: Path | None = None
+        if _topic_intro_audio_bytes is not None:
+            inputs_dir = render_dir / "inputs"
+            inputs_dir.mkdir(parents=True, exist_ok=True)
+            _topic_intro_audio_snapshot = inputs_dir / "topic_intro.mp3"
+            _topic_intro_audio_snapshot.write_bytes(_topic_intro_audio_bytes)
 
         # Render each chapter segment
         segment_entries: list[RenderSegmentEntry] = []
@@ -648,20 +676,65 @@ def render_video(
             str((base_dir / entry.segment_path).absolute()) for entry in segment_entries
         ]
 
+        if _eff_topic_intro_enabled:
+            topic_chapter_ids = {
+                chapter.chapter_id
+                for chapter in chapters_doc.chapters
+                if (chapter.story_type or "").lower() not in {"intro", "outro"}
+            }
+            topic_total = len(topic_chapter_ids)
+            topic_index = 0
+            chapter_by_id = {chapter.chapter_id: chapter for chapter in chapters_doc.chapters}
+            paths_with_topic_intros: list[str] = []
+            for entry, segment_abs_path in zip(segment_entries, segment_abs_paths, strict=True):
+                chapter = chapter_by_id[entry.chapter_id]
+                if chapter.chapter_id in topic_chapter_ids:
+                    topic_index += 1
+                    topic_path = segments_dir / f"topic_{chapter.chapter_id}.mp4"
+                    create_topic_intro_segment(
+                        output_path=str(topic_path),
+                        topic_title=chapter.title,
+                        topic_index=topic_index,
+                        total_topics=topic_total,
+                        channel_name=_eff_intro_show_name or settings.render_intro_show_name,
+                        section_label=_eff_topic_intro_label,
+                        audio_path=(
+                            str(_topic_intro_audio_snapshot)
+                            if _topic_intro_audio_snapshot
+                            else None
+                        ),
+                        duration=_eff_topic_intro_duration,
+                        resolution=settings.render_resolution,
+                        fps=settings.render_fps,
+                        bg_color=settings.render_intro_bg_color,
+                        accent_color=_accent_color,
+                        font=_eff_font or settings.render_font,
+                        crf=settings.render_crf,
+                        preset=settings.render_preset,
+                        timeout_seconds=settings.render_timeout_segment,
+                        dry_run=settings.dry_run,
+                    )
+                    paths_with_topic_intros.append(str(topic_path.absolute()))
+                    total_duration += _eff_topic_intro_duration
+                paths_with_topic_intros.append(segment_abs_path)
+            segment_abs_paths = paths_with_topic_intros
+            logger.info("Created %d topic intro segments", topic_index)
+
         # Prepend intro if enabled
         if _eff_intro_enabled:
             intro_path = segments_dir / "intro.mp4"
             _ep_date = ""
             if hasattr(episode, "published_at") and episode.published_at:
                 _ep_date = episode.published_at.strftime("%d.%m.%Y")
-            _ep_title = getattr(episode, "title", "") or episode_id
+            _ep_title = _eff_intro_episode_title or getattr(episode, "title", "") or episode_id
             create_intro_segment(
                 output_path=str(intro_path),
                 show_name=_eff_intro_show_name or settings.render_intro_show_name,
                 episode_title=_ep_title,
                 episode_date=_ep_date,
+                slogan=_eff_intro_slogan,
                 audio_path=str(_intro_audio_snapshot) if _intro_audio_snapshot else None,
-                duration=settings.render_intro_duration,
+                duration=_eff_intro_duration,
                 resolution=settings.render_resolution,
                 fps=settings.render_fps,
                 bg_color=settings.render_intro_bg_color,
@@ -673,8 +746,8 @@ def render_video(
                 dry_run=settings.dry_run,
             )
             segment_abs_paths.insert(0, str(intro_path.absolute()))
-            total_duration += settings.render_intro_duration
-            logger.info("Intro segment created (%.1fs)", settings.render_intro_duration)
+            total_duration += _eff_intro_duration
+            logger.info("Intro segment created (%.1fs)", _eff_intro_duration)
 
         # Append outro if enabled
         if getattr(settings, "render_outro_enabled", False) is True:
@@ -1001,6 +1074,7 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
     _enh_hash_data: dict = {}
     try:
         intro_audio = str(_rc("intro_audio", "") or "")
+        topic_intro_audio = str(_rc("topic_intro_audio", intro_audio) or "")
         _enh_hash_data = {
             "ken_burns": bool(
                 _rc("ken_burns_enabled", getattr(settings, "render_ken_burns_enabled", False))
@@ -1019,6 +1093,18 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
             "intro_audio_sha256": (
                 hashlib.sha256(Path(intro_audio).read_bytes()).hexdigest()
                 if intro_audio and Path(intro_audio).exists()
+                else None
+            ),
+            "intro_slogan": str(_rc("intro_slogan", "") or ""),
+            "intro_episode_title": str(_rc("intro_episode_title", "") or ""),
+            "intro_duration": float(_rc("intro_duration", settings.render_intro_duration)),
+            "topic_intro_enabled": bool(_rc("topic_intro_enabled", False)),
+            "topic_intro_duration": float(_rc("topic_intro_duration", 2.4)),
+            "topic_intro_label": str(_rc("topic_intro_label", "GÜNDEM") or "GÜNDEM"),
+            "topic_intro_audio": topic_intro_audio,
+            "topic_intro_audio_sha256": (
+                hashlib.sha256(Path(topic_intro_audio).read_bytes()).hexdigest()
+                if topic_intro_audio and Path(topic_intro_audio).exists()
                 else None
             ),
             "outro": bool(settings.render_outro_enabled),
@@ -1041,7 +1127,6 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
             "ticker_speed": settings.render_ticker_speed,
             "ticker_height": settings.render_ticker_height,
             "ticker_fontsize": settings.render_ticker_fontsize,
-            "intro_duration": settings.render_intro_duration,
             "intro_bg_color": settings.render_intro_bg_color,
             "outro_duration": settings.render_outro_duration,
             "outro_bg_color": settings.render_outro_bg_color,

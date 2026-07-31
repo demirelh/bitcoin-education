@@ -208,6 +208,12 @@ class TestProfileRegistry:
         assert transcription["secondary"]["minimum_severity"] == "major"
         assert transcription["max_secondary_audio_seconds"] == 300
         assert transcription["max_secondary_clips"] == 10
+        render = news.stage_config["render"]
+        assert render["intro_show_name"] == "ALMANYA24"
+        assert render["intro_slogan"] == "Almanya'nın nabzı burada atıyor."
+        assert render["intro_episode_title"] == "Almanya Gündemi"
+        assert render["topic_intro_enabled"] is True
+        assert render["topic_intro_duration"] == 2.4
 
 
 # -----------------------------------------------------------------------

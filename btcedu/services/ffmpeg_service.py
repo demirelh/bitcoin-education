@@ -145,7 +145,10 @@ def _escape_drawtext(text: str) -> str:
     # Note: Turkish chars (ş,ç,ğ,ı,ö,ü,İ) pass through unmodified
     text = text.replace("\\", "\\\\")  # Backslash must be first
     text = text.replace(":", "\\:")
-    text = text.replace("'", "'\\''")  # Escape single quotes
+    # ffmpeg drawtext treats ASCII apostrophes as filter delimiters even when
+    # passed without a shell. A typographic apostrophe preserves the intended
+    # Turkish punctuation without leaking the rest of the filter onto screen.
+    text = text.replace("'", "’")
     return text
 
 
@@ -339,6 +342,7 @@ def create_intro_segment(
     show_name: str,
     episode_title: str,
     episode_date: str,
+    slogan: str | None = None,
     audio_path: str | None = None,
     duration: float = 4.0,
     resolution: str = "1920x1080",
@@ -351,11 +355,12 @@ def create_intro_segment(
     timeout_seconds: int = 60,
     dry_run: bool = False,
 ) -> SegmentResult:
-    """Create intro segment with show name, episode title, and date."""
+    """Create a branded intro segment with a softly fading audio sting."""
     font_path = find_font_path(font)
     escaped_show = _escape_drawtext(show_name)
     escaped_title = _escape_drawtext(episode_title)
     escaped_date = _escape_drawtext(episode_date)
+    escaped_slogan = _escape_drawtext(slogan or "")
 
     # If accent_color and bg_color are identical (or near-identical), the show
     # name text would be invisible against the background. Fall back to white
@@ -374,24 +379,38 @@ def create_intro_segment(
         _dist = 999
     _show_color = "white" if _dist < 60 else accent_color
 
-    fade_out_start = max(0, duration - 0.5)
+    fade_out_start = max(0, duration - 0.7)
+    audio_fade_out_start = max(0, duration - 1.2)
 
     filter_parts = [
         f"[0:v]"
+        f"drawbox=x=0:y=0:w=iw:h=18:color={accent_color}:t=fill,"
+        f"drawbox=x=0:y=ih-18:w=iw:h=18:color={accent_color}:t=fill,"
+        f"drawtext=fontfile={font_path}:text='GÜNÜN HABERLERİ'"
+        f":fontsize=28:fontcolor=white@0.75"
+        f":x=(w-text_w)/2:y=(h/2)-185"
+        f":enable='between(t\\,0.3\\,{duration})',"
         f"drawtext=fontfile={font_path}:text='{escaped_show}'"
-        f":fontsize=80:fontcolor={_show_color}"
-        f":x=(w-text_w)/2:y=(h/2)-80"
+        f":fontsize=104:fontcolor={_show_color}"
+        f":x=(w-text_w)/2:y=(h/2)-125"
         f":enable='between(t\\,0.5\\,{duration})',"
+        f"drawtext=fontfile={font_path}:text='{escaped_slogan}'"
+        f":fontsize=38:fontcolor=white"
+        f":x=(w-text_w)/2:y=(h/2)+5"
+        f":enable='between(t\\,0.9\\,{duration})',"
         f"drawtext=fontfile={font_path}:text='{escaped_title}'"
-        f":fontsize=48:fontcolor=white"
-        f":x=(w-text_w)/2:y=(h/2)+20"
-        f":enable='between(t\\,1.0\\,{duration})',"
-        f"drawtext=fontfile={font_path}:text='{escaped_date}'"
-        f":fontsize=32:fontcolor=white@0.7"
+        f":fontsize=36:fontcolor=white@0.82"
         f":x=(w-text_w)/2:y=(h/2)+80"
-        f":enable='between(t\\,1.5\\,{duration})',"
-        f"fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out_start}:d=0.5"
-        f"[v]"
+        f":enable='between(t\\,1.3\\,{duration})',"
+        f"drawtext=fontfile={font_path}:text='{escaped_date}'"
+        f":fontsize=28:fontcolor=white@0.6"
+        f":x=(w-text_w)/2:y=(h/2)+135"
+        f":enable='between(t\\,1.6\\,{duration})',"
+        f"fade=t=in:st=0:d=0.5,fade=t=out:st={fade_out_start}:d=0.7"
+        f"[v]",
+        f"[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,"
+        f"afade=t=in:st=0:d=0.35,"
+        f"afade=t=out:st={audio_fade_out_start}:d=1.2[a]",
     ]
 
     filter_complex = ";".join(filter_parts)
@@ -415,7 +434,7 @@ def create_intro_segment(
             "-map",
             "[v]",
             "-map",
-            "1:a",
+            "[a]",
             "-c:v",
             "libx264",
             "-preset",
@@ -456,6 +475,129 @@ def create_intro_segment(
 
     if returncode != 0:
         raise RuntimeError(f"Intro segment creation failed (exit {returncode}): {stderr}")
+
+    return SegmentResult(
+        segment_path=output_path,
+        duration_seconds=duration,
+        size_bytes=size_bytes,
+        ffmpeg_command=cmd,
+        returncode=returncode,
+        stderr=stderr,
+    )
+
+
+def create_topic_intro_segment(
+    output_path: str,
+    topic_title: str,
+    topic_index: int,
+    total_topics: int,
+    channel_name: str = "ALMANYA24",
+    section_label: str = "GÜNDEM",
+    audio_path: str | None = None,
+    duration: float = 2.4,
+    resolution: str = "1920x1080",
+    fps: int = 30,
+    bg_color: str = "#004B87",
+    accent_color: str = "#F7931A",
+    font: str = "NotoSans-Bold",
+    crf: int = 23,
+    preset: str = "medium",
+    timeout_seconds: int = 60,
+    dry_run: bool = False,
+) -> SegmentResult:
+    """Create a short branded topic card before a news chapter."""
+    font_path = find_font_path(font)
+    clean_title = " ".join(topic_title.split())
+    if len(clean_title) > 88:
+        clean_title = f"{clean_title[:85].rstrip()}..."
+    title_fontsize = 58 if len(clean_title) <= 45 else 46 if len(clean_title) <= 65 else 38
+
+    escaped_title = _escape_drawtext(clean_title)
+    escaped_channel = _escape_drawtext(channel_name)
+    escaped_section = _escape_drawtext(section_label)
+    escaped_progress = _escape_drawtext(f"{topic_index:02d} / {total_topics:02d}")
+    fade_out_start = max(0, duration - 0.55)
+    audio_fade_out_start = max(0, duration - 0.9)
+
+    filter_complex = ";".join(
+        [
+            f"[0:v]"
+            f"drawbox=x=0:y=0:w=22:h=ih:color={accent_color}:t=fill,"
+            f"drawbox=x=95:y=(h/2)-125:w=145:h=8:color={accent_color}:t=fill,"
+            f"drawtext=fontfile={font_path}:text='{escaped_section}'"
+            f":fontsize=30:fontcolor=white@0.72:x=95:y=(h/2)-185,"
+            f"drawtext=fontfile={font_path}:text='{escaped_title}'"
+            f":fontsize={title_fontsize}:fontcolor=white:x=95:y=(h-text_h)/2,"
+            f"drawtext=fontfile={font_path}:text='{escaped_channel}'"
+            f":fontsize=28:fontcolor=white@0.65:x=95:y=h-115,"
+            f"drawtext=fontfile={font_path}:text='{escaped_progress}'"
+            f":fontsize=28:fontcolor={accent_color}:x=w-text_w-95:y=h-115,"
+            f"fade=t=in:st=0:d=0.25,fade=t=out:st={fade_out_start}:d=0.55[v]",
+            f"[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,"
+            f"volume=0.72,afade=t=in:st=0:d=0.2,"
+            f"afade=t=out:st={audio_fade_out_start}:d=0.9[a]",
+        ]
+    )
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-f",
+        "lavfi",
+        "-i",
+        f"color=c={bg_color}:s={resolution}:d={duration}:r={fps}",
+    ]
+    if audio_path and Path(audio_path).exists():
+        cmd.extend(["-stream_loop", "-1", "-i", audio_path])
+    else:
+        cmd.extend(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"])
+    cmd.extend(
+        [
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "[a]",
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-ac",
+            "2",
+            "-ar",
+            "44100",
+            "-t",
+            str(duration),
+            output_path,
+        ]
+    )
+
+    if dry_run:
+        logger.info("Dry-run: would create topic intro segment")
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(output_path).touch()
+        return SegmentResult(
+            segment_path=output_path,
+            duration_seconds=duration,
+            size_bytes=0,
+            ffmpeg_command=cmd,
+            returncode=0,
+            stderr="[dry-run]",
+        )
+
+    returncode, stderr = _run_ffmpeg(cmd, timeout_seconds)
+    size_bytes = Path(output_path).stat().st_size if Path(output_path).exists() else 0
+    if returncode != 0:
+        raise RuntimeError(f"Topic intro creation failed (exit {returncode}): {stderr}")
 
     return SegmentResult(
         segment_path=output_path,

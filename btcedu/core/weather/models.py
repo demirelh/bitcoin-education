@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 SCHEMA_VERSION = "1.0"
 
 # Renderer version — bump when template/SVG/logic changes to invalidate cache.
-RENDERER_VERSION = "1.0.0"
+RENDERER_VERSION = "1.1.1"
 
 
 class WeatherCondition(str, Enum):

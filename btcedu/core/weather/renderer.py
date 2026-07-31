@@ -39,6 +39,12 @@ logger = logging.getLogger(__name__)
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 _ASSETS_DIR = Path(__file__).parent / "assets"
 
+
+def weather_provenance_path(output_path: Path) -> Path:
+    """Return a sidecar path that keeps PNG and MP4 provenance separate."""
+    return output_path.with_name(f"{output_path.name}.provenance.json")
+
+
 _CONDITION_LABELS_TR = {
     "sunny": "Güneşli",
     "mostly_sunny": "Çoğunlukla güneşli",
@@ -488,7 +494,7 @@ def render_weather_visual(
 
     # Check if output already exists and is valid (idempotency)
     if not force and output_path.exists():
-        provenance_path = output_path.with_suffix(".provenance.json")
+        provenance_path = weather_provenance_path(output_path)
         if provenance_path.exists():
             try:
                 prov = json.loads(provenance_path.read_text())
@@ -691,6 +697,121 @@ def _weather_data_for_scene(weather_data: WeatherData, scene: WeatherScene) -> W
     return selected
 
 
+_REGION_ANCHORS = {
+    "north": (0.29, 0.25),
+    "northeast": (0.39, 0.28),
+    "northwest": (0.18, 0.28),
+    "central": (0.28, 0.48),
+    "east": (0.40, 0.46),
+    "west": (0.16, 0.49),
+    "south": (0.28, 0.72),
+    "southeast": (0.36, 0.68),
+    "southwest": (0.20, 0.70),
+    "coast": (0.28, 0.21),
+    "alps": (0.28, 0.77),
+}
+
+
+def _render_animated_scene_frames(
+    source_path: Path,
+    output_dir: Path,
+    weather_data: WeatherData,
+    *,
+    frame_count: int = 24,
+) -> str | None:
+    """Create a short loop of grounded sun, wind, rain, or storm motion."""
+    try:
+        from PIL import Image, ImageDraw
+    except ImportError:
+        return None
+
+    conditions = {
+        condition.value for region in weather_data.regions for condition in region.conditions
+    }
+    warning_text = " ".join(warning.text.casefold() for warning in weather_data.warnings)
+    has_wind = "windy" in conditions or "rüzgar" in warning_text or "rüzgâr" in warning_text
+    has_sun = bool({"sunny", "mostly_sunny"} & conditions)
+    has_rain = bool({"rain", "showers", "heavy_rain"} & conditions)
+    has_storm = bool({"storm", "thunderstorms"} & conditions)
+    if not any((has_wind, has_sun, has_rain, has_storm)):
+        return None
+
+    try:
+        base = Image.open(source_path).convert("RGBA")
+    except (OSError, ValueError):
+        return None
+    width, height = base.size
+    pattern = output_dir / "anim_%03d.png"
+    wind_anchors = [
+        _REGION_ANCHORS.get(region.region_id.value, (0.28, 0.48))
+        for region in weather_data.regions
+        if any(condition.value == "windy" for condition in region.conditions)
+    ]
+    if has_wind and not wind_anchors:
+        wind_anchors = [(0.28, 0.48)]
+    rain_anchors = [
+        _REGION_ANCHORS.get(region.region_id.value, (0.28, 0.48))
+        for region in weather_data.regions
+        if any(
+            condition.value in {"rain", "showers", "heavy_rain"} for condition in region.conditions
+        )
+    ]
+    storm_anchors = [
+        _REGION_ANCHORS.get(region.region_id.value, (0.28, 0.48))
+        for region in weather_data.regions
+        if any(condition.value in {"storm", "thunderstorms"} for condition in region.conditions)
+    ]
+    for frame_index in range(frame_count):
+        phase = frame_index / frame_count
+        frame = base.copy()
+        draw = ImageDraw.Draw(frame, "RGBA")
+        if has_sun:
+            pulse = 24 + int(10 * abs(0.5 - phase) * 2)
+            for region in weather_data.regions:
+                if not any(c.value in {"sunny", "mostly_sunny"} for c in region.conditions):
+                    continue
+                x_ratio, y_ratio = _REGION_ANCHORS.get(region.region_id.value, (0.28, 0.48))
+                x, y = int(width * x_ratio), int(height * y_ratio)
+                draw.ellipse(
+                    (x - pulse, y - pulse, x + pulse, y + pulse),
+                    fill=(255, 205, 55, 115),
+                    outline=(255, 235, 130, 230),
+                    width=5,
+                )
+        if has_wind:
+            shift = int(phase * 220)
+            for x_ratio, y_ratio in wind_anchors:
+                center_x, center_y = int(width * x_ratio), int(height * y_ratio)
+                for row in range(3):
+                    x = center_x - 100 + ((shift + row * 65) % 190)
+                    y = center_y - 70 + row * 45
+                    draw.arc(
+                        (x, y, x + 120, y + 45),
+                        190,
+                        350,
+                        fill=(130, 220, 255, 210),
+                        width=6,
+                    )
+        if has_rain:
+            shift = int(phase * 34)
+            for x_ratio, y_ratio in rain_anchors:
+                center_x, center_y = int(width * x_ratio), int(height * y_ratio)
+                for column in range(5):
+                    x = center_x - 80 + column * 35
+                    y = center_y - 55 + ((column * 23 + shift) % 100)
+                    draw.line((x, y, x - 12, y + 32), fill=(90, 180, 255, 190), width=5)
+        if has_storm and frame_index % 12 < 2:
+            for x_ratio, y_ratio in storm_anchors:
+                x, y = int(width * x_ratio), int(height * y_ratio)
+                draw.line(
+                    ((x + 20, y - 70), (x - 10, y), (x + 25, y), (x - 20, y + 90)),
+                    fill=(255, 240, 120, 230),
+                    width=9,
+                )
+        frame.convert("RGB").save(output_dir / f"anim_{frame_index:03d}.png")
+    return str(pattern)
+
+
 def render_weather_scene_video(
     weather_data: WeatherData,
     scene_plan: WeatherScenePlan,
@@ -722,12 +843,12 @@ def render_weather_scene_video(
     cache_key = _compute_cache_key(
         weather_data,
         scene_plan,
-        profile=profile,
+        profile=f"{profile}:fps={fps}",
         resolution=f"{width}x{height}",
         accent_color=accent_color,
         title=title,
     )
-    provenance_path = output_path.with_suffix(".provenance.json")
+    provenance_path = weather_provenance_path(output_path)
     if output_path.exists() and provenance_path.exists() and output_path.stat().st_size > 5000:
         try:
             provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
@@ -752,11 +873,12 @@ def render_weather_scene_video(
     with tempfile.TemporaryDirectory(
         prefix=f"{output_path.stem}_scenes_", dir=output_path.parent
     ) as temp_dir:
-        scene_paths: list[Path] = []
+        scene_inputs: list[tuple[Path, str | None]] = []
         for index, scene in enumerate(scene_plan.scenes):
             scene_path = Path(temp_dir) / f"scene_{index:02d}.png"
+            scene_weather = _weather_data_for_scene(weather_data, scene)
             scene_result = render_weather_visual(
-                _weather_data_for_scene(weather_data, scene),
+                scene_weather,
                 None,
                 scene_path,
                 accent_color=accent_color,
@@ -769,7 +891,14 @@ def render_weather_scene_video(
             )
             if not scene_result.success:
                 return scene_result
-            scene_paths.append(scene_path)
+            animation_dir = Path(temp_dir) / f"animation_{index:02d}"
+            animation_dir.mkdir()
+            animation_pattern = _render_animated_scene_frames(
+                scene_path,
+                animation_dir,
+                scene_weather,
+            )
+            scene_inputs.append((scene_path, animation_pattern))
             scene_metadata.append(
                 {
                     "type": scene.type.value,
@@ -780,17 +909,33 @@ def render_weather_scene_video(
             )
 
         command = ["ffmpeg", "-y"]
-        for scene_path, metadata in zip(scene_paths, scene_metadata, strict=True):
-            command.extend(
-                [
-                    "-loop",
-                    "1",
-                    "-t",
-                    f"{metadata['duration']:.3f}",
-                    "-i",
-                    str(scene_path),
-                ]
-            )
+        for (scene_path, animation_pattern), metadata in zip(
+            scene_inputs, scene_metadata, strict=True
+        ):
+            if animation_pattern:
+                command.extend(
+                    [
+                        "-stream_loop",
+                        "-1",
+                        "-framerate",
+                        "12",
+                        "-t",
+                        f"{metadata['duration']:.3f}",
+                        "-i",
+                        animation_pattern,
+                    ]
+                )
+            else:
+                command.extend(
+                    [
+                        "-loop",
+                        "1",
+                        "-t",
+                        f"{metadata['duration']:.3f}",
+                        "-i",
+                        str(scene_path),
+                    ]
+                )
 
         filters: list[str] = []
         labels: list[str] = []
@@ -893,5 +1038,5 @@ def _write_provenance(
         "region_count": len(weather_data.regions),
         "rendered_at": datetime.now(UTC).isoformat(),
     }
-    prov_path = output_path.with_suffix(".provenance.json")
+    prov_path = weather_provenance_path(output_path)
     prov_path.write_text(json.dumps(provenance, indent=2), encoding="utf-8")

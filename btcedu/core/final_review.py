@@ -300,6 +300,18 @@ def _check_weather_chapter(
             _check_stale_provenance(
                 source_asset_path, chapter_id, base_dir, narration_hashes, result
             )
+            if segment.get("asset_type") == "video":
+                weather_video_path = base_dir / "images" / f"{chapter_id}_weather.mp4"
+                _check_source_asset_exists(weather_video_path, chapter_id, result)
+                if weather_video_path.exists():
+                    _check_source_resolution(weather_video_path, chapter_id, result)
+                    _check_stale_provenance(
+                        weather_video_path,
+                        chapter_id,
+                        base_dir,
+                        narration_hashes,
+                        result,
+                    )
     else:
         result.add_finding(
             ValidationFinding(
@@ -507,7 +519,11 @@ def _check_stale_provenance(
         return
 
     # Check provenance file
-    provenance_path = asset_path.with_suffix(".provenance.json")
+    from btcedu.core.weather.renderer import weather_provenance_path
+
+    provenance_path = weather_provenance_path(asset_path)
+    if not provenance_path.exists():
+        provenance_path = asset_path.with_suffix(".provenance.json")
     if not provenance_path.exists():
         return  # No provenance is acceptable (older renders)
 

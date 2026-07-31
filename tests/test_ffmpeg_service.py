@@ -15,6 +15,7 @@ from btcedu.services.ffmpeg_service import (
     _escape_drawtext,
     concatenate_segments,
     create_segment,
+    create_video_segment,
     extract_audio_clip,
     find_font_path,
     get_ffmpeg_version,
@@ -264,6 +265,31 @@ def test_concatenate_segments_dry_run(tmp_path):
     assert result.stderr == "[dry-run]"
     assert result.segment_count == 2
     assert output.exists()
+
+
+def test_video_segment_normalizes_fps_and_timebase(tmp_path):
+    video = tmp_path / "weather.mp4"
+    audio = tmp_path / "narration.mp3"
+    output = tmp_path / "segment.mp4"
+    video.write_bytes(b"video")
+    audio.write_bytes(b"audio")
+
+    result = create_video_segment(
+        str(video),
+        str(audio),
+        str(output),
+        10.0,
+        [],
+        fps=30,
+        dry_run=True,
+    )
+
+    filter_complex = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
+    assert "fps=30" in filter_complex
+    assert "settb=expr=1/30" in filter_complex
+    assert (
+        result.ffmpeg_command[result.ffmpeg_command.index("-video_track_timescale") + 1] == "15360"
+    )
 
 
 def test_concatenate_segments_empty_list():

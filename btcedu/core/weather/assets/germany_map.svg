@@ -1,4 +1,5 @@
-<svg viewBox="0 0 400 520" xmlns="http://www.w3.org/2000/svg">
+<svg viewBox="0 0 400 520" width="760" height="760" preserveAspectRatio="xMidYMid meet"
+     xmlns="http://www.w3.org/2000/svg">
   <!--
     Simplified Germany silhouette for weather region display.
     Created as original geometric approximation for the btcedu project.
@@ -12,9 +13,9 @@
            L195,480 L175,475 L155,460 L135,440 L115,415 L100,390 L85,365
            L75,340 L70,310 L65,280 L60,250 L55,220 L60,190 L65,160
            L75,130 L85,100 L100,75 L120,55 L145,35 L165,22 Z"
-        fill="rgba(255,255,255,0.06)"
-        stroke="rgba(255,255,255,0.3)"
-        stroke-width="1.5"/>
+        fill="rgba(46,112,168,0.34)"
+        stroke="rgba(255,255,255,0.82)"
+        stroke-width="4"/>
 
   <!-- Region anchor points (for overlaying weather icons/labels) -->
   <!-- North -->

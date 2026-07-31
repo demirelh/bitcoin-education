@@ -111,13 +111,14 @@ _OUTLOOK_RE = re.compile(
 )
 
 # Warning keywords
-_WARNING_KEYWORDS = {
-    "uyarı": "warning",
-    "dikkat": "caution",
-    "fırtına uyarısı": "storm",
-    "sel": "flood",
-    "don": "frost",
-    "sıcak hava dalgası": "heat",
+_WARNING_PATTERNS = {
+    re.compile(r"(?<!\w)fırtına uyarısı(?!\w)", re.IGNORECASE): "storm",
+    re.compile(r"(?<!\w)kasırga şiddetinde rüzg[aâ]r(?!\w)", re.IGNORECASE): "wind",
+    re.compile(r"(?<!\w)uyarı(?!\w)", re.IGNORECASE): "warning",
+    re.compile(r"(?<!\w)dikkat(?!\w)", re.IGNORECASE): "caution",
+    re.compile(r"(?<!\w)sel(?!\w)", re.IGNORECASE): "flood",
+    re.compile(r"(?<!\w)don(?!\w)", re.IGNORECASE): "frost",
+    re.compile(r"(?<!\w)sıcak hava dalgası(?!\w)", re.IGNORECASE): "heat",
 }
 
 # Sentence splitter
@@ -285,10 +286,9 @@ def extract_weather_data(
     # Extract warnings
     warnings: list[WeatherWarning] = []
     outlook = [sentence for sentence, _, _ in sentences if _OUTLOOK_RE.search(sentence)]
-    narr_lower = narration_text.lower()
-    for keyword, warning_type in _WARNING_KEYWORDS.items():
-        if keyword in narr_lower:
-            idx = narr_lower.index(keyword)
+    for pattern, warning_type in _WARNING_PATTERNS.items():
+        if match := pattern.search(narration_text):
+            idx = match.start()
             # Find surrounding sentence
             for sentence, start, end in sentences:
                 if start <= idx < end:

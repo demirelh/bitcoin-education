@@ -36,15 +36,18 @@ body {
     gap: 40px;
 }
 .map-section {
-    flex: 1;
+    flex: 1.15;
     display: flex;
     align-items: center;
     justify-content: center;
     position: relative;
 }
 .map-section svg {
-    max-height: 700px;
+    width: 760px;
+    height: 760px;
+    max-height: 100%;
     max-width: 100%;
+    filter: drop-shadow(0 0 20px rgba(255,255,255,0.18));
 }
 .info-section {
     flex: 1;
@@ -121,9 +124,19 @@ body {
     color: #ffffff;
     background: rgba(0,0,0,0.72);
     border: 3px solid {{ accent_color }};
-    padding: 8px 12px;
+    padding: 10px 14px;
     border-radius: 12px;
     white-space: nowrap;
+}
+.map-marker .marker-icon {
+    display: block;
+    width: 44px;
+    height: 44px;
+    margin: 0 auto 4px;
+}
+.map-marker .marker-icon svg {
+    width: 44px;
+    height: 44px;
 }
 .marker-north { left: 53%; top: 17%; }
 .marker-northeast { left: 70%; top: 23%; }
@@ -150,6 +163,10 @@ body {
         {{ germany_map | safe }}
         {% for region in weather.regions %}
         <div class="map-marker marker-{{ region.region_id.value }}">
+            {% set marker_cond = region.conditions[0].value if region.conditions else 'cloudy' %}
+            {% if marker_cond in icons %}
+            <span class="marker-icon">{{ icons[marker_cond] | safe }}</span>
+            {% endif %}
             {{ region.label_tr }}
         </div>
         {% endfor %}

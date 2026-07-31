@@ -19,10 +19,12 @@ from btcedu.core.weather.models import (
 )
 from btcedu.core.weather.renderer import (
     _compute_cache_key,
+    _render_animated_scene_frames,
     _render_pillow_fallback,
     _validate_output,
     render_weather_scene_video,
     render_weather_visual,
+    weather_provenance_path,
 )
 from btcedu.core.weather.scene_planner import plan_weather_scenes
 from btcedu.core.weather.validator import validate_weather_data
@@ -112,6 +114,15 @@ class TestWeatherExtraction:
         data = extract_weather_data(text)
         assert data.overview.temperature_min_c == 20
         assert data.overview.temperature_max_c == 29
+
+    def test_temperature_rise_does_not_create_flood_warning(self):
+        data = extract_weather_data("Sıcaklıklar yarın 30 dereceye yükselecek.")
+        assert all(warning.type != "flood" for warning in data.warnings)
+
+    def test_hurricane_force_wind_creates_wind_warning(self):
+        text = "Baltık Denizi ile Erzgebirge arasında kasırga şiddetinde rüzgar olasılığı var."
+        data = extract_weather_data(text)
+        assert any(warning.type == "wind" for warning in data.warnings)
 
     def test_no_temperature_no_invention(self):
         """Case 3: Narration without temperature → no invented values."""
@@ -404,13 +415,18 @@ class TestWeatherRendering:
         render_weather_visual(data, plan, output)
 
         # Tamper with provenance to simulate old version
-        prov_path = output.with_suffix(".provenance.json")
+        prov_path = weather_provenance_path(output)
         prov = json.loads(prov_path.read_text())
         prov["cache_key"] = "old_key"
         prov_path.write_text(json.dumps(prov))
 
         result = render_weather_visual(data, plan, output)
         assert result.metadata.get("cached") is not True
+
+    def test_png_and_mp4_use_distinct_provenance_sidecars(self, tmp_path):
+        assert weather_provenance_path(tmp_path / "weather.png") != weather_provenance_path(
+            tmp_path / "weather.mp4"
+        )
 
     def test_validate_output_missing_file(self, tmp_path):
         """Case 10: Missing asset produces CRITICAL finding."""
@@ -502,6 +518,37 @@ class TestWeatherRendering:
         assert _render_pillow_fallback(WeatherData(), output, fallback_level="generic")
         image = Image.open(output).convert("RGB")
         assert (255, 200, 50) not in set(image.get_flattened_data())
+
+    def test_sun_animation_frames_change_over_time(self, tmp_path):
+        from PIL import Image
+
+        source = tmp_path / "scene.png"
+        Image.new("RGB", (640, 360), "#102040").save(source)
+        data = extract_weather_data("Güneyde güneşli hava bekleniyor.")
+        animation_dir = tmp_path / "animation"
+        animation_dir.mkdir()
+
+        pattern = _render_animated_scene_frames(
+            source,
+            animation_dir,
+            data,
+            frame_count=6,
+        )
+
+        assert pattern is not None
+        assert (animation_dir / "anim_000.png").read_bytes() != (
+            animation_dir / "anim_003.png"
+        ).read_bytes()
+
+    def test_weather_map_is_explicitly_sized_and_high_contrast(self):
+        from pathlib import Path
+
+        map_svg = (
+            Path(__file__).parents[1] / "btcedu" / "core" / "weather" / "assets" / "germany_map.svg"
+        ).read_text()
+        assert 'width="760"' in map_svg
+        assert 'height="760"' in map_svg
+        assert 'stroke="rgba(255,255,255,0.82)"' in map_svg
 
 
 # ============================================================

@@ -3543,7 +3543,12 @@ def _weather_chapter_detail(
     # Check rendered assets (PNG and MP4)
     weather_png = images_dir / f"{chapter_id}_weather.png"
     weather_mp4 = images_dir / f"{chapter_id}_weather.mp4"
-    provenance = _read_json_artifact(images_dir / f"{chapter_id}_weather.provenance.json")
+    from btcedu.core.weather.renderer import weather_provenance_path
+
+    provenance_asset = weather_mp4 if weather_mp4.exists() else weather_png
+    provenance = _read_json_artifact(weather_provenance_path(provenance_asset))
+    if not provenance:
+        provenance = _read_json_artifact(images_dir / f"{chapter_id}_weather.provenance.json")
 
     # Determine cache status
     cache_status = "miss"

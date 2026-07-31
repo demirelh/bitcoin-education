@@ -665,7 +665,7 @@ def create_segment(
         filter_parts = [
             f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
             f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
-            f"format=yuv420p[raw]"
+            f"fps={fps},settb=expr=1/{fps},format=yuv420p,setparams=range=limited[raw]"
         ]
 
     # Color correction (applied before overlays)
@@ -801,6 +801,10 @@ def create_segment(
             str(crf),
             "-pix_fmt",
             "yuv420p",
+            "-r",
+            str(fps),
+            "-video_track_timescale",
+            str(fps * 512),
             "-c:a",
             "aac",
             "-b:a",
@@ -1005,7 +1009,7 @@ def create_video_segment(
     filter_parts = [
         f"[0:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
         f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
-        f"format=yuv420p[raw]"
+        f"fps={fps},settb=expr=1/{fps},format=yuv420p,setparams=range=limited[raw]"
     ]
 
     # Color correction
@@ -1117,6 +1121,10 @@ def create_video_segment(
             str(crf),
             "-pix_fmt",
             "yuv420p",
+            "-r",
+            str(fps),
+            "-video_track_timescale",
+            str(fps * 512),
             "-c:a",
             "aac",
             "-b:a",

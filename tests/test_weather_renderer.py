@@ -551,6 +551,11 @@ class TestWeatherRendering:
         assert 'height="760"' in map_svg
         assert 'stroke="rgba(255,255,255,0.82)"' in map_svg
         assert "Natural Earth Admin 0" in map_svg
+        assert 'id="major-cities"' in map_svg
+        assert '<circle cx="300.3" cy="187.1"' in map_svg
+        assert ">Berlin</text>" in map_svg
+        assert ">Stuttgart</text>" in map_svg
+        assert ">Münih</text>" in map_svg
 
         path = re.search(r'<path[^>]+d="([^"]+)"', map_svg)
         assert path is not None

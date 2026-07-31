@@ -264,6 +264,9 @@ def correct_transcript(
         logger.info("Correction is current for %s (use --force to re-correct)", episode_id)
         existing_corrected = corrected_path.read_text(encoding="utf-8")
         existing_diff = json.loads(diff_path.read_text(encoding="utf-8"))
+        episode.status = EpisodeStatus.CORRECTED
+        episode.error_message = None
+        session.commit()
         return CorrectionResult(
             episode_id=episode_id,
             corrected_path=str(corrected_path),
@@ -465,6 +468,7 @@ def correct_transcript(
 
         # Update Episode
         episode.status = EpisodeStatus.CORRECTED
+        episode.error_message = None
         session.commit()
 
         logger.info(

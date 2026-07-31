@@ -292,7 +292,6 @@ def _call_copilot_cli(
     Requires `copilot` binary on PATH. Uses JSONL output stream to reliably
     extract only the assistant's final text (no footer stats or stray output).
     """
-    import json as _json
     import subprocess
     import tempfile
     import time as _time
@@ -327,7 +326,10 @@ def _call_copilot_cli(
         "--model",
         model,
         "--no-custom-instructions",
-        "--allow-all-tools",
+        "--available-tools=view",
+        "--allow-tool=view",
+        "--add-dir",
+        str(Path(prompt_path).parent),
         "--no-ask-user",
         "--output-format",
         "json",
@@ -356,36 +358,15 @@ def _call_copilot_cli(
             f"copilot CLI exited {proc.returncode}: {proc.stderr[:500] or proc.stdout[:500]}"
         )
 
-    # Parse JSONL stream: collect assistant text_deltas
-    text_parts: list[str] = []
-    input_tokens = 0
-    output_tokens = 0
-    for line in proc.stdout.splitlines():
-        line = line.strip()
-        if not line or not line.startswith("{"):
-            continue
-        try:
-            evt = _json.loads(line)
-        except _json.JSONDecodeError:
-            continue
-        etype = evt.get("type", "")
-        data = evt.get("data", {}) or {}
-        if etype == "assistant.text_delta":
-            text_parts.append(data.get("deltaContent", "") or "")
-        elif etype == "assistant.message":
-            # Some versions emit a single consolidated message
-            content = data.get("content")
-            if isinstance(content, str) and content:
-                text_parts = [content]  # replace deltas with final
-        elif etype in ("assistant.turn_complete", "assistant.usage"):
-            usage = data.get("usage") or {}
-            input_tokens = usage.get("input_tokens", input_tokens) or input_tokens
-            output_tokens = usage.get("output_tokens", output_tokens) or output_tokens
-
-    text = "".join(text_parts).strip()
+    text, input_tokens, output_tokens, event_types = _parse_copilot_jsonl(proc.stdout)
     if not text:
-        # Fallback: text-format shell run, strip footer
-        text = _copilot_cli_fallback_text(binary, model, combined, settings)
+        first_char = next((char for char in proc.stdout if not char.isspace()), "")
+        stdout_hash = hashlib.sha256(proc.stdout.encode("utf-8")).hexdigest()[:12]
+        raise RuntimeError(
+            "Copilot CLI JSON stream contained no assistant content "
+            f"(events={event_types}, stdout_len={len(proc.stdout)}, "
+            f"stdout_sha256={stdout_hash}, first_char={first_char!r})"
+        )
 
     if json_mode and text:
         text = _extract_json_object(text)
@@ -404,6 +385,47 @@ def _call_copilot_cli(
         cost_usd=0.0,
         model=f"copilot/{model}",
     )
+
+
+def _parse_copilot_jsonl(stdout: str) -> tuple[str, int, int, list[str]]:
+    """Extract assistant content and usage from current and legacy CLI events."""
+    text_parts: list[str] = []
+    input_tokens = 0
+    output_tokens = 0
+    event_types: list[str] = []
+
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
+            continue
+        try:
+            evt = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        etype = str(evt.get("type", ""))
+        if etype and etype not in event_types:
+            event_types.append(etype)
+        data = evt.get("data", {}) or {}
+        if etype in {"assistant.message_delta", "assistant.text_delta"}:
+            text_parts.append(data.get("deltaContent", "") or "")
+        elif etype == "assistant.message":
+            content = data.get("content")
+            if isinstance(content, str) and content:
+                text_parts = [content]
+        elif etype in {"assistant.turn_complete", "assistant.usage"}:
+            usage = data.get("usage") or data
+            input_tokens = (
+                usage.get("inputTokens")
+                or usage.get("input_tokens")
+                or input_tokens
+            )
+            output_tokens = (
+                usage.get("outputTokens")
+                or usage.get("output_tokens")
+                or output_tokens
+            )
+
+    return "".join(text_parts).strip(), input_tokens, output_tokens, event_types
 
 
 def _copilot_prompt_argument(prompt: str, prompt_path: str) -> str:
@@ -473,7 +495,8 @@ def _extract_json_object(text: str) -> str:
     Copilot CLI Sonnet often wraps JSON in prose or markdown code fences even
     when instructed otherwise. This walks the string once, tracking brace depth
     while respecting string literals, and returns the first top-level object.
-    Falls back to the original text if no balanced object is found.
+    If the assistant returned no JSON, preserve its text so refusal handling or
+    the calling stage's structured-response retry can decide how to recover.
     """
     if not text:
         return text
@@ -541,7 +564,8 @@ def _copilot_cli_fallback_text(binary: str, model: str, prompt: str, settings) -
             "--model",
             model,
             "--no-custom-instructions",
-            "--allow-all-tools",
+            "--available-tools=view",
+            "--allow-tool=view",
             "--no-ask-user",
             "--output-format",
             "text",
@@ -552,6 +576,11 @@ def _copilot_cli_fallback_text(binary: str, model: str, prompt: str, settings) -
         text=True,
         timeout=getattr(settings, "copilot_cli_timeout", 900),
     )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"copilot CLI text fallback exited {proc.returncode}: "
+            f"{proc.stderr[:500] or proc.stdout[:500]}"
+        )
     out = proc.stdout
     # Footer starts with "\n\nChanges" or "\nChanges    "
     for marker in ("\n\nChanges", "\nChanges    ", "\nAI Credits"):

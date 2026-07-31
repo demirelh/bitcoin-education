@@ -466,6 +466,9 @@ class TestIsCorrectionCurrent:
 class TestCorrectTranscript:
     def test_success_dry_run(self, db_session, transcribed_episode, mock_settings):
         """Full integration: dry-run correction creates expected files and DB records."""
+        transcribed_episode.error_message = "previous correction failure"
+        db_session.commit()
+
         result = correct_transcript(db_session, "ep_test", mock_settings, force=False)
         assert isinstance(result, CorrectionResult)
         assert result.episode_id == "ep_test"
@@ -485,6 +488,7 @@ class TestCorrectTranscript:
         # Episode status updated
         db_session.refresh(transcribed_episode)
         assert transcribed_episode.status == EpisodeStatus.CORRECTED
+        assert transcribed_episode.error_message is None
 
         # PipelineRun created
         runs = (

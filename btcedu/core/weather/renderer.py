@@ -283,20 +283,12 @@ def _render_pillow_fallback(
     # Title
     draw.text((60, 50), title, fill=(255, 255, 255), font=_font(72))
 
-    # Subtitle with renderer version
-    draw.text(
-        (60, 140),
-        f"Tagesschau Türkçe — {RENDERER_VERSION}",
-        fill=(200, 200, 200),
-        font=_font(28),
-    )
-
     y = 250
 
     if fallback_level == "title":
         draw.text(
             (80, y),
-            "Tagesschau Türkçe",
+            "Hava Durumu",
             fill=(210, 220, 235),
             font=_font(52),
         )
@@ -376,15 +368,6 @@ def _render_pillow_fallback(
             fill=(180, 180, 180),
             font=_font(36),
         )
-
-    # Footer branding
-    draw.rectangle([(0, height - 60), (width, height)], fill=accent_rgb)
-    draw.text(
-        (60, height - 50),
-        "Kaynak: ARD Tagesschau",
-        fill=(200, 200, 200),
-        font=_font(24),
-    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     img.save(output_path, "PNG")

@@ -576,19 +576,20 @@ class TestWeatherRendering:
     def test_weather_map_markers_fit_geographic_outline(self):
         from pathlib import Path
 
+        weather_root = Path(__file__).parents[1] / "btcedu" / "core" / "weather"
         template = (
-            Path(__file__).parents[1]
-            / "btcedu"
-            / "core"
-            / "weather"
-            / "templates"
-            / "weather_card.html"
+            weather_root / "templates" / "weather_card.html"
         ).read_text()
+        renderer = (weather_root / "renderer.py").read_text()
 
         assert ".marker-coast { left: 49.3%; top: 19.7%; }" in template
         assert ".marker-central { left: 49.3%; top: 51.6%; }" in template
         assert ".marker-alps { left: 51.9%; top: 82.5%; }" in template
         assert "Simplified Germany silhouette" not in template
+        assert "Tagesschau Türkçe" not in template
+        assert "Kaynak: ARD Tagesschau" not in template
+        assert "Tagesschau Türkçe" not in renderer
+        assert "Kaynak: ARD Tagesschau" not in renderer
 
 
 # ============================================================

@@ -5,6 +5,7 @@ from unittest.mock import patch
 import pytest
 import requests
 
+from btcedu.services.elevenlabs_service import ElevenLabsAPIError
 from btcedu.services.errors import (
     ERROR_SUGGESTIONS,
     ErrorCategory,
@@ -48,6 +49,14 @@ class TestClassifyError:
 
     def test_quota_exceeded(self):
         exc = RuntimeError("quota exceeded for this billing period")
+        assert classify_error(exc) == ErrorCategory.PERMANENT_QUOTA
+
+    def test_elevenlabs_quota_exceeded_is_permanent(self):
+        exc = ElevenLabsAPIError(401, "Not enough credits", "quota_exceeded")
+        assert classify_error(exc) == ErrorCategory.PERMANENT_QUOTA
+
+    def test_elevenlabs_429_remains_transient(self):
+        exc = ElevenLabsAPIError(429, "Too many requests", "rate_limit_exceeded")
         assert classify_error(exc) == ErrorCategory.TRANSIENT_RATE_LIMIT
 
     def test_server_500(self):
@@ -123,6 +132,9 @@ class TestIsTransient:
 
     def test_cost_not_transient(self):
         assert is_transient(ErrorCategory.PERMANENT_COST_LIMIT) is False
+
+    def test_quota_not_transient(self):
+        assert is_transient(ErrorCategory.PERMANENT_QUOTA) is False
 
     def test_unknown_not_transient(self):
         assert is_transient(ErrorCategory.UNKNOWN) is False

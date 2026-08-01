@@ -7,6 +7,7 @@ import pytest
 from btcedu.services.elevenlabs_service import (
     ELEVENLABS_COST_PER_1K_CHARS,
     MAX_CHARS_PER_REQUEST,
+    ElevenLabsAPIError,
     ElevenLabsService,
     TTSRequest,
     TTSResponse,
@@ -259,6 +260,33 @@ def test_synthesize_api_error(mock_post):
 
     with pytest.raises(RuntimeError, match="ElevenLabs API error 500"):
         service.synthesize(req)
+
+
+@patch("btcedu.services.elevenlabs_service.requests.post")
+def test_synthesize_quota_error_exposes_provider_code(mock_post):
+    mock_response = MagicMock()
+    mock_response.status_code = 401
+    mock_response.text = (
+        '{"detail":{"type":"invalid_request","code":"quota_exceeded",'
+        '"message":"Not enough credits"}}'
+    )
+    mock_response.json.return_value = {
+        "detail": {
+            "type": "invalid_request",
+            "code": "quota_exceeded",
+            "message": "Not enough credits",
+        }
+    }
+    mock_post.return_value = mock_response
+
+    service = ElevenLabsService(api_key="key", default_voice_id="v1")
+
+    with pytest.raises(ElevenLabsAPIError) as exc_info:
+        service.synthesize(TTSRequest(text="Test", voice_id="v1"))
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.error_code == "quota_exceeded"
+    assert mock_post.call_count == 1
 
 
 def test_synthesize_no_voice_id():

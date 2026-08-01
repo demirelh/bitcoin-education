@@ -27,6 +27,7 @@ from btcedu.models.episode import (
     PipelineStage,
     RunStatus,
 )
+from btcedu.services.errors import ErrorCategory
 
 
 def _make_settings(tmp_path: Path) -> Settings:
@@ -180,6 +181,29 @@ class TestRunEpisodePipeline:
         attempted = [s for s in report.stages if s.status != "skipped"]
         assert len(attempted) == 1
         assert attempted[0].stage == "download"
+
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_permanent_quota_failure_creates_dead_letter(
+        self, mock_stage, db_session, new_episode, tmp_path
+    ):
+        from btcedu.models.dead_letter import DeadLetterEntry
+
+        mock_stage.return_value = StageResult(
+            "tts",
+            "failed",
+            0.1,
+            error=(
+                "[quota_exhausted] ElevenLabs quota exceeded — "
+                "Provider quota exhausted. Add credits or renew the plan before retrying."
+            ),
+        )
+
+        run_episode_pipeline(db_session, new_episode, _make_settings(tmp_path))
+
+        entry = db_session.query(DeadLetterEntry).filter_by(
+            episode_id=new_episode.episode_id,
+        ).one()
+        assert entry.error_category == ErrorCategory.PERMANENT_QUOTA.value
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_clears_error_on_success(self, mock_stage, db_session, failed_episode, tmp_path):

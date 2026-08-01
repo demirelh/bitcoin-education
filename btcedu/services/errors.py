@@ -21,12 +21,17 @@ class ErrorCategory(str, Enum):
     PERMANENT_CONTENT = "content_error"
     PERMANENT_NOT_FOUND = "not_found"
     PERMANENT_COST_LIMIT = "cost_limit"
+    PERMANENT_QUOTA = "quota_exhausted"
     UNKNOWN = "unknown"
 
 
 # Patterns for classifying errors by exception message
 _RATE_LIMIT_PATTERNS = re.compile(
-    r"rate.?limit|429|quota.?exceeded|too.?many.?requests", re.IGNORECASE
+    r"rate.?limit|429|too.?many.?requests", re.IGNORECASE
+)
+_QUOTA_PATTERNS = re.compile(
+    r"quota[_\s-]?exceeded|insufficient.*credits|not enough.*credits",
+    re.IGNORECASE,
 )
 _NETWORK_PATTERNS = re.compile(
     r"connect(ion)?.*?(error|refused|reset|timeout)|timed?\s*out|"
@@ -93,6 +98,9 @@ ERROR_SUGGESTIONS: dict[ErrorCategory, str] = {
     ErrorCategory.PERMANENT_COST_LIMIT: (
         "Episode cost limit exceeded. Increase max_episode_cost_usd or skip."
     ),
+    ErrorCategory.PERMANENT_QUOTA: (
+        "Provider quota exhausted. Add credits or renew the plan before retrying."
+    ),
     ErrorCategory.UNKNOWN: "Check logs for details.",
 }
 
@@ -108,6 +116,15 @@ def classify_error(exc: Exception) -> ErrorCategory:
 
     Uses exception type first, then falls back to message pattern matching.
     """
+    status_code = getattr(exc, "status_code", None)
+    error_code = str(getattr(exc, "error_code", "") or "").lower()
+    if status_code == 429:
+        return ErrorCategory.TRANSIENT_RATE_LIMIT
+    if error_code == "quota_exceeded":
+        return ErrorCategory.PERMANENT_QUOTA
+    if status_code in {401, 403}:
+        return ErrorCategory.PERMANENT_AUTH
+
     # Check exception type name (works across SDK exception hierarchies)
     for parent in type(exc).__mro__:
         if parent.__name__ in _EXCEPTION_TYPE_MAP:
@@ -120,6 +137,8 @@ def classify_error(exc: Exception) -> ErrorCategory:
         return ErrorCategory.PERMANENT_COST_LIMIT
     if _RATE_LIMIT_PATTERNS.search(msg):
         return ErrorCategory.TRANSIENT_RATE_LIMIT
+    if _QUOTA_PATTERNS.search(msg):
+        return ErrorCategory.PERMANENT_QUOTA
     if _AUTH_PATTERNS.search(msg):
         return ErrorCategory.PERMANENT_AUTH
     if _CONTENT_PATTERNS.search(msg):

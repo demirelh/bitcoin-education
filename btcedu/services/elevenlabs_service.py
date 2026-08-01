@@ -14,6 +14,17 @@ logger = logging.getLogger(__name__)
 # ElevenLabs Starter pricing (per 1000 characters)
 ELEVENLABS_COST_PER_1K_CHARS = 0.30
 
+
+class ElevenLabsAPIError(RuntimeError):
+    """Structured ElevenLabs API failure for reliable retry classification."""
+
+    def __init__(self, status_code: int, detail: str, error_code: str | None = None):
+        self.status_code = status_code
+        self.error_code = error_code
+        self.detail = detail
+        code_suffix = f" ({error_code})" if error_code else ""
+        super().__init__(f"ElevenLabs API error {status_code}{code_suffix}: {detail}")
+
 # Maximum characters per API request
 MAX_CHARS_PER_REQUEST = 5000
 
@@ -195,14 +206,26 @@ class ElevenLabsService:
                         time.sleep(wait_time)
                         continue
                     else:
-                        raise RuntimeError(
-                            f"ElevenLabs rate limit exceeded after {max_retries} retries"
+                        raise ElevenLabsAPIError(
+                            429,
+                            f"rate limit exceeded after {max_retries} retries",
+                            "rate_limit_exceeded",
                         )
 
                 if response.status_code != 200:
                     error_detail = response.text[:200]
-                    raise RuntimeError(
-                        f"ElevenLabs API error {response.status_code}: {error_detail}"
+                    error_code = None
+                    try:
+                        payload = response.json()
+                        detail = payload.get("detail") if isinstance(payload, dict) else None
+                        if isinstance(detail, dict):
+                            error_code = detail.get("code")
+                    except (TypeError, ValueError):
+                        pass
+                    raise ElevenLabsAPIError(
+                        response.status_code,
+                        error_detail,
+                        error_code,
                     )
 
                 return response.content

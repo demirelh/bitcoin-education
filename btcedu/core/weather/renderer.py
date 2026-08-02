@@ -73,6 +73,7 @@ def _compute_cache_key(
     resolution: str = "1920x1080",
     accent_color: str = "#004B87",
     title: str = "Hava Durumu",
+    day_badge: str | None = None,
 ) -> str:
     """Compute deterministic cache key for weather render."""
     parts = [
@@ -85,6 +86,7 @@ def _compute_cache_key(
         f"resolution:{resolution}",
         f"accent:{accent_color}",
         f"title:{title}",
+        f"day_badge:{day_badge or ''}",
         f"assets:{_renderer_assets_hash()}",
     ]
     if scene_plan:
@@ -181,6 +183,7 @@ def _build_weather_html(
     *,
     accent_color: str = "#004B87",
     title: str = "Hava Durumu",
+    day_badge: str | None = None,
 ) -> str:
     """Build the weather HTML/SVG page from Jinja2 template."""
     try:
@@ -215,6 +218,7 @@ def _build_weather_html(
         germany_map=map_svg,
         renderer_version=RENDERER_VERSION,
         title=title,
+        day_badge=day_badge or weather_data.forecast_reference.date_text,
     )
 
 
@@ -246,6 +250,7 @@ def _render_pillow_fallback(
     width: int = 1920,
     height: int = 1080,
     title: str = "Hava Durumu",
+    day_badge: str | None = None,
 ) -> bool:
     """Render a branded weather card using Pillow. Never produces blank output."""
     try:
@@ -282,6 +287,18 @@ def _render_pillow_fallback(
 
     # Title
     draw.text((60, 50), title, fill=(255, 255, 255), font=_font(72))
+
+    # Day badge (which forecast day this card describes)
+    badge_text = day_badge or weather_data.forecast_reference.date_text
+    if badge_text:
+        badge_font = _font(44)
+        badge_width = int(draw.textlength(badge_text, font=badge_font))
+        draw.text(
+            (width - badge_width - 60, 70),
+            badge_text,
+            fill=(255, 255, 255),
+            font=badge_font,
+        )
 
     y = 250
 
@@ -456,6 +473,7 @@ def render_weather_visual(
     width: int = 1920,
     height: int = 1080,
     title: str = "Hava Durumu",
+    day_badge: str | None = None,
     render_empty_template: bool = False,
 ) -> WeatherRenderResult:
     """Render weather visual with full fallback chain.
@@ -473,6 +491,7 @@ def render_weather_visual(
         resolution=f"{width}x{height}",
         accent_color=accent_color,
         title=title,
+        day_badge=day_badge,
     )
 
     # Check if output already exists and is valid (idempotency)
@@ -512,6 +531,7 @@ def render_weather_visual(
             scene_plan,
             accent_color=accent_color,
             title=title,
+            day_badge=day_badge,
         )
         if html and _render_html_to_png(html, output_path, width=width, height=height):
             output_findings = _validate_output(output_path)
@@ -536,6 +556,7 @@ def render_weather_visual(
             width=width,
             height=height,
             title=title,
+            day_badge=day_badge,
         ):
             output_findings = _validate_output(output_path)
             if not any(f.publish_blocked for f in output_findings):
@@ -560,6 +581,7 @@ def render_weather_visual(
             width=width,
             height=height,
             title=title,
+            day_badge=day_badge,
         ):
             output_findings = _validate_output(output_path)
             if not any(f.publish_blocked for f in output_findings):
@@ -585,6 +607,7 @@ def render_weather_visual(
             width=width,
             height=height,
             title=title,
+            day_badge=day_badge,
         ):
             output_findings = _validate_output(output_path)
             if not any(f.publish_blocked for f in output_findings):
@@ -609,6 +632,7 @@ def render_weather_visual(
         width=width,
         height=height,
         title=title,
+        day_badge=day_badge,
     ):
         output_findings = _validate_output(output_path)
         _write_provenance(output_path, cache_key, "pillow_generic", weather_data)
@@ -870,6 +894,7 @@ def render_weather_scene_video(
                 width=width,
                 height=height,
                 title=scene.headline or title,
+                day_badge=scene.day_label,
                 render_empty_template=scene.type == WeatherSceneType.TITLE,
             )
             if not scene_result.success:
@@ -888,6 +913,7 @@ def render_weather_scene_video(
                     "start": scene.start,
                     "end": scene.end,
                     "duration": scene.end - scene.start,
+                    "day_label": scene.day_label,
                 }
             )
 

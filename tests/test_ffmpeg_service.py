@@ -528,3 +528,48 @@ def test_create_segment_no_fades(tmp_path):
 
         # Check NO -af parameter (no audio fades)
         assert "-af" not in cmd
+
+
+def test_ticker_drawbox_uses_input_height():
+    """Ticker bar must sit at the bottom: drawbox `h` is the box height, not the frame."""
+    from btcedu.services.ffmpeg_service import _build_ticker_filters
+
+    filters = _build_ticker_filters("Haber 1 ||| Haber 2", "/tmp/font.ttf", height=50)
+    boxes = [f for f in filters if f.startswith("drawbox")]
+
+    assert len(boxes) == 2
+    for box in boxes:
+        assert ":y=ih-" in box, f"drawbox must reference ih, got: {box}"
+        assert ":y=h-" not in box
+
+    # Scrolling text uses drawtext, where `h` correctly resolves to the frame height
+    text_filter = next(f for f in filters if f.startswith("drawtext"))
+    assert ":y=h-50+" in text_filter
+
+
+def test_animated_lower_third_drawbox_uses_input_height():
+    """Lower third background boxes must be placed relative to the frame height."""
+    from btcedu.services.ffmpeg_service import _build_animated_lower_third
+
+    spec = OverlaySpec(
+        text="Test",
+        overlay_type="lower_third",
+        fontsize=48,
+        fontcolor="white",
+        font="/tmp/font.ttf",
+        position="bottom_center",
+        start=0.0,
+        end=5.0,
+    )
+    filters = _build_animated_lower_third(spec, "/tmp/font.ttf")
+
+    boxes = [f for f in filters if f.startswith("drawbox")]
+    assert boxes
+    for box in boxes:
+        assert ":y=ih-100-70:" in box
+        assert ":y=h-" not in box
+
+    texts = [f for f in filters if f.startswith("drawtext")]
+    assert texts
+    for text_filter in texts:
+        assert ":y=h-100-70" in text_filter

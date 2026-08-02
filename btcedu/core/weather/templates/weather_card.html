@@ -14,16 +14,41 @@ body {
 }
 .header {
     background: {{ accent_color }};
-    padding: 30px 60px;
+    padding: 24px 60px;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 40px;
     height: 140px;
 }
 .header h1 {
-    font-size: 64px;
+    font-size: 60px;
     font-weight: bold;
     letter-spacing: 1px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.day-badge {
+    flex-shrink: 0;
+    max-width: 46%;
+    background: rgba(0, 0, 0, 0.28);
+    border: 3px solid rgba(255, 255, 255, 0.55);
+    border-radius: 14px;
+    padding: 12px 26px;
+    text-align: right;
+}
+.day-badge .day-label {
+    font-size: 42px;
+    font-weight: bold;
+    line-height: 1.1;
+    white-space: nowrap;
+}
+.day-badge .day-caption {
+    font-size: 20px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.75);
 }
 .content {
     display: flex;
@@ -141,7 +166,13 @@ body {
 </head>
 <body>
 <div class="header">
-    <h1>{{ weather.forecast_reference.date_text or title }}</h1>
+    <h1>{{ title }}</h1>
+    {% if day_badge %}
+    <div class="day-badge">
+        <div class="day-caption">Tahmin</div>
+        <div class="day-label">{{ day_badge }}</div>
+    </div>
+    {% endif %}
 </div>
 
 <div class="content">

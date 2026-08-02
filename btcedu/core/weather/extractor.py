@@ -98,6 +98,153 @@ _DAY_REF_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"\bpazar\b", re.IGNORECASE), "sunday"),
 ]
 
+# Additional temporal markers used only for per-scene day context (not for the
+# global forecast reference, which stays backwards compatible).
+_CONTEXT_DAY_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (re.compile(r"\bbu\s+gece\b", re.IGNORECASE), "tonight"),
+    (re.compile(r"\bgece\s+başlangıcında\b", re.IGNORECASE), "tonight"),
+    (re.compile(r"\bönümüzdeki\s+günlerde\b", re.IGNORECASE), "coming_days"),
+    (re.compile(r"\btakip\s+eden\s+günlerde\b", re.IGNORECASE), "coming_days"),
+    *_DAY_REF_PATTERNS,
+]
+
+# Turkish display labels for day references.
+_DAY_LABELS_TR: dict[str, str] = {
+    "today": "Bugün",
+    "tonight": "Bu gece",
+    "tomorrow": "Yarın",
+    "following_day": "Ertesi gün",
+    "weekend": "Hafta sonu",
+    "coming_days": "Önümüzdeki günler",
+    "monday": "Pazartesi",
+    "tuesday": "Salı",
+    "wednesday": "Çarşamba",
+    "thursday": "Perşembe",
+    "friday": "Cuma",
+    "saturday": "Cumartesi",
+    "sunday": "Pazar",
+}
+
+# Weekday name (lowercase, as it appears inside a date text) → day reference.
+_WEEKDAY_TO_REF: dict[str, str] = {
+    "pazartesi": "monday",
+    "salı": "tuesday",
+    "çarşamba": "wednesday",
+    "perşembe": "thursday",
+    "cuma": "friday",
+    "cumartesi": "saturday",
+    "pazar": "sunday",
+}
+
+
+def day_label_for(day_reference: str | None) -> str | None:
+    """Return the Turkish display label for a day reference."""
+    if not day_reference:
+        return None
+    return _DAY_LABELS_TR.get(day_reference)
+
+
+def day_reference_in_text(text: str) -> str | None:
+    """Return the earliest explicit day reference mentioned in ``text``."""
+    best: tuple[int, str] | None = None
+    for pattern, ref_name in _CONTEXT_DAY_PATTERNS:
+        match = pattern.search(text)
+        if match and (best is None or match.start() < best[0]):
+            best = (match.start(), ref_name)
+    return best[1] if best else None
+
+
+def _anchor_refs(forecast_ref: ForecastReference) -> set[str]:
+    """Day references that provably denote the forecast's anchor date.
+
+    When the narration contains an explicit date ("2 Ağustos Pazar"), only that
+    weekday is the anchor. Relative markers such as "yarın" are not equated with
+    the date, because that mapping is not grounded in the text.
+    """
+    if forecast_ref.date_text:
+        lowered = forecast_ref.date_text.casefold()
+        weekdays = {ref for weekday, ref in _WEEKDAY_TO_REF.items() if weekday in lowered}
+        if weekdays:
+            return weekdays
+    return {forecast_ref.day_reference} if forecast_ref.day_reference else set()
+
+
+def _compose_day_label(
+    day_reference: str | None,
+    forecast_ref: ForecastReference,
+    anchor_refs: set[str],
+) -> str | None:
+    """Build the display label for a day reference, grounded in the narration."""
+    if not day_reference:
+        return None
+    base = _DAY_LABELS_TR.get(day_reference)
+    date_text = forecast_ref.date_text
+    if date_text and day_reference in anchor_refs:
+        if base and base.casefold() not in date_text.casefold():
+            return f"{base} · {date_text}"
+        return date_text
+    return base
+
+
+def _build_day_contexts(
+    sentences: list[tuple[str, int, int]],
+    forecast_ref: ForecastReference,
+) -> list[tuple[int, int, str | None, str | None]]:
+    """Resolve which forecast day each sentence describes.
+
+    The day reference is sticky: a sentence without its own temporal marker
+    inherits the day of the preceding sentence. Only markers present in the
+    narration are used — nothing is inferred from the calendar.
+    """
+    anchors = _anchor_refs(forecast_ref)
+    contexts: list[tuple[int, int, str | None, str | None]] = []
+    current_ref: str | None = None
+    current_label: str | None = None
+
+    for sentence, start, end in sentences:
+        date_match = _DATE_TEXT_RE.search(sentence)
+        sentence_ref: str | None = None
+        sentence_label: str | None = None
+
+        if date_match:
+            matched_date = date_match.group(0)
+            lowered = matched_date.casefold()
+            sentence_ref = next(
+                (ref for weekday, ref in _WEEKDAY_TO_REF.items() if weekday in lowered),
+                "date",
+            )
+            sentence_label = matched_date
+        else:
+            best: tuple[int, str] | None = None
+            for pattern, ref_name in _CONTEXT_DAY_PATTERNS:
+                match = pattern.search(sentence)
+                if match and (best is None or match.start() < best[0]):
+                    best = (match.start(), ref_name)
+            if best:
+                sentence_ref = best[1]
+                sentence_label = _compose_day_label(sentence_ref, forecast_ref, anchors)
+
+        if sentence_ref:
+            current_ref = sentence_ref
+            current_label = sentence_label
+        contexts.append((start, end, current_ref, current_label))
+
+    return contexts
+
+
+def _day_context_at(
+    contexts: list[tuple[int, int, str | None, str | None]],
+    offset: int,
+) -> tuple[str | None, str | None]:
+    """Return (day_reference, day_label) for a character offset."""
+    resolved: tuple[str | None, str | None] = (None, None)
+    for start, end, ref, label in contexts:
+        if start <= offset < end:
+            return ref, label
+        if start <= offset:
+            resolved = (ref, label)
+    return resolved
+
 _DATE_TEXT_RE = re.compile(
     r"\b\d{1,2}\s+"
     r"(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)"
@@ -255,15 +402,31 @@ def extract_weather_data(
 
     # Parse sentences for regional forecasts using clause-level association
     sentences = _split_sentences(narration_text)
+    day_contexts = _build_day_contexts(sentences, forecast_ref)
     regions: list[WeatherRegion] = []
     unresolved: list[str] = []
 
+    if temp_match:
+        overview.day_reference, overview.day_label_tr = _day_context_at(
+            day_contexts, temp_match.start()
+        )
+
     for sentence, sent_start, sent_end in sentences:
         clauses = _extract_clauses(sentence)
+        day_ref, day_label = _day_context_at(day_contexts, sent_start)
 
         if len(clauses) <= 1:
             # Single clause or unsplittable — use whole sentence
-            _process_clause(sentence, sent_start, sent_end, regions, unresolved, sentence)
+            _process_clause(
+                sentence,
+                sent_start,
+                sent_end,
+                regions,
+                unresolved,
+                sentence,
+                day_ref,
+                day_label,
+            )
         else:
             # Multiple clauses — clause-level nearest association
             clause_had_match = False
@@ -273,7 +436,14 @@ def extract_weather_data(
                 clause_start = sent_start + clause_offset if clause_offset >= 0 else sent_start
                 clause_end = clause_start + len(clause)
                 matched = _process_clause(
-                    clause, clause_start, clause_end, regions, unresolved, sentence
+                    clause,
+                    clause_start,
+                    clause_end,
+                    regions,
+                    unresolved,
+                    sentence,
+                    day_ref,
+                    day_label,
                 )
                 if matched:
                     clause_had_match = True
@@ -281,7 +451,16 @@ def extract_weather_data(
             if not clause_had_match:
                 # Try whole sentence as fallback (regions in one clause,
                 # conditions in another within the same sentence)
-                _process_clause(sentence, sent_start, sent_end, regions, unresolved, sentence)
+                _process_clause(
+                    sentence,
+                    sent_start,
+                    sent_end,
+                    regions,
+                    unresolved,
+                    sentence,
+                    day_ref,
+                    day_label,
+                )
 
     # Extract warnings
     warnings: list[WeatherWarning] = []
@@ -292,11 +471,14 @@ def extract_weather_data(
             # Find surrounding sentence
             for sentence, start, end in sentences:
                 if start <= idx < end:
+                    warning_day_ref, warning_day_label = _day_context_at(day_contexts, start)
                     warnings.append(
                         WeatherWarning(
                             type=warning_type,
                             text=sentence,
                             regions=_find_regions_in_text(sentence),
+                            day_reference=warning_day_ref,
+                            day_label_tr=warning_day_label,
                             source_span=SourceSpan(text=sentence, start=start, end=end),
                         )
                     )
@@ -325,6 +507,8 @@ def _process_clause(
     regions: list[WeatherRegion],
     unresolved: list[str],
     full_sentence: str,
+    day_reference: str | None = None,
+    day_label: str | None = None,
 ) -> bool:
     """Process a single clause for region-condition associations.
 
@@ -371,6 +555,8 @@ def _process_clause(
                     if WeatherCondition.WINDY in found_conditions
                     else None
                 ),
+                day_reference=day_reference,
+                day_label_tr=day_label,
                 source_span=SourceSpan(text=clause, start=start, end=end),
                 confidence=0.95 if len(found_regions) == 1 else 0.85,
             )

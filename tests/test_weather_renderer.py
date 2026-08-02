@@ -18,6 +18,7 @@ from btcedu.core.weather.models import (
     WeatherData,
 )
 from btcedu.core.weather.renderer import (
+    _build_weather_html,
     _compute_cache_key,
     _render_animated_scene_frames,
     _render_pillow_fallback,
@@ -1044,3 +1045,62 @@ class TestValidationRejection:
 
                 with pytest.raises(RuntimeError, match="blocked"):
                     _render_weather_chapter(chapter, tmp_path)
+
+
+# ============================================================
+# Forecast day context (which day a scene describes)
+# ============================================================
+
+
+class TestForecastDayContext:
+    """Regions, warnings and scenes must state which forecast day they show."""
+
+    def test_region_day_reference_is_sticky_per_sentence(self):
+        text = (
+            "2 Ağustos Pazar günü güneyde güneşli hava bekleniyor. "
+            "Pazartesi günü batıda sağanak yağış görülecek."
+        )
+        data = extract_weather_data(text)
+
+        south = next(r for r in data.regions if r.region_id == RegionId.SOUTH)
+        west = next(r for r in data.regions if r.region_id == RegionId.WEST)
+        assert south.day_reference == "sunday"
+        assert south.day_label_tr == "2 Ağustos Pazar"
+        assert west.day_reference == "monday"
+        assert west.day_label_tr == "Pazartesi"
+
+    def test_sentence_without_marker_inherits_previous_day(self):
+        text = "Yarın kuzeyde yağmur bekleniyor. Doğuda ise güneşli hava olacak."
+        data = extract_weather_data(text)
+
+        east = next(r for r in data.regions if r.region_id == RegionId.EAST)
+        assert east.day_reference == "tomorrow"
+        assert east.day_label_tr == "Yarın"
+
+    def test_scene_plan_carries_day_labels(self):
+        text = (
+            "2 Ağustos Pazar günü güneyde güneşli hava bekleniyor. "
+            "Pazartesi günü batıda sağanak yağış görülecek."
+        )
+        data = extract_weather_data(text)
+        plan = plan_weather_scenes(data, 30.0)
+
+        title_scene = plan.scenes[0]
+        assert title_scene.day_label == "2 Ağustos Pazar"
+
+        region_labels = [s.day_label for s in plan.scenes if s.type.value == "weather_regions"]
+        assert "2 Ağustos Pazar" in region_labels
+        assert "Pazartesi" in region_labels
+
+    def test_day_badge_rendered_in_html(self):
+        text = "Yarın kuzeyde yağmur bekleniyor."
+        data = extract_weather_data(text)
+        html = _build_weather_html(data, None, title="Hava Durumu", day_badge="Yarın")
+        assert "Yarın" in html
+        assert "day-badge" in html
+
+    def test_day_badge_changes_cache_key(self):
+        data = extract_weather_data("Yarın kuzeyde yağmur bekleniyor.")
+        key_a = _compute_cache_key(data, None, day_badge="Yarın")
+        key_b = _compute_cache_key(data, None, day_badge="Pazartesi")
+        assert key_a != key_b

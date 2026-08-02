@@ -252,16 +252,19 @@ def _build_animated_lower_third(
     end = overlay.end
     enable = f"enable='between(t\\,{start}\\,{end})'"
     bar_h = 100
+    # drawtext resolves `h` to the input height; drawbox resolves `h` to the box
+    # height it is currently drawing, so it must use `ih` for the frame height.
     bar_y = f"h-{bar_h}-70"
+    box_y = f"ih-{bar_h}-70"
 
     filters = []
 
     # Gradient background: two stacked drawbox at different opacities
-    filters.append(f"drawbox=x=0:y={bar_y}:w=iw:h={bar_h}:color=black@0.7:t=fill:{enable}")
-    filters.append(f"drawbox=x=0:y={bar_y}:w=iw:h={bar_h // 2}:color=black@0.5:t=fill:{enable}")
+    filters.append(f"drawbox=x=0:y={box_y}:w=iw:h={bar_h}:color=black@0.7:t=fill:{enable}")
+    filters.append(f"drawbox=x=0:y={box_y}:w=iw:h={bar_h // 2}:color=black@0.5:t=fill:{enable}")
 
     # Accent stripe on left edge
-    filters.append(f"drawbox=x=0:y={bar_y}:w=4:h={bar_h}:color={accent_color}:t=fill:{enable}")
+    filters.append(f"drawbox=x=0:y={box_y}:w=4:h={bar_h}:color={accent_color}:t=fill:{enable}")
 
     # Slide-in animation for x position
     slide_x = (
@@ -310,10 +313,10 @@ def _build_ticker_filters(
     """
     escaped = _escape_drawtext(ticker_text)
     filters = [
-        # Separator line
-        f"drawbox=x=0:y=h-{height}-1:w=iw:h=1:color=white@0.8:t=fill",
+        # Separator line (drawbox `h` is the box height -> use `ih` for frame height)
+        f"drawbox=x=0:y=ih-{height}-1:w=iw:h=1:color=white@0.8:t=fill",
         # Ticker background
-        f"drawbox=x=0:y=h-{height}:w=iw:h={height}:color=black@0.8:t=fill",
+        f"drawbox=x=0:y=ih-{height}:w=iw:h={height}:color=black@0.8:t=fill",
         # Scrolling text
         (
             f"drawtext=fontfile={font_path}:text='{escaped}'"

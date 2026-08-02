@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 SCHEMA_VERSION = "1.0"
 
 # Renderer version — bump when template/SVG/logic changes to invalidate cache.
-RENDERER_VERSION = "1.3.0"
+RENDERER_VERSION = "1.4.0"
 
 
 class WeatherCondition(str, Enum):
@@ -105,6 +105,8 @@ class WeatherRegion(BaseModel):
     temperature_min_c: int | None = None
     temperature_max_c: int | None = None
     wind: str | None = None
+    day_reference: str | None = None  # "today", "tonight", "tomorrow", day name
+    day_label_tr: str | None = None  # Display label grounded in the narration
     source_span: SourceSpan | None = None
     confidence: float = Field(default=0.9, ge=0.0, le=1.0)
 
@@ -115,6 +117,8 @@ class WeatherOverview(BaseModel):
     headline: str | None = None
     temperature_min_c: int | None = None
     temperature_max_c: int | None = None
+    day_reference: str | None = None
+    day_label_tr: str | None = None
     source_span: SourceSpan | None = None
 
 
@@ -124,6 +128,8 @@ class WeatherWarning(BaseModel):
     type: str  # e.g. "storm", "heavy_rain", "heat"
     text: str
     regions: list[RegionId] = Field(default_factory=list)
+    day_reference: str | None = None
+    day_label_tr: str | None = None
     source_span: SourceSpan | None = None
 
 
@@ -190,6 +196,8 @@ class WeatherScene(BaseModel):
     temperature_min_c: int | None = None
     temperature_max_c: int | None = None
     text: str | None = None
+    day_reference: str | None = None  # Which forecast day this scene describes
+    day_label: str | None = None  # Turkish badge text shown in the visual
 
 
 class WeatherScenePlan(BaseModel):

@@ -28,6 +28,7 @@ class ContentProfile(BaseModel):
     review_gates: dict = {}
     youtube: dict = {}
     ingest: dict = {}
+    branding: dict = {}
     auto_approve_reviews: bool = False
     auto_publish: bool = True
     prompt_namespace: str | None = None

@@ -96,10 +96,18 @@ class Overlay(BaseModel):
 
     type: OverlayType = Field(..., description="Overlay type")
     text: str = Field(..., min_length=1, description="Text to display")
+    subtext: str | None = Field(
+        None,
+        description=(
+            "Optional second line rendered below the headline (short summary). "
+            "Kept optional so existing single-line overlays stay valid."
+        ),
+    )
     start_offset_seconds: float = Field(
         ..., ge=0.0, description="Start time relative to chapter start"
     )
     duration_seconds: float = Field(..., gt=0.0, description="Duration of overlay")
+    priority: int = Field(0, ge=0, description="Higher priority overlays win when they collide")
 
 
 class Transitions(BaseModel):
@@ -121,6 +129,12 @@ class Chapter(BaseModel):
     transitions: Transitions = Field(..., description="Transitions")
     notes: str | None = Field(None, description="Production notes (optional)")
     story_type: str | None = Field(None, description="Optional source story classification")
+    display_headline: str | None = Field(
+        None, description="Short on-screen headline (2-6 words) for the story overlay"
+    )
+    display_summary: str | None = Field(
+        None, description="Short on-screen summary (~8-15 words) shown below the headline"
+    )
     source_text: str | None = Field(
         None, description="Optional approved source-language text for traceability"
     )

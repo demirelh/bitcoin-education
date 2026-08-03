@@ -18,6 +18,7 @@ class EpisodeStatus(str, enum.Enum):
     SEGMENTED = "segmented"  # After story segmentation (news profiles)
     TRANSLATED = "translated"
     ADAPTED = "adapted"
+    SCRIPTED = "scripted"  # Editorial broadcast script written (dual-presenter format)
     CHAPTERIZED = "chapterized"
     FRAMES_EXTRACTED = "frames_extracted"
     IMAGES_GENERATED = "images_generated"
@@ -42,6 +43,8 @@ class PipelineStage(str, enum.Enum):
     TRANSLATE = "translate"
     TRANSLATION_QA = "translation_qa"
     ADAPT = "adapt"
+    SCRIPT = "script"
+    SCRIPT_QA = "script_qa"
     CHAPTERIZE = "chapterize"
     FRAMEEXTRACT = "frameextract"
     IMAGEGEN = "imagegen"

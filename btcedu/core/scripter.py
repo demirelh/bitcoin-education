@@ -912,6 +912,27 @@ def load_broadcast_script(settings: Settings, episode_id: str) -> BroadcastScrip
         return None
 
 
+def broadcast_narration(settings: Settings, episode_id: str) -> str:
+    """The exact spoken text of the broadcast script, or ``""`` when there is none.
+
+    A human-reviewed script under ``review/`` takes precedence over the
+    generated one, mirroring the review conventions of the other stages.
+    """
+    base = Path(settings.outputs_dir) / episode_id
+    for candidate in (
+        base / "review" / "script.broadcast.reviewed.tr.md",
+        base / NARRATION_FILENAME,
+    ):
+        if candidate.exists():
+            try:
+                text = candidate.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if text.strip():
+                return text
+    return ""
+
+
 def estimate_script_duration(script: BroadcastScript) -> float:
     """Estimated spoken duration of a broadcast script in seconds."""
     return round(

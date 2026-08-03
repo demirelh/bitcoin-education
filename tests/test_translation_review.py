@@ -340,17 +340,22 @@ class TestGetStagesTagesschau:
         assert rgt_stage is not None
         assert rgt_stage[1] == EpisodeStatus.CORRECTED
 
-    def test_tagesschau_chapterize_requires_adapted(
+    def test_tagesschau_script_precedes_chapterize(
         self, db_session, tagesschau_episode, settings_with_profiles
     ):
-        """chapterize requires ADAPTED for tagesschau."""
+        """The broadcast script runs on ADAPTED, chapterize then requires SCRIPTED."""
         from btcedu.core.pipeline import _get_stages
 
         stages = _get_stages(settings_with_profiles, tagesschau_episode)
+        names = [n for n, _ in stages]
+        script_stage = next(((n, s) for n, s in stages if n == "script"), None)
         chap_stage = next(((n, s) for n, s in stages if n == "chapterize"), None)
 
+        assert script_stage is not None
+        assert script_stage[1] == EpisodeStatus.ADAPTED
         assert chap_stage is not None
-        assert chap_stage[1] == EpisodeStatus.ADAPTED
+        assert chap_stage[1] == EpisodeStatus.SCRIPTED
+        assert names.index("script") == names.index("chapterize") - 1
 
     def test_bitcoin_podcast_unchanged(self, db_session, bitcoin_episode, settings_with_profiles):
         """bitcoin_podcast still has review_gate_2, adapt, not review_gate_translate."""

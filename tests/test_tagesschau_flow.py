@@ -127,9 +127,13 @@ class TestGetStages:
         adapt_stage = next((s, r) for s, r in stages if s == "adapt")
         assert adapt_stage[1] == EpisodeStatus.TRANSLATED
 
-        # chapterize requires ADAPTED for tagesschau (adapt is enabled)
+        # the broadcast script runs on ADAPTED, chapterize then follows the script
+        assert "script" in stage_names
+        script_stage = next((s, r) for s, r in stages if s == "script")
+        assert script_stage[1] == EpisodeStatus.ADAPTED
+
         chapterize_stage = next((s, r) for s, r in stages if s == "chapterize")
-        assert chapterize_stage[1] == EpisodeStatus.ADAPTED
+        assert chapterize_stage[1] == EpisodeStatus.SCRIPTED
 
     def test_get_stages_no_episode(self, settings_with_profiles):
         """With no episode, returns default v2 stages."""

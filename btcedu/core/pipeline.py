@@ -35,6 +35,7 @@ _STATUS_ORDER = {
     EpisodeStatus.SEGMENTED: 10.5,  # Between CORRECTED and TRANSLATED (news profiles)
     EpisodeStatus.TRANSLATED: 11,
     EpisodeStatus.ADAPTED: 12,
+    EpisodeStatus.SCRIPTED: 12.5,  # Between ADAPTED and CHAPTERIZED (broadcast profiles)
     EpisodeStatus.CHAPTERIZED: 13,
     EpisodeStatus.FRAMES_EXTRACTED: 13.5,
     EpisodeStatus.IMAGES_GENERATED: 14,
@@ -160,6 +161,18 @@ def _get_stages(
             ("chapterize", EpisodeStatus.TRANSLATED) if n == "chapterize" else (n, s)
             for n, s in stages
         ]
+
+    # Insert the 'script' stage for profiles that broadcast a two-presenter
+    # programme. It runs after the translation review gate and rewrites the
+    # approved translation into the spoken script that chapterize then follows.
+    if stage_config.get("script", {}).get("enabled"):
+        chapterize_idx = next(
+            (i for i, (name, _) in enumerate(stages) if name == "chapterize"), None
+        )
+        if chapterize_idx is not None:
+            required = stages[chapterize_idx][1]
+            stages.insert(chapterize_idx, ("script", required))
+            stages[chapterize_idx + 1] = ("chapterize", EpisodeStatus.SCRIPTED)
 
     return stages
 
@@ -312,6 +325,7 @@ _STAGE_NAME_TO_PIPELINE_STAGE = {
     "segment": PipelineStage.SEGMENT,
     "translate": PipelineStage.TRANSLATE,
     "adapt": PipelineStage.ADAPT,
+    "script": PipelineStage.SCRIPT,
     "chapterize": PipelineStage.CHAPTERIZE,
     "frameextract": PipelineStage.FRAMEEXTRACT,
     "imagegen": PipelineStage.IMAGEGEN,
@@ -401,6 +415,7 @@ def _run_stage(
         "adapt",
         "review_gate_2",
         "review_gate_translate",
+        "script",
         "chapterize",
         "frameextract",
         "imagegen",
@@ -991,6 +1006,26 @@ def _run_stage(
                 "review_pending",
                 elapsed,
                 detail="translation review task created",
+            )
+
+        elif stage_name == "script":
+            from btcedu.core.scripter import generate_script
+
+            result = generate_script(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("script", "skipped", elapsed, detail="already up-to-date")
+            return StageResult(
+                "script",
+                "success",
+                elapsed,
+                detail=(
+                    f"{result.story_count} stories, "
+                    f"~{result.estimated_duration_seconds:.0f}s, "
+                    f"anchor {result.anchor_share:.0%}, "
+                    f"${result.cost_usd:.4f}"
+                ),
             )
 
         elif stage_name == "chapterize":

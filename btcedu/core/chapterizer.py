@@ -166,6 +166,17 @@ def _enforce_narration_lock(
         return None, None
 
     _, approved_text = canonical_narration(settings, episode_id)
+    # When a broadcast script exists it is what actually gets spoken: it
+    # re-splits the approved translation across two presenters and adds the
+    # show's own opening and closing. Chapters must then match the script
+    # verbatim. The translation gate hash is deliberately left alone — the
+    # approved translation itself is unchanged, and script QA proves the script
+    # is grounded in it.
+    from btcedu.core.scripter import broadcast_narration
+
+    script_text = broadcast_narration(settings, episode_id)
+    if script_text.strip():
+        approved_text = script_text
     if not approved_text.strip():
         return None, None
 
@@ -297,6 +308,90 @@ class ChapterizationResult:
     skipped: bool = False
 
 
+def _chapters_from_script(script, show_name: str) -> list[dict]:
+    """Build chapter dictionaries directly from a broadcast script.
+
+    The script already decides what is said, by whom and in which order, so
+    chapterization becomes a pure structural mapping: one chapter per script
+    story, narration taken verbatim. This satisfies the narration lock by
+    construction and needs no LLM call at all.
+
+    Speaker segments are preserved in ``metadata`` so TTS can synthesize each
+    presenter with their own voice.
+    """
+    chapters: list[dict] = []
+    for index, story in enumerate(script.stories, start=1):
+        narration_text = story.narration.strip()
+        if not narration_text:
+            continue
+        word_count = max(1, len(narration_text.split()))
+        duration = max(1, _compute_duration_estimate(word_count))
+        headline = (story.display_headline or show_name).strip()
+        summary = (story.display_summary or "").strip()
+
+        is_weather = (
+            story.is_weather or story.category == "wetter" or "hava durumu" in headline.lower()
+        )
+        is_frame = story.source_story_id in ("__opening__", "__closing__")
+        if is_weather:
+            visual_type = "diagram"
+        elif is_frame:
+            visual_type = "title_card"
+        else:
+            visual_type = "b_roll"
+
+        overlays: list[dict] = []
+        if not is_frame:
+            overlay = {
+                "type": "lower_third",
+                "text": headline,
+                "start_offset_seconds": 1.0,
+                "duration_seconds": min(float(duration), max(4.0, story.overlay_duration_seconds)),
+                "priority": story.overlay_priority or 1,
+            }
+            if summary:
+                overlay["subtext"] = summary
+            overlays.append(overlay)
+
+        chapters.append(
+            {
+                "chapter_id": f"ch{index:02d}",
+                "title": headline if not is_frame else show_name,
+                "order": index,
+                "narration": {
+                    "text": narration_text,
+                    "word_count": word_count,
+                    "estimated_duration_seconds": duration,
+                },
+                "visual": {
+                    "type": visual_type,
+                    "description": summary or headline,
+                    "image_prompt": None if is_frame else (summary or headline),
+                },
+                "overlays": overlays,
+                "transitions": {"in": "fade", "out": "cut"},
+                "story_type": "wetter" if is_weather else story.category or None,
+                "display_headline": headline,
+                "display_summary": summary or None,
+                "metadata": {
+                    "script_story_id": story.story_id,
+                    "source_story_id": story.source_story_id,
+                    "priority": story.priority.value,
+                    "is_weather": is_weather,
+                    "speaker_segments": [
+                        {
+                            "role": segment.role.value,
+                            "purpose": segment.purpose.value,
+                            "text": segment.text,
+                        }
+                        for segment in story.speaker_sequence
+                    ],
+                },
+            }
+        )
+    return chapters
+
+
 def chapterize_script(
     session: Session,
     episode_id: str,
@@ -345,13 +440,17 @@ def chapterize_script(
     use_story_mode = stories_translated_path.exists() and not adapted_script_path.exists()
 
     # Allow both ADAPTED, TRANSLATED (story mode), and CHAPTERIZED status
-    allowed_statuses = {EpisodeStatus.ADAPTED, EpisodeStatus.CHAPTERIZED}
+    allowed_statuses = {
+        EpisodeStatus.ADAPTED,
+        EpisodeStatus.SCRIPTED,
+        EpisodeStatus.CHAPTERIZED,
+    }
     if use_story_mode:
         allowed_statuses.add(EpisodeStatus.TRANSLATED)
     if episode.status not in allowed_statuses and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
-            "expected 'adapted', 'translated' (story mode), or 'chapterized'. "
+            "expected 'adapted', 'scripted', 'translated' (story mode), or 'chapterized'. "
             "Use --force to override."
         )
 
@@ -431,6 +530,20 @@ def chapterize_script(
     except Exception:
         profile_namespace = None
 
+    # A broadcast script, when present, is the authoritative spoken text: it
+    # decides running order, presenter split and on-screen headlines. Chapters
+    # are then derived from it deterministically instead of via the LLM.
+    from btcedu.core.scripter import load_broadcast_script
+
+    broadcast_script = load_broadcast_script(settings, episode_id)
+    show_name = str(
+        (getattr(profile_obj, "branding", {}) or {}).get("show_name") or "Haber Bülteni"
+    )
+    if broadcast_script is not None:
+        script_narration_path = Path(settings.outputs_dir) / episode_id / "script.broadcast.tr.md"
+        if script_narration_path.exists():
+            adapted_path = script_narration_path
+
     # Load and register prompt via PromptRegistry (with profile-namespaced fallback)
     registry = PromptRegistry(session)
     template_file = registry.resolve_template_path("chapterize.md", profile=profile_namespace)
@@ -502,7 +615,7 @@ def chapterize_script(
         total_cost = 0.0
         all_chapters = []
 
-        for i, segment in enumerate(segments):
+        for i, segment in enumerate(segments if broadcast_script is None else []):
             user_message = user_template.replace("{{episode_id}}", episode_id).replace(
                 "{{adapted_script}}", segment
             )
@@ -587,8 +700,31 @@ def chapterize_script(
                 response.cost_usd,
             )
 
+        # Deterministic path: the broadcast script already fixed the running
+        # order, the spoken text and the on-screen headlines, so chapters are a
+        # direct structural mapping. No LLM call, no narration drift, no cost.
+        if broadcast_script is not None:
+            deterministic_chapters = _chapters_from_script(broadcast_script, show_name)
+            final_chapter_doc = ChapterDocument(
+                schema_version="1.0",
+                episode_id=episode_id,
+                title=show_name,
+                total_chapters=len(deterministic_chapters),
+                estimated_duration_seconds=max(
+                    1,
+                    sum(
+                        c["narration"]["estimated_duration_seconds"] for c in deterministic_chapters
+                    ),
+                ),
+                chapters=deterministic_chapters,
+            )
+            logger.info(
+                "Built %d chapters deterministically from the broadcast script for %s",
+                len(deterministic_chapters),
+                episode_id,
+            )
         # Reassemble if multi-segment: re-number chapters sequentially
-        if len(segments) > 1:
+        elif len(segments) > 1:
             for idx, ch in enumerate(all_chapters):
                 ch.order = idx + 1
                 ch.chapter_id = f"ch{ch.order:02d}"
@@ -610,6 +746,10 @@ def chapterize_script(
         merged_chapters = _merge_short_chapters(
             list(final_chapter_doc.chapters), min_chapter_seconds
         )
+        if broadcast_script is not None:
+            # Script stories are editorial units; merging them would destroy the
+            # one-overlay-per-story mapping and the speaker segmentation.
+            merged_chapters = list(final_chapter_doc.chapters)
         if len(merged_chapters) != len(final_chapter_doc.chapters):
             logger.info(
                 "Merged %d short chapters (<%ds) into neighbors",

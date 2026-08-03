@@ -159,6 +159,7 @@ def generate_tts(
         _stability = tts_config["stability"]
         _style = tts_config["style"]
         _speed = tts_config["speed"]
+        _role_voices = tts_config.get("voices") or {}
         total_cost = 0.0
 
         def _before_tts_api_call(sent_chars: int, chunk_chars: int) -> None:
@@ -309,21 +310,44 @@ def generate_tts(
 
             # Generate audio (profile voice/model/params; synthesis text carries
             # any pronunciation-lexicon substitutions, display narration does not)
-            entry = _generate_single_audio(
-                chapter,
-                tts_service,
-                tts_dir,
-                settings,
-                voice_id=_voice_id,
-                model=_model,
-                stability=_stability,
-                similarity_boost=tts_config["similarity_boost"],
-                style=_style,
-                speed=_speed,
-                use_speaker_boost=tts_config["use_speaker_boost"],
-                synthesis_text=synthesis_text,
-                text_hash=text_hash,
-            )
+            segments = _speaker_segments(chapter) if _role_voices else []
+            if segments:
+                entry = _generate_multi_voice_audio(
+                    chapter,
+                    segments,
+                    tts_service,
+                    tts_dir,
+                    settings,
+                    role_voices=_role_voices,
+                    fallback={
+                        "voice_id": _voice_id,
+                        "model": _model,
+                        "stability": _stability,
+                        "similarity_boost": tts_config["similarity_boost"],
+                        "style": _style,
+                        "speed": _speed,
+                        "use_speaker_boost": tts_config["use_speaker_boost"],
+                        "voice_id_configured": bool(_voice_id),
+                    },
+                    lexicon=lexicon,
+                    text_hash=text_hash,
+                )
+            else:
+                entry = _generate_single_audio(
+                    chapter,
+                    tts_service,
+                    tts_dir,
+                    settings,
+                    voice_id=_voice_id,
+                    model=_model,
+                    stability=_stability,
+                    similarity_boost=tts_config["similarity_boost"],
+                    style=_style,
+                    speed=_speed,
+                    use_speaker_boost=tts_config["use_speaker_boost"],
+                    synthesis_text=synthesis_text,
+                    text_hash=text_hash,
+                )
             audio_entries.append(entry)
             total_cost += entry.cost_usd
             total_duration += entry.duration_seconds
@@ -500,7 +524,41 @@ def _resolve_tts_config(episode, settings: Settings) -> dict:
         "speed": cfg.get("speed", settings.elevenlabs_speed),
         "use_speaker_boost": cfg.get("use_speaker_boost", settings.elevenlabs_use_speaker_boost),
         "pronunciation_lexicon": {str(k): str(v) for k, v in lexicon.items()},
+        "voices": _resolve_role_voices(cfg, settings),
     }
+
+
+def _resolve_role_voices(cfg: dict, settings: Settings) -> dict:
+    """Per-speaker-role voice settings, each falling back to the single voice.
+
+    Profiles without a ``voices`` block get an empty mapping, so their episodes
+    keep being synthesized with exactly one voice as before.
+    """
+    voices = cfg.get("voices")
+    if not isinstance(voices, dict) or not voices:
+        return {}
+    default_voice = cfg.get("voice_id") or settings.elevenlabs_voice_id
+    resolved: dict[str, dict] = {}
+    for role, raw in voices.items():
+        if not isinstance(raw, dict):
+            continue
+        resolved[str(role)] = {
+            "voice_id": raw.get("voice_id") or default_voice,
+            "model": raw.get("model") or cfg.get("model") or settings.elevenlabs_model,
+            "stability": raw.get("stability", cfg.get("stability", settings.elevenlabs_stability)),
+            "similarity_boost": raw.get(
+                "similarity_boost",
+                cfg.get("similarity_boost", settings.elevenlabs_similarity_boost),
+            ),
+            "style": raw.get("style", cfg.get("style", settings.elevenlabs_style)),
+            "speed": raw.get("speed", cfg.get("speed", settings.elevenlabs_speed)),
+            "use_speaker_boost": raw.get(
+                "use_speaker_boost",
+                cfg.get("use_speaker_boost", settings.elevenlabs_use_speaker_boost),
+            ),
+            "voice_id_configured": bool(raw.get("voice_id")),
+        }
+    return resolved
 
 
 def _voice_config_signature(cfg: dict) -> dict:
@@ -514,6 +572,7 @@ def _voice_config_signature(cfg: dict) -> dict:
         "speed": cfg.get("speed"),
         "use_speaker_boost": cfg.get("use_speaker_boost"),
         "pronunciation_lexicon": cfg.get("pronunciation_lexicon") or {},
+        "voices": cfg.get("voices") or {},
     }
 
 
@@ -621,6 +680,213 @@ def _is_tts_current(
         return False
 
     return True
+
+
+def _speaker_segments(chapter) -> list[dict]:
+    """Speaker segments of a chapter, or ``[]`` when it is single-voice.
+
+    Only returned when the segments actually reconstruct the chapter narration,
+    so a stale or hand-edited ``metadata`` block can never change what is spoken.
+    """
+    metadata = getattr(chapter, "metadata", None) or {}
+    raw = metadata.get("speaker_segments")
+    if not isinstance(raw, list) or len(raw) < 2:
+        return []
+    segments = []
+    for item in raw:
+        if not isinstance(item, dict):
+            return []
+        text = str(item.get("text") or "").strip()
+        role = str(item.get("role") or "").strip()
+        if not text or not role:
+            return []
+        segments.append({"role": role, "purpose": str(item.get("purpose") or ""), "text": text})
+    if len({s["role"] for s in segments}) < 2:
+        return []
+
+    from btcedu.core.narration_lock import normalize_narration_text
+
+    composed = normalize_narration_text(" ".join(s["text"] for s in segments))
+    if composed != normalize_narration_text(chapter.narration.text):
+        logger.warning(
+            "Speaker segments of chapter %s do not reconstruct its narration — "
+            "falling back to single-voice synthesis",
+            chapter.chapter_id,
+        )
+        return []
+    return segments
+
+
+def _concat_mp3(parts: list[Path], target: Path, pause_seconds: float) -> None:
+    """Join MP3 parts into one file, inserting a short pause between speakers."""
+    import shutil
+    import subprocess
+
+    if len(parts) == 1:
+        shutil.copyfile(parts[0], target)
+        return
+
+    inputs: list[str] = []
+    for part in parts:
+        inputs.extend(["-i", str(part)])
+    silence = f"anullsrc=r=44100:cl=mono:d={pause_seconds}"
+    filters = []
+    for index in range(len(parts)):
+        filters.append(f"[{index}:a]aresample=44100,aformat=channel_layouts=mono[a{index}]")
+    concat_inputs = ""
+    for index in range(len(parts)):
+        concat_inputs += f"[a{index}]"
+        if index < len(parts) - 1:
+            filters.append(f"{silence}[p{index}]")
+            concat_inputs += f"[p{index}]"
+    segment_count = len(parts) * 2 - 1
+    filters.append(f"{concat_inputs}concat=n={segment_count}:v=0:a=1[out]")
+
+    command = [
+        "ffmpeg",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-y",
+        *inputs,
+        "-filter_complex",
+        ";".join(filters),
+        "-map",
+        "[out]",
+        "-codec:a",
+        "libmp3lame",
+        "-q:a",
+        "2",
+        str(target),
+    ]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=600)
+    if result.returncode != 0 or not target.exists():
+        raise RuntimeError(f"Could not join speaker audio for {target.name}: {result.stderr[:400]}")
+
+
+def _generate_multi_voice_audio(
+    chapter,
+    segments: list[dict],
+    tts_service,
+    output_dir: Path,
+    settings: Settings,
+    *,
+    role_voices: dict,
+    fallback: dict,
+    lexicon: dict,
+    text_hash: str,
+    pause_seconds: float = 0.35,
+) -> AudioEntry:
+    """Synthesize a chapter with one voice per speaker segment.
+
+    Each segment is rendered with its role's voice and the parts are joined into
+    the single chapter MP3 the renderer expects. Roles without a configured
+    voice fall back to the profile's main voice, so an incomplete configuration
+    degrades to today's behaviour instead of failing.
+    """
+    from btcedu.services.elevenlabs_service import TTSRequest
+
+    parts_dir = output_dir / "parts"
+    parts_dir.mkdir(parents=True, exist_ok=True)
+    mp3_filename = f"{chapter.chapter_id}.mp3"
+    mp3_path = output_dir / mp3_filename
+
+    part_paths: list[Path] = []
+    part_meta: list[dict] = []
+    total_cost = 0.0
+    total_duration = 0.0
+    used_fallback: set[str] = set()
+
+    for index, segment in enumerate(segments):
+        role = segment["role"]
+        voice = role_voices.get(role) or fallback
+        if not voice.get("voice_id_configured", True):
+            used_fallback.add(role)
+        spoken = _apply_pronunciation_lexicon(segment["text"], lexicon)
+        part_path = parts_dir / f"{chapter.chapter_id}_{index:02d}_{role}.mp3"
+
+        if settings.dry_run:
+            part_path.write_bytes(_create_silent_mp3())
+            duration = 0.0
+            cost = 0.0
+            model = voice.get("model")
+        else:
+            response = tts_service.synthesize(
+                TTSRequest(
+                    text=spoken,
+                    voice_id=voice.get("voice_id") or settings.elevenlabs_voice_id,
+                    model=voice.get("model") or settings.elevenlabs_model,
+                    stability=voice.get("stability"),
+                    similarity_boost=voice.get("similarity_boost"),
+                    style=voice.get("style"),
+                    use_speaker_boost=voice.get("use_speaker_boost"),
+                    speed=voice.get("speed"),
+                )
+            )
+            part_path.write_bytes(response.audio_bytes)
+            duration = response.duration_seconds
+            cost = response.cost_usd
+            model = response.model
+
+        part_paths.append(part_path)
+        part_meta.append(
+            {
+                "role": role,
+                "purpose": segment["purpose"],
+                "voice_id": voice.get("voice_id"),
+                "characters": len(segment["text"]),
+                "duration_seconds": round(duration, 3),
+                "file": part_path.name,
+            }
+        )
+        total_cost += cost
+        total_duration += duration
+
+    if settings.dry_run:
+        # The placeholder frames are not a decodable stream, so joining them
+        # with ffmpeg would fail. A single placeholder stands in for the chapter.
+        mp3_path.write_bytes(_create_silent_mp3())
+    else:
+        _concat_mp3(part_paths, mp3_path, pause_seconds)
+        if len(part_paths) > 1:
+            total_duration += pause_seconds * (len(part_paths) - 1)
+
+    if used_fallback:
+        logger.warning(
+            "Chapter %s: no voice configured for role(s) %s — used the main voice",
+            chapter.chapter_id,
+            ", ".join(sorted(used_fallback)),
+        )
+
+    logger.info(
+        "Generated multi-voice TTS for chapter %s: %d segments, %.1fs, $%.3f",
+        chapter.chapter_id,
+        len(segments),
+        total_duration,
+        total_cost,
+    )
+
+    return AudioEntry(
+        chapter_id=chapter.chapter_id,
+        chapter_title=chapter.title,
+        text_length=len(chapter.narration.text),
+        text_hash=text_hash,
+        duration_seconds=round(total_duration, 3),
+        file_path=f"tts/{mp3_filename}",
+        sample_rate=44100,
+        model=str(model or settings.elevenlabs_model),
+        voice_id=",".join(sorted({str(p["voice_id"]) for p in part_meta})),
+        mime_type="audio/mpeg",
+        size_bytes=mp3_path.stat().st_size if mp3_path.exists() else 0,
+        cost_usd=total_cost,
+        metadata={
+            "generated_at": _utcnow().isoformat(),
+            "multi_voice": True,
+            "dry_run": settings.dry_run,
+            "speaker_parts": part_meta,
+            "pause_seconds": pause_seconds,
+        },
+    )
 
 
 def _generate_single_audio(

@@ -166,7 +166,7 @@ def test_resolve_tts_config_uses_profile_model_and_voice(tmp_path):
 
     cfg = _resolve_tts_config(episode, settings)
     assert cfg["model"] == "eleven_turbo_v2_5"  # profile model, not the global default
-    assert cfg["voice_id"] == "LCHGt3rsPMP50Vs28amI"
+    assert cfg["voice_id"] == "Q2IX97JeHBY3vNGzgM5s"
     assert cfg["speed"] == 1.08
     assert isinstance(cfg["pronunciation_lexicon"], dict)
 
@@ -226,7 +226,7 @@ def test_tts_manifest_writes_resolved_profile_voice_and_model(mock_service, db_s
     result = generate_tts(db_session, "ep_news_tts", settings)
     manifest = json.loads(result.manifest_path.read_text())
     # Top-level voice/model reflect the PROFILE, not the global settings default.
-    assert manifest["voice_id"] == "LCHGt3rsPMP50Vs28amI"
+    assert manifest["voice_id"] == "Q2IX97JeHBY3vNGzgM5s"
     assert manifest["model"] == "eleven_turbo_v2_5"
     assert "voice_config" in manifest
 

@@ -5,13 +5,17 @@ fallback chain, and integration with the image generator.
 """
 
 import json
+from datetime import date
 from unittest.mock import MagicMock, patch
 
+from btcedu.core.weather.cities import CITIES_BY_ID, MAP_CITIES
+from btcedu.core.weather.dates import build_calendar, format_date
 from btcedu.core.weather.detector import detect_weather_story
 from btcedu.core.weather.extractor import extract_weather_data
 from btcedu.core.weather.lexicon import CONDITION_LEXICON_TR
 from btcedu.core.weather.models import (
     SCHEMA_VERSION,
+    CityForecast,
     FindingType,
     RegionId,
     WeatherCondition,
@@ -25,10 +29,12 @@ from btcedu.core.weather.renderer import (
     _validate_output,
     render_weather_scene_video,
     render_weather_visual,
+    select_city_forecasts,
     weather_provenance_path,
 )
 from btcedu.core.weather.scene_planner import plan_weather_scenes
 from btcedu.core.weather.validator import validate_weather_data
+from btcedu.services.meteo_service import OpenMeteoService
 
 # ============================================================
 # 1. Detection Tests
@@ -588,14 +594,47 @@ class TestWeatherRendering:
         ).read_text()
         renderer = (weather_root / "renderer.py").read_text()
 
-        assert ".marker-coast { left: 49.3%; top: 19.7%; }" in template
-        assert ".marker-central { left: 49.3%; top: 51.6%; }" in template
-        assert ".marker-alps { left: 51.9%; top: 82.5%; }" in template
+        assert ".marker-coast { left: 38.1%; top: 15.4%; }" in template
+        assert ".marker-central { left: 51.1%; top: 53.8%; }" in template
+        assert ".marker-alps { left: 55.0%; top: 88.0%; }" in template
         assert "Simplified Germany silhouette" not in template
         assert "Tagesschau Türkçe" not in template
         assert "Kaynak: ARD Tagesschau" not in template
         assert "Tagesschau Türkçe" not in renderer
         assert "Kaynak: ARD Tagesschau" not in renderer
+
+    def test_region_markers_do_not_sit_on_city_dots(self):
+        """Region markers must keep clear of the city temperature labels."""
+        import re
+        from pathlib import Path
+
+        from btcedu.core.weather.cities import MAP_CITIES
+
+        template = (
+            Path(__file__).parents[1]
+            / "btcedu"
+            / "core"
+            / "weather"
+            / "templates"
+            / "weather_card.html"
+        ).read_text()
+        markers = re.findall(
+            r"\.marker-([a-z]+) \{ left: ([\d.]+)%; top: ([\d.]+)%; \}", template
+        )
+        assert len(markers) >= 10
+
+        # SVG viewBox 400x520 rendered into a 760x760 box (xMidYMid meet).
+        scale = 760 / 520
+        x_offset = (760 - 400 * scale) / 2
+        city_positions = [
+            ((x_offset + city.map_x * scale) / 760 * 100, city.map_y * scale / 760 * 100)
+            for city in MAP_CITIES
+        ]
+
+        for name, left, top in markers:
+            for city_left, city_top in city_positions:
+                distance = ((float(left) - city_left) ** 2 + (float(top) - city_top) ** 2) ** 0.5
+                assert distance > 4.0, f"marker-{name} overlaps a city dot"
 
 
 # ============================================================
@@ -1104,3 +1143,186 @@ class TestForecastDayContext:
         key_a = _compute_cache_key(data, None, day_badge="Yarın")
         key_b = _compute_cache_key(data, None, day_badge="Pazartesi")
         assert key_a != key_b
+
+
+class TestAbsoluteForecastDates:
+    """Day badges must always show an absolute date in one constant format."""
+
+    NARRATION = (
+        "3 Ağustos Pazartesi günü için hava tahmini şöyle: Yeni hafta güneşli başlıyor. "
+        "Bu gece kuzeydoğuda sağanak yağış görülecek. "
+        "Yarın kıyı kesimlerinde güneşli hava olacak. "
+        "Salı günü de benzer hava koşulları bekleniyor. "
+        "Önümüzdeki günlerde de bu tür hava olaylarıyla karşılaşılabilir."
+    )
+
+    def test_relative_markers_resolve_to_dates(self):
+        data = extract_weather_data(self.NARRATION, broadcast_date=date(2026, 8, 2))
+
+        assert data.forecast_reference.broadcast_date == "2026-08-02"
+        assert data.forecast_reference.anchor_date == "2026-08-03"
+        labels = {r.day_label_tr for r in data.regions}
+        assert "Yarın" not in labels
+        assert all(label is None or label[0].isdigit() for label in labels)
+
+    def test_tonight_uses_broadcast_date(self):
+        data = extract_weather_data(self.NARRATION, broadcast_date=date(2026, 8, 2))
+
+        northeast = next(r for r in data.regions if r.region_id == RegionId.NORTHEAST)
+        assert northeast.day_reference == "tonight"
+        assert northeast.day_date == "2026-08-02"
+        assert northeast.day_label_tr == "2 Ağustos Pazar"
+
+    def test_scene_badges_are_absolute_dates(self):
+        data = extract_weather_data(self.NARRATION, broadcast_date=date(2026, 8, 2))
+        plan = plan_weather_scenes(data, 60.0)
+
+        assert plan.scenes[0].day_label == "3 Ağustos Pazartesi"
+        assert plan.scenes[0].day_caption == "Tahmin"
+        for scene in plan.scenes:
+            assert scene.day_label is None or scene.day_label[0].isdigit()
+
+    def test_outlook_scene_shows_date_range(self):
+        data = extract_weather_data(self.NARRATION, broadcast_date=date(2026, 8, 2))
+        plan = plan_weather_scenes(data, 60.0)
+
+        outlook = [s for s in plan.scenes if s.day_reference == "coming_days"]
+        assert outlook
+        assert outlook[0].day_label == "4 – 6 Ağustos"
+        assert outlook[0].day_caption == "Önümüzdeki günler"
+
+    def test_without_broadcast_date_behaviour_is_unchanged(self):
+        data = extract_weather_data(self.NARRATION)
+
+        assert data.forecast_reference.anchor_date is None
+        coast = next(r for r in data.regions if r.region_id == RegionId.COAST)
+        assert coast.day_label_tr == "Yarın"
+
+    def test_weekday_resolves_forward_from_anchor(self):
+        calendar = build_calendar("3 Ağustos Pazartesi", date(2026, 8, 2))
+
+        assert calendar.anchor_date == date(2026, 8, 3)
+        assert calendar.resolve("tuesday") == (date(2026, 8, 4), date(2026, 8, 4))
+        assert calendar.label("tuesday") == "4 Ağustos Salı"
+
+    def test_calendar_falls_back_to_next_day(self):
+        calendar = build_calendar(None, date(2026, 12, 31))
+
+        assert calendar.anchor_date == date(2027, 1, 1)
+        assert calendar.label(None) is None
+        assert format_date(calendar.anchor_date) == "1 Ocak Cuma"
+
+
+class TestCityTemperatures:
+    """External per-city temperatures are attributed and never invented."""
+
+    @staticmethod
+    def _payload(dates):
+        return [
+            {
+                "daily": {
+                    "time": dates,
+                    "temperature_2m_max": [28.4, 30.1][: len(dates)],
+                    "temperature_2m_min": [15.2, 17.9][: len(dates)],
+                    "weather_code": [3, 95][: len(dates)],
+                }
+            }
+            for _ in MAP_CITIES
+        ]
+
+    def test_open_meteo_maps_payload_to_forecasts(self):
+        service = OpenMeteoService()
+        dates = ["2026-08-02", "2026-08-03"]
+        with patch.object(service, "_request", return_value=self._payload(dates)):
+            forecasts = service.fetch_city_forecasts(
+                MAP_CITIES, [date(2026, 8, 2), date(2026, 8, 3)]
+            )
+
+        assert len(forecasts) == len(MAP_CITIES) * 2
+        first = forecasts[0]
+        assert first.city_id == "hamburg"
+        assert first.temperature_max_c == 28
+        assert first.temperature_min_c == 15
+        assert first.condition == WeatherCondition.OVERCAST
+        assert forecasts[1].condition == WeatherCondition.THUNDERSTORMS
+
+    def test_provider_failure_degrades_gracefully(self):
+        service = OpenMeteoService()
+        with patch.object(service, "_request", side_effect=OSError("no network")):
+            assert service.fetch_city_forecasts(MAP_CITIES, [date(2026, 8, 2)]) == []
+
+    def test_city_projection_matches_map_dots(self):
+        hamburg = CITIES_BY_ID["hamburg"]
+        assert round(hamburg.map_x) == 185
+        assert round(hamburg.map_y) == 132
+
+    def test_scene_selects_forecasts_of_its_day(self):
+        data = extract_weather_data(
+            TestAbsoluteForecastDates.NARRATION, broadcast_date=date(2026, 8, 2)
+        )
+        data.temperature_source = "Open-Meteo / DWD ICON"
+        data.city_forecasts = [
+            CityForecast(
+                city_id="hamburg",
+                label_tr="Hamburg",
+                date_iso="2026-08-02",
+                temperature_max_c=25,
+                temperature_min_c=14,
+            ),
+            CityForecast(
+                city_id="hamburg",
+                label_tr="Hamburg",
+                date_iso="2026-08-03",
+                temperature_max_c=28,
+                temperature_min_c=15,
+            ),
+        ]
+        plan = plan_weather_scenes(data, 60.0)
+        title_scene = plan.scenes[0]
+
+        selected = select_city_forecasts(data, title_scene.day_date)
+        assert [f.temperature_max_c for f in selected] == [28]
+        assert [f.temperature_max_c for f in select_city_forecasts(data, "2026-08-02")] == [25]
+
+    def test_html_renders_city_temperatures_and_source(self):
+        data = extract_weather_data(
+            TestAbsoluteForecastDates.NARRATION, broadcast_date=date(2026, 8, 2)
+        )
+        data.temperature_source = "Open-Meteo / DWD ICON"
+        data.city_forecasts = [
+            CityForecast(
+                city_id="berlin",
+                label_tr="Berlin",
+                date_iso="2026-08-03",
+                temperature_max_c=30,
+                temperature_min_c=16,
+                map_x=300.3,
+                map_y=187.1,
+                anchor="end",
+            )
+        ]
+
+        html = _build_weather_html(data, None, day_badge="3 Ağustos Pazartesi")
+
+        assert "Open-Meteo / DWD ICON" in html
+        assert "Şehirlere göre sıcaklık" in html
+        assert "30°" in html and "16°" in html
+        assert 'id="city-berlin"' in html
+
+    def test_city_temperatures_are_not_validated_as_claims(self):
+        data = extract_weather_data(
+            TestAbsoluteForecastDates.NARRATION, broadcast_date=date(2026, 8, 2)
+        )
+        data.city_forecasts = [
+            CityForecast(
+                city_id="berlin",
+                label_tr="Berlin",
+                date_iso="2026-08-03",
+                temperature_max_c=44,
+                temperature_min_c=-9,
+            )
+        ]
+
+        result = validate_weather_data(data, TestAbsoluteForecastDates.NARRATION)
+
+        assert not result.publish_blocked

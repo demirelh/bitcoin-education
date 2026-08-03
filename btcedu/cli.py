@@ -2453,6 +2453,11 @@ def credits_cmd(ctx: click.Context, as_json: bool) -> None:
     default=None,
     help="Override narration text (for testing/preview without an episode).",
 )
+@click.option(
+    "--broadcast-date",
+    default=None,
+    help="Broadcast date (YYYY-MM-DD) used to resolve relative day references.",
+)
 @click.pass_context
 def weather_render_cmd(
     ctx: click.Context,
@@ -2460,6 +2465,7 @@ def weather_render_cmd(
     force: bool,
     chapter_id: str | None,
     narration: str | None,
+    broadcast_date: str | None,
 ) -> None:
     """Render weather visual for a specific episode or test narration.
 
@@ -2482,7 +2488,14 @@ def weather_render_cmd(
         output_dir = Path(settings.outputs_dir) / episode_id / "images"
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        weather_data = extract_weather_data(narration, story_id=chapter_id or "weather_test")
+        from datetime import date as _date
+
+        parsed_broadcast = _date.fromisoformat(broadcast_date) if broadcast_date else None
+        weather_data = extract_weather_data(
+            narration,
+            story_id=chapter_id or "weather_test",
+            broadcast_date=parsed_broadcast,
+        )
         validation = validate_weather_data(weather_data, narration)
         scene_plan = plan_weather_scenes(weather_data, 30.0)
         target = output_dir / f"{chapter_id or 'weather_test'}_weather.png"

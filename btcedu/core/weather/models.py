@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 SCHEMA_VERSION = "1.0"
 
 # Renderer version — bump when template/SVG/logic changes to invalidate cache.
-RENDERER_VERSION = "1.4.0"
+RENDERER_VERSION = "1.5.0"
 
 
 class WeatherCondition(str, Enum):
@@ -94,6 +94,8 @@ class ForecastReference(BaseModel):
 
     date_text: str | None = None
     day_reference: str | None = None  # "today", "tomorrow", day name
+    broadcast_date: str | None = None  # ISO date the episode aired
+    anchor_date: str | None = None  # ISO date the headline forecast refers to
 
 
 class WeatherRegion(BaseModel):
@@ -107,6 +109,7 @@ class WeatherRegion(BaseModel):
     wind: str | None = None
     day_reference: str | None = None  # "today", "tonight", "tomorrow", day name
     day_label_tr: str | None = None  # Display label grounded in the narration
+    day_date: str | None = None  # ISO date resolved from the broadcast date
     source_span: SourceSpan | None = None
     confidence: float = Field(default=0.9, ge=0.0, le=1.0)
 
@@ -119,6 +122,7 @@ class WeatherOverview(BaseModel):
     temperature_max_c: int | None = None
     day_reference: str | None = None
     day_label_tr: str | None = None
+    day_date: str | None = None
     source_span: SourceSpan | None = None
 
 
@@ -130,7 +134,26 @@ class WeatherWarning(BaseModel):
     regions: list[RegionId] = Field(default_factory=list)
     day_reference: str | None = None
     day_label_tr: str | None = None
+    day_date: str | None = None
     source_span: SourceSpan | None = None
+
+
+class CityForecast(BaseModel):
+    """Measured/forecast temperatures for a city from an external provider.
+
+    This data is NOT extracted from the narration. It is attributed on the card
+    and never validated as a narration claim.
+    """
+
+    city_id: str
+    label_tr: str
+    date_iso: str
+    temperature_max_c: int | None = None
+    temperature_min_c: int | None = None
+    condition: WeatherCondition | None = None
+    map_x: float = 0.0
+    map_y: float = 0.0
+    anchor: Literal["start", "end"] = "start"
 
 
 class WeatherData(BaseModel):
@@ -147,6 +170,8 @@ class WeatherData(BaseModel):
     outlook: list[str] = Field(default_factory=list)
     warnings: list[WeatherWarning] = Field(default_factory=list)
     unresolved_claims: list[str] = Field(default_factory=list)
+    city_forecasts: list[CityForecast] = Field(default_factory=list)
+    temperature_source: str | None = None  # Attribution for city_forecasts
 
 
 class ValidationFinding(BaseModel):
@@ -198,6 +223,9 @@ class WeatherScene(BaseModel):
     text: str | None = None
     day_reference: str | None = None  # Which forecast day this scene describes
     day_label: str | None = None  # Turkish badge text shown in the visual
+    day_caption: str | None = None  # Small caption above the badge date
+    day_date: str | None = None  # ISO date the scene describes
+    day_date_end: str | None = None  # ISO end date for multi-day outlooks
 
 
 class WeatherScenePlan(BaseModel):

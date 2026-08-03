@@ -23,6 +23,7 @@ from pathlib import Path
 from btcedu.core.weather.models import (
     RENDERER_VERSION,
     SCHEMA_VERSION,
+    CityForecast,
     FindingSeverity,
     FindingType,
     ValidationFinding,
@@ -74,6 +75,7 @@ def _compute_cache_key(
     accent_color: str = "#004B87",
     title: str = "Hava Durumu",
     day_badge: str | None = None,
+    day_caption: str | None = None,
 ) -> str:
     """Compute deterministic cache key for weather render."""
     parts = [
@@ -87,6 +89,7 @@ def _compute_cache_key(
         f"accent:{accent_color}",
         f"title:{title}",
         f"day_badge:{day_badge or ''}",
+        f"day_caption:{day_caption or ''}",
         f"assets:{_renderer_assets_hash()}",
     ]
     if scene_plan:
@@ -177,6 +180,96 @@ def _render_html_to_png(
             html_path.unlink(missing_ok=True)
 
 
+def select_city_forecasts(
+    weather_data: WeatherData,
+    day_date: str | None = None,
+) -> list[CityForecast]:
+    """Return the external city forecasts for a single day.
+
+    Falls back to the forecast anchor date and finally to the earliest day so a
+    card always shows exactly one day of city temperatures.
+    """
+    if not weather_data.city_forecasts:
+        return []
+    by_date: dict[str, list[CityForecast]] = {}
+    for forecast in weather_data.city_forecasts:
+        by_date.setdefault(forecast.date_iso, []).append(forecast)
+    for candidate in (day_date, weather_data.forecast_reference.anchor_date):
+        if candidate and candidate in by_date:
+            return by_date[candidate]
+    return by_date[min(by_date)]
+
+
+def merge_display_regions(weather_data: WeatherData) -> list:
+    """Merge repeated region entries so each region appears once on the card."""
+    merged: dict[str, object] = {}
+    for region in weather_data.regions:
+        key = region.region_id.value
+        existing = merged.get(key)
+        if existing is None:
+            merged[key] = region.model_copy(deep=True)
+            continue
+        for condition in region.conditions:
+            if condition not in existing.conditions:
+                existing.conditions.append(condition)
+        if existing.temperature_min_c is None:
+            existing.temperature_min_c = region.temperature_min_c
+        if existing.temperature_max_c is None:
+            existing.temperature_max_c = region.temperature_max_c
+    return list(merged.values())
+
+
+def _build_city_map_svg(map_svg: str, city_forecasts: list[CityForecast]) -> str:
+    """Overlay per-city temperatures onto the bundled Germany map SVG."""
+    if not map_svg or not city_forecasts:
+        return map_svg
+    marker = '<g id="major-cities"'
+    start = map_svg.find(marker)
+    end = map_svg.rfind("</g>")
+    if start == -1 or end == -1 or end < start:
+        return map_svg
+
+    parts = [
+        '<g id="major-cities" font-family="DejaVu Sans, Arial, sans-serif" '
+        'stroke="#10213a" stroke-width="3" paint-order="stroke fill">'
+    ]
+    for forecast in city_forecasts:
+        offset = 10 if forecast.anchor == "start" else -10
+        text_x = round(forecast.map_x + offset, 1)
+        parts.append(f'<g id="city-{forecast.city_id}">')
+        parts.append(
+            f'<circle cx="{forecast.map_x}" cy="{forecast.map_y}" r="4.5" '
+            'fill="#fbbf24" stroke="#10213a" stroke-width="2"/>'
+        )
+        parts.append(
+            f'<text x="{text_x}" y="{round(forecast.map_y - 3, 1)}" '
+            f'text-anchor="{forecast.anchor}" fill="#f8fafc" font-size="13" '
+            f'font-weight="700">{_escape_svg(forecast.label_tr)}</text>'
+        )
+        temps = []
+        if forecast.temperature_max_c is not None:
+            temps.append(f'<tspan fill="#fbbf24">{forecast.temperature_max_c}°</tspan>')
+        if forecast.temperature_min_c is not None:
+            separator = " / " if temps else ""
+            temps.append(
+                f'<tspan fill="#93c5fd">{separator}{forecast.temperature_min_c}°</tspan>'
+            )
+        if temps:
+            parts.append(
+                f'<text x="{text_x}" y="{round(forecast.map_y + 16, 1)}" '
+                f'text-anchor="{forecast.anchor}" font-size="18" font-weight="700">'
+                f'{"".join(temps)}</text>'
+            )
+        parts.append("</g>")
+    parts.append("</g>")
+    return map_svg[:start] + "".join(parts) + map_svg[end + 4 :]
+
+
+def _escape_svg(text: str) -> str:
+    """Minimal XML escaping for text injected into the map SVG."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _build_weather_html(
     weather_data: WeatherData,
     scene_plan: WeatherScenePlan | None,
@@ -184,6 +277,7 @@ def _build_weather_html(
     accent_color: str = "#004B87",
     title: str = "Hava Durumu",
     day_badge: str | None = None,
+    day_caption: str | None = None,
 ) -> str:
     """Build the weather HTML/SVG page from Jinja2 template."""
     try:
@@ -206,8 +300,9 @@ def _build_weather_html(
     # Load SVG icons inline
     icons = _load_weather_icons()
 
-    # Build Germany map SVG
-    map_svg = _get_germany_map_svg()
+    # Build Germany map SVG with external city temperatures overlaid
+    city_forecasts = select_city_forecasts(weather_data)
+    map_svg = _build_city_map_svg(_get_germany_map_svg(), city_forecasts)
 
     return template.render(
         weather=weather_data,
@@ -219,6 +314,10 @@ def _build_weather_html(
         renderer_version=RENDERER_VERSION,
         title=title,
         day_badge=day_badge or weather_data.forecast_reference.date_text,
+        day_caption=day_caption or "Tahmin",
+        city_forecasts=city_forecasts,
+        display_regions=merge_display_regions(weather_data),
+        temperature_source=weather_data.temperature_source,
     )
 
 
@@ -251,6 +350,7 @@ def _render_pillow_fallback(
     height: int = 1080,
     title: str = "Hava Durumu",
     day_badge: str | None = None,
+    day_caption: str | None = None,
 ) -> bool:
     """Render a branded weather card using Pillow. Never produces blank output."""
     try:
@@ -298,6 +398,15 @@ def _render_pillow_fallback(
             badge_text,
             fill=(255, 255, 255),
             font=badge_font,
+        )
+        caption_text = (day_caption or "Tahmin").upper()
+        caption_font = _font(24)
+        caption_width = int(draw.textlength(caption_text, font=caption_font))
+        draw.text(
+            (width - caption_width - 60, 34),
+            caption_text,
+            fill=(220, 232, 245),
+            font=caption_font,
         )
 
     y = 250
@@ -474,6 +583,7 @@ def render_weather_visual(
     height: int = 1080,
     title: str = "Hava Durumu",
     day_badge: str | None = None,
+    day_caption: str | None = None,
     render_empty_template: bool = False,
 ) -> WeatherRenderResult:
     """Render weather visual with full fallback chain.
@@ -492,6 +602,7 @@ def render_weather_visual(
         accent_color=accent_color,
         title=title,
         day_badge=day_badge,
+        day_caption=day_caption,
     )
 
     # Check if output already exists and is valid (idempotency)
@@ -532,6 +643,7 @@ def render_weather_visual(
             accent_color=accent_color,
             title=title,
             day_badge=day_badge,
+            day_caption=day_caption,
         )
         if html and _render_html_to_png(html, output_path, width=width, height=height):
             output_findings = _validate_output(output_path)
@@ -557,6 +669,7 @@ def render_weather_visual(
             height=height,
             title=title,
             day_badge=day_badge,
+            day_caption=day_caption,
         ):
             output_findings = _validate_output(output_path)
             if not any(f.publish_blocked for f in output_findings):
@@ -582,6 +695,7 @@ def render_weather_visual(
             height=height,
             title=title,
             day_badge=day_badge,
+            day_caption=day_caption,
         ):
             output_findings = _validate_output(output_path)
             if not any(f.publish_blocked for f in output_findings):
@@ -608,6 +722,7 @@ def render_weather_visual(
             height=height,
             title=title,
             day_badge=day_badge,
+            day_caption=day_caption,
         ):
             output_findings = _validate_output(output_path)
             if not any(f.publish_blocked for f in output_findings):
@@ -633,6 +748,7 @@ def render_weather_visual(
         height=height,
         title=title,
         day_badge=day_badge,
+        day_caption=day_caption,
     ):
         output_findings = _validate_output(output_path)
         _write_provenance(output_path, cache_key, "pillow_generic", weather_data)
@@ -678,6 +794,7 @@ def render_weather_visual(
 def _weather_data_for_scene(weather_data: WeatherData, scene: WeatherScene) -> WeatherData:
     """Return a claim-preserving weather subset for one planned scene."""
     selected = weather_data.model_copy(deep=True)
+    selected.city_forecasts = select_city_forecasts(weather_data, scene.day_date)
     if scene.type == WeatherSceneType.TITLE:
         selected.regions = []
         selected.overview.temperature_min_c = None
@@ -895,6 +1012,7 @@ def render_weather_scene_video(
                 height=height,
                 title=scene.headline or title,
                 day_badge=scene.day_label,
+                day_caption=scene.day_caption,
                 render_empty_template=scene.type == WeatherSceneType.TITLE,
             )
             if not scene_result.success:
@@ -914,6 +1032,8 @@ def render_weather_scene_video(
                     "end": scene.end,
                     "duration": scene.end - scene.start,
                     "day_label": scene.day_label,
+                    "day_caption": scene.day_caption,
+                    "day_date": scene.day_date,
                 }
             )
 

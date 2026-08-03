@@ -132,7 +132,17 @@ stage_config:
     extraction:
       provider: deterministic
       require_source_spans: true
+      # Narration claims stay 100% deterministic; no external source may create
+      # or modify a claim shown as narration content.
       allow_external_weather_data: false
+    # Attributed context data: per-city temperatures shown on the map and in a
+    # side panel. Never used for claim validation.
+    city_temperatures:
+      enabled: true
+      provider: open_meteo
+      model: icon_seamless
+      timeout_seconds: 20
+      cities: [hamburg, berlin, cologne, frankfurt, stuttgart, munich]
     rendering:
       engine: html_svg_chromium
       resolution:

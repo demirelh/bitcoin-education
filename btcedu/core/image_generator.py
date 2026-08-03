@@ -591,6 +591,9 @@ def generate_images(
                         output_dir,
                         accent_color=_profile_accent,
                         weather_config=_weather_cfg,
+                        broadcast_date=(
+                            episode.published_at.date() if episode.published_at else None
+                        ),
                     )
                     deterministic_count += 1
                 except Exception as error:
@@ -1310,8 +1313,59 @@ def _render_deterministic_visual(
     )
 
 
+def _attach_city_forecasts(weather_data, weather_config: dict | None) -> None:
+    """Attach external per-city temperatures to the extracted weather data.
+
+    The data is attributed on the card and never enters claim validation. Any
+    provider failure is non-fatal: the card simply renders without city temps.
+    """
+    from datetime import date as _date
+    from datetime import timedelta
+
+    config = (weather_config or {}).get("city_temperatures") or {}
+    if not config.get("enabled", True):
+        return
+    reference = weather_data.forecast_reference
+    if not reference.broadcast_date or not reference.anchor_date:
+        return
+    try:
+        broadcast = _date.fromisoformat(reference.broadcast_date)
+        anchor = _date.fromisoformat(reference.anchor_date)
+    except ValueError:
+        return
+
+    from btcedu.core.weather.cities import MAP_CITIES
+    from btcedu.services.meteo_service import OpenMeteoService
+
+    selected_ids = config.get("cities")
+    cities = tuple(
+        city for city in MAP_CITIES if not selected_ids or city.city_id in selected_ids
+    )
+    if not cities:
+        return
+
+    # Cover the broadcast night through the multi-day outlook in one request.
+    span_days = (anchor - broadcast).days + 4
+    dates = [broadcast + timedelta(days=offset) for offset in range(max(span_days, 1))]
+
+    service = OpenMeteoService(
+        timeout=float(config.get("timeout_seconds", 20)),
+        model=str(config.get("model", "icon_seamless")),
+    )
+    forecasts = service.fetch_city_forecasts(cities, dates)
+    if forecasts:
+        weather_data.city_forecasts = forecasts
+        weather_data.temperature_source = service.source_label
+    else:
+        logger.warning("No external city temperatures available for weather card")
+
+
 def _render_weather_chapter(
-    chapter, output_dir: Path, accent_color: str = "#004B87", weather_config: dict | None = None
+    chapter,
+    output_dir: Path,
+    accent_color: str = "#004B87",
+    weather_config: dict | None = None,
+    broadcast_date=None,
 ) -> ImageEntry:
     """Render a weather chapter using the specialized weather renderer.
 
@@ -1367,7 +1421,9 @@ def _render_weather_chapter(
         narration_text,
         story_id=chapter.chapter_id,
         source_text=source_text if isinstance(source_text, str) else "",
+        broadcast_date=broadcast_date,
     )
+    _attach_city_forecasts(weather_data, _wcfg)
 
     # Validate
     validation = validate_weather_data(weather_data, narration_text)

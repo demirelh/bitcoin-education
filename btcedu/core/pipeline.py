@@ -1567,6 +1567,20 @@ def run_episode_pipeline(
             except Exception:
                 logger.debug("Could not create DLQ entry", exc_info=True)
 
+            try:
+                from btcedu.services.notify_service import notify_stage_failure
+
+                notify_stage_failure(
+                    settings,
+                    episode_id=episode.episode_id,
+                    episode_title=episode.title or "",
+                    stage=stage_name,
+                    error=result.error or "unknown error",
+                    retry_count=episode.retry_count,
+                )
+            except Exception:
+                logger.debug("Could not send failure notification", exc_info=True)
+
             break
         elif result.status == "review_pending":
             logger.info("  Stage %s: %s", stage_name, result.detail)

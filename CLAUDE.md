@@ -78,3 +78,11 @@ thresholds, `qa_review_enabled`, `qa_model`, LLM/provider credentials,
 `default_content_profile`, `dry_run`, `max_episode_cost_usd`, image/TTS/render
 providers, and YouTube OAuth paths. Profile YAML owns stage routing and may
 override applicable `.env` values. Full list: `btcedu/config.py`.
+
+## Notifications
+
+Failed pipeline stages are pushed to WhatsApp via the standalone
+`whatsapp-service` (Baileys linked device, REST API at
+`/home/pi/services/whatsapp-service`). Enable with `NOTIFY_WHATSAPP_ENABLED=true`
+and `NOTIFY_WHATSAPP_URL`. `btcedu/services/notify_service.py` never raises and
+is skipped in dry-run mode; `btcedu notify-test` sends a test message.

@@ -2541,3 +2541,25 @@ def weather_render_cmd(
         raise click.ClickException(str(e))
     finally:
         session.close()
+
+
+@cli.command(name="notify-test")
+@click.option("--message", default=None, help="Custom message text.")
+@click.pass_context
+def notify_test(ctx: click.Context, message: str | None) -> None:
+    """Send a test notification through the WhatsApp service."""
+    from btcedu.services.notify_service import send_notification
+
+    settings = ctx.obj["settings"]
+    if not settings.notify_whatsapp_enabled:
+        raise click.ClickException(
+            "WhatsApp notifications are disabled. Set NOTIFY_WHATSAPP_ENABLED=true in .env"
+        )
+    text = message or "\u2705 btcedu Testnachricht - Benachrichtigungen funktionieren."
+    if send_notification(settings, text):
+        click.echo(f"[OK] Notification sent via {settings.notify_whatsapp_url}")
+    else:
+        raise click.ClickException(
+            f"Notification was not accepted by {settings.notify_whatsapp_url} - "
+            "check that the whatsapp service is running (systemctl status whatsapp)."
+        )

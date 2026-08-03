@@ -224,6 +224,13 @@ class Settings(BaseSettings):
     agent_model: str = "claude-sonnet-4-20250514"
     agent_max_tokens: int = 2048
 
+    # Notifications (WhatsApp via local whatsapp-service REST API)
+    notify_whatsapp_enabled: bool = False
+    notify_whatsapp_url: str = "http://127.0.0.1:3010"
+    notify_whatsapp_token: str = ""
+    notify_whatsapp_timeout: int = 15
+    notify_whatsapp_number: str = ""  # empty: use the service default recipient
+
     # Output
     outputs_dir: str = "data/outputs"
     episode_retention_days: int = 0  # 0 disables global cleanup; profiles may override

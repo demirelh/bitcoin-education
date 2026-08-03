@@ -1,4 +1,4 @@
-# tests/ — Test Suite (~1189 tests)
+# tests/ — Test Suite (~1955 tests)
 
 ## Running Tests
 
@@ -35,3 +35,10 @@ pytest -k "test_render" -x            # match pattern
 - `test_web*.py` / `test_*_api.py` — Flask test client tests for web endpoints
 - `conftest.py` — shared fixtures (db, episodes, transcripts)
 - `fixtures/` — static test data files
+
+<!--
+Documentation sync
+Baseline: 1d7291b
+Synced through: HEAD
+Date: 2026-08-04
+-->

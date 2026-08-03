@@ -9,20 +9,29 @@ Each service uses a Protocol for swappable implementations:
 
 ## Services
 
-- `claude_service.py` — `call_claude()` -> `ClaudeResponse(text, input_tokens, output_tokens, cost_usd)`. Uses anthropic SDK. Also: `compute_prompt_hash()`, `calculate_cost()`
+- `claude_service.py` — `call_claude()` -> `ClaudeResponse(text, input_tokens, output_tokens, cost_usd)`. Providers: `anthropic`, `openai`, `github_models`, `copilot_cli`. Also: `compute_prompt_hash()`, `calculate_cost()`
 - `elevenlabs_service.py` — raw HTTP (not SDK). Retry logic, text chunking for long narrations.
 - `image_gen_service.py` — DALL-E 3 via openai SDK
 - `pexels_service.py` — Pexels stock photo/video search via raw HTTP
+- `meteo_service.py` — Open-Meteo / DWD ICON forecasts via urllib (`OpenMeteoService`, `MeteoService` Protocol). One multi-location request, never raises: failures degrade to an empty list. `_request()` is the seam patched in tests.
+- `notify_service.py` — WhatsApp push for pipeline failures via the local whatsapp-service REST API. Never raises, skipped when disabled or in dry-run.
+- `errors.py` — `ErrorCategory` (incl. `PERMANENT_QUOTA` for exhausted provider credits), `is_transient()`, `ERROR_SUGGESTIONS`
 - `ffmpeg_service.py` — ffmpeg subprocess wrapper: `normalize_video_clip()`, `create_video_segment()`, `concat_segments()`, `probe_media()`, `generate_test_video()`, `generate_silent_audio()`
 - `youtube_service.py` — YouTube Data API upload + OAuth. `authenticate()`, `check_token_status()` -> `{valid, expired, expiry, can_refresh, error}`
 - `feed_service.py` — RSS/YouTube feed parsing -> `list[EpisodeInfo]`
 - `download_service.py` — yt-dlp audio download
 - `transcription_service.py` — OpenAI Whisper API, auto-chunks large audio files
 - `gemini_image_service.py` — Gemini 2.0 Flash image editing via raw HTTP REST API. `edit_image()` -> `GeminiEditResult(image_path, cost_usd)`
-- `gemini_image_service.py` — Gemini 2.0 Flash image editing via raw HTTP REST API. `edit_image()` -> `GeminiEditResult(image_path, cost_usd)`
 
 ## Conventions
 
-- Raw HTTP (`requests`) for ElevenLabs, Pexels, and Gemini (no SDKs)
+- Raw HTTP (`requests`) for ElevenLabs, Pexels, and Gemini (no SDKs); `urllib` for Open-Meteo and the WhatsApp notifier
 - All services are stateless (instantiated per-call or with minimal config)
 - Tests mock all external APIs — no real API calls ever
+
+<!--
+Documentation sync
+Baseline: 1d7291b
+Synced through: HEAD
+Date: 2026-08-04
+-->

@@ -2,12 +2,12 @@
 
 ## Architecture
 
-- `app.py` — Flask app factory, registers `api_bp` blueprint
-- `api.py` — 30+ REST endpoints under `/api` prefix (71KB)
+- `app.py` — Flask app factory, registers `api_bp` under `/api`, serves the page routes (`/`, `/whatsapp`)
+- `api.py` — 80+ REST endpoints under `/api` prefix (136KB)
 - `jobs.py` — `JobManager` for background pipeline execution (thread-based)
-- `static/app.js` — JavaScript SPA (vanilla JS, no framework), 75KB
-- `static/styles.css` — styling, 41KB
-- `templates/index.html` — HTML shell
+- `static/app.js` — JavaScript SPA (vanilla JS, no framework), 140KB
+- `static/styles.css` — styling, 64KB
+- `templates/index.html` — HTML shell; `templates/whatsapp.html` — WhatsApp pairing page
 
 ## Key API Endpoints
 
@@ -24,6 +24,10 @@ Files: `GET /api/episodes/<id>/files/<type>` (serve episode artifacts)
 Channels: `GET/POST /api/channels`, `PATCH /api/channels/<id>` (includes `content_profile`)
 WhatsApp: `GET /api/whatsapp/status` (pairing state + QR code as data URL, proxied from the local
 whatsapp-service), `POST /api/whatsapp/relink`, `POST /api/whatsapp/test`; pairing page at `/whatsapp`
+Weather: `GET /api/episodes/<id>/weather` (summary), `.../weather/<chapter_id>/detail|image|video`,
+`POST .../weather/<chapter_id>/rerender`, `POST .../weather/<chapter_id>/override`,
+`GET .../weather/overrides`
+Intro audio: `GET/POST/DELETE /api/intro-audio`, `GET /api/intro-audio/file` (Tagesschau intro MP3, max 20 MB)
 
 ## Conventions
 
@@ -32,3 +36,11 @@ whatsapp-service), `POST /api/whatsapp/relink`, `POST /api/whatsapp/test`; pairi
 - Health check: `GET /api/health` -> `{"status": "ok", ...}`
 - Production: gunicorn with gthread worker, behind Caddy reverse proxy
 - Dashboard served at `/dashboard/*` path via Caddy with basic auth
+- Templates use relative URLs (`api/...`, `whatsapp`) so the `/dashboard/` prefix keeps working
+
+<!--
+Documentation sync
+Baseline: 1d7291b
+Synced through: HEAD
+Date: 2026-08-04
+-->

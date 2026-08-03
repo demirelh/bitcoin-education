@@ -46,6 +46,11 @@ def create_app(settings=None) -> Flask:
     def index():
         return render_template("index.html")
 
+    @app.route("/whatsapp")
+    def whatsapp_page():
+        """Pairing page for the WhatsApp notification service (QR code)."""
+        return render_template("whatsapp.html")
+
     @app.errorhandler(Exception)
     def handle_exception(e):
         """Global exception handler for unhandled errors."""

@@ -125,6 +125,40 @@ def health():
     )
 
 
+@api_bp.route("/whatsapp/status")
+def whatsapp_status():
+    """Pairing state of the WhatsApp notification service (incl. QR code)."""
+    from btcedu.services.notify_service import get_pairing_status
+
+    settings = current_app.config["settings"]
+    return jsonify(get_pairing_status(settings))
+
+
+@api_bp.route("/whatsapp/relink", methods=["POST"])
+def whatsapp_relink():
+    """Drop the WhatsApp session so a new QR code is generated."""
+    from btcedu.services.notify_service import request_relink
+
+    settings = current_app.config["settings"]
+    result = request_relink(settings)
+    return jsonify(result), 200 if result.get("success") else 502
+
+
+@api_bp.route("/whatsapp/test", methods=["POST"])
+def whatsapp_test():
+    """Send a test notification to the configured number."""
+    from btcedu.services.notify_service import send_notification
+
+    settings = current_app.config["settings"]
+    payload = request.get_json(silent=True) or {}
+    message = str(payload.get("message") or "").strip()
+    if not message:
+        message = "\u2705 btcedu Testnachricht - Benachrichtigungen funktionieren."
+    if send_notification(settings, message):
+        return jsonify({"success": True})
+    return jsonify({"success": False, "error": "message was not accepted by the service"}), 502
+
+
 @api_bp.route("/intro-audio", methods=["GET"])
 def intro_audio_status():
     """Return metadata for the Tagesschau intro MP3."""

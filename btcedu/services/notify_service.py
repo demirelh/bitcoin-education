@@ -68,6 +68,54 @@ def send_notification(settings: Settings, message: str) -> bool:
     return _post(settings, message)
 
 
+def _request_json(settings: Settings, path: str, method: str = "GET") -> dict:
+    """Call the whatsapp-service and return its JSON body (or an error dict)."""
+    url = f"{settings.notify_whatsapp_url.rstrip('/')}/{path.lstrip('/')}"
+    headers = {"Accept": "application/json"}
+    if settings.notify_whatsapp_token:
+        headers["Authorization"] = f"Bearer {settings.notify_whatsapp_token}"
+
+    request = urllib.request.Request(url, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=settings.notify_whatsapp_timeout) as response:
+            body = response.read().decode("utf-8")
+            return json.loads(body) if body else {}
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8")
+        try:
+            return json.loads(body) if body else {"error": exc.reason}
+        except json.JSONDecodeError:
+            return {"error": f"HTTP {exc.code}: {body.strip() or exc.reason}"}
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        logger.debug("WhatsApp service unreachable: %s", exc)
+        return {"error": f"whatsapp service unreachable: {exc}"}
+
+
+def get_pairing_status(settings: Settings) -> dict:
+    """Return connection state plus the current QR code as a PNG data URL."""
+    if not settings.notify_whatsapp_enabled:
+        return {
+            "enabled": False,
+            "connected": False,
+            "status": "disabled",
+            "error": "WhatsApp notifications are disabled (NOTIFY_WHATSAPP_ENABLED)",
+        }
+    data = _request_json(settings, "/qr")
+    data["enabled"] = True
+    data.setdefault("connected", False)
+    data.setdefault("status", "unknown")
+    return data
+
+
+def request_relink(settings: Settings) -> dict:
+    """Ask the service to drop its session so a fresh QR code is generated."""
+    if not settings.notify_whatsapp_enabled:
+        return {"success": False, "error": "WhatsApp notifications are disabled"}
+    data = _request_json(settings, "/relink", method="POST")
+    data.setdefault("success", "error" not in data)
+    return data
+
+
 def notify_stage_failure(
     settings: Settings,
     *,

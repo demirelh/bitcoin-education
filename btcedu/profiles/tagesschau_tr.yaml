@@ -116,9 +116,8 @@ stage_config:
     voice_id: "Q2IX97JeHBY3vNGzgM5s"  # Cavit (fallback / single-voice episodes)
     voices:
       anchor_female:
-        # Main anchor. Set to a female ElevenLabs voice id before first use;
-        # until then the stage falls back to voice_id above.
-        voice_id: ""
+        # Main anchor: Nazlı Yeni (Istanbul accent, professional).
+        voice_id: "o9DOmAyPjfFu8AfoFAnM"
         stability: 0.5
         similarity_boost: 0.75
         style: 0.3

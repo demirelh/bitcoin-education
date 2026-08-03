@@ -46,6 +46,17 @@ def _write_render_progress(render_dir: Path, payload: dict) -> None:
 # Overlay style defaults based on overlay type
 OVERLAY_STYLES = {
     "lower_third": {"fontsize": 48, "fontcolor": "white", "position": "bottom_center"},
+    # Used when an overlay carries both a headline and a summary line.
+    "lower_third_headline": {
+        "fontsize": 52,
+        "fontcolor": "white",
+        "position": "lower_third_headline",
+    },
+    "lower_third_subtext": {
+        "fontsize": 34,
+        "fontcolor": "#E8EEF5",
+        "position": "lower_third_subtext",
+    },
     "title": {"fontsize": 72, "fontcolor": "white", "position": "center"},
     "quote": {"fontsize": 42, "fontcolor": "white", "position": "center"},
     "statistic": {"fontsize": 56, "fontcolor": "#F7931A", "position": "center"},
@@ -496,7 +507,10 @@ def render_video(
 
             # Convert overlays to OverlaySpec (profile-aware accent color + font)
             overlay_specs = _chapter_to_overlay_specs(
-                chapter, _eff_font or settings.render_font, accent_color=_accent_color
+                chapter,
+                _eff_font or settings.render_font,
+                accent_color=_accent_color,
+                animated_lower_thirds=_eff_lower_thirds,
             )
 
             # Compute fade durations based on transition types (Sprint 10)
@@ -1221,13 +1235,24 @@ def render_is_current(session, episode_id: str, settings: Settings) -> tuple[boo
     return True, "render is current"
 
 
-def _chapter_to_overlay_specs(chapter, font: str, accent_color: str = "#F7931A") -> list:
+def _chapter_to_overlay_specs(
+    chapter,
+    font: str,
+    accent_color: str = "#F7931A",
+    animated_lower_thirds: bool = False,
+) -> list:
     """Convert chapter overlays to OverlaySpec list.
+
+    An overlay carrying a ``subtext`` becomes a two-line lower third: the short
+    headline on top, a one-sentence summary below. The animated renderer draws
+    both lines inside its own background bar, so a single spec is enough there;
+    the static renderer needs one spec per line.
 
     Args:
         chapter: Chapter object
         font: Font name
         accent_color: Hex color for statistic overlays (profile-specific)
+        animated_lower_thirds: Whether animated lower thirds are enabled
 
     Returns:
         List of OverlaySpec objects
@@ -1244,6 +1269,54 @@ def _chapter_to_overlay_specs(chapter, font: str, accent_color: str = "#F7931A")
             style = dict(style)
             style["fontcolor"] = accent_color
 
+        subtext = (getattr(overlay, "subtext", None) or "").strip()
+        if subtext and overlay.type.value == "lower_third" and animated_lower_thirds:
+            # The animated lower third draws both lines in its own bar.
+            overlay_specs.append(
+                OverlaySpec(
+                    text=f"{overlay.text}\\n{_shorten_overlay_text(subtext, max_chars=70)}",
+                    overlay_type="lower_third",
+                    fontsize=OVERLAY_STYLES["lower_third_headline"]["fontsize"],
+                    fontcolor=style["fontcolor"],
+                    font=font,
+                    position=style["position"],
+                    start=overlay.start_offset_seconds,
+                    end=overlay.start_offset_seconds + overlay.duration_seconds,
+                )
+            )
+            continue
+
+        if subtext and overlay.type.value == "lower_third":
+            # Two-line lower third: headline on top, one-sentence summary below.
+            head_style = OVERLAY_STYLES["lower_third_headline"]
+            sub_style = OVERLAY_STYLES["lower_third_subtext"]
+            end = overlay.start_offset_seconds + overlay.duration_seconds
+            overlay_specs.append(
+                OverlaySpec(
+                    text=overlay.text,
+                    overlay_type="lower_third",
+                    fontsize=head_style["fontsize"],
+                    fontcolor=head_style["fontcolor"],
+                    font=font,
+                    position=head_style["position"],
+                    start=overlay.start_offset_seconds,
+                    end=end,
+                )
+            )
+            overlay_specs.append(
+                OverlaySpec(
+                    text=_shorten_overlay_text(subtext),
+                    overlay_type="lower_third",
+                    fontsize=sub_style["fontsize"],
+                    fontcolor=sub_style["fontcolor"],
+                    font=font,
+                    position=sub_style["position"],
+                    start=overlay.start_offset_seconds + 0.2,
+                    end=end,
+                )
+            )
+            continue
+
         spec = OverlaySpec(
             text=overlay.text,
             overlay_type=overlay.type.value,
@@ -1257,6 +1330,21 @@ def _chapter_to_overlay_specs(chapter, font: str, accent_color: str = "#F7931A")
         overlay_specs.append(spec)
 
     return overlay_specs
+
+
+def _shorten_overlay_text(text: str, max_chars: int = 62) -> str:
+    """Trim a summary line to one line that fits inside the title-safe area.
+
+    ffmpeg's drawtext draws a line as-is, so an over-long summary would run past
+    the frame edge. The line is cut at a word boundary and ends with an ellipsis.
+    """
+    text = " ".join(text.split())
+    if len(text) <= max_chars:
+        return text
+    cut = text[: max_chars - 1]
+    if " " in cut:
+        cut = cut[: cut.rindex(" ")]
+    return cut.rstrip(" ,;:") + "…"
 
 
 def _resolve_chapter_media(

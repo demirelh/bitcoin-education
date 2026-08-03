@@ -290,3 +290,100 @@ class TestDurationEstimate:
 
     def test_empty_text_has_no_duration(self):
         assert estimate_duration_seconds("   ") == 0.0
+
+
+class TestTwoLineOverlays:
+    """The chapter overlay carries a headline and a summary line."""
+
+    @staticmethod
+    def _chapter_with_subtext():
+        from btcedu.models.chapter_schema import (
+            Chapter,
+            Narration,
+            Overlay,
+            Transitions,
+            Visual,
+        )
+
+        return Chapter(
+            chapter_id="ch01",
+            title="Test",
+            order=1,
+            narration=Narration(text="metin", word_count=1, estimated_duration_seconds=5),
+            visual=Visual(type="b_roll", description="d", image_prompt="p"),
+            transitions=Transitions(**{"in": "fade", "out": "cut"}),
+            overlays=[
+                Overlay(
+                    type="lower_third",
+                    text="Ren Nehri'nde su seviyesi düştü",
+                    subtext="Kuraklık nedeniyle yük gemileri kapasitesinin altında çalışıyor.",
+                    start_offset_seconds=1.0,
+                    duration_seconds=6.0,
+                )
+            ],
+        )
+
+    def test_static_renderer_gets_one_spec_per_line(self):
+        from btcedu.core.renderer import _chapter_to_overlay_specs
+
+        specs = _chapter_to_overlay_specs(
+            self._chapter_with_subtext(), "Roboto", animated_lower_thirds=False
+        )
+        assert len(specs) == 2
+        assert specs[0].position == "lower_third_headline"
+        assert specs[1].position == "lower_third_subtext"
+        assert specs[1].fontsize < specs[0].fontsize
+        assert specs[0].end == specs[1].end
+
+    def test_animated_renderer_gets_a_single_two_line_spec(self):
+        from btcedu.core.renderer import _chapter_to_overlay_specs
+
+        specs = _chapter_to_overlay_specs(
+            self._chapter_with_subtext(), "Roboto", animated_lower_thirds=True
+        )
+        assert len(specs) == 1
+        assert "\\n" in specs[0].text
+
+    def test_overlay_without_subtext_is_unchanged(self):
+        from btcedu.core.renderer import _chapter_to_overlay_specs
+
+        chapter = self._chapter_with_subtext()
+        chapter.overlays[0].subtext = None
+        for animated in (False, True):
+            specs = _chapter_to_overlay_specs(chapter, "Roboto", animated_lower_thirds=animated)
+            assert len(specs) == 1
+            assert specs[0].position == "bottom_center"
+
+    def test_long_summary_is_shortened_to_fit(self):
+        from btcedu.core.renderer import _shorten_overlay_text
+
+        result = _shorten_overlay_text("kelime " * 40, max_chars=62)
+        assert len(result) <= 62
+        assert result.endswith("…")
+
+    def test_short_summary_is_left_alone(self):
+        from btcedu.core.renderer import _shorten_overlay_text
+
+        assert _shorten_overlay_text("Kısa bir özet.") == "Kısa bir özet."
+
+    def test_two_line_bar_is_taller_than_the_single_line_bar(self):
+        from btcedu.services.ffmpeg_service import (
+            OverlaySpec,
+            _build_animated_lower_third,
+        )
+
+        def bar_height(text):
+            spec = OverlaySpec(
+                text=text,
+                overlay_type="lower_third",
+                fontsize=52,
+                fontcolor="white",
+                font="Roboto",
+                position="bottom_center",
+                start=0.0,
+                end=5.0,
+            )
+            drawbox = _build_animated_lower_third(spec, "/font.ttf")[0]
+            return int(drawbox.split(":h=")[1].split(":")[0])
+
+        assert bar_height("Başlık\\nÖzet cümlesi.") > bar_height("Başlık")

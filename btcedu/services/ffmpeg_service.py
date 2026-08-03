@@ -71,6 +71,10 @@ class MediaInfo:
 # Position mappings for overlay text
 OVERLAY_POSITIONS = {
     "bottom_center": "x=(w-text_w)/2:y=h-th-60",
+    # Two-line lower third: the headline sits above the summary line. Both stay
+    # inside the title-safe area and above the subtitle band.
+    "lower_third_headline": "x=(w-text_w)/2:y=h-th-140",
+    "lower_third_subtext": "x=(w-text_w)/2:y=h-th-78",
     "center": "x=(w-text_w)/2:y=(h-text_h)/2",
     "top_center": "x=(w-text_w)/2:y=60",
 }
@@ -251,7 +255,14 @@ def _build_animated_lower_third(
     start = overlay.start
     end = overlay.end
     enable = f"enable='between(t\\,{start}\\,{end})'"
-    bar_h = 100
+
+    # A headline plus a summary line needs a taller bar than a single line, and
+    # the two lines need enough vertical distance not to overlap.
+    lines = overlay.text.split("\\n") if "\\n" in overlay.text else [overlay.text]
+    two_line = len(lines) >= 2
+    head_size = min(overlay.fontsize, 46) if two_line else overlay.fontsize
+    sub_size = max(int(head_size * 0.66), 24)
+    bar_h = (head_size + sub_size + 46) if two_line else 100
     # drawtext resolves `h` to the input height; drawbox resolves `h` to the box
     # height it is currently drawing, so it must use `ih` for the frame height.
     bar_y = f"h-{bar_h}-70"
@@ -272,23 +283,18 @@ def _build_animated_lower_third(
         f"-text_w+(text_w+60)*(t-{start})/{slide_duration}\\,60)"
     )
 
-    # Check for two-line text
-    lines = overlay.text.split("\\n") if "\\n" in overlay.text else [overlay.text]
-    if len(lines) >= 2:
+    if two_line:
         headline = _escape_drawtext(lines[0])
         subtext = _escape_drawtext(lines[1])
-        # Headline (larger)
         filters.append(
             f"drawtext=fontfile={font_path}:text='{headline}'"
-            f":fontsize={overlay.fontsize}:fontcolor={overlay.fontcolor}"
-            f":x='{slide_x}':y={bar_y}+15:{enable}"
+            f":fontsize={head_size}:fontcolor={overlay.fontcolor}"
+            f":x='{slide_x}':y={bar_y}+14:{enable}"
         )
-        # Subtext (smaller)
         filters.append(
             f"drawtext=fontfile={font_path}:text='{subtext}'"
-            f":fontsize={max(overlay.fontsize - 12, 24)}"
-            f":fontcolor={overlay.fontcolor}@0.8"
-            f":x='{slide_x}':y={bar_y}+55:{enable}"
+            f":fontsize={sub_size}:fontcolor={overlay.fontcolor}@0.85"
+            f":x='{slide_x}':y={bar_y}+{head_size + 24}:{enable}"
         )
     else:
         filters.append(

@@ -250,13 +250,14 @@ def collect_render_texts(render_config: dict[str, Any]) -> list[VisibleText]:
 
 
 def sanitize_overlays(chapter_doc: Any, branding: dict[str, Any]) -> int:
-    """Drop overlays whose text carries forbidden attribution.
+    """Drop or rewrite legacy visible text that carries forbidden attribution.
 
     Used for backward compatibility: chapter documents produced before this
-    feature contain a mandatory attribution lower third. Removing it silently is
-    preferable to failing an otherwise valid, already-approved episode.
+    feature contain a mandatory attribution lower third and a document title
+    naming the upstream broadcaster. Cleaning them silently is preferable to
+    failing an otherwise valid, already-approved episode.
 
-    Returns the number of removed overlays.
+    Returns the number of sanitized elements.
     """
     terms = forbidden_terms(branding)
     if not terms:
@@ -265,16 +266,25 @@ def sanitize_overlays(chapter_doc: Any, branding: dict[str, Any]) -> int:
     removed = 0
     for chapter in getattr(chapter_doc, "chapters", []) or []:
         kept = []
+        chapter_removed = 0
         for overlay in getattr(chapter, "overlays", []) or []:
             haystack = _mask_allowed(
                 f"{getattr(overlay, 'text', '')} {getattr(overlay, 'subtext', '') or ''}", allowed
             ).lower()
             if any(term.lower() in haystack for term in terms):
-                removed += 1
+                chapter_removed += 1
                 continue
             kept.append(overlay)
-        if removed:
+        if chapter_removed:
             chapter.overlays = kept
+            removed += chapter_removed
+
+    title = getattr(chapter_doc, "title", "") or ""
+    if title and any(term.lower() in _mask_allowed(title, allowed).lower() for term in terms):
+        show_name = str(branding.get("show_name") or "").strip()
+        if show_name:
+            chapter_doc.title = show_name
+            removed += 1
     return removed
 
 

@@ -4,6 +4,13 @@ source_language: de
 target_language: tr
 domain: news
 pipeline_version: 2
+branding:
+  show_name: "ALMANYA24"
+  slogan: "Almanya'nın nabzı burada atıyor."
+  # The programme is an independent Turkish-language production. Source
+  # provenance stays in the story documents, QA artifacts and the video
+  # description - but never on screen.
+  visible_source_attribution: false
 stages_enabled: all
 stage_config:
   transcription:
@@ -95,8 +102,33 @@ stage_config:
       enabled: true
       provider: copilot_cli
       model: gpt-5.6-sol
+  script:
+    # Turns the approved translation into a two-presenter broadcast script.
+    enabled: true
+    provider: copilot_cli
+    model: gpt-5.6-sol
+    prompt_template: script_broadcast.md
+    target_seconds: 540
+    min_seconds: 480
+    max_seconds: 630
+    max_revisions: 1
   tts:
-    voice_id: "Q2IX97JeHBY3vNGzgM5s"  # Cavit
+    voice_id: "Q2IX97JeHBY3vNGzgM5s"  # Cavit (fallback / single-voice episodes)
+    voices:
+      anchor_female:
+        # Main anchor. Set to a female ElevenLabs voice id before first use;
+        # until then the stage falls back to voice_id above.
+        voice_id: ""
+        stability: 0.5
+        similarity_boost: 0.75
+        style: 0.3
+        speed: 1.05
+      reporter_male:
+        voice_id: "Q2IX97JeHBY3vNGzgM5s"  # Cavit
+        stability: 0.45
+        similarity_boost: 0.75
+        style: 0.35
+        speed: 1.08
     stability: 0.45
     similarity_boost: 0.75
     style: 0.35
@@ -122,7 +154,7 @@ stage_config:
     topic_intro_duration: 2.4
     topic_intro_label: "GÜNDEM"
     topic_intro_audio: "data/assets/tagesschau_tr/intro.mp3"
-    outro_text: "Kaynak: ARD Tagesschau — Türkçe altyazı & çeviri"
+    outro_text: "ALMANYA24 — Bizi izlediğiniz için teşekkürler"
     font: "Roboto-Condensed-Bold"
     music_bed: "data/assets/music/news_bed.mp3"
   weather:

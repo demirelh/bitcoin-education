@@ -198,6 +198,7 @@ def render_video(
 
     # Load inputs
     chapters_doc = _load_chapters(chapters_path)
+    _apply_branding_guard(settings, episode_id, _profile_name, chapters_doc, _render_cfg)
     image_manifest = _load_image_manifest(image_manifest_path)
     tts_manifest = _load_tts_manifest(tts_manifest_path)
 
@@ -914,6 +915,40 @@ def render_video(
         )
         logger.error("Render failed for %s: %s", episode_id, e)
         raise
+
+
+def _apply_branding_guard(
+    settings,
+    episode_id: str,
+    profile_name: str,
+    chapters_doc: ChapterDocument,
+    render_cfg: dict,
+) -> None:
+    """Strip legacy attribution overlays, then fail closed on any remaining leak.
+
+    Episodes chapterized before the independent-branding change carry a
+    mandatory source-attribution lower third. Those overlays are dropped
+    in-memory so an already-approved episode still renders; anything else that
+    would become visible (titles, narration, render config) aborts the stage.
+    """
+    from btcedu.core import branding_guard
+
+    branding = branding_guard.branding_config(settings, profile_name)
+    if not branding or branding.get("visible_source_attribution", True):
+        return
+    removed = branding_guard.sanitize_overlays(chapters_doc, branding)
+    if removed:
+        logger.info(
+            "Branding guard removed %d legacy attribution overlay(s) for %s", removed, episode_id
+        )
+    branding_guard.assert_no_forbidden_visible_text(
+        settings,
+        episode_id,
+        profile_name,
+        chapters_doc,
+        render_config=render_cfg,
+        stage="render",
+    )
 
 
 def _load_chapters(chapters_path: Path) -> ChapterDocument:

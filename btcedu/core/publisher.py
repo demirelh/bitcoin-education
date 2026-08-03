@@ -429,6 +429,47 @@ def _check_manual_publish_approval(
     )
 
 
+def _check_branding(episode: Episode, settings: Settings) -> SafetyCheck:
+    """Block publishing when foreign attribution would be visible in the video.
+
+    A last line of defence: ``render`` already guards this, but chapters.json
+    can be edited by hand between render and publish.
+    """
+    from btcedu.core import branding_guard
+
+    profile_name = getattr(episode, "content_profile", None) or "bitcoin_podcast"
+    branding = branding_guard.branding_config(settings, profile_name)
+    if not branding or branding.get("visible_source_attribution", True):
+        return SafetyCheck("branding", True, "Profile permits visible source attribution")
+
+    chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
+    if not chapters_path.exists():
+        return SafetyCheck("branding", True, "No chapter document to check")
+    try:
+        from btcedu.models.chapter_schema import ChapterDocument
+
+        doc = ChapterDocument(**json.loads(chapters_path.read_text(encoding="utf-8")))
+    except Exception as exc:
+        return SafetyCheck("branding", False, f"Could not read chapters.json: {exc}")
+
+    branding_guard.sanitize_overlays(doc, branding)
+    render_cfg: dict = {}
+    try:
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(settings).get(profile_name)
+        render_cfg = (profile.stage_config.get("render", {}) if profile else {}) or {}
+    except Exception:
+        render_cfg = {}
+
+    texts = branding_guard.collect_chapter_texts(doc)
+    texts.extend(branding_guard.collect_render_texts(render_cfg))
+    result = branding_guard.scan_texts(texts, branding)
+    if result.ok:
+        return SafetyCheck("branding", True, f"No forbidden visible text ({result.scanned} texts)")
+    return SafetyCheck("branding", False, f"Forbidden visible text: {result.summary()}")
+
+
 def _run_all_safety_checks(
     session: Session,
     episode: Episode,
@@ -454,6 +495,7 @@ def _run_all_safety_checks(
         _check_narration_current(settings, episode),
         _check_render_valid(session, episode, settings),
         _check_profile_publish_permitted(episode, settings),
+        _check_branding(episode, settings),
     ]
     if _requires_manual_publish_review(episode, settings):
         checks.append(_check_manual_publish_approval(session, episode, settings))

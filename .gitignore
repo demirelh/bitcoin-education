@@ -35,3 +35,6 @@ output/
 # OS
 .DS_Store
 Thumbs.db
+
+# Locally generated voice samples for listening comparisons.
+btcedu/web/static/samples/

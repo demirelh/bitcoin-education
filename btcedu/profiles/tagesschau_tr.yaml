@@ -92,7 +92,7 @@ stage_config:
     fallback_provider: ideogram
     deterministic_exact_data: true
     prompt_template: imagegen_news.md
-    style_prefix: "Photorealistic editorial news illustration in the visual style of a European public-service television newscast. Neutral, journalistic tone, clean broadcast composition, restrained blue and white color palette. Absolutely no readable text, no captions, no headlines, no lower thirds, no station logos, no channel names, no watermarks and no signage of any kind anywhere in the image. "
+    style_prefix: "Photorealistic editorial news photograph, documentary photojournalism, natural light, shallow depth of field. Neutral, journalistic tone, restrained blue and white colour palette. Show the subject of the story on location. Never a television studio, never a news desk, never a presenter or anchor, never a person addressing the camera, and never a flat vector illustration. Absolutely no readable text, no captions, no headlines, no lower thirds, no station logos, no channel names, no watermarks and no signage of any kind anywhere in the image. "
   translate:
     mode: per_story
     register: formal_news

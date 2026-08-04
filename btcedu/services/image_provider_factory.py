@@ -73,12 +73,10 @@ def select_provider_for_chapter(chapter, profile_config: dict | None = None) -> 
 
     visual_type = getattr(getattr(chapter, "visual", None), "type", "") or ""
     visual_type = str(visual_type).lower()
-    overlays = getattr(chapter, "overlays", None) or []
-    has_text_overlay = any(
-        getattr(o, "text", None) and len(getattr(o, "text", "")) > 8 for o in overlays
-    )
 
-    if visual_type in ("quote", "chart", "text_heavy", "title_card", "thumbnail") or has_text_overlay:
+    # Overlays are drawn by the renderer, not by the image model, so they must
+    # not route a chapter to the text-rendering provider.
+    if visual_type in ("quote", "chart", "text_heavy", "title_card", "thumbnail"):
         return "ideogram"
     if visual_type in ("stock", "b_roll", "broll"):
         return "dalle3"

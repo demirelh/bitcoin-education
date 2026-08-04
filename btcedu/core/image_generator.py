@@ -112,17 +112,19 @@ def _route_provider_for_chapter(chapter) -> str:
 
     - Text-in-image / infographic chapters (title cards, charts, labelled weather
       maps) → Ideogram (renders legible text far better than Flux/DALL-E).
+    - Lower thirds and other overlays are ignored here: the renderer draws them,
+      so they say nothing about what the picture itself must contain.
     - Explicit stock placeholders → DALL-E 3 (until Pexels fallback kicks in).
     - Photoreal editorial footage (b_roll, hero, lifestyle) → Flux (quality/cost).
     """
     raw_type = getattr(getattr(chapter, "visual", None), "type", "") or ""
     # VisualType is a (str, Enum); str() yields "VisualType.X", so read .value.
     visual_type = str(getattr(raw_type, "value", raw_type)).lower()
-    overlays = getattr(chapter, "overlays", None) or []
-    has_text_overlay = any(
-        getattr(o, "text", None) and len(getattr(o, "text", "")) > 8 for o in overlays
-    )
-    if visual_type in _TEXT_IN_IMAGE_TYPES or has_text_overlay:
+    # Overlays deliberately do not influence the choice: they are drawn by the
+    # renderer with drawtext, never by the image model. Routing on them sent
+    # every chapter with a lower third to the text-rendering provider, which then
+    # wrote nonsense words into the picture.
+    if visual_type in _TEXT_IN_IMAGE_TYPES:
         return "ideogram"
     if visual_type == "stock":
         return "dalle3"
@@ -661,8 +663,23 @@ def generate_images(
                 _generative_profile and visual.type in GENERATIVE_EXTRA_TYPES
             ):
                 try:
-                    # Generate or use existing image prompt
-                    if visual.image_prompt:
+                    beats = _visual_beats(chapter)
+                    if beats:
+                        # A chapter with presenter blocks must have all of its
+                        # shots written the same way, so the first shot goes
+                        # through the beat prompt like the others.
+                        _check_cost_limit(before_call=True)
+                        (
+                            image_prompt,
+                            prompt_tokens,
+                            completion_tokens,
+                            prompt_cost,
+                        ) = _generate_beat_prompt(chapter, beats[0], template_body, settings)
+                        total_input_tokens += prompt_tokens
+                        total_output_tokens += completion_tokens
+                        total_cost += prompt_cost
+                        _check_cost_limit(before_call=False)
+                    elif visual.image_prompt:
                         # Use prompt from chapter JSON if provided
                         image_prompt = visual.image_prompt
                         prompt_tokens, completion_tokens, prompt_cost = 0, 0, 0.0
@@ -1128,14 +1145,18 @@ def _visual_beats(chapter) -> list[dict]:
     return [beat for beat in beats if isinstance(beat, dict)]
 
 
+# The programme never shows its presenters, so a beat hint may only change the
+# framing of the subject. Naming a studio or a presenter makes the image model
+# invent an on-screen anchor, which is both wrong and, since the anchor is a
+# woman, usually the wrong person as well.
 _ROLE_SCENE_HINT = {
     "anchor_female": (
-        "Studio-adjacent framing for a presenter-led passage: the establishing view of "
-        "the subject, calm and wide."
+        "Framing: a calm, wide establishing view of the subject. "
+        "No news studio, no presenter, no person addressing the camera."
     ),
     "reporter_male": (
-        "On-location reporting framing for the same subject: closer, at ground level, "
-        "showing the situation being described rather than an overview."
+        "Framing: a closer view at ground level showing the situation itself rather "
+        "than an overview. No news studio, no presenter, no person addressing the camera."
     ),
 }
 
@@ -1151,6 +1172,11 @@ def _generate_beat_prompt(
     The subject stays the same — it is the same story — but the shot must not be.
     A change of presenter is a change of scene, so the beat's own words and a
     role-specific framing hint drive the prompt.
+
+    Every shot of a chapter is written by this function, including the first one.
+    Building the first shot from the chapter's one-line ``image_prompt`` and the
+    remaining shots from a detailed prompt made the shots of a single story look
+    unrelated, so the short line is folded into the description instead.
     """
     system_prompt, user_template = _split_prompt(template_body)
     visual = chapter.visual
@@ -1160,9 +1186,10 @@ def _generate_beat_prompt(
 
     user_message = user_template.replace("{{ chapter_title }}", chapter.title)
     user_message = user_message.replace("{{ visual_type }}", visual.type)
-    user_message = user_message.replace(
-        "{{ visual_description }}", f"{visual.description} {hint}".strip()
+    description = " ".join(
+        part for part in (visual.description, visual.image_prompt, hint) if part
     )
+    user_message = user_message.replace("{{ visual_description }}", description.strip())
     user_message = user_message.replace("{{ narration_context }}", narration_context)
 
     dry_run_path = None

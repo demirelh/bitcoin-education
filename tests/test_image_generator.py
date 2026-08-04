@@ -678,3 +678,16 @@ def test_targeted_regeneration_keeps_complete_manifest(db_session, tmp_path, com
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_a_lower_third_does_not_route_the_picture_to_the_text_provider():
+    """Overlays are drawn by the renderer, so they must not decide the provider."""
+    from types import SimpleNamespace
+
+    from btcedu.core.image_generator import _route_provider_for_chapter
+
+    chapter = SimpleNamespace(
+        visual=SimpleNamespace(type="b_roll"),
+        overlays=[SimpleNamespace(text="EMEKLİLİK PAKETİ TARTIŞMASI")],
+    )
+    assert _route_provider_for_chapter(chapter) == "flux"

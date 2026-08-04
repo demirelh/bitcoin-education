@@ -324,3 +324,24 @@ def test_corrected_transcript_change_invalidates_qa_fingerprint(tmp_path):
     old_de = "Guten Abend."
     new_de = "Guten Abend, willkommen."
     assert _sha256_text(old_de) != _sha256_text(new_de)
+
+
+def test_presenter_beats_invalidate_images_but_not_tts():
+    """A changed presenter block is a visual change: pictures and render, no TTS."""
+    from btcedu.core.chapterizer import _chapter_component_hashes
+
+    before = _doc([_chapter("ch01", 1, "a"), _chapter("ch02", 2, "b")])
+    after = _doc([_chapter("ch01", 1, "a"), _chapter("ch02", 2, "b")])
+    after.chapters[1].metadata = {
+        "visual_beats": [
+            {"beat_index": 0, "role": "anchor_female", "text": "sunucu"},
+            {"beat_index": 1, "role": "reporter_male", "text": "muhabir"},
+        ]
+    }
+
+    h_before = _chapter_component_hashes(before)
+    h_after = _chapter_component_hashes(after)
+
+    assert h_before["visuals"] != h_after["visuals"]
+    assert h_before["narration"] == h_after["narration"]
+    assert h_before["structure"] == h_after["structure"]

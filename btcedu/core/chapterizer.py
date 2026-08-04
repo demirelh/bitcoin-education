@@ -1607,6 +1607,13 @@ def _chapter_component_hashes(doc: ChapterDocument) -> dict:
             "description": ch.visual.description,
             "image_prompt": ch.visual.image_prompt,
             "deterministic": ch.visual.deterministic,
+            # Presenter blocks decide how many pictures a chapter needs, so they
+            # belong to the visual component: a change invalidates images and
+            # render, but never the narration audio.
+            "beats": [
+                {"role": b.get("role"), "text": b.get("text")}
+                for b in (ch.metadata or {}).get("visual_beats") or []
+            ],
         }
         for ch in doc.chapters
     ]

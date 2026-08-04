@@ -193,10 +193,17 @@ regenerated.
 
 ### Renderer robustness
 
-A full render takes about an hour on the Pi. The segment directory was created
-once at the start and assumed to survive; when it disappeared mid-run the render
-failed at chapter 5 with `No such file or directory`. The directory is now
-re-asserted before every segment, topic intro, intro and outro.
+A full render takes about an hour on the Pi, and the segment directory was
+created once at the start and then assumed to survive. Two renders failed
+because the directory disappeared mid-run. The cause was not the pipeline: it
+was a manual `rm -rf render/segments` issued while a scheduled run was already
+rendering. The renderer nevertheless now re-asserts the directory before every
+segment, topic intro, intro and outro, because an hour of work should not be
+lost to a directory that can be recreated for free.
+
+Operational rule that follows from this: never touch `data/outputs/<id>/render/`
+by hand. Check `ps` and the pipeline lock first — a scheduled `run-latest` fires
+every five minutes.
 
 ## Dashboard
 

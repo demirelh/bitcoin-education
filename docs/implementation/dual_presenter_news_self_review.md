@@ -90,10 +90,14 @@ overlays have each been seen working once at full scale. That is enough to say
 they work; it is not enough to say they are stable across the variety of episodes
 the pipeline will actually see.
 
-**Rendering cost of failure is high.** A render is roughly an hour on the Pi. A
-failure at chapter 5 wastes most of it. Segment reuse exists, but the directory
-robustness fix was only added after a real failure — there may be similar
-assumptions about long-lived state elsewhere in the render path.
+**Rendering cost of failure is high.** A render is roughly an hour on the Pi and
+a failure part-way through wastes most of it. Both render failures during this
+work were self-inflicted: a manual `rm -rf` on the segment directory while a
+scheduled run was already rendering into it. That is worth recording plainly
+rather than dressing up as a code defect. The hardening that followed — asserting
+the directory before every segment — is still justified, but the real lesson is
+that this pipeline has a scheduled run every five minutes and manual commands
+race with it. The lock protects stage entry, not files already on disk.
 
 ## What was not built, and honestly why
 

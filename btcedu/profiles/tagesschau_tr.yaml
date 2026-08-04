@@ -92,7 +92,7 @@ stage_config:
     fallback_provider: ideogram
     deterministic_exact_data: true
     prompt_template: imagegen_news.md
-    style_prefix: "Photorealistic editorial news illustration in the visual style of a European public-broadcaster newscast (ARD/Tagesschau). Neutral, journalistic tone, clean broadcast composition, restrained blue and white color palette. "
+    style_prefix: "Photorealistic editorial news illustration in the visual style of a European public-service television newscast. Neutral, journalistic tone, clean broadcast composition, restrained blue and white color palette. Absolutely no readable text, no captions, no headlines, no lower thirds, no station logos, no channel names, no watermarks and no signage of any kind anywhere in the image. "
   translate:
     mode: per_story
     register: formal_news

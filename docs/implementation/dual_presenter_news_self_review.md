@@ -54,6 +54,15 @@ that a short programme is acceptable; the branch simply had not been written.
 looks pure at the call site. It is not. This is the kind of bug that only shows up
 when a second caller appears, which is exactly what happened.
 
+**The branding guard only saw text, not pictures.** The guard was built to stop
+the source name appearing on screen, and it did that job for overlays and titles.
+Meanwhile the profile's own image style prefix instructed the picture model to
+imitate the source broadcaster *by name*, and the model duly printed that name
+into the frame. The guard and the prompt contradicted each other and nothing
+compared them. Only looking at a rendered frame exposed it. Lesson: a guard that
+inspects metadata gives no protection against a generator that produces pixels
+from a prompt the guard never reads.
+
 ## What remains weak
 
 **`delivery_factor = 0.88` is an empirical constant fitted to one model on a
@@ -101,5 +110,8 @@ assumptions about long-lived state elsewhere in the render path.
    and confirm 122 holds.
 2. Re-measure `delivery_factor` whenever the script prompt or model changes.
 3. Separate deterministic findings from heuristic ones in the QA severity model.
-4. Watch the anchor share across several episodes; it was 45 % on the observed
+4. Extract and look at a frame from every episode. Two of the most serious faults
+   found so far (the printed source name, the lower third layout) were invisible
+   in every artifact and only visible in the picture.
+5. Watch the anchor share across several episodes; it was 45 % on the observed
    episode against a 50 % target, which is inside tolerance but consistently low.

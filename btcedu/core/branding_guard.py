@@ -288,6 +288,44 @@ def sanitize_overlays(chapter_doc: Any, branding: dict[str, Any]) -> int:
     return removed
 
 
+def sanitize_image_prompt(prompt: str, branding: dict[str, Any]) -> tuple[str, list[str]]:
+    """Remove forbidden source attribution from a prompt sent to an image model.
+
+    Generative image models render words they are given. A style prefix naming
+    the upstream broadcaster made the model draw that broadcaster's name into
+    the picture, which the visible-text guard cannot see because it inspects
+    metadata, not pixels. A prompt carries no editorial content worth
+    preserving, so offending terms are simply dropped.
+
+    Returns the cleaned prompt and the terms that were removed.
+    """
+    terms = forbidden_terms(branding)
+    if not terms or not prompt:
+        return prompt, []
+
+    allowed = _allowed_texts(branding)
+    cleaned = prompt
+    removed: list[str] = []
+    for term in terms:
+        if not term:
+            continue
+        masked = _mask_allowed(cleaned, allowed)
+        if term.lower() not in masked.lower():
+            continue
+        pattern = re.compile(re.escape(term), re.IGNORECASE)
+        candidate = pattern.sub(" ", cleaned)
+        if candidate != cleaned:
+            cleaned = candidate
+            removed.append(term)
+
+    if removed:
+        cleaned = re.sub(r"[/,]\s*(?=[).,;])", "", cleaned)
+        cleaned = re.sub(r"\(\s*[/,;]*\s*\)", "", cleaned)
+        cleaned = re.sub(r"\s+([).,;])", r"\1", cleaned)
+        cleaned = re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned, removed
+
+
 def assert_no_forbidden_visible_text(
     settings: Settings,
     episode_id: str,

@@ -167,6 +167,30 @@ literal. The duration estimate for `IuNt7iyNtkI` moved from 454 s to 556 s again
 556.5 s measured. Much of the apparent "too short" problem was an estimation
 artefact, not a content problem.
 
+### The generated images carried the source brand
+
+A frame extracted from the finished render showed the upstream broadcaster's
+name printed across the top of the picture. The cause was the profile's own
+`imagegen.style_prefix`, which described the desired look as *"in the visual
+style of a European public-broadcaster newscast (ARD/Tagesschau)"*. Generative
+image models draw the words they are given.
+
+The visible-text guard could not see this: it inspects overlay, title and
+narration metadata, not pixels.
+
+Two changes:
+
+- The style prefix no longer names any broadcaster and now forbids readable
+  text, captions, logos, channel names, watermarks and signage outright.
+- `branding_guard.sanitize_image_prompt()` strips forbidden terms from both the
+  style prefix and the per-chapter prompt before the request leaves the process,
+  and logs every removal. A prompt carries no editorial content worth
+  preserving, so removal is safe — unlike narration, which is locked. Profiles
+  that permit attribution are unaffected.
+
+Images generated before this fix still contain the printed name and must be
+regenerated.
+
 ### Renderer robustness
 
 A full render takes about an hour on the Pi. The segment directory was created

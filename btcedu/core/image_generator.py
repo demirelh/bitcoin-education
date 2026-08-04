@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
+from btcedu.core.branding_guard import branding_config
 from btcedu.core.prompt_registry import TEMPLATES_DIR, PromptRegistry
 from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.content_artifact import ContentArtifact
@@ -381,6 +382,7 @@ def generate_images(
         _render_cfg = (_profile.stage_config.get("render", {}) if _profile else {}) or {}
         _profile_accent = _render_cfg.get("accent_color") or "#F7931A"
         _imagegen_cfg = (_profile.stage_config.get("imagegen", {}) if _profile else {}) or {}
+        _branding_cfg = branding_config(settings, _profile_name)
         _profile_style_prefix = _imagegen_cfg.get("style_prefix", None)
     except Exception:
         pass
@@ -670,6 +672,7 @@ def generate_images(
                         settings,
                         style_prefix_override=_profile_style_prefix,
                         smart_routing=_smart_routing,
+                        branding=_branding_cfg,
                     )
                     total_cost += image_entry.metadata.get("cost_usd", 0.0)
                     _check_cost_limit(before_call=False)
@@ -1051,6 +1054,7 @@ def _generate_single_image(
     settings: Settings,
     style_prefix_override: str | None = None,
     smart_routing: bool | None = None,
+    branding: dict | None = None,
 ) -> ImageEntry:
     """Generate a single image via configured provider.
 
@@ -1069,6 +1073,18 @@ def _generate_single_image(
         effective_prefix = style_prefix_override
     else:
         effective_prefix = getattr(settings, "image_gen_style_prefix", "")
+
+    if branding:
+        from btcedu.core.branding_guard import sanitize_image_prompt
+
+        effective_prefix, removed_prefix = sanitize_image_prompt(effective_prefix, branding)
+        image_prompt, removed_prompt = sanitize_image_prompt(image_prompt, branding)
+        for term in removed_prefix + removed_prompt:
+            logger.warning(
+                "Removed forbidden term %r from the image prompt for chapter %s",
+                term,
+                getattr(chapter, "chapter_id", "?"),
+            )
 
     request = ImageGenRequest(
         prompt=image_prompt,

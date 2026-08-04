@@ -324,6 +324,30 @@ class TestBranding:
         permissive = {"show_name": "X", "visible_source_attribution": True}
         assert branding_guard.scan_texts(branding_guard.collect_chapter_texts(doc), permissive).ok
 
+    def test_image_prompt_loses_the_source_name(self):
+        prompt = (
+            "Photorealistic editorial news illustration in the visual style of a "
+            "European public-broadcaster newscast (ARD/Tagesschau). Neutral tone."
+        )
+        cleaned, removed = branding_guard.sanitize_image_prompt(prompt, BRANDING)
+        assert removed == ["tagesschau"]
+        assert "tagesschau" not in cleaned.lower()
+        assert "Neutral tone." in cleaned
+        assert "  " not in cleaned
+
+    def test_image_prompt_keeps_the_own_show_name(self):
+        prompt = f"{BRANDING['show_name']} studio, clean broadcast composition"
+        cleaned, removed = branding_guard.sanitize_image_prompt(prompt, BRANDING)
+        assert removed == []
+        assert cleaned == prompt
+
+    def test_image_prompt_is_untouched_for_permissive_profiles(self):
+        prompt = "newscast in the style of ARD Tagesschau"
+        permissive = {"show_name": "X", "visible_source_attribution": True}
+        cleaned, removed = branding_guard.sanitize_image_prompt(prompt, permissive)
+        assert removed == []
+        assert cleaned == prompt
+
 
 def _document(script: BroadcastScript) -> ChapterDocument:
     chapters = _chapters_from_script(script, BRANDING["show_name"])

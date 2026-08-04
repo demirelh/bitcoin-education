@@ -351,6 +351,26 @@ class TestDeterministicChapters:
         doc = _document(script)
         assert doc.total_chapters == len(script.stories)
 
+    def test_short_chapter_merging_must_not_touch_script_chapters(self, source_stories):
+        """The merge rewrites narration in place, so it must not run at all.
+
+        The closing is far shorter than the merge threshold. Running the merge
+        appended it to the preceding chapter while the closing chapter itself
+        remained, which silently duplicated it and broke the narration lock.
+        """
+        from btcedu.core.chapterizer import _merge_short_chapters
+
+        script, _, _ = _script(source_stories)
+        doc = _document(script)
+        before = [c.narration.text for c in doc.chapters]
+        _merge_short_chapters(list(doc.chapters), 30)
+        after = [c.narration.text for c in doc.chapters]
+        assert after != before, "expected the merge to mutate in place"
+
+        doc = _document(script)
+        result = check_narration_lock(script.narration, compose_chapter_narration(doc.chapters))
+        assert result.matches, result.summary()
+
     def test_speaker_segments_survive_into_chapters(self, source_stories):
         script, _, _ = _script(source_stories)
         doc = _document(script)

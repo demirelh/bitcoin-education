@@ -743,13 +743,15 @@ def chapterize_script(
             final_chapter_doc = chapter_doc
 
         # Merge chapters shorter than min_chapter_seconds (LLM constraint is unreliable).
-        merged_chapters = _merge_short_chapters(
-            list(final_chapter_doc.chapters), min_chapter_seconds
-        )
+        # Script stories are editorial units: merging them would destroy the
+        # one-overlay-per-story mapping and the speaker segmentation, and the
+        # merge mutates chapters in place, so it must not run at all here.
         if broadcast_script is not None:
-            # Script stories are editorial units; merging them would destroy the
-            # one-overlay-per-story mapping and the speaker segmentation.
             merged_chapters = list(final_chapter_doc.chapters)
+        else:
+            merged_chapters = _merge_short_chapters(
+                list(final_chapter_doc.chapters), min_chapter_seconds
+            )
         if len(merged_chapters) != len(final_chapter_doc.chapters):
             logger.info(
                 "Merged %d short chapters (<%ds) into neighbors",

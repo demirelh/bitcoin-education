@@ -1424,10 +1424,142 @@ _FILE_MAP = {
     "transcript_raw": ("transcripts_dir", "{eid}/transcript.de.txt"),
     "transcript_clean": ("transcripts_dir", "{eid}/transcript.clean.de.txt"),
     "script_adapted": ("outputs_dir", "{eid}/script.adapted.tr.md"),
+    "script_broadcast": ("outputs_dir", "{eid}/script_broadcast.json"),
+    "script_narration": ("outputs_dir", "{eid}/script.broadcast.tr.md"),
+    "script_omissions": ("outputs_dir", "{eid}/script_omissions.json"),
+    "script_qa": ("outputs_dir", "{eid}/script_qa.json"),
     "chapters": ("outputs_dir", "{eid}/chapters.json"),
     "stories": ("outputs_dir", "{eid}/stories.json"),
     "stories_translated": ("outputs_dir", "{eid}/stories_translated.json"),
 }
+
+
+@api_bp.route("/episodes/<episode_id>/broadcast")
+def get_broadcast(episode_id: str):
+    """Editorial view of one episode: running order, omissions, QA and voices.
+
+    Everything here is read from the artifacts the script stage wrote, so the
+    dashboard shows exactly what will be broadcast and why, including the
+    stories that were deliberately left out.
+    """
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    settings = _get_settings()
+    outputs = Path(settings.outputs_dir) / episode_id
+    script_path = outputs / "script_broadcast.json"
+    if not script_path.exists():
+        return jsonify({"error": "No broadcast script for this episode"}), 404
+
+    try:
+        script = json.loads(script_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return jsonify({"error": f"Broadcast script unreadable: {exc}"}), 500
+
+    def _words(story: dict) -> int:
+        return sum(len(str(s.get("text") or "").split()) for s in story.get("speaker_sequence", []))
+
+    def _role_words(story: dict, role: str) -> int:
+        return sum(
+            len(str(s.get("text") or "").split())
+            for s in story.get("speaker_sequence", [])
+            if s.get("role") == role
+        )
+
+    from btcedu.models.script_schema import WORDS_PER_MINUTE
+
+    stories = []
+    total_words = 0
+    anchor_words = 0
+    for story in script.get("stories", []):
+        words = _words(story)
+        anchor = _role_words(story, "anchor_female")
+        total_words += words
+        anchor_words += anchor
+        stories.append(
+            {
+                "story_id": story.get("story_id"),
+                "source_story_id": story.get("source_story_id"),
+                "order": story.get("order"),
+                "priority": story.get("priority"),
+                "category": story.get("category"),
+                "headline": story.get("display_headline"),
+                "summary": story.get("display_summary"),
+                "is_weather": story.get("is_weather", False),
+                "words": words,
+                "estimated_seconds": round(words / WORDS_PER_MINUTE * 60, 1),
+                "anchor_share": round(anchor / words, 3) if words else 0.0,
+                "segments": [
+                    {"role": s.get("role"), "purpose": s.get("purpose")}
+                    for s in story.get("speaker_sequence", [])
+                ],
+            }
+        )
+
+    omissions = [
+        {
+            "story_id": o.get("story_id"),
+            "headline": o.get("headline"),
+            "score": o.get("total_score"),
+            "reason": o.get("reason"),
+            "manual_override": o.get("manual_override", False),
+        }
+        for o in script.get("omissions", [])
+    ]
+
+    findings = []
+    qa_path = outputs / "script_qa.json"
+    if qa_path.exists():
+        try:
+            qa = json.loads(qa_path.read_text(encoding="utf-8"))
+            findings = [
+                {
+                    "severity": f.get("severity"),
+                    "category": f.get("category"),
+                    "story_id": f.get("story_id"),
+                    "explanation": f.get("explanation"),
+                    "required_action": f.get("required_action"),
+                }
+                for f in qa.get("findings", [])
+            ]
+        except (OSError, json.JSONDecodeError):
+            findings = []
+
+    voices: dict[str, str] = {}
+    try:
+        from btcedu.profiles import get_registry
+
+        profile_name = str(script.get("profile") or "")
+        if profile_name:
+            profile = get_registry(settings).get(profile_name)
+            configured = (profile.stage_config.get("tts") or {}).get("voices") or {}
+            voices = {
+                role: str((cfg or {}).get("voice_id") or "") for role, cfg in configured.items()
+            }
+    except Exception:  # noqa: BLE001 - a missing profile must not break the view
+        voices = {}
+
+    return jsonify(
+        {
+            "episode_id": episode_id,
+            "show_name": script.get("show_name"),
+            "slogan": script.get("slogan"),
+            "broadcast_date": script.get("broadcast_date"),
+            "generated_by": script.get("generated_by"),
+            "revision": script.get("revision"),
+            "story_count": len(stories),
+            "omitted_count": len(omissions),
+            "total_words": total_words,
+            "estimated_seconds": round(total_words / WORDS_PER_MINUTE * 60, 1),
+            "anchor_share": round(anchor_words / total_words, 3) if total_words else 0.0,
+            "words_per_minute": WORDS_PER_MINUTE,
+            "stories": stories,
+            "omissions": omissions,
+            "qa_findings": findings,
+            "voices": voices,
+        }
+    )
 
 
 @api_bp.route("/episodes/<episode_id>/files/<file_type>")

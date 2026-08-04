@@ -351,6 +351,7 @@
     if (isTagesschau) {
       html += tab("stories", "Stories DE", f.stories);
       html += tab("stories_translated", "Stories TR", f.stories_translated);
+      html += tab("broadcast", "Sendung", false);
     } else {
       html += tab("script_adapted", "Script (adapted)", f.script_adapted);
     }
@@ -647,6 +648,13 @@
       viewer.classList.remove("log-viewer");
       viewer.innerHTML = "Loading TTS data...";
       await loadTTSPanel();
+      return;
+    }
+
+    if (type === "broadcast") {
+      viewer.classList.remove("log-viewer");
+      viewer.innerHTML = "Lade Sendungsplanung...";
+      await loadBroadcastPanel();
       return;
     }
 
@@ -1152,6 +1160,88 @@
   window.approveStockReview = approveStockReview;
 
   // ── TTS Audio Panel ─────────────────────────────────────────
+  async function loadBroadcastPanel() {
+    if (!selected) return;
+    const viewer = document.getElementById("viewer");
+
+    try {
+      const data = await GET(`/episodes/${selected.episode_id}/broadcast`);
+      if (data.error) {
+        viewer.innerHTML = `
+          <div class="tts-panel">
+            <p>Für diese Episode gibt es noch keine Sendungsplanung.</p>
+          </div>`;
+        return;
+      }
+
+      const minutes = ((data.estimated_seconds || 0) / 60).toFixed(1);
+      const share = Math.round((data.anchor_share || 0) * 100);
+
+      const rows = (data.stories || []).map(s => {
+        const roles = (s.segments || [])
+          .map(x => x.role === "anchor_female"
+            ? '<span class="spk spk-a" title="Moderatorin">A</span>'
+            : '<span class="spk spk-r" title="Reporter">R</span>')
+          .join('');
+        const secs = (s.estimated_seconds || 0).toFixed(0);
+        return `
+          <tr>
+            <td>${esc(s.story_id || '')}</td>
+            <td><span class="prio prio-${esc(s.priority || '')}">${esc(s.priority || '')}</span></td>
+            <td class="num">${secs}s</td>
+            <td>${roles}</td>
+            <td><strong>${esc(s.headline || '')}</strong><br>
+                <span class="muted">${esc(s.summary || '')}</span></td>
+          </tr>`;
+      }).join('');
+
+      const omitted = (data.omissions || []).map(o => `
+          <tr>
+            <td>${esc(o.story_id || '')}</td>
+            <td class="num">${(o.score || 0).toFixed(1)}</td>
+            <td>${esc(o.headline || '')}<br>
+                <span class="muted">${esc(o.reason || '')}</span></td>
+          </tr>`).join('');
+
+      const findings = (data.qa_findings || []).map(f => `
+          <li><span class="sev sev-${esc(f.severity || '')}">${esc(f.severity || '')}</span>
+              ${esc(f.category || '')} — ${esc(f.explanation || '')}</li>`).join('');
+
+      const voices = Object.entries(data.voices || {}).map(([role, id]) =>
+        `<li>${esc(role)}: <code>${esc(id || '—')}</code></li>`).join('');
+
+      viewer.innerHTML = `
+        <div class="tts-panel broadcast-panel">
+          <div class="tts-summary">
+            <strong>${esc(data.show_name || '')}</strong> — ${esc(data.slogan || '')}<br>
+            ${esc(data.broadcast_date || '')} &middot; ${data.story_count} Beiträge &middot;
+            ${minutes} min &middot; Moderatorin ${share}% &middot;
+            ${esc(data.generated_by || '')}${data.revision ? ' (Revision ' + data.revision + ')' : ''}
+          </div>
+
+          <h4>Sendeablauf</h4>
+          <table class="broadcast-table">
+            <thead><tr><th>ID</th><th>Rang</th><th>Dauer</th><th>Stimmen</th><th>Einblendung</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+
+          <h4>Nicht gesendet (${data.omitted_count})</h4>
+          <table class="broadcast-table">
+            <thead><tr><th>ID</th><th>Score</th><th>Beitrag und Begründung</th></tr></thead>
+            <tbody>${omitted || '<tr><td colspan="3" class="muted">keine</td></tr>'}</tbody>
+          </table>
+
+          <h4>Redaktionsprüfung</h4>
+          <ul class="broadcast-findings">${findings || '<li class="muted">keine Befunde</li>'}</ul>
+
+          <h4>Stimmen</h4>
+          <ul class="broadcast-voices">${voices || '<li class="muted">nicht konfiguriert</li>'}</ul>
+        </div>`;
+    } catch (err) {
+      viewer.textContent = "Sendungsplanung konnte nicht geladen werden.";
+    }
+  }
+
   async function loadTTSPanel() {
     if (!selected) return;
     const viewer = document.getElementById("viewer");

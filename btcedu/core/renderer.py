@@ -521,7 +521,9 @@ def render_video(
             if chapter.transitions.out_transition.value in ("fade", "dissolve"):
                 fade_out_dur = settings.render_transition_duration
 
-            # Render segment
+            # Render segment. A full render can take an hour on the Pi, so the
+            # directory is re-asserted per segment instead of only once up front.
+            segments_dir.mkdir(parents=True, exist_ok=True)
             segment_filename = f"{chapter.chapter_id}.mp4"
             segment_path = segments_dir / segment_filename
             segment_rel_path = f"render/segments/{segment_filename}"
@@ -705,6 +707,7 @@ def render_video(
                 chapter = chapter_by_id[entry.chapter_id]
                 if chapter.chapter_id in topic_chapter_ids:
                     topic_index += 1
+                    segments_dir.mkdir(parents=True, exist_ok=True)
                     topic_path = segments_dir / f"topic_{chapter.chapter_id}.mp4"
                     create_topic_intro_segment(
                         output_path=str(topic_path),
@@ -737,6 +740,7 @@ def render_video(
 
         # Prepend intro if enabled
         if _eff_intro_enabled:
+            segments_dir.mkdir(parents=True, exist_ok=True)
             intro_path = segments_dir / "intro.mp4"
             _ep_date = ""
             if hasattr(episode, "published_at") and episode.published_at:
@@ -766,6 +770,7 @@ def render_video(
 
         # Append outro if enabled
         if getattr(settings, "render_outro_enabled", False) is True:
+            segments_dir.mkdir(parents=True, exist_ok=True)
             outro_path = segments_dir / "outro.mp4"
             create_outro_segment(
                 output_path=str(outro_path),

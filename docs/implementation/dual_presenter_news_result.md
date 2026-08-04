@@ -117,7 +117,7 @@ exists for — the chain is layered:
 
 ## Verification
 
-- Full suite: **2001 passed** (baseline 1955; 46 new tests).
+- Full suite: **2012 passed** (baseline 1955; 57 new tests).
 - `ruff check` and `ruff format --check` clean on every touched file. 18
   pre-existing errors remain in files this work did not touch
   (`credits_service.py`, `flux_service.py`, `ideogram_service.py`,
@@ -134,13 +134,65 @@ exists for — the chain is layered:
   parts joined into one 7.36 s file, $0.029.
 - All tests mock external providers; no test makes a paid call.
 
+## Corrections found by the first real run
+
+The format was afterwards run end to end on the real episode `IuNt7iyNtkI`.
+That run found four genuine faults, all fixed:
+
+1. **Grounding heuristic produced false alarms.** `_proper_names()` treated every
+   capitalised token as a name. Turkish headlines are set in capitals and Turkish
+   capitalises the first word of a sentence, so ordinary nouns were reported as
+   invented names — four `major` findings on one episode. Names are now only taken
+   from mixed-case tokens that are not sentence-initial, the source side is a full
+   word vocabulary, and agglutinated forms are matched on a four-character stem.
+   A genuinely invented name is still caught.
+2. **The duration gate was one-sided.** Overlong programmes triggered a revision,
+   short ones only produced advice. `duration_revision_below` (0.9 × minimum) now
+   makes a substantial shortfall a `major` finding with a revision. The
+   deterministic fallback is exempt — it can only re-split approved text.
+3. **The editorial model delivers less than it is allocated.** It writes roughly
+   88 % of the words it is given. `RankingBudget.delivery_factor` (0.88) inflates
+   the allocation accordingly; validated offline against four episodes.
+4. **`_merge_short_chapters()` mutates chapters in place.** On the script path its
+   return value was discarded, but the mutation persisted and appended the closing
+   to the weather chapter, so the narration lock failed. The merge is now skipped
+   entirely when a broadcast script drives the mapping. Regression test added.
+
+### Speech rate calibration
+
+The assumed 150 words per minute was wrong. A fully synthesized episode measured
+**1135 words in 556.5 s = 122 wpm** (121–128 per chapter). `WORDS_PER_MINUTE` is
+now 122 and the chapterizer imports the same constant instead of duplicating the
+literal. The duration estimate for `IuNt7iyNtkI` moved from 454 s to 556 s against
+556.5 s measured. Much of the apparent "too short" problem was an estimation
+artefact, not a content problem.
+
+### Renderer robustness
+
+A full render takes about an hour on the Pi. The segment directory was created
+once at the start and assumed to survive; when it disappeared mid-run the render
+failed at chapter 5 with `No such file or directory`. The directory is now
+re-asserted before every segment, topic intro, intro and outro.
+
+## Dashboard
+
+- `GET /api/episodes/<id>/broadcast` returns the editorial view: show, date,
+  running order with priority, duration and speaker pattern, headline and
+  summary, omissions with score and reason, QA findings, configured voices,
+  anchor share.
+- The episode detail view has a **Sendung** tab (tagesschau profile only) that
+  renders this view.
+- `script_broadcast.json`, `script.broadcast.tr.md`, `script_omissions.json` and
+  `script_qa.json` are downloadable through the existing file endpoint.
+
 ## Deliberately not done
 
-- **Dashboard UI for the script stage.** The artifacts
-  (`script_broadcast.json`, `script_omissions.json`, `script_qa.json`) are
-  written and readable, but no endpoints or views were added.
-- **Reusable intro master asset.** The profile's existing `intro_*` render
-  settings are used; no separate pre-rendered intro clip was introduced.
+- **Reusable intro master asset.** The intro is generated procedurally by
+  `create_intro_segment()` from `intro_show_name`, `intro_slogan`,
+  `intro_episode_title`, the episode date and `intro.mp3`. It is branded and it
+  works. A hand-made intro clip would need artwork that does not exist in the
+  repository and a new config field, so it is left as an explicit decision for
+  the operator rather than invented here.
 - **Weather refinements** (grouping regions per forecast day). The weather
   renderer already works — map, region cards, per-city temperatures from
   Open-Meteo — and rebuilding it was out of scope for this change.

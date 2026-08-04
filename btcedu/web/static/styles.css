@@ -2641,3 +2641,25 @@ body {
 .badge-override { background: #f97316; color: #fff; font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600; }
 .btn-active { background: var(--accent) !important; color: #fff !important; border-color: var(--accent) !important; }
 .btn-dim { opacity: 0.7; }
+
+/* Broadcast planning panel */
+.broadcast-table { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 13px; }
+.broadcast-table th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #333; color: #9aa; font-weight: 600; }
+.broadcast-table td { padding: 6px 8px; border-bottom: 1px solid #222; vertical-align: top; }
+.broadcast-table td.num { text-align: right; white-space: nowrap; }
+.broadcast-panel h4 { margin: 18px 0 6px; color: #cde; }
+.broadcast-panel .muted { color: #778; font-size: 12px; }
+.spk { display: inline-block; width: 18px; height: 18px; line-height: 18px; text-align: center;
+       border-radius: 3px; font-size: 11px; font-weight: 700; margin-right: 2px; }
+.spk-a { background: #7b3fa0; color: #fff; }
+.spk-r { background: #1f6f8b; color: #fff; }
+.prio { padding: 1px 6px; border-radius: 3px; font-size: 11px; text-transform: uppercase; }
+.prio-top { background: #a33; color: #fff; }
+.prio-normal { background: #345; color: #cde; }
+.prio-brief { background: #553; color: #eda; }
+.sev { padding: 1px 6px; border-radius: 3px; font-size: 11px; margin-right: 6px; }
+.sev-critical { background: #a22; color: #fff; }
+.sev-major { background: #a63; color: #fff; }
+.sev-minor { background: #444; color: #ccc; }
+.sev-info { background: #335; color: #bcd; }
+.broadcast-findings, .broadcast-voices { margin: 0; padding-left: 18px; font-size: 13px; }

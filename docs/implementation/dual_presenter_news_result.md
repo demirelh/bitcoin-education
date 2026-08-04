@@ -257,11 +257,46 @@ The lower third belongs to the story, so it is drawn on the first shot only; the
 fades stay at the outer edges of the chapter; the Ken Burns direction varies per
 shot.
 
-**Cost.** Measured on the first episode: 9 pictures before, 17 with beats, and
-19 once the anchor-first rule adds a beat to the two reporter-led stories — about
-**$1.44 per episode** instead of the ~$1.12 estimated earlier. Verified with a
-real ffmpeg run before release; that run also exposed a wrong `SegmentResult`
+**Cost.** 16 pictures for an eight-chapter episode instead of 8. Measured on
+episode `hrzrn0Wutak`: **$0.485**, less than the $0.64 the pipeline spent before
+this change, because the provider fault described below was fixed at the same
+time. A real ffmpeg run before release exposed a wrong `SegmentResult`
 construction in `replace_audio_track()` that would have failed the live render.
+
+### Three picture faults found by watching a real episode
+
+Verifying against the manifest would have missed all three; they were only
+visible in the frames themselves.
+
+1. **Every chapter went to the text-rendering provider.** `_route_provider_for_chapter()`
+   treated any lower third as "this picture must contain text". Every chapter has
+   a lower third, so all 15 pictures came from Ideogram — which wrote a speech
+   bubble full of nonsense words into the EU map. Overlays are drawn by the
+   renderer with `drawtext`, never by the image model, so they no longer
+   influence the routing. Flux now handles the photographic chapters: better
+   pictures at $0.025 instead of $0.080 each.
+2. **The style prefix asked for a television studio.** *"in the visual style of a
+   European public-service television newscast"* produced a studio with an
+   invented male presenter — contradicting the female anchor the viewer hears.
+   The prefix now asks for editorial news photography and rules out studios,
+   desks, presenters and flat vector illustration; `imagegen_news.md` says the
+   same, and the beat hints only describe framing.
+3. **The shots of one story looked unrelated.** The first shot was built from the
+   chapter's one-line `image_prompt`, the following shots from a two-hundred-word
+   generated prompt. Every shot of a chapter with beats now goes through
+   `_generate_beat_prompt()`, with the one-line prompt folded into the
+   description.
+
+**Invalidation.** `visual_beats` is part of the `visuals` component hash, so a
+changed presenter block invalidates images and render and leaves the narration
+audio — and its cost — untouched. Verified on `hrzrn0Wutak`: re-chapterizing
+marked images and render stale and wrote no TTS marker.
+
+**End-to-end verification** on `hrzrn0Wutak` (04.08.2026): 8 chapters, 16
+pictures, 18 rendered shots, draft 527.7 s. The audio track measures 527.70 s
+against 527.68 s of picture, so nothing is clipped. Frames at 4 s, 20 s and 37 s
+of `ch03` show three different pictures of one story (Reichstag, the meeting,
+the ministry) with the lower third on the first shot only.
 
 ## Deliberately not done
 

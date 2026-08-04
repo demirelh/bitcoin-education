@@ -1137,7 +1137,9 @@ def _merge_short_chapters(chapters: list, min_seconds: int) -> list:
 def _compute_duration_estimate(word_count: int) -> int:
     """Estimate narration duration in seconds from Turkish word count.
 
-    Turkish speech rate: ~150 words/minute.
+    Uses the single measured speech rate defined in
+    :mod:`btcedu.models.script_schema` so chapter estimates and script estimates
+    cannot drift apart.
 
     Args:
         word_count: Number of words in narration text
@@ -1145,7 +1147,8 @@ def _compute_duration_estimate(word_count: int) -> int:
     Returns:
         Estimated duration in seconds (rounded to nearest integer)
     """
-    WORDS_PER_MINUTE = 150
+    from btcedu.models.script_schema import WORDS_PER_MINUTE
+
     duration_minutes = word_count / WORDS_PER_MINUTE
     duration_seconds = duration_minutes * 60
     return round(duration_seconds)

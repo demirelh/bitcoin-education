@@ -407,10 +407,12 @@ class TestDeterministicChapters:
 
 class TestDurationEstimate:
     def test_estimate_scales_with_word_count(self):
-        short = estimate_duration_seconds(" ".join(["kelime"] * 75))
-        long = estimate_duration_seconds(" ".join(["kelime"] * 150))
-        assert short == pytest.approx(30.0, abs=1.0)
-        assert long == pytest.approx(60.0, abs=1.0)
+        from btcedu.models.script_schema import WORDS_PER_MINUTE
+
+        half = " ".join(["kelime"] * (WORDS_PER_MINUTE // 2))
+        full = " ".join(["kelime"] * WORDS_PER_MINUTE)
+        assert estimate_duration_seconds(half) == pytest.approx(30.0, abs=1.0)
+        assert estimate_duration_seconds(full) == pytest.approx(60.0, abs=1.0)
 
     def test_empty_text_has_no_duration(self):
         assert estimate_duration_seconds("   ") == 0.0

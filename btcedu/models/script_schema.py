@@ -15,9 +15,10 @@ from enum import Enum
 from pydantic import BaseModel, Field, model_validator
 
 # Words per minute used to estimate spoken duration for Turkish news delivery.
-# Measured against rendered episodes: ~2.45 s per word including pauses is far
-# too slow, ~150 wpm matches the existing chapter estimates.
-WORDS_PER_MINUTE = 150
+# Measured on synthesized audio of a full episode (1135 words, 556.5 s): the
+# per-chapter rate sits between 121 and 128 wpm, averaging 122. The previous
+# value of 150 underestimated every programme by about a fifth.
+WORDS_PER_MINUTE = 122
 
 
 def estimate_duration_seconds(text: str) -> float:

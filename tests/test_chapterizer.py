@@ -198,17 +198,19 @@ def test_parse_json_response_repairs_unescaped_quotes():
 
 
 def test_compute_duration_estimate():
-    """Test duration estimate calculation (150 words/min for Turkish)."""
-    # 150 words = 60 seconds
-    assert _compute_duration_estimate(150) == 60
+    """Test duration estimate calculation (measured Turkish delivery rate)."""
+    from btcedu.models.script_schema import WORDS_PER_MINUTE
 
-    # 75 words = 30 seconds
-    assert _compute_duration_estimate(75) == 30
+    # A full minute of speech.
+    assert _compute_duration_estimate(WORDS_PER_MINUTE) == 60
 
-    # 300 words = 120 seconds
-    assert _compute_duration_estimate(300) == 120
+    # Half a minute.
+    assert _compute_duration_estimate(WORDS_PER_MINUTE // 2) == 30
 
-    # 1 word = 0.4 seconds, rounds to 0
+    # Two minutes.
+    assert _compute_duration_estimate(WORDS_PER_MINUTE * 2) == 120
+
+    # A single word rounds down to nothing.
     assert _compute_duration_estimate(1) == 0
 
 
@@ -403,7 +405,7 @@ def test_chapterize_script_success(
     assert isinstance(result, ChapterizationResult)
     assert result.episode_id == "ep_test"
     assert result.chapter_count == 2
-    assert result.estimated_duration_seconds == 120
+    assert result.estimated_duration_seconds == 2 * _compute_duration_estimate(150)
     assert result.input_tokens == 1000
     assert result.output_tokens == 500
     assert result.cost_usd == 0.05

@@ -39,6 +39,12 @@ yalnızca bir iki cümle söylemez; önemli konuları gerçekten tanıtır ve ba
    kuruluşunun adı, proje adı, profil adı veya teknik terim geçmemeli.
 8. **Tekrar yok.** Ana sunucu muhabirin söyleyeceğini önceden söylemez;
    bağlamı verir, muhabir ayrıntıyı verir.
+9. **Hedef uzunluğa uy.** Her haber için verilen kelime sayısı bir tavsiye
+   değil, bir yayın süresidir. Bir haberi verilen alt sınırın altında bitirme;
+   kaynak metinde o haber için var olan ayrıntıları kullanarak süreyi doldur.
+   Uzun haberlerde kaynaktaki arka planı, tarafların pozisyonlarını ve
+   sonuçlarını da işle. Süreyi doldurmak için bilgi uydurmak yasaktır — kaynakta
+   gerçekten yeterli malzeme yoksa haberi kısa tut ve bunu böyle bırak.
 
 ## DEĞERLENDİRME (izin verilen)
 

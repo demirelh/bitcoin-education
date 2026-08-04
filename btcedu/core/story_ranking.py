@@ -101,6 +101,11 @@ class RankingBudget:
     max_seconds: float = 630.0
     # Reserved for opening, headlines block and closing.
     overhead_seconds: float = 55.0
+    # The written script comes out shorter than the source text it is based on,
+    # because the editorial pass condenses. Airtime is therefore allocated
+    # against an inflated budget so the broadcast reaches its target length.
+    # Measured against real episodes; the QA upper bound still applies.
+    delivery_factor: float = 0.88
 
 
 def _haystack(story: dict[str, Any]) -> str:
@@ -256,6 +261,8 @@ def rank_stories(
         weather_seconds += ranking.estimated_duration_seconds
 
     available = budget.target_seconds - budget.overhead_seconds - weather_seconds
+    factor = budget.delivery_factor if budget.delivery_factor > 0 else 1.0
+    available /= factor
     used = 0.0
     # A "top" story keeps its full body plus anchor intro and analysis (~35%
     # extra); a "brief" is compressed to roughly half of its body.
@@ -282,7 +289,7 @@ def rank_stories(
     # stories did not fit. Re-admit the best omitted stories as briefs and
     # restore compressed briefs to full length while airtime remains, so the
     # programme reaches its minimum length instead of ending early.
-    floor = budget.min_seconds - budget.overhead_seconds - weather_seconds
+    floor = (budget.min_seconds - budget.overhead_seconds - weather_seconds) / factor
     for ranking, story in regular:
         if used >= floor:
             break

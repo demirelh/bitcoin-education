@@ -1084,6 +1084,62 @@ def adapt(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run
     "episode_ids",
     multiple=True,
     required=True,
+    help="Episode ID(s) to build a broadcast script for (repeatable).",
+)
+@click.option("--force", is_flag=True, default=False, help="Rebuild even if output exists.")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Write request JSON instead of calling the editorial model.",
+)
+@click.pass_context
+def script(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, dry_run: bool) -> None:
+    """Build the dual-presenter broadcast script (v2 pipeline).
+
+    Ranks the adapted stories into an airtime budget and splits them between the
+    female main anchor and the male reporter. Chapterize then maps the script
+    one-to-one, so this stage decides what actually airs.
+    """
+    from btcedu.core.scripter import generate_script
+
+    settings = ctx.obj["settings"]
+    if dry_run:
+        settings.dry_run = True
+
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = generate_script(session, eid, settings, force=force)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
+                    continue
+                click.echo(
+                    f"[OK] {eid} -> {result.story_count} stories "
+                    f"({result.omitted_count} omitted), "
+                    f"~{result.estimated_duration_seconds / 60:.1f} min, "
+                    f"anchor {result.anchor_share * 100:.0f}% "
+                    f"(${result.cost_usd:.4f})"
+                )
+                qa = result.qa_result
+                if qa is not None:
+                    for finding in qa.findings:
+                        click.echo(
+                            f"       [{finding.severity}] {finding.category}: {finding.explanation}"
+                        )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
     help="Episode ID(s) to chapterize (repeatable).",
 )
 @click.option("--force", is_flag=True, default=False, help="Re-chapterize even if output exists.")

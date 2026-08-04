@@ -80,12 +80,23 @@ FORBIDDEN_OPINION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 )
 
 _NUMBER_PATTERN = re.compile(r"\d[\d.,]*")
-# A proper name: capitalised token of at least 3 characters. Turkish uppercase
-# letters are included explicitly because ``str.isupper`` handles them but a
-# plain ``A-Z`` class does not.
+# A proper-name candidate: a capitalised token of at least three characters.
+# Turkish uppercase letters are listed explicitly because a plain ``A-Z`` class
+# does not cover them.
 _PROPER_NAME_PATTERN = re.compile(r"\b[A-ZÇĞİÖŞÜ][\wÇĞİÖŞÜçğıöşü]{2,}\b")
+# Any word, used to build the vocabulary a script is checked against.
+_WORD_PATTERN = re.compile(r"[^\W\d_]{2,}", re.UNICODE)
+# A token that starts a sentence is capitalised by grammar, not because it names
+# something. Sentences end at these characters or at a line break.
+_SENTENCE_SPLIT = re.compile(r"(?:[.!?:;]|\n)+")
+# Turkish is agglutinative: "gemi" becomes "gemilerden", "Almanya" becomes
+# "Almanya'nın". A candidate counts as grounded when a source word shares this
+# many leading characters with it, which matches the stem without needing a
+# morphological analyser.
+_STEM_PREFIX = 4
 
-# Sentence-initial words are capitalised by grammar, not because they are names.
+# Words that are capitalised for emphasis or belong to the programme itself
+# rather than to the source report.
 _STOPWORD_NAMES = {
     "bu",
     "bir",
@@ -111,6 +122,14 @@ _STOPWORD_NAMES = {
     "akşamlar",
     "haberler",
     "gündem",
+    # Titles are capitalised as a courtesy, they do not name anyone.
+    "bakan",
+    "başbakan",
+    "cumhurbaşkanı",
+    "şansölye",
+    "başkan",
+    "bakanı",
+    "sözcüsü",
 }
 
 
@@ -125,20 +144,27 @@ class ScriptQAConfig:
     anchor_share_max: float = 0.50
     anchor_share_major_below: float = 0.35
     anchor_share_revision_below: float = 0.25
+    # A programme that falls this far below the lower bound is not just a little
+    # tight, it is a different programme than promised, so it is sent back.
+    duration_revision_below: float = 432.0
     max_automatic_revisions: int = 2
 
     @classmethod
     def from_stage_config(cls, config: dict[str, Any] | None) -> ScriptQAConfig:
         config = config or {}
         share = config.get("anchor_share_target") or [0.40, 0.50]
+        min_total = float(config.get("min_total_seconds", 480))
         return cls(
-            min_total_seconds=float(config.get("min_total_seconds", 480)),
+            min_total_seconds=min_total,
             max_total_seconds=float(config.get("max_total_seconds", 630)),
             target_total_seconds=float(config.get("target_total_seconds", 540)),
             anchor_share_min=float(share[0]),
             anchor_share_max=float(share[1]),
             anchor_share_major_below=float(config.get("anchor_share_major_below", 0.35)),
             anchor_share_revision_below=float(config.get("anchor_share_revision_below", 0.25)),
+            duration_revision_below=float(
+                config.get("duration_revision_below", round(min_total * 0.9, 3))
+            ),
             max_automatic_revisions=int(config.get("max_automatic_revisions", 2)),
         )
 
@@ -234,13 +260,50 @@ def _fold(text: str) -> str:
 
 
 def _proper_names(text: str) -> set[str]:
-    names = set()
-    for match in _PROPER_NAME_PATTERN.finditer(text):
-        token = match.group(0)
-        if token.lower() in _STOPWORD_NAMES:
-            continue
-        names.add(_fold(token))
+    """Extract tokens that genuinely look like proper names.
+
+    Only mixed-case tokens that are not sentence-initial qualify. A token in all
+    capitals is display styling (headlines are set in capitals) and a
+    sentence-initial token is capitalised by grammar, so neither is evidence
+    that a name was used.
+    """
+    names: set[str] = set()
+    for sentence in _SENTENCE_SPLIT.split(text):
+        first = True
+        for match in re.finditer(r"[^\W_]+(?:['’][^\W_]+)?", sentence, re.UNICODE):
+            token = match.group(0)
+            is_first, first = first, False
+            if not _PROPER_NAME_PATTERN.fullmatch(token.split("'")[0].split("’")[0]):
+                continue
+            if is_first:
+                continue
+            base = token.split("'")[0].split("’")[0]
+            if base.isupper():
+                continue
+            if base.lower() in _STOPWORD_NAMES:
+                continue
+            names.add(_fold(base))
     return names
+
+
+def _vocabulary(text: str) -> set[str]:
+    """Every word of the source, folded, used as the grounding vocabulary."""
+    return {_fold(m.group(0)) for m in _WORD_PATTERN.finditer(text)}
+
+
+def _is_grounded(name: str, vocabulary: set[str]) -> bool:
+    """True when a source word shares this name's stem.
+
+    Exact containment is checked first; otherwise a shared leading run of
+    ``_STEM_PREFIX`` characters accepts Turkish case suffixes such as
+    "Almanya" versus "Almanya'nın".
+    """
+    if name in vocabulary:
+        return True
+    if len(name) < _STEM_PREFIX:
+        return False
+    prefix = name[:_STEM_PREFIX]
+    return any(word.startswith(prefix) for word in vocabulary if len(word) >= _STEM_PREFIX)
 
 
 def check_grounding(
@@ -270,7 +333,7 @@ def check_grounding(
             )
             continue
         source_numbers = _numbers(source)
-        source_names = _proper_names(source)
+        source_vocabulary = _vocabulary(source)
         spoken = editorial_narration(story)
         invented_numbers = sorted(_numbers(spoken) - source_numbers)
         if invented_numbers:
@@ -289,7 +352,9 @@ def check_grounding(
                     structural_invariant=True,
                 )
             )
-        invented_names = sorted(_proper_names(spoken) - source_names)
+        invented_names = sorted(
+            name for name in _proper_names(spoken) if not _is_grounded(name, source_vocabulary)
+        )
         if invented_names:
             findings.append(
                 factory.make(
@@ -538,17 +603,24 @@ def check_balance_and_duration(
         )
         revision_reasons.append("duration_too_long")
     elif duration < config.min_total_seconds:
+        substantial = duration < config.duration_revision_below
         findings.append(
             factory.make(
                 category="duration_too_short",
-                severity="minor",
+                severity="major" if substantial else "minor",
                 explanation=(
                     f"Toplam süre {duration / 60:.1f} dk "
                     f"(alt sınır {config.min_total_seconds / 60:.1f} dk)."
                 ),
-                required_action="Bir haberi daha ayrıntılı işle.",
+                required_action=(
+                    "Çıkarılan haberlerden birini yayına al veya mevcut haberleri "
+                    "daha ayrıntılı işle."
+                ),
+                structural_invariant=substantial,
             )
         )
+        if substantial:
+            revision_reasons.append("duration_too_short")
 
     return findings, bool(revision_reasons), revision_reasons
 

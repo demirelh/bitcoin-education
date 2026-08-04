@@ -42,6 +42,7 @@ from btcedu.core.script_qa import (
 from btcedu.core.story_ranking import RankingBudget, rank_stories
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
 from btcedu.models.script_schema import (
+    WORDS_PER_MINUTE,
     BroadcastScript,
     OmittedStory,
     ScriptStory,
@@ -187,12 +188,17 @@ def _selected_stories_block(
     blocks = []
     for story in stories:
         ranking = rankings[story["story_id"]]
+        target_words = round(ranking.estimated_duration_seconds / 60 * WORDS_PER_MINUTE)
+        min_words = round(target_words * 0.9)
         blocks.append(
             "\n".join(
                 [
                     f"### {story['story_id']} — öncelik: {ranking.priority.value}",
                     f"kategori: {story.get('category', '')}",
-                    f"hedef süre: {ranking.estimated_duration_seconds:.0f} saniye",
+                    (
+                        f"hedef süre: {ranking.estimated_duration_seconds:.0f} saniye "
+                        f"= yaklaşık {target_words} kelime (en az {min_words} kelime)"
+                    ),
                     f"izleyici ilgisi: {ranking.reasoning_summary}",
                     "",
                     "onaylanmış Türkçe metin:",
@@ -581,6 +587,7 @@ def generate_script(
         min_seconds=qa_config.min_total_seconds,
         max_seconds=qa_config.max_total_seconds,
         overhead_seconds=float(config.get("overhead_seconds", 55)),
+        delivery_factor=float(config.get("delivery_factor", 0.88)),
     )
     overrides = _load_overrides(settings, episode_id)
 
@@ -702,6 +709,16 @@ def generate_script(
             )
             qa_result = run_script_qa(script, approved_by_story, selected, qa_config)
             if not qa_result.revision_required or revision >= max_revisions:
+                break
+            if not model_stories:
+                # The deterministic fallback only re-splits approved text; asking
+                # it again would produce the identical script at no benefit.
+                logger.warning(
+                    "Script QA requested revision for %s but the deterministic "
+                    "fallback cannot revise: %s",
+                    episode_id,
+                    ", ".join(qa_result.revision_reasons),
+                )
                 break
             feedback = revision_feedback(qa_result)
             logger.warning(

@@ -189,6 +189,110 @@ class TestScriptQA:
         result = run_script_qa(script, approved, selected, ScriptQAConfig())
         assert any(f.category.startswith("opinion") for f in result.findings)
 
+    def test_invented_name_is_caught(self, source_stories):
+        script, by_id, selected = _script(source_stories)
+        target = next(s for s in script.stories if not s.source_story_id.startswith("__"))
+        target.speaker_sequence.append(
+            SpeakerSegment(
+                role=SpeakerRole.ANCHOR,
+                purpose=SegmentPurpose.ANALYSIS,
+                text="Konuyu Fransa'da Cumhurbaşkanı Macron da değerlendirdi.",
+            )
+        )
+        approved = {sid: by_id[sid]["text_adapted_tr"] for sid in selected}
+        result = run_script_qa(script, approved, selected, ScriptQAConfig())
+        invented = [f for f in result.findings if f.category == "invented_name"]
+        assert invented
+        assert "macron" in invented[0].explanation
+
+
+class TestGroundingHeuristics:
+    """Turkish capitalisation and suffixes must not look like invented names."""
+
+    SOURCE = (
+        "Ren Nehri'nde su seviyesi düştü. Gemiler yükünü azaltmak zorunda kaldı. "
+        "Bakan Wissing açıklama yaptı. Piyasalarda endeks yükseldi."
+    )
+
+    def _invented(self, spoken: str) -> list[str]:
+        from btcedu.core.script_qa import _is_grounded, _proper_names, _vocabulary
+
+        vocabulary = _vocabulary(self.SOURCE)
+        return sorted(name for name in _proper_names(spoken) if not _is_grounded(name, vocabulary))
+
+    def test_all_caps_headline_is_not_a_name(self):
+        assert self._invented("REN NEHRİNDE KURAKLIK. KISA ARA.") == []
+
+    def test_sentence_initial_word_is_not_a_name(self):
+        assert self._invented("Fabrika üretimi durdurdu. Orman yangını sürüyor.") == []
+
+    def test_turkish_suffix_still_matches_the_stem(self):
+        assert self._invented("Gemilerden bazıları limanda bekliyor.") == []
+        assert self._invented("Piyasalardaki hareketlilik sürüyor.") == []
+
+    def test_title_before_a_name_is_not_itself_a_name(self):
+        assert self._invented("Bugün Bakan Wissing konuştu.") == []
+
+    def test_a_genuinely_new_name_is_reported(self):
+        assert "macron" in self._invented("Görüşmeye Cumhurbaşkanı Macron katıldı.")
+
+
+class TestDurationGate:
+    def test_a_substantial_shortfall_requires_revision(self, source_stories):
+        script, by_id, selected = _script(source_stories)
+        approved = {sid: by_id[sid]["text_adapted_tr"] for sid in selected}
+        config = ScriptQAConfig(
+            min_total_seconds=script.estimated_duration_seconds + 120.0,
+            duration_revision_below=script.estimated_duration_seconds + 60.0,
+        )
+        result = run_script_qa(script, approved, selected, config)
+        assert "duration_too_short" in result.revision_reasons
+        short = [f for f in result.findings if f.category == "duration_too_short"]
+        assert short and short[0].severity == "major"
+
+    def test_a_small_shortfall_stays_advisory(self, source_stories):
+        script, by_id, selected = _script(source_stories)
+        approved = {sid: by_id[sid]["text_adapted_tr"] for sid in selected}
+        duration = script.estimated_duration_seconds
+        config = ScriptQAConfig(
+            min_total_seconds=duration + 30.0,
+            duration_revision_below=duration - 30.0,
+        )
+        result = run_script_qa(script, approved, selected, config)
+        assert "duration_too_short" not in result.revision_reasons
+        short = [f for f in result.findings if f.category == "duration_too_short"]
+        assert short and short[0].severity == "minor"
+
+    def test_the_revision_threshold_follows_the_minimum(self):
+        config = ScriptQAConfig.from_stage_config({"min_total_seconds": 600})
+        assert config.duration_revision_below == 540.0
+
+
+class TestDeliveryFactor:
+    """The editorial pass condenses, so airtime is allocated with headroom."""
+
+    def test_allocation_exceeds_the_plain_target(self, source_stories):
+        from btcedu.core.story_ranking import RankingBudget, rank_stories
+
+        def allocated(factor: float) -> float:
+            rankings = rank_stories(source_stories, budget=RankingBudget(delivery_factor=factor))
+            return sum(
+                r.estimated_duration_seconds for r in rankings if r.priority != StoryPriority.OMIT
+            )
+
+        assert allocated(0.88) > allocated(1.0)
+
+    def test_allocation_stays_below_the_upper_bound(self, source_stories):
+        from btcedu.core.story_ranking import RankingBudget, rank_stories
+
+        budget = RankingBudget(delivery_factor=0.88)
+        rankings = rank_stories(source_stories, budget=budget)
+        total = (
+            sum(r.estimated_duration_seconds for r in rankings if r.priority != StoryPriority.OMIT)
+            + budget.overhead_seconds
+        )
+        assert total <= budget.max_seconds
+
 
 class TestBranding:
     def test_attribution_in_an_overlay_is_rejected(self, source_stories):

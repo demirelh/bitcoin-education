@@ -224,6 +224,45 @@ while 95 characters already reach the frame edge.
 - `script_broadcast.json`, `script.broadcast.tr.md`, `script_omissions.json` and
   `script_qa.json` are downloadable through the existing file endpoint.
 
+## Per-speaker visuals and the anchor-first rule
+
+Requested after the first watched episode: a change of voice should also be a
+change of picture, and the anchor should open, announce and close everything.
+
+**Anchor announces every story.** The prompt (`script_broadcast.md`) now states
+it as an absolute rule, the deterministic fallback in `scripter.py` splits even
+short briefs so the anchor announces the first sentence and the reporter
+delivers the rest, and `check_presentation_order()` in `script_qa.py` reports
+`reporter_opens_story` (severity `major`, structural invariant) if a story still
+starts with the reporter. In the first real episode two of nine stories
+(`n03`, `n06`) started with the reporter, so the rule was only half kept before.
+
+**One picture per presenter block.** The chapterizer groups consecutive segments
+of the same speaker into *visual beats* (`metadata["visual_beats"]`, written only
+for chapters that are neither frame nor weather and that really change speaker).
+The image generator produces one additional picture per beat
+(`<chapter>_beatNN.png`, `beat_index` in the metadata), the renderer builds the
+chapter from one silent shot per beat and then lays the untouched chapter MP3
+over the joined picture with the new `replace_audio_track()`.
+
+Why the audio is laid over instead of cut: TTS already inserts a 0.35 s pause
+between speakers, so cutting the chapter audio per speaker would be fragile.
+Copying the video stream and re-attaching the original narration keeps the sound
+exactly what TTS produced; only the picture cuts. Beat durations are weights
+(measured per-part durations from `speaker_parts`, word counts otherwise) scaled
+onto the chapter duration, so they always add up to the chapter length, and the
+last shot gets 0.2 s of headroom so `-shortest` can never clip the final words.
+
+The lower third belongs to the story, so it is drawn on the first shot only; the
+fades stay at the outer edges of the chapter; the Ken Burns direction varies per
+shot.
+
+**Cost.** Measured on the first episode: 9 pictures before, 17 with beats, and
+19 once the anchor-first rule adds a beat to the two reporter-led stories — about
+**$1.44 per episode** instead of the ~$1.12 estimated earlier. Verified with a
+real ffmpeg run before release; that run also exposed a wrong `SegmentResult`
+construction in `replace_audio_track()` that would have failed the live render.
+
 ## Deliberately not done
 
 - **Reusable intro master asset.** The intro is generated procedurally by

@@ -1328,6 +1328,77 @@ def create_video_segment(
     )
 
 
+def replace_audio_track(
+    video_path: str,
+    audio_path: str,
+    output_path: str,
+    audio_bitrate: str = "192k",
+    timeout_seconds: int = 600,
+    dry_run: bool = False,
+) -> SegmentResult:
+    """Put an audio file onto an existing video without re-encoding the video.
+
+    Used to build a chapter whose picture changes with the presenter: the shots
+    are rendered silently and joined, then the chapter's own narration track is
+    laid over the result. The audio therefore stays exactly the file TTS
+    produced, including the pauses between speakers.
+    """
+    if not Path(video_path).exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+    if not Path(audio_path).exists():
+        raise FileNotFoundError(f"Audio not found: {audio_path}")
+
+    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
+        "-i",
+        audio_path,
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        audio_bitrate,
+        "-shortest",
+        output_path,
+    ]
+    if dry_run:
+        return SegmentResult(
+            segment_path=output_path,
+            duration_seconds=0.0,
+            size_bytes=0,
+            ffmpeg_command=cmd,
+            returncode=0,
+            stderr="[dry-run]",
+        )
+
+    returncode, stderr = _run_ffmpeg(cmd, timeout_seconds)
+    if returncode != 0:
+        raise RuntimeError(f"ffmpeg audio replacement failed (exit code {returncode}): {stderr}")
+
+    duration_seconds = 0.0
+    try:
+        duration_seconds = probe_media(output_path).duration_seconds
+    except Exception as exc:  # noqa: BLE001 - duration is informational only
+        logger.warning("Could not probe duration of %s: %s", output_path, exc)
+
+    return SegmentResult(
+        segment_path=output_path,
+        duration_seconds=duration_seconds,
+        size_bytes=Path(output_path).stat().st_size,
+        ffmpeg_command=cmd,
+        returncode=returncode,
+        stderr=stderr,
+    )
+
+
 def concatenate_segments(
     segment_paths: list[str],
     output_path: str,

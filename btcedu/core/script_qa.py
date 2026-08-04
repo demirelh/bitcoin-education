@@ -449,6 +449,40 @@ def check_opinion(script: BroadcastScript, factory: _FindingFactory) -> list[QAF
     return findings
 
 
+def check_presentation_order(script: BroadcastScript, factory: _FindingFactory) -> list[QAFinding]:
+    """The main anchor opens the programme, every story and the close.
+
+    The reporter contributes where the anchor hands over, never before her. A
+    story that starts with the reporter leaves the viewer without an anchor
+    introduction, which is what a newsreader is for.
+    """
+    findings: list[QAFinding] = []
+    for story in script.stories:
+        sequence = story.speaker_sequence
+        if not sequence:
+            continue
+        first = sequence[0]
+        if first.role is SpeakerRole.ANCHOR:
+            continue
+        findings.append(
+            factory.make(
+                category="reporter_opens_story",
+                severity="major",
+                story_id=story.story_id,
+                target_excerpt=first.text[:300],
+                explanation=(
+                    "Haber muhabirle başlıyor; her haberi ana sunucu anons etmeli."
+                ),
+                required_action=(
+                    "Haberin başına ana sunucudan kısa bir anons ekle ve muhabiri "
+                    "ondan sonra konuştur."
+                ),
+                structural_invariant=True,
+            )
+        )
+    return findings
+
+
 def check_completeness(
     script: BroadcastScript,
     selected_story_ids: list[str],
@@ -636,6 +670,7 @@ def run_script_qa(
     factory = _FindingFactory()
     findings: list[QAFinding] = []
     findings += check_completeness(script, selected_story_ids, factory)
+    findings += check_presentation_order(script, factory)
     findings += check_grounding(script, approved_by_story, factory)
     findings += check_overlays(script, approved_by_story, factory)
     findings += check_opinion(script, factory)

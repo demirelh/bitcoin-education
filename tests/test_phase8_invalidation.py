@@ -240,14 +240,21 @@ def test_chapters_needing_regen_selects_failed_and_missing(tmp_path):
             _chapter("ch03", 3, "c"),
         ]
     )
+    # Entries are grouped per chapter: the chapter image first, then any beat images.
     existing = {
-        "ch01": {"chapter_id": "ch01", "generation_method": "flux", "file_path": "images/ch01.png"},
-        "ch02": {"chapter_id": "ch02", "generation_method": "failed", "file_path": "images/x.png"},
-        "ch03": {
-            "chapter_id": "ch03",
-            "generation_method": "flux",
-            "file_path": "images/missing.png",
-        },
+        "ch01": [
+            {"chapter_id": "ch01", "generation_method": "flux", "file_path": "images/ch01.png"}
+        ],
+        "ch02": [
+            {"chapter_id": "ch02", "generation_method": "failed", "file_path": "images/x.png"}
+        ],
+        "ch03": [
+            {
+                "chapter_id": "ch03",
+                "generation_method": "flux",
+                "file_path": "images/missing.png",
+            }
+        ],
     }
     need = _chapters_needing_regen(existing, doc, images_dir)
     assert need == {"ch02", "ch03"}  # ch01 (good) is reused

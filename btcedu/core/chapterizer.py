@@ -386,10 +386,41 @@ def _chapters_from_script(script, show_name: str) -> list[dict]:
                         }
                         for segment in story.speaker_sequence
                     ],
+                    "visual_beats": [] if (is_frame or is_weather) else _visual_beats(story),
                 },
             }
         )
     return chapters
+
+
+def _visual_beats(story) -> list[dict]:
+    """Group a story's speaker sequence into the blocks that each get their own picture.
+
+    A change of presenter is a change of scene, so every uninterrupted run of one
+    speaker becomes one visual beat. Consecutive segments of the same speaker
+    share a beat: the opening greeting and the headline read are one shot, not two.
+    """
+    beats: list[dict] = []
+    for position, segment in enumerate(story.speaker_sequence):
+        role = segment.role.value
+        if beats and beats[-1]["role"] == role:
+            beat = beats[-1]
+            beat["purposes"].append(segment.purpose.value)
+            beat["segment_indices"].append(position)
+            beat["text"] = f"{beat['text']} {segment.text}".strip()
+            continue
+        beats.append(
+            {
+                "beat_index": len(beats),
+                "role": role,
+                "purposes": [segment.purpose.value],
+                "segment_indices": [position],
+                "text": segment.text,
+            }
+        )
+    if len(beats) < 2:
+        return []
+    return beats
 
 
 def chapterize_script(

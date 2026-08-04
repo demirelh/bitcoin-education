@@ -599,8 +599,33 @@ def render_video(
             # Build enhancement kwargs for this chapter
             enh_kwargs = _enhancement_kwargs(asset_type, chapter.order - 1)
 
+            beats = (chapter.metadata or {}).get("visual_beats") or []
+            beat_image_paths = _beat_images(chapter.chapter_id, image_manifest) if beats else []
+            use_beats = (
+                asset_type != "video"
+                and len(beats) >= 2
+                and len(beat_image_paths) >= 2
+                and not settings.dry_run
+            )
+
             # Phase 4: Branch on asset_type for video vs image segments
-            if asset_type == "video":
+            if use_beats:
+                segment_result = _render_beat_chapter(
+                    chapter=chapter,
+                    beats=beats,
+                    beat_image_paths=[str(base_dir / rel) for rel in beat_image_paths],
+                    parts=_speaker_parts(chapter.chapter_id, tts_manifest),
+                    audio_path=audio_path,
+                    output_path=segment_path,
+                    duration=duration,
+                    overlays=overlay_specs,
+                    fade_in_duration=fade_in_dur,
+                    fade_out_duration=fade_out_dur,
+                    settings=settings,
+                    font=_eff_font or settings.render_font,
+                    enhancement_kwargs=_enhancement_kwargs,
+                )
+            elif asset_type == "video":
                 segment_result = create_video_segment(
                     video_path=str(media_path),
                     audio_path=str(audio_path),
@@ -1438,6 +1463,143 @@ def _resolve_chapter_media(
     duration = audio_entry["duration_seconds"]
 
     return media_path, audio_path, duration, asset_type
+
+
+_BEAT_TAIL_HEADROOM_SECONDS = 0.2
+
+
+def _render_beat_chapter(
+    *,
+    chapter,
+    beats: list[dict],
+    beat_image_paths: list[str],
+    parts: list[dict],
+    audio_path,
+    output_path,
+    duration: float,
+    overlays,
+    fade_in_duration: float,
+    fade_out_duration: float,
+    settings: Settings,
+    font: str,
+    enhancement_kwargs,
+):
+    """Render one chapter as a sequence of shots, one per presenter block.
+
+    A change of presenter is a change of scene, so the chapter is built from
+    several silent shots that are joined and then given the chapter's own
+    narration track. Laying the original audio over the joined picture keeps the
+    sound byte-for-byte what TTS produced, including the pauses between
+    speakers; only the picture cuts.
+
+    The lower third belongs to the story, not to a speaker, so it is drawn on the
+    first shot only. The fades stay at the outer edges of the chapter.
+    """
+    from btcedu.services.ffmpeg_service import (
+        concatenate_segments,
+        create_segment,
+        generate_silent_audio,
+        replace_audio_track,
+    )
+
+    output_path = Path(output_path)
+    beats_dir = output_path.parent / "beats"
+    beats_dir.mkdir(parents=True, exist_ok=True)
+
+    usable = min(len(beats), len(beat_image_paths))
+    beats = beats[:usable]
+    # A few frames of headroom on the last shot: the joined picture must never be
+    # shorter than the narration, because the audio is laid over it with
+    # -shortest and would otherwise lose the final words.
+    durations = _beat_durations(beats, parts, duration)
+    durations[-1] = round(durations[-1] + _BEAT_TAIL_HEADROOM_SECONDS, 3)
+
+    shot_paths: list[str] = []
+    for index, (beat, shot_duration) in enumerate(zip(beats, durations, strict=True)):
+        silent_audio = beats_dir / f"{chapter.chapter_id}_beat{index:02d}.m4a"
+        generate_silent_audio(str(silent_audio), duration=shot_duration)
+        shot_path = beats_dir / f"{chapter.chapter_id}_beat{index:02d}.mp4"
+        create_segment(
+            image_path=beat_image_paths[index],
+            audio_path=str(silent_audio),
+            output_path=str(shot_path),
+            duration=shot_duration,
+            overlays=overlays if index == 0 else [],
+            resolution=settings.render_resolution,
+            fps=settings.render_fps,
+            crf=settings.render_crf,
+            preset=settings.render_preset,
+            audio_bitrate=settings.render_audio_bitrate,
+            font=font,
+            fade_in_duration=fade_in_duration if index == 0 else 0.0,
+            fade_out_duration=fade_out_duration if index == len(beats) - 1 else 0.0,
+            timeout_seconds=settings.render_timeout_segment,
+            **enhancement_kwargs("photo", chapter.order - 1 + index),
+        )
+        shot_paths.append(str(shot_path))
+        logger.info(
+            "  shot %d/%d of %s: %s, %.1fs",
+            index + 1,
+            len(beats),
+            chapter.chapter_id,
+            beat.get("role", "?"),
+            shot_duration,
+        )
+
+    silent_chapter = beats_dir / f"{chapter.chapter_id}_silent.mp4"
+    concatenate_segments(shot_paths, str(silent_chapter))
+    return replace_audio_track(
+        video_path=str(silent_chapter),
+        audio_path=str(audio_path),
+        output_path=str(output_path),
+        audio_bitrate=settings.render_audio_bitrate,
+        timeout_seconds=settings.render_timeout_segment,
+    )
+
+
+def _beat_images(chapter_id: str, image_manifest: dict) -> list[str]:
+    """Relative image paths of a chapter, ordered by presenter block."""
+    entries = [img for img in image_manifest.get("images", []) if img["chapter_id"] == chapter_id]
+    entries.sort(key=lambda e: int((e.get("metadata") or {}).get("beat_index") or 0))
+    return [e["file_path"] for e in entries if e.get("generation_method") != "failed"]
+
+
+def _beat_durations(beats: list[dict], parts: list[dict], total_duration: float) -> list[float]:
+    """Split a chapter's running time across its presenter blocks.
+
+    Weights come from the measured per-speaker audio when TTS recorded it, and
+    from word counts otherwise. The weights are then scaled onto the chapter
+    duration, so the blocks always add up to exactly the chapter length however
+    the pauses between speakers were distributed.
+    """
+    weights: list[float] = []
+    for beat in beats:
+        indices = [int(i) for i in beat.get("segment_indices") or []]
+        measured = [
+            float(parts[i].get("duration_seconds") or 0.0) for i in indices if 0 <= i < len(parts)
+        ]
+        if measured and sum(measured) > 0:
+            weights.append(sum(measured))
+        else:
+            weights.append(float(max(1, len(str(beat.get("text") or "").split()))))
+
+    total_weight = sum(weights)
+    if total_weight <= 0:
+        share = total_duration / len(beats)
+        return [share] * len(beats)
+
+    durations = [total_duration * w / total_weight for w in weights]
+    durations[-1] = round(total_duration - sum(durations[:-1]), 3)
+    return durations
+
+
+def _speaker_parts(chapter_id: str, tts_manifest: dict) -> list[dict]:
+    """The per-speaker audio parts TTS recorded for a chapter, or []."""
+    for seg in tts_manifest.get("segments", []):
+        if seg["chapter_id"] == chapter_id:
+            parts = (seg.get("metadata") or {}).get("speaker_parts") or []
+            return [p for p in parts if isinstance(p, dict)]
+    return []
 
 
 def _find_image_rel_path(chapter_id: str, image_manifest: dict) -> str:

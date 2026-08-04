@@ -205,13 +205,22 @@ def _weather_detection_for_chapter(chapter, weather_config: dict | None = None):
     )
 
 
-def _load_existing_image_entries(manifest_path: Path) -> dict[str, dict]:
-    """Load {chapter_id: entry} from an existing image manifest, or {}."""
+def _load_existing_image_entries(manifest_path: Path) -> dict[str, list[dict]]:
+    """Load {chapter_id: [entries]} from an existing image manifest, or {}.
+
+    A chapter can hold more than one picture — one per presenter block — so the
+    entries are grouped, ordered by beat index, with the chapter image first.
+    """
     if not manifest_path.exists():
         return {}
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        return {entry["chapter_id"]: entry for entry in manifest.get("images", [])}
+        grouped: dict[str, list[dict]] = {}
+        for entry in manifest.get("images", []):
+            grouped.setdefault(entry["chapter_id"], []).append(entry)
+        for entries in grouped.values():
+            entries.sort(key=lambda e: int((e.get("metadata") or {}).get("beat_index") or 0))
+        return grouped
     except (json.JSONDecodeError, KeyError, OSError):
         return {}
 
@@ -230,19 +239,28 @@ def _image_inputs_unchanged(provenance_path: Path, chapters_hash: str, prompt_ha
 
 
 def _chapters_needing_regen(
-    existing_entries: dict[str, dict], chapters_doc, output_dir: Path
+    existing_entries: dict[str, list[dict]], chapters_doc, output_dir: Path
 ) -> set[str]:
     """Chapter ids whose image entry is missing, failed, or has no file on disk."""
     base_dir = output_dir.parent  # outputs/{episode_id}/
     need: set[str] = set()
     for ch in chapters_doc.chapters:
-        entry = existing_entries.get(ch.chapter_id)
-        if entry is None or entry.get("generation_method") == "failed":
+        entries = existing_entries.get(ch.chapter_id)
+        if not entries:
             need.add(ch.chapter_id)
             continue
-        file_path = entry.get("file_path")
-        if not file_path or not (base_dir / file_path).exists():
+        expected_beats = max(1, len(_visual_beats(ch)))
+        if len(entries) < expected_beats:
             need.add(ch.chapter_id)
+            continue
+        for entry in entries:
+            if entry.get("generation_method") == "failed":
+                need.add(ch.chapter_id)
+                break
+            file_path = entry.get("file_path")
+            if not file_path or not (base_dir / file_path).exists():
+                need.add(ch.chapter_id)
+                break
     return need
 
 
@@ -573,15 +591,15 @@ def generate_images(
                 or (recover_ids is not None and chapter.chapter_id not in recover_ids)
             )
             if _reuse_existing:
-                existing_entry_dict = existing_entries[chapter.chapter_id]
-                image_entry = ImageEntry(**existing_entry_dict)
-                image_entries.append(image_entry)
-                if image_entry.generation_method == "deterministic":
-                    deterministic_count += 1
-                elif image_entry.generation_method == "template":
-                    template_count += 1
-                elif image_entry.generation_method != "failed":
-                    generated_count += 1
+                for existing_entry_dict in existing_entries[chapter.chapter_id]:
+                    image_entry = ImageEntry(**existing_entry_dict)
+                    image_entries.append(image_entry)
+                    if image_entry.generation_method == "deterministic":
+                        deterministic_count += 1
+                    elif image_entry.generation_method == "template":
+                        template_count += 1
+                    elif image_entry.generation_method != "failed":
+                        generated_count += 1
                 continue
 
             if weather_override == "weather" or (
@@ -711,14 +729,69 @@ def generate_images(
             if image_entry.generation_method != "failed":
                 _create_media_asset_record(session, episode_id, image_entry, prompt_version.id)
 
+            # One picture per presenter block. The first block already has the
+            # chapter image above, so only the later blocks are generated here.
+            if image_entry.generation_method != "failed":
+                for beat in _visual_beats(chapter)[1:]:
+                    beat_index = int(beat.get("beat_index") or 0)
+                    try:
+                        _check_cost_limit(before_call=True)
+                        (
+                            beat_prompt,
+                            beat_in,
+                            beat_out,
+                            beat_prompt_cost,
+                        ) = _generate_beat_prompt(chapter, beat, template_body, settings)
+                        total_input_tokens += beat_in
+                        total_output_tokens += beat_out
+                        total_cost += beat_prompt_cost
+                        _check_cost_limit(before_call=False)
+
+                        _check_cost_limit(before_call=True)
+                        beat_entry = _generate_single_image(
+                            chapter,
+                            beat_prompt,
+                            image_service,
+                            output_dir,
+                            settings,
+                            style_prefix_override=_profile_style_prefix,
+                            smart_routing=_smart_routing,
+                            branding=_branding_cfg,
+                            beat_index=beat_index,
+                        )
+                        total_cost += beat_entry.metadata.get("cost_usd", 0.0)
+                        _check_cost_limit(before_call=False)
+                        generated_count += 1
+                        image_entries.append(beat_entry)
+                        _create_media_asset_record(
+                            session, episode_id, beat_entry, prompt_version.id
+                        )
+                    except PipelineError:
+                        raise
+                    except Exception as e:
+                        # A missing beat picture is not fatal: the renderer holds
+                        # the previous shot for that block instead.
+                        logger.warning(
+                            "Beat %d of chapter %s has no picture (%s); the previous "
+                            "shot will be held",
+                            beat_index,
+                            chapter.chapter_id,
+                            e,
+                        )
+
         if chapter_id and existing_entries:
-            updated_entries = {entry.chapter_id: entry for entry in image_entries}
-            image_entries = [
-                updated_entries.get(chapter.chapter_id)
-                or ImageEntry(**existing_entries[chapter.chapter_id])
-                for chapter in chapters_doc.chapters
-                if chapter.chapter_id in updated_entries or chapter.chapter_id in existing_entries
-            ]
+            regenerated: dict[str, list[ImageEntry]] = {}
+            for entry in image_entries:
+                regenerated.setdefault(entry.chapter_id, []).append(entry)
+            merged: list[ImageEntry] = []
+            for chapter in chapters_doc.chapters:
+                if chapter.chapter_id in regenerated:
+                    merged.extend(regenerated[chapter.chapter_id])
+                elif chapter.chapter_id in existing_entries:
+                    merged.extend(
+                        ImageEntry(**raw) for raw in existing_entries[chapter.chapter_id]
+                    )
+            image_entries = merged
 
         # Write manifest
         manifest_data = {
@@ -1046,6 +1119,65 @@ def _generate_image_prompt(
     return image_prompt, response.input_tokens, response.output_tokens, response.cost_usd
 
 
+def _visual_beats(chapter) -> list[dict]:
+    """Return the presenter blocks of a chapter that each deserve their own picture."""
+    metadata = getattr(chapter, "metadata", None) or {}
+    beats = metadata.get("visual_beats") or []
+    if not isinstance(beats, list):
+        return []
+    return [beat for beat in beats if isinstance(beat, dict)]
+
+
+_ROLE_SCENE_HINT = {
+    "anchor_female": (
+        "Studio-adjacent framing for a presenter-led passage: the establishing view of "
+        "the subject, calm and wide."
+    ),
+    "reporter_male": (
+        "On-location reporting framing for the same subject: closer, at ground level, "
+        "showing the situation being described rather than an overview."
+    ),
+}
+
+
+def _generate_beat_prompt(
+    chapter,
+    beat: dict,
+    template_body: str,
+    settings: Settings,
+) -> tuple[str, int, int, float]:
+    """Generate an image prompt for one presenter block of a chapter.
+
+    The subject stays the same — it is the same story — but the shot must not be.
+    A change of presenter is a change of scene, so the beat's own words and a
+    role-specific framing hint drive the prompt.
+    """
+    system_prompt, user_template = _split_prompt(template_body)
+    visual = chapter.visual
+    beat_text = str(beat.get("text") or "")
+    narration_context = beat_text[:300] + "..." if len(beat_text) > 300 else beat_text
+    hint = _ROLE_SCENE_HINT.get(str(beat.get("role") or ""), "")
+
+    user_message = user_template.replace("{{ chapter_title }}", chapter.title)
+    user_message = user_message.replace("{{ visual_type }}", visual.type)
+    user_message = user_message.replace(
+        "{{ visual_description }}", f"{visual.description} {hint}".strip()
+    )
+    user_message = user_message.replace("{{ narration_context }}", narration_context)
+
+    dry_run_path = None
+    if settings.dry_run:
+        beat_index = int(beat.get("beat_index") or 0)
+        dry_run_path = (
+            Path(settings.outputs_dir)
+            / "dry_run"
+            / f"imagegen_{chapter.chapter_id}_beat{beat_index:02d}.json"
+        )
+
+    response = call_claude(system_prompt, user_message, settings, dry_run_path)
+    return response.text.strip(), response.input_tokens, response.output_tokens, response.cost_usd
+
+
 def _generate_single_image(
     chapter,
     image_prompt: str,
@@ -1055,6 +1187,7 @@ def _generate_single_image(
     style_prefix_override: str | None = None,
     smart_routing: bool | None = None,
     branding: dict | None = None,
+    beat_index: int = 0,
 ) -> ImageEntry:
     """Generate a single image via configured provider.
 
@@ -1112,7 +1245,8 @@ def _generate_single_image(
 
     response: ImageGenResponse = image_service.generate_image(request)
 
-    filename = f"{chapter.chapter_id}_{_slugify_filename_part(chapter.title)}.png"
+    suffix = f"_beat{beat_index:02d}" if beat_index else ""
+    filename = f"{chapter.chapter_id}{suffix}_{_slugify_filename_part(chapter.title)}.png"
     target_path = output_dir / filename
     # All service classes expose static download_image with same signature
     type(image_service).download_image(response.image_url, target_path)
@@ -1134,6 +1268,7 @@ def _generate_single_image(
             "revised_prompt": response.revised_prompt,
             "cost_usd": response.cost_usd,
             "generated_at": _utcnow().isoformat(),
+            "beat_index": beat_index,
         },
     )
 

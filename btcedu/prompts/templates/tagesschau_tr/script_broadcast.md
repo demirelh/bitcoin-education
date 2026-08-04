@@ -63,11 +63,17 @@ bölümünü boş bırak; uydurma.
 
 Her haberi aynı kalıba sokma. Önceliğe göre:
 
+**Değişmez kural: her haber ana sunucuyla başlar.** Muhabir hiçbir haberin ilk
+konuşmacısı olamaz. Bülteni ana sunucu açar, her haberi o anons eder, bülteni o
+kapatır. Muhabir yalnızca ana sunucunun devrettiği yerde konuşur.
+
 - `top`: ana sunucu tanıtır (`introduction`) → muhabir aktarır (`report`) →
   ana sunucu değerlendirir (`analysis`)
 - `normal`: ana sunucu kısa tanıtır (`introduction`) → muhabir aktarır (`report`)
-  VEYA muhabir aktarır (`report`) → ana sunucu toparlar (`analysis`)
-- `brief`: tek konuşmacı, tek kompakt paragraf (`brief`), çoğunlukla ana sunucu
+  → ana sunucu toparlar (`analysis`)
+- `brief`: ana sunucu kısa anons eder (`transition`) → muhabir tek kompakt
+  paragraf aktarır (`brief`); ya da haberin tamamını ana sunucu tek başına
+  okur (`brief`)
 
 ## GÖRSEL ALT YAZI
 

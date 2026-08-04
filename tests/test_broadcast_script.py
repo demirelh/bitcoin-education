@@ -537,3 +537,122 @@ class TestTwoLineOverlays:
             return int(drawbox.split(":h=")[1].split(":")[0])
 
         assert bar_height("Başlık\\nÖzet cümlesi.") > bar_height("Başlık")
+
+
+class TestPresentationOrder:
+    def test_every_story_starts_with_the_anchor(self, source_stories):
+        script, _, _ = _script(source_stories)
+        for story in script.stories:
+            assert story.speaker_sequence, story.story_id
+            assert story.speaker_sequence[0].role is SpeakerRole.ANCHOR, story.story_id
+
+    def test_opening_and_closing_belong_to_the_anchor(self, source_stories):
+        script, _, _ = _script(source_stories)
+        frames = [s for s in script.stories if s.source_story_id in ("__opening__", "__closing__")]
+        assert len(frames) == 2
+        for story in frames:
+            roles = {segment.role for segment in story.speaker_sequence}
+            assert roles == {SpeakerRole.ANCHOR}
+
+    def test_a_reporter_led_story_is_reported(self, source_stories):
+        from btcedu.core.script_qa import _FindingFactory, check_presentation_order
+
+        script, _, _ = _script(source_stories)
+        target = next(
+            s for s in script.stories if len({x.role for x in s.speaker_sequence}) == 2
+        )
+        target.speaker_sequence = list(reversed(target.speaker_sequence))
+        findings = check_presentation_order(script, _FindingFactory())
+        assert [f.category for f in findings] == ["reporter_opens_story"]
+        assert findings[0].severity == "major"
+
+
+class TestVisualBeats:
+    def test_a_speaker_change_creates_a_new_beat(self, source_stories):
+        from btcedu.core.chapterizer import _visual_beats
+
+        script, _, _ = _script(source_stories)
+        story = next(
+            s
+            for s in script.stories
+            if len({seg.role for seg in s.speaker_sequence}) == 2
+        )
+        beats = _visual_beats(story)
+        assert len(beats) >= 2
+        roles = [beat["role"] for beat in beats]
+        assert all(a != b for a, b in zip(roles, roles[1:], strict=False))
+        joined = " ".join(beat["text"] for beat in beats)
+        assert joined == " ".join(seg.text for seg in story.speaker_sequence)
+
+    def test_a_single_speaker_needs_no_beats(self, source_stories):
+        from btcedu.core.chapterizer import _visual_beats
+
+        script, _, _ = _script(source_stories)
+        story = next(
+            s
+            for s in script.stories
+            if len({seg.role for seg in s.speaker_sequence}) == 1
+        )
+        assert _visual_beats(story) == []
+
+    def test_consecutive_segments_of_one_speaker_share_a_beat(self, source_stories):
+        from btcedu.core.chapterizer import _visual_beats
+
+        script, _, _ = _script(source_stories)
+        story = next(s for s in script.stories if s.source_story_id == "__opening__")
+        story.speaker_sequence.append(
+            SpeakerSegment(
+                role=SpeakerRole.REPORTER,
+                purpose=SegmentPurpose.REPORT,
+                text="Muhabir burada konuşuyor.",
+            )
+        )
+        beats = _visual_beats(story)
+        assert [b["role"] for b in beats] == ["anchor_female", "reporter_male"]
+        assert beats[0]["segment_indices"] == [0, 1]
+
+    def test_beat_durations_add_up_to_the_chapter(self):
+        from btcedu.core.renderer import _beat_durations
+
+        beats = [
+            {"segment_indices": [0], "text": "bir"},
+            {"segment_indices": [1], "text": "iki"},
+            {"segment_indices": [2], "text": "üç"},
+        ]
+        parts = [
+            {"duration_seconds": 30.0},
+            {"duration_seconds": 70.0},
+            {"duration_seconds": 20.0},
+        ]
+        durations = _beat_durations(beats, parts, 150.0)
+        assert sum(durations) == pytest.approx(150.0)
+        assert durations[0] < durations[1]
+
+    def test_beat_durations_fall_back_to_word_counts(self):
+        from btcedu.core.renderer import _beat_durations
+
+        beats = [
+            {"segment_indices": [0], "text": "bir iki üç dört"},
+            {"segment_indices": [1], "text": "bir iki"},
+        ]
+        durations = _beat_durations(beats, [], 60.0)
+        assert sum(durations) == pytest.approx(60.0)
+        assert durations[0] > durations[1]
+
+    def test_beat_images_are_ordered_by_beat_index(self):
+        from btcedu.core.renderer import _beat_images
+
+        manifest = {
+            "images": [
+                {"chapter_id": "ch02", "file_path": "images/b1.png", "metadata": {"beat_index": 1}},
+                {"chapter_id": "ch02", "file_path": "images/b0.png", "metadata": {"beat_index": 0}},
+                {"chapter_id": "ch03", "file_path": "images/other.png", "metadata": {}},
+                {
+                    "chapter_id": "ch02",
+                    "file_path": "images/bad.png",
+                    "generation_method": "failed",
+                    "metadata": {"beat_index": 2},
+                },
+            ]
+        }
+        assert _beat_images("ch02", manifest) == ["images/b0.png", "images/b1.png"]

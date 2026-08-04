@@ -573,3 +573,44 @@ def test_animated_lower_third_drawbox_uses_input_height():
     assert texts
     for text_filter in texts:
         assert ":y=h-100-70" in text_filter
+
+
+def test_replace_audio_track_copies_the_video_and_keeps_the_narration(tmp_path):
+    """The picture is passed through untouched; only the audio is (re-)attached."""
+    from btcedu.services.ffmpeg_service import replace_audio_track
+
+    video = tmp_path / "silent.mp4"
+    audio = tmp_path / "chapter.mp3"
+    output = tmp_path / "segment.mp4"
+    video.write_bytes(b"video")
+    audio.write_bytes(b"audio")
+
+    result = replace_audio_track(
+        video_path=str(video),
+        audio_path=str(audio),
+        output_path=str(output),
+        dry_run=True,
+    )
+
+    cmd = result.ffmpeg_command
+    assert cmd[cmd.index("-c:v") + 1] == "copy"
+    assert cmd[cmd.index("-c:a") + 1] == "aac"
+    assert "-shortest" in cmd
+    assert cmd[cmd.index("-map") + 1] == "0:v:0"
+    assert result.segment_path == str(output)
+    assert result.returncode == 0
+
+
+def test_replace_audio_track_requires_both_inputs(tmp_path):
+    from btcedu.services.ffmpeg_service import replace_audio_track
+
+    audio = tmp_path / "chapter.mp3"
+    audio.write_bytes(b"audio")
+
+    with pytest.raises(FileNotFoundError, match="Video not found"):
+        replace_audio_track(
+            video_path=str(tmp_path / "missing.mp4"),
+            audio_path=str(audio),
+            output_path=str(tmp_path / "out.mp4"),
+            dry_run=True,
+        )

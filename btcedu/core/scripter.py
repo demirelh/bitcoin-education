@@ -276,15 +276,25 @@ def _fallback_sequence(
     if not text:
         return []
     if ranking.priority == StoryPriority.BRIEF:
-        # Briefs alternate between the two voices so the programme does not turn
-        # into a monologue block, and are trimmed to their ranked airtime.
-        role = SpeakerRole.ANCHOR if index % 2 == 0 else SpeakerRole.REPORTER
+        # Briefs are trimmed to their ranked airtime. The anchor announces them
+        # like every other story; the reporter only follows her.
+        trimmed = _trim_to_duration(text, ranking.estimated_duration_seconds)
+        brief_sentences = [
+            s.strip() for s in re.split(r"(?<=[.!?])\s+", trimmed.replace("\n", " ")) if s.strip()
+        ]
+        if len(brief_sentences) < 2:
+            return [{"role": SpeakerRole.ANCHOR.value, "purpose": "brief", "text": trimmed}]
         return [
             {
-                "role": role.value,
+                "role": SpeakerRole.ANCHOR.value,
+                "purpose": "transition",
+                "text": brief_sentences[0],
+            },
+            {
+                "role": SpeakerRole.REPORTER.value,
                 "purpose": "brief",
-                "text": _trim_to_duration(text, ranking.estimated_duration_seconds),
-            }
+                "text": " ".join(brief_sentences[1:]),
+            },
         ]
     sentences = [
         s.strip() for s in re.split(r"(?<=[.!?])\s+", text.replace("\n", " ")) if s.strip()

@@ -1279,7 +1279,7 @@ def _chapter_to_overlay_specs(
             # The animated lower third draws both lines in its own bar.
             overlay_specs.append(
                 OverlaySpec(
-                    text=f"{overlay.text}\\n{_shorten_overlay_text(subtext, max_chars=70)}",
+                    text=f"{overlay.text}\\n{_shorten_overlay_text(subtext)}",
                     overlay_type="lower_third",
                     fontsize=OVERLAY_STYLES["lower_third_headline"]["fontsize"],
                     fontcolor=style["fontcolor"],
@@ -1337,11 +1337,15 @@ def _chapter_to_overlay_specs(
     return overlay_specs
 
 
-def _shorten_overlay_text(text: str, max_chars: int = 62) -> str:
+def _shorten_overlay_text(text: str, max_chars: int = 88) -> str:
     """Trim a summary line to one line that fits inside the title-safe area.
 
     ffmpeg's drawtext draws a line as-is, so an over-long summary would run past
     the frame edge. The line is cut at a word boundary and ends with an ellipsis.
+
+    88 is measured, not guessed: at the 34 px summary size the rendered line ends
+    at 1723 px of 1920, just inside the 5 % title-safe margin. 95 characters
+    already reach the frame edge.
     """
     text = " ".join(text.split())
     if len(text) <= max_chars:

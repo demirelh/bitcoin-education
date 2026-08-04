@@ -205,6 +205,14 @@ Operational rule that follows from this: never touch `data/outputs/<id>/render/`
 by hand. Check `ps` and the pipeline lock first — a scheduled `run-latest` fires
 every five minutes.
 
+### The summary line was cut off
+
+The two-line lower third trimmed the summary at 70 characters, so a normal
+Turkish sentence ended in an ellipsis with a third of the bar still empty. The
+limit is now 88, measured rather than estimated: at the 34 px summary size the
+rendered line ends at 1723 px of 1920, just inside the 5 % title-safe margin,
+while 95 characters already reach the frame edge.
+
 ## Dashboard
 
 - `GET /api/episodes/<id>/broadcast` returns the editorial view: show, date,

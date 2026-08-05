@@ -764,6 +764,101 @@ class TestFileViewer:
         content = client.get("/api/episodes/ep001/files/transcript_tr").get_json()["content"]
         assert content.count("[Anchor (female)]") == 1
 
+    def test_file_transcript_tr_names_the_picture_per_beat(self, client, test_settings):
+        ep_dir = Path(test_settings.outputs_dir) / "ep001"
+        (ep_dir / "images").mkdir(parents=True)
+        chapters = {
+            "schema_version": "1.0",
+            "episode_id": "ep001",
+            "title": "Test",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 20,
+            "chapters": [
+                {
+                    "chapter_id": "c1",
+                    "title": "Haber",
+                    "order": 1,
+                    "narration": {"text": "Sunucu. Muhabir."},
+                    "metadata": {
+                        "speaker_segments": [
+                            {"role": "anchor_female", "text": "Sunucu."},
+                            {"role": "reporter_male", "text": "Muhabir."},
+                        ],
+                        "visual_beats": [
+                            {"beat_index": 0, "role": "anchor_female", "text": "Sunucu."},
+                            {"beat_index": 1, "role": "reporter_male", "text": "Muhabir."},
+                        ],
+                    },
+                },
+            ],
+        }
+        (ep_dir / "chapters.json").write_text(
+            json.dumps(chapters, ensure_ascii=False), encoding="utf-8"
+        )
+        manifest = {
+            "images": [
+                {
+                    "chapter_id": "c1",
+                    "file_path": "images/c1_beat01.png",
+                    "metadata": {"beat_index": 1},
+                },
+                {"chapter_id": "c1", "file_path": "images/c1.png", "metadata": {}},
+                {
+                    "chapter_id": "c1",
+                    "file_path": "images/c1_failed.png",
+                    "generation_method": "failed",
+                    "metadata": {"beat_index": 2},
+                },
+            ]
+        }
+        (ep_dir / "images" / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+        content = client.get("/api/episodes/ep001/files/transcript_tr").get_json()["content"]
+        # Opening shot first, then the beat picture; the failed one is not shown
+        assert content.index("# images/c1.png") < content.index("# images/c1_beat01.png")
+        assert "c1_failed" not in content
+        # Each picture sits directly above the passage spoken under it
+        assert content.index("# images/c1_beat01.png") < content.index("Muhabir.")
+        assert content.index("Sunucu.") < content.index("# images/c1_beat01.png")
+
+    def test_file_transcript_tr_names_the_weather_scene_video(self, client, test_settings):
+        ep_dir = Path(test_settings.outputs_dir) / "ep001"
+        (ep_dir / "images").mkdir(parents=True)
+        chapters = {
+            "schema_version": "1.0",
+            "episode_id": "ep001",
+            "title": "Test",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 10,
+            "chapters": [
+                {
+                    "chapter_id": "c1",
+                    "title": "Hava",
+                    "order": 1,
+                    "narration": {"text": "Hava durumu."},
+                    "metadata": {},
+                },
+            ],
+        }
+        (ep_dir / "chapters.json").write_text(
+            json.dumps(chapters, ensure_ascii=False), encoding="utf-8"
+        )
+        manifest = {
+            "images": [
+                {
+                    "chapter_id": "c1",
+                    "file_path": "images/c1_weather.png",
+                    "metadata": {"scene_video_deferred_until_render": True},
+                }
+            ]
+        }
+        (ep_dir / "images" / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (ep_dir / "images" / "c1_weather.mp4").write_bytes(b"x")
+
+        content = client.get("/api/episodes/ep001/files/transcript_tr").get_json()["content"]
+        assert "# images/c1_weather.mp4" in content
+        assert "c1_weather.png" not in content
+
     def test_file_transcript_tr_missing(self, client):
         r = client.get("/api/episodes/ep001/files/transcript_tr")
         assert r.status_code == 404

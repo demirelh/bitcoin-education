@@ -714,6 +714,80 @@ def _speaker_passages(chapter: dict) -> list[tuple[str, str]]:
     return passages
 
 
+def _chapter_images(episode_id: str, settings) -> dict[str, list[str]]:
+    """Per chapter, its generated image files in the order the video shows them.
+
+    Mirrors the renderer's ordering (``metadata.beat_index``, missing counts as
+    the opening shot) so the transcript names the same picture the viewer sees.
+    Failed generations are left out exactly as the renderer leaves them out.
+    """
+    episode_dir = Path(settings.outputs_dir) / episode_id
+    path = episode_dir / "images" / "manifest.json"
+    if not path.exists():
+        return {}
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+    by_chapter: dict[str, list[dict]] = {}
+    for entry in manifest.get("images", []):
+        if not isinstance(entry, dict) or entry.get("generation_method") == "failed":
+            continue
+        by_chapter.setdefault(str(entry.get("chapter_id") or ""), []).append(entry)
+
+    ordered: dict[str, list[str]] = {}
+    for chapter_id, entries in by_chapter.items():
+        entries.sort(key=lambda e: int((e.get("metadata") or {}).get("beat_index") or 0))
+        ordered[chapter_id] = [_shown_asset(e, episode_dir) for e in entries]
+    return ordered
+
+
+def _shown_asset(entry: dict, episode_dir: Path) -> str:
+    """The file the finished video actually shows for a manifest entry.
+
+    Weather cards are stills in the manifest but are animated into a scene video
+    during render; naming the still would point at something the viewer never
+    sees on its own.
+    """
+    rel = str(entry.get("file_path") or "")
+    meta = entry.get("metadata") or {}
+    if meta.get("scene_video_deferred_until_render") and rel:
+        video_rel = str(Path(rel).with_suffix(".mp4"))
+        if (episode_dir / video_rel).exists():
+            return video_rel
+    return rel
+
+
+def _chapter_blocks(chapter: dict, images: list[str]) -> list[tuple[str, str, str | None]]:
+    """Split a chapter into (role, text, image) blocks as rendered.
+
+    A chapter with at least two visual beats and at least two pictures is cut
+    into one shot per beat -- the same condition the renderer applies -- so beat
+    *i* is shown under picture *i*. Everything else stays one block under the
+    chapter's single picture.
+    """
+    beats = (chapter.get("metadata") or {}).get("visual_beats") or []
+    if len(beats) >= 2 and len(images) >= 2:
+        usable = min(len(beats), len(images))
+        blocks: list[tuple[str, str, str | None]] = []
+        for index in range(usable):
+            beat = beats[index]
+            role = str(beat.get("role") or "").strip() or "narrator"
+            blocks.append((role, str(beat.get("text") or "").strip(), images[index]))
+        return blocks
+
+    single = images[0] if images else None
+    passages = _speaker_passages(chapter)
+    if not passages:
+        text = (chapter.get("narration") or {}).get("text", "").strip()
+        return [("", text, single)]
+    return [
+        (role, text, single if index == 0 else None)
+        for index, (role, text) in enumerate(passages)
+    ]
+
+
 # Fallback labels for speaker roles when the profile names no presenter.
 _SPEAKER_ROLE_LABELS = {
     "anchor_female": "Anchor (female)",
@@ -784,20 +858,19 @@ def _build_tr_transcript(episode_id: str, settings) -> str | None:
         lines.append("")
 
     names = _speaker_names(episode_id, settings)
+    images = _chapter_images(episode_id, settings)
 
     for ch in chapters:
         heading = ch.get("title") or ch.get("chapter_id") or ""
         order = ch.get("order")
         prefix = f"{order}. " if order else ""
         lines.append(f"## {prefix}{heading}".rstrip())
-        segments = _speaker_passages(ch)
-        if segments:
-            for role, text in segments:
+        for role, text, image in _chapter_blocks(ch, images.get(ch.get("chapter_id"), [])):
+            if image:
+                lines.append(f"# {image}")
+            if role:
                 lines.append(f"[{names.get(role, role)}]")
-                lines.append(text)
-                lines.append("")
-        else:
-            lines.append((ch.get("narration") or {}).get("text", "").strip())
+            lines.append(text)
             lines.append("")
 
     return "\n".join(lines).strip() + "\n"

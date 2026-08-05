@@ -394,12 +394,31 @@ def _build_script_stories(
                 speaker_sequence=segments,
                 source_segment_ids=list(source.get("source_segment_ids") or []),
                 grounding_references=[source_id],
-                is_weather=str(source.get("category") or "").lower() == "wetter",
+                is_weather=_is_weather_story(source, headline),
                 overlay_duration_seconds=6.0,
                 overlay_priority=1 if ranking.priority == StoryPriority.TOP else 0,
             )
         )
     return result
+
+
+def _is_weather_story(source: dict[str, Any], headline: str) -> bool:
+    """Whether a story is the weather forecast.
+
+    The category is the primary signal, but it is not the only one: the visual
+    side decides with the canonical multi-signal detector, and if the two
+    disagree the reporter ends up narrating over the weather map. Both sides ask
+    the same question about the same text instead.
+    """
+    if str(source.get("category") or "").lower() == "wetter":
+        return True
+    from btcedu.core.weather.detector import detect_weather_story
+
+    return detect_weather_story(
+        title=headline,
+        story_type=str(source.get("category") or ""),
+        narration_text=_approved_text(source),
+    ).is_weather_story
 
 
 def _first_sentence(text: str, max_words: int = 15) -> str:
@@ -469,6 +488,16 @@ def _frame_stories(
     briefs_started = False
     for story in script_stories:
         if story.is_weather:
+            # The weather belongs to the anchor from the handover to the last
+            # word. A voice change in the middle of the forecast reads as a
+            # second presenter taking over, which is not what happens: she
+            # hands over to the map, not to the reporter.
+            story.speaker_sequence = [
+                segment.model_copy(update={"role": SpeakerRole.ANCHOR})
+                if segment.role != SpeakerRole.ANCHOR
+                else segment
+                for segment in story.speaker_sequence
+            ]
             story.speaker_sequence.insert(
                 0,
                 SpeakerSegment(

@@ -428,6 +428,21 @@ transition is rejected; a genuine dropout still blocks, verified against a
 synthetic all-black clip. The check stays fail-closed: an undecodable
 neighbourhood keeps the original verdict.
 
+## The weather belongs to the anchor
+
+The forecast switched to the reporter halfway through. The handover line was
+already hers, but the body of the weather story went through the same
+anchor/reporter split as every news item, so a second voice took over while the
+weather map was on screen. Every segment of a weather story is now the anchor's,
+from the handover to the last word.
+
+Which story *is* the weather was decided twice in the code: the script went by
+the category `wetter`, the visuals by the canonical multi-signal detector. Where
+those two disagree, the reporter narrates over a weather map. Both sides now ask
+the same function about the same text, so the voice and the picture cannot come
+apart. Checked against the eleven stories of a real episode: exactly the one
+weather story is detected, and no news item is mistaken for it.
+
 ## Deliberately not done
 
 - **Reusable intro master asset.** The intro is generated procedurally by

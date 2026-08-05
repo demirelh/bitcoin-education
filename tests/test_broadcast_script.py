@@ -419,6 +419,46 @@ class TestDeterministicChapters:
         )
         assert detection.is_weather_story
 
+    def test_weather_is_narrated_by_the_anchor_alone(self, source_stories):
+        """The forecast never hands over to the reporter mid-way."""
+        script, _, _ = _script(source_stories)
+        doc = _document(script)
+        weather = [c for c in doc.chapters if c.metadata.get("is_weather")]
+        assert len(weather) == 1
+        roles = {s["role"] for s in weather[0].metadata["speaker_segments"]}
+        assert roles == {"anchor_female"}
+
+    def test_weather_story_without_the_category_is_still_the_anchor(self):
+        """The visual side detects weather from the text; the voice must agree."""
+        from btcedu.core.scripter import _is_weather_story
+
+        story = {
+            "story_id": "s99",
+            "category": "vermischtes",
+            "story_type": "meldung",
+            "headline_tr": "Hava Tahmini",
+            "text_adapted_tr": (
+                "Yarın kuzeyde yağmur bekleniyor. Güneyde güneşli hava hakim olacak. "
+                "Sıcaklıklar 18 ile 26 derece arasında seyredecek."
+            ),
+        }
+        assert _is_weather_story(story, "Hava Tahmini") is True
+
+    def test_an_ordinary_story_is_not_taken_for_the_weather(self):
+        from btcedu.core.scripter import _is_weather_story
+
+        story = {
+            "story_id": "s98",
+            "category": "politik",
+            "story_type": "meldung",
+            "headline_tr": "Bakanlar kurulu toplandı",
+            "text_adapted_tr": (
+                "Bakanlar kurulu bugün Berlin'de toplandı. Görüşmelerin ardından "
+                "bir açıklama yapılması bekleniyor."
+            ),
+        }
+        assert _is_weather_story(story, "Bakanlar kurulu toplandı") is False
+
     def test_chapters_carry_two_line_overlay_data(self, source_stories):
         script, _, _ = _script(source_stories)
         doc = _document(script)

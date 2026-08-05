@@ -183,6 +183,9 @@ def render_video(
     _eff_topic_intro_duration = float(_rc("topic_intro_duration", 2.4))
     _eff_topic_intro_label = str(_rc("topic_intro_label", "GÜNDEM") or "GÜNDEM")
     _eff_topic_intro_audio = str(_rc("topic_intro_audio", _eff_intro_audio) or "")
+    # The closing card uses the same sting as the intro unless a profile names
+    # its own, so the programme never ends on a silent picture.
+    _eff_outro_audio = str(_rc("outro_audio", _eff_intro_audio) or "")
     _eff_outro_text = str(_rc("outro_text", getattr(settings, "render_outro_text", "")))
     _eff_font = str(_rc("font", getattr(settings, "render_font", "")))
     _eff_music_bed = str(_rc("music_bed", getattr(settings, "render_music_bed", "")))
@@ -234,6 +237,9 @@ def render_video(
     _topic_intro_audio_bytes: bytes | None = None
     if _eff_topic_intro_audio and Path(_eff_topic_intro_audio).exists():
         _topic_intro_audio_bytes = Path(_eff_topic_intro_audio).read_bytes()
+    _outro_audio_bytes: bytes | None = None
+    if _eff_outro_audio and Path(_eff_outro_audio).exists():
+        _outro_audio_bytes = Path(_eff_outro_audio).read_bytes()
     try:
         _enh_hash_data = {
             "ken_burns": _eff_ken_burns,
@@ -259,6 +265,12 @@ def render_video(
                 else None
             ),
             "outro": bool(settings.render_outro_enabled),
+            "outro_audio": _eff_outro_audio,
+            "outro_audio_sha256": (
+                hashlib.sha256(_outro_audio_bytes).hexdigest()
+                if _outro_audio_bytes is not None
+                else None
+            ),
             "color_correction": bool(settings.render_color_correction_enabled),
             "font": _eff_font,
             "music_bed": _eff_music_bed,
@@ -800,6 +812,7 @@ def render_video(
             create_outro_segment(
                 output_path=str(outro_path),
                 source_text=_eff_outro_text or settings.render_outro_text,
+                audio_path=_eff_outro_audio or None,
                 duration=settings.render_outro_duration,
                 resolution=settings.render_resolution,
                 fps=settings.render_fps,
@@ -1154,6 +1167,7 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
     try:
         intro_audio = str(_rc("intro_audio", "") or "")
         topic_intro_audio = str(_rc("topic_intro_audio", intro_audio) or "")
+        outro_audio = str(_rc("outro_audio", intro_audio) or "")
         _enh_hash_data = {
             "ken_burns": bool(
                 _rc("ken_burns_enabled", getattr(settings, "render_ken_burns_enabled", False))
@@ -1187,6 +1201,12 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
                 else None
             ),
             "outro": bool(settings.render_outro_enabled),
+            "outro_audio": outro_audio,
+            "outro_audio_sha256": (
+                hashlib.sha256(Path(outro_audio).read_bytes()).hexdigest()
+                if outro_audio and Path(outro_audio).exists()
+                else None
+            ),
             "color_correction": bool(settings.render_color_correction_enabled),
             "font": str(_rc("font", getattr(settings, "render_font", ""))),
             "music_bed": str(_rc("music_bed", getattr(settings, "render_music_bed", ""))),

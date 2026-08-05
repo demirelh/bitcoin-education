@@ -621,6 +621,7 @@ def create_topic_intro_segment(
 def create_outro_segment(
     output_path: str,
     source_text: str,
+    audio_path: str | None = None,
     duration: float = 3.0,
     resolution: str = "1920x1080",
     fps: int = 30,
@@ -632,11 +633,17 @@ def create_outro_segment(
     timeout_seconds: int = 60,
     dry_run: bool = False,
 ) -> SegmentResult:
-    """Create outro segment with source attribution."""
+    """Create outro segment with source attribution.
+
+    Given an audio file the closing card carries the programme's sting like the
+    intro does; without one it stays silent, which is what a viewer hears as the
+    picture running out of sound at the end.
+    """
     font_path = find_font_path(font)
     escaped_source = _escape_drawtext(source_text)
 
     fade_out_start = max(0, duration - 0.5)
+    audio_fade_out_start = max(0, duration - 1.0)
 
     filter_complex = (
         f"[0:v]"
@@ -653,6 +660,14 @@ def create_outro_segment(
         f"[v]"
     )
 
+    has_audio = bool(audio_path and Path(audio_path).exists())
+    if has_audio:
+        filter_complex += (
+            f";[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,"
+            f"afade=t=in:st=0:d=0.35,"
+            f"afade=t=out:st={audio_fade_out_start}:d=1.0[a]"
+        )
+
     cmd = [
         "ffmpeg",
         "-y",
@@ -660,16 +675,19 @@ def create_outro_segment(
         "lavfi",
         "-i",
         f"color=c={bg_color}:s={resolution}:d={duration}:r={fps}",
-        "-f",
-        "lavfi",
-        "-i",
-        "anullsrc=r=44100:cl=stereo",
+    ]
+    if has_audio:
+        cmd.extend(["-stream_loop", "-1", "-i", audio_path])
+    else:
+        cmd.extend(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"])
+    cmd.extend(
+        [
         "-filter_complex",
         filter_complex,
         "-map",
         "[v]",
         "-map",
-        "1:a",
+        "[a]" if has_audio else "1:a",
         "-c:v",
         "libx264",
         "-preset",
@@ -689,7 +707,8 @@ def create_outro_segment(
         "-t",
         str(duration),
         output_path,
-    ]
+        ]
+    )
 
     if dry_run:
         logger.info("Dry-run: would create outro segment")

@@ -614,3 +614,41 @@ def test_replace_audio_track_requires_both_inputs(tmp_path):
             output_path=str(tmp_path / "out.mp4"),
             dry_run=True,
         )
+
+
+def test_the_outro_carries_the_sting_when_an_audio_file_is_given(tmp_path):
+    """A silent closing card sounds like the video running out of sound."""
+    from btcedu.services.ffmpeg_service import create_outro_segment
+
+    sting = tmp_path / "intro.mp3"
+    sting.write_bytes(b"audio")
+    out = tmp_path / "outro.mp4"
+
+    result = create_outro_segment(
+        output_path=str(out),
+        source_text="ALMANYA24",
+        audio_path=str(sting),
+        duration=4.0,
+        dry_run=True,
+    )
+
+    cmd = result.ffmpeg_command
+    assert str(sting) in cmd
+    assert cmd[cmd.index("-map") + 1] == "[v]"
+    assert "[a]" in cmd
+    filter_complex = cmd[cmd.index("-filter_complex") + 1]
+    assert "afade=t=in" in filter_complex
+
+
+def test_the_outro_stays_silent_without_an_audio_file(tmp_path):
+    from btcedu.services.ffmpeg_service import create_outro_segment
+
+    out = tmp_path / "outro.mp4"
+    result = create_outro_segment(
+        output_path=str(out),
+        source_text="ALMANYA24",
+        audio_path=str(tmp_path / "missing.mp3"),
+        duration=4.0,
+        dry_run=True,
+    )
+    assert "anullsrc=r=44100:cl=stereo" in result.ffmpeg_command

@@ -358,6 +358,25 @@ def render_video(
 
         # Create render directories
         segments_dir.mkdir(parents=True, exist_ok=True)
+
+        # A cached segment is only reusable while the render settings it was
+        # built with still hold. The per-segment freshness check below compares
+        # mtimes of the picture and the audio, which says nothing about the
+        # ffmpeg filters: switching Ken Burns off left every chapter segment in
+        # place and the change never reached the video.
+        settings_marker = segments_dir / ".render_settings"
+        settings_fingerprint = hashlib.sha256(
+            json.dumps(_enh_hash_data or {}, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        try:
+            settings_unchanged = (
+                settings_marker.read_text(encoding="utf-8").strip() == settings_fingerprint
+            )
+        except OSError:
+            settings_unchanged = False
+        if not settings_unchanged:
+            logger.info("Render settings changed — every chapter segment is rebuilt")
+
         _intro_audio_snapshot: Path | None = None
         if _intro_audio_bytes is not None:
             inputs_dir = render_dir / "inputs"
@@ -544,7 +563,9 @@ def render_video(
             # inputs (image/video + audio). Merely existing is not enough: when
             # images or TTS are regenerated, the old segment is stale and MUST be
             # re-rendered, otherwise the final video keeps the previous content.
-            if segment_path.exists() and segment_path.stat().st_size > 0:
+            # The same holds for the render settings — a changed ffmpeg filter
+            # leaves every input untouched, so `settings_unchanged` carries it.
+            if segment_path.exists() and segment_path.stat().st_size > 0 and settings_unchanged:
                 seg_mtime = segment_path.stat().st_mtime
                 input_mtimes = []
                 for _inp in (media_path, audio_path):
@@ -902,6 +923,9 @@ def render_video(
         provenance_path.write_text(
             json.dumps(provenance_data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
+
+        # Record which settings the cached segments belong to.
+        settings_marker.write_text(settings_fingerprint, encoding="utf-8")
 
         # Create ContentArtifact record
         artifact = ContentArtifact(

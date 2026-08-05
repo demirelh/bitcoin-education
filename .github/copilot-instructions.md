@@ -78,8 +78,9 @@ verify against `btcedu/config.py` and the profile file.
 Every stage: SHA-256 content hash + provenance file, `.stale` markers for
 downstream invalidation, partial recovery (skip unchanged chapters),
 `PipelineRun` / `ContentArtifact` / `MediaAsset` records.
-`render --force` still skips segments whose inputs are unchanged — delete the
-segment files when only ffmpeg filters changed.
+`render --force` still skips segments whose picture and audio are unchanged;
+changed render settings invalidate them automatically via
+`render/segments/.render_settings`.
 
 ## Review Gates
 

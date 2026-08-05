@@ -982,18 +982,75 @@ def test_render_skips_fresh_segments(db_session, settings, tmp_path):
     _create_test_image_manifest("ep001", Path(settings.outputs_dir))
     _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
 
-    # Inputs old, segments new → fresh, should be skipped.
-    old = 1_000_000.0
-    for rel in ("images/ch01.png", "images/ch02.png", "tts/ch01.mp3", "tts/ch02.mp3"):
-        os.utime(base / rel, (old, old))
+    rendered = []
 
-    seg_dir = base / "render" / "segments"
-    seg_dir.mkdir(parents=True, exist_ok=True)
-    new = old + 10_000.0
-    for cid in ("ch01", "ch02"):
-        p = seg_dir / f"{cid}.mp4"
-        p.write_bytes(b"\x00" * 1024)
-        os.utime(p, (new, new))
+    def mock_create_segment(image_path, audio_path, output_path, duration, **kw):
+        rendered.append(Path(output_path).stem)
+        return _mock_segment_result(output_path, duration=duration)
+
+    def mock_concatenate_segments(segment_paths, output_path, **kw):
+        return _mock_concat_result(output_path, segment_count=len(segment_paths))
+
+    with (
+        patch(
+            "btcedu.services.ffmpeg_service.create_segment",
+            side_effect=mock_create_segment,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.concatenate_segments",
+            side_effect=mock_concatenate_segments,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.probe_media",
+            return_value=None,
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.get_ffmpeg_version",
+            return_value="ffmpeg version 6.0-mock",
+        ),
+    ):
+        render_video(db_session, "ep001", settings, force=True)
+
+        # The first render produced the segments; now age the inputs so the
+        # segments are unambiguously fresh and render again.
+        rendered.clear()
+        old = 1_000_000.0
+        for rel in ("images/ch01.png", "images/ch02.png", "tts/ch01.mp3", "tts/ch02.mp3"):
+            os.utime(base / rel, (old, old))
+
+        render_video(db_session, "ep001", settings, force=True)
+
+    # Fresh segments reused → create_segment not called.
+    assert rendered == []
+
+
+def test_render_rebuilds_segments_when_render_settings_change(db_session, settings, tmp_path):
+    """A changed render setting leaves the inputs untouched — segments must still go.
+
+    Switching Ken Burns off used to leave every cached segment in place, because
+    the freshness check only compared mtimes, so the change never reached the
+    finished video.
+    """
+    import os
+
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.dry_run = False
+    settings.render_crf = 23
+
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    base = Path(settings.outputs_dir) / "ep001"
+    _create_test_chapters_json("ep001", Path(settings.outputs_dir))
+    _create_test_image_manifest("ep001", Path(settings.outputs_dir))
+    _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
 
     rendered = []
 
@@ -1024,8 +1081,15 @@ def test_render_skips_fresh_segments(db_session, settings, tmp_path):
     ):
         render_video(db_session, "ep001", settings, force=True)
 
-    # Fresh segments reused → create_segment not called.
-    assert rendered == []
+        rendered.clear()
+        old = 1_000_000.0
+        for rel in ("images/ch01.png", "images/ch02.png", "tts/ch01.mp3", "tts/ch02.mp3"):
+            os.utime(base / rel, (old, old))
+
+        settings.render_crf = 20
+        render_video(db_session, "ep001", settings, force=True)
+
+    assert rendered == ["ch01", "ch02"]
 
 
 def test_render_video_error_rollback(db_session, settings, tmp_path):

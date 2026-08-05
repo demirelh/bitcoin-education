@@ -143,6 +143,13 @@ stage_config:
   render:
     accent_color: "#004B87"
     ticker_enabled: true
+    # No Ken Burns. zoompan crops from the source image at whole-pixel
+    # granularity, and a 4% move spread over a whole shot advances by less than
+    # a pixel per frame for long stretches and then jumps — which reads as a
+    # judder rather than as a slow drift. A still picture is what a newscast
+    # shows anyway. (RENDER_KEN_BURNS_ENABLED in .env stays on for other
+    # profiles.)
+    ken_burns_enabled: false
     intro_enabled: true
     intro_audio: "data/assets/tagesschau_tr/intro.mp3"
     intro_duration: 5.5

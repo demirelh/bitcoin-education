@@ -729,3 +729,24 @@ class TestContentHash:
         )
 
         assert hash_without != hash_with
+
+
+def test_the_news_profile_shows_still_pictures():
+    """zoompan advances the crop by less than a pixel per frame and judders."""
+    from pathlib import Path
+
+    import yaml
+
+    profile = yaml.safe_load(Path("btcedu/profiles/tagesschau_tr.yaml").read_text(encoding="utf-8"))
+    assert profile["stage_config"]["render"]["ken_burns_enabled"] is False
+
+
+def test_the_podcast_profile_keeps_its_ken_burns():
+    """Turning the effect off is a decision of the news profile alone."""
+    from pathlib import Path
+
+    import yaml
+
+    path = Path("btcedu/profiles/bitcoin_podcast.yaml")
+    profile = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert profile["stage_config"]["render"]["ken_burns_enabled"] is True

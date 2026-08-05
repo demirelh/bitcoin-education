@@ -369,6 +369,37 @@ cost rose from $2.40 to $3.04.
 The noise floor and the number of takes are recorded per part in the TTS
 manifest, so a bad episode can be recognised without listening to it.
 
+## The juddering pictures, and the cached segments that hid the fix
+
+The photographs did not drift, they stuttered. The cause was the Ken Burns
+effect: `zoompan` crops its window out of the source image at whole-pixel
+granularity, so a 4 % move spread across a shot of forty seconds advances by
+well under a pixel per frame, holds still for a while and then jumps a whole
+pixel at once. On a 1920-wide frame that is a visible tick, not a slow push.
+The textbook remedy is to upscale the source enormously before the zoom, which
+is far too expensive on a Pi — and a newscast shows still pictures anyway. So
+the effect is switched off in `tagesschau_tr.yaml` alone; `bitcoin_podcast`
+keeps it.
+
+The interesting part is that the fix did not arrive in the video. `render
+--force` skipped every chapter and produced a byte-identical file. The
+per-segment freshness check compared the segment's mtime against the mtimes of
+its picture and its audio — and a changed ffmpeg filter touches neither. The
+stage-level content hash *did* notice the change and started the render; the
+segment cache then quietly handed back the old frames. Two idempotency layers
+disagreed, and the weaker one won.
+
+`render/segments/.render_settings` now holds a fingerprint of the effective
+render settings. A segment is only reused while that fingerprint still matches,
+so any filter change invalidates the cache by itself. The manual workaround
+noted in `CLAUDE.md` — delete the segment files when only ffmpeg filters
+changed — is no longer necessary.
+
+Verified on pixels rather than on trust: frames taken 10, 20 and 30 seconds
+apart out of the same shot differ by at most 4 of 255 across the whole picture
+area, which is codec noise. Only the bottom 60 rows change — that is the
+ticker, which is supposed to move.
+
 ## Deliberately not done
 
 - **Reusable intro master asset.** The intro is generated procedurally by

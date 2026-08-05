@@ -1252,3 +1252,63 @@ def test_title_card_texts_falls_back_to_the_episode_title(settings, db_session):
     texts = title_card_texts(episode, settings)
 
     assert texts["episode_title"] == "Stored title"
+
+
+def test_topic_cards_skip_the_opening_and_closing(db_session, settings, tmp_path):
+    """The greeting and the goodbye are not topics and get no 'GÜNDEM x/y' card."""
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.dry_run = False
+
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        content_profile="tagesschau_tr",
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    chapters_path = _create_test_chapters_json("ep001", Path(settings.outputs_dir))
+    doc = json.loads(chapters_path.read_text())
+    doc["chapters"][0]["story_type"] = "opening"
+    doc["chapters"][1]["story_type"] = "politik"
+    chapters_path.write_text(json.dumps(doc))
+    _create_test_image_manifest("ep001", Path(settings.outputs_dir))
+    _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
+
+    topic_titles: list[str] = []
+
+    def mock_topic_intro(output_path, topic_title, topic_index, total_topics, **kw):
+        topic_titles.append(f"{topic_index}/{total_topics} {topic_title}")
+        Path(output_path).write_bytes(b"x")
+        return _mock_segment_result(output_path, duration=2.4)
+
+    with (
+        patch(
+            "btcedu.services.ffmpeg_service.create_segment",
+            side_effect=lambda image_path, audio_path, output_path, duration, **kw: (
+                _mock_segment_result(output_path, duration=duration)
+            ),
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.concatenate_segments",
+            side_effect=lambda segment_paths, output_path, **kw: (
+                _mock_concat_result(output_path, segment_count=len(segment_paths))
+            ),
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.get_ffmpeg_version",
+            return_value="ffmpeg version 6.0-mock",
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.create_topic_intro_segment",
+            side_effect=mock_topic_intro,
+        ),
+        patch("btcedu.services.ffmpeg_service.create_intro_segment"),
+        patch("btcedu.services.ffmpeg_service.create_outro_segment"),
+    ):
+        render_video(db_session, "ep001", settings)
+
+    assert topic_titles == ["1/1 Main"]

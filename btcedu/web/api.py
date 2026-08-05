@@ -941,10 +941,12 @@ def _build_tr_transcript(episode_id: str, settings) -> str | None:
         lines.append("")
 
     topic_label = cards.get("topic_intro_label") if cards.get("topic_intro_enabled") else None
+    from btcedu.core.renderer import BUMPER_STORY_TYPES
+
     topic_ids = [
         c.get("chapter_id")
         for c in chapters
-        if str(c.get("story_type") or "").lower() not in {"intro", "outro"}
+        if str(c.get("story_type") or "").lower() not in BUMPER_STORY_TYPES
     ]
 
     for ch in chapters:

@@ -43,6 +43,11 @@ def _write_render_progress(render_dir: Path, payload: dict) -> None:
         pass
 
 
+# Chapters that frame the broadcast rather than carry a story. The broadcast
+# script labels them "opening"/"closing"; segmented source stories and older
+# episodes use "intro"/"outro". They are not counted as topics.
+BUMPER_STORY_TYPES = frozenset({"intro", "outro", "opening", "closing"})
+
 # Overlay style defaults based on overlay type
 OVERLAY_STYLES = {
     "lower_third": {"fontsize": 48, "fontcolor": "white", "position": "bottom_center"},
@@ -755,7 +760,7 @@ def render_video(
             topic_chapter_ids = {
                 chapter.chapter_id
                 for chapter in chapters_doc.chapters
-                if (chapter.story_type or "").lower() not in {"intro", "outro"}
+                if (chapter.story_type or "").lower() not in BUMPER_STORY_TYPES
             }
             topic_total = len(topic_chapter_ids)
             topic_index = 0
@@ -794,6 +799,11 @@ def render_video(
                     total_duration += _eff_topic_intro_duration
                 paths_with_topic_intros.append(segment_abs_path)
             segment_abs_paths = paths_with_topic_intros
+            # A chapter that is no longer a topic must not leave its old card
+            # behind, where it would suggest the video still shows it.
+            for stale in segments_dir.glob("topic_*.mp4"):
+                if stale.stem.removeprefix("topic_") not in topic_chapter_ids:
+                    stale.unlink(missing_ok=True)
             logger.info("Created %d topic intro segments", topic_index)
 
         # Prepend intro if enabled

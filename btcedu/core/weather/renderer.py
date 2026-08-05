@@ -1068,14 +1068,23 @@ def render_weather_scene_video(
 
         filters: list[str] = []
         labels: list[str] = []
+        last_index = len(scene_metadata) - 1
         for index, metadata in enumerate(scene_metadata):
             duration = float(metadata["duration"])
-            fade_out = max(0.0, duration - 0.25)
             label = f"v{index}"
+            # Fade only at the outer edges. Fading every scene out to black and
+            # the next one back in put a dark blink at every card boundary,
+            # which reads as a dropout and tripped the blank-frame check in
+            # review_gate_3. Between cards a hard cut is what a newscast does.
+            fades = ""
+            if index == 0:
+                fades += "fade=t=in:st=0:d=0.25,"
+            if index == last_index:
+                fades += f"fade=t=out:st={max(0.0, duration - 0.25):.3f}:d=0.25,"
             filters.append(
                 f"[{index}:v]scale={width}:{height}:force_original_aspect_ratio=decrease,"
                 f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,format=yuv420p,"
-                f"fade=t=in:st=0:d=0.25,fade=t=out:st={fade_out:.3f}:d=0.25,"
+                f"{fades}"
                 f"fps={fps}[{label}]"
             )
             labels.append(f"[{label}]")

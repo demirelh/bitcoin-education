@@ -1285,6 +1285,7 @@ def _run_stage(
             # Fail closed: a checker crash means we cannot safely approve.
             _final_review_blocked = False
             _final_review_detail = ""
+            _final_review_error = ""
             _fr_output = (
                 Path(settings.outputs_dir)
                 / episode.episode_id
@@ -1301,6 +1302,9 @@ def _run_stage(
                     _final_review_detail = (
                         f"weather video checks blocked publish: "
                         f"{len(_blocking)} critical finding(s)"
+                    )
+                    _final_review_error = "[validation] " + "; ".join(
+                        f.message for f in _blocking
                     )
                     logger.warning(
                         "Final review blocked for %s: %s",
@@ -1337,6 +1341,7 @@ def _run_stage(
                 # safely approve. This is intentional — never silently skip.
                 _final_review_blocked = True
                 _final_review_detail = f"weather video checker crashed: {exc}"
+                _final_review_error = f"[unknown] weather video checker crashed: {exc}"
                 logger.error(
                     "Final review weather checks crashed for %s (fail-closed): %s",
                     episode.episode_id,
@@ -1350,6 +1355,7 @@ def _run_stage(
                     "failed",
                     elapsed,
                     detail=_final_review_detail,
+                    error=_final_review_error or _final_review_detail,
                 )
 
             if auto_approve or has_approved_review(session, episode.episode_id, "render"):
@@ -1555,8 +1561,11 @@ def run_episode_pipeline(
             )
 
         if result.status == "failed":
-            logger.error("  Stage %s failed: %s", stage_name, result.error)
-            report.error = f"Stage '{stage_name}' failed: {result.error}"
+            # A stage may carry its reason in `detail` instead of `error`; report
+            # whichever is there rather than a bare "None".
+            failure_reason = result.error or result.detail or "unknown error"
+            logger.error("  Stage %s failed: %s", stage_name, failure_reason)
+            report.error = f"Stage '{stage_name}' failed: {failure_reason}"
 
             # Record failure on the episode
             session.refresh(episode)
@@ -1572,7 +1581,7 @@ def run_episode_pipeline(
                 )
 
                 # Parse category from error string or classify
-                error_str = result.error or ""
+                error_str = failure_reason
                 category = ErrorCategory.UNKNOWN
                 for cat in ErrorCategory:
                     if f"[{cat.value}]" in error_str:
@@ -1610,7 +1619,7 @@ def run_episode_pipeline(
                     episode_id=episode.episode_id,
                     episode_title=episode.title or "",
                     stage=stage_name,
-                    error=result.error or "unknown error",
+                    error=failure_reason,
                     retry_count=episode.retry_count,
                 )
             except Exception:

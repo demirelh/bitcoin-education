@@ -504,6 +504,46 @@ class TestWeatherRendering:
         for scene in plan.scenes:
             assert f"{scene.end - scene.start:.3f}" in command
 
+    def test_scene_video_fades_only_at_the_outer_edges(self, tmp_path):
+        """Fading every scene to black blinked at each card boundary."""
+        text = "Kuzeyde yağmur. Güneyde güneş. Sıcaklıklar 20 ile 29 derece."
+        data = extract_weather_data(text)
+        plan = plan_weather_scenes(data, 12)
+        output = tmp_path / "weather.mp4"
+
+        def fake_render(_data, _plan, path, **_kwargs):
+            path.write_bytes(b"png")
+            from btcedu.core.weather.models import WeatherRenderResult
+
+            return WeatherRenderResult(success=True, output_path=str(path))
+
+        def fake_run(command, **_kwargs):
+            output.write_bytes(b"video")
+            completed = MagicMock()
+            completed.returncode = 0
+            completed.stderr = ""
+            completed.args = command
+            return completed
+
+        with (
+            patch(
+                "btcedu.core.weather.renderer.render_weather_visual",
+                side_effect=fake_render,
+            ),
+            patch("btcedu.core.weather.renderer.subprocess.run", side_effect=fake_run) as run,
+            patch("btcedu.core.weather.renderer._write_provenance"),
+        ):
+            render_weather_scene_video(data, plan, output)
+
+        command = run.call_args.args[0]
+        filter_complex = command[command.index("-filter_complex") + 1]
+        assert filter_complex.count("fade=t=in") == 1
+        assert filter_complex.count("fade=t=out") == 1
+        first_chain = filter_complex.split(";")[0]
+        last_chain = filter_complex.split(";")[len(plan.scenes) - 1]
+        assert "fade=t=in" in first_chain
+        assert "fade=t=out" in last_chain
+
     def test_title_scene_fallback_is_neutral(self, tmp_path):
         data = extract_weather_data("Kuzeyde yağmur bekleniyor.")
         output = tmp_path / "title.png"

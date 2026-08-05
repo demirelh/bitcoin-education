@@ -427,7 +427,10 @@ class TestPipelineActions:
         assert r.status_code == 202
         data = r.get_json()
         assert "job_id" in data
-        assert data["state"] in ("queued", "running")
+        # The worker thread starts immediately, so by the time the response is
+        # built the job may already have finished. Asserting on "queued" or
+        # "running" made this test fail sporadically under load.
+        assert data["state"] in ("queued", "running", "success", "error")
 
     def test_qa_rerun_all_returns_202(self, client):
         r = client.post("/api/episodes/ep002/qa-rerun-all")

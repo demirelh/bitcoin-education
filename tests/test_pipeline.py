@@ -206,6 +206,25 @@ class TestRunEpisodePipeline:
         assert entry.error_category == ErrorCategory.PERMANENT_QUOTA.value
 
     @patch("btcedu.core.pipeline._run_stage")
+    def test_failure_without_error_field_reports_the_detail(
+        self, mock_stage, db_session, new_episode, tmp_path
+    ):
+        """review_gate_3 put its reason in `detail`, so the episode read 'failed: None'."""
+        mock_stage.return_value = StageResult(
+            "review_gate_3",
+            "failed",
+            0.1,
+            detail="weather video checks blocked publish: 1 critical finding(s)",
+        )
+
+        report = run_episode_pipeline(db_session, new_episode, _make_settings(tmp_path))
+
+        assert "None" not in (report.error or "")
+        assert "weather video checks blocked publish" in (report.error or "")
+        db_session.refresh(new_episode)
+        assert "weather video checks blocked publish" in (new_episode.error_message or "")
+
+    @patch("btcedu.core.pipeline._run_stage")
     def test_clears_error_on_success(self, mock_stage, db_session, failed_episode, tmp_path):
         """Successful pipeline run clears previous error_message."""
         mock_stage.return_value = StageResult(

@@ -944,3 +944,106 @@ class TestAnalyzeRgbImage:
         assert analysis["is_near_black"] is False
         assert analysis["is_near_white"] is False
         assert analysis["is_near_uniform"] is False
+
+
+# ============================================================
+# Transition dips must not count as blank frames
+# ============================================================
+
+
+def _solid_frame(width: int, height: int, rgb: tuple[int, int, int]) -> bytes:
+    data = bytearray(width * height * 3)
+    for i in range(0, len(data), 3):
+        data[i], data[i + 1], data[i + 2] = rgb
+    return bytes(data)
+
+
+def _varied_frame(width: int, height: int, seed: int = 0) -> bytes:
+    data = bytearray(width * height * 3)
+    for i in range(0, len(data), 3):
+        data[i] = (i // 3 + seed) % 256
+        data[i + 1] = (i // 7 + seed) % 256
+        data[i + 2] = (i // 11 + seed) % 256
+    return bytes(data)
+
+
+class TestBlankConfirmation:
+    """A cross-fade darkens the picture briefly; that is not a dropout."""
+
+    def test_bright_neighbour_rejects_the_blank(self, tmp_path):
+        from btcedu.core.final_review import _blank_persists
+
+        width, height = 32, 24
+        bright = _varied_frame(width, height)
+        with patch(
+            "btcedu.core.final_review._extract_frame_at",
+            return_value=bright,
+        ):
+            assert (
+                _blank_persists(str(tmp_path / "v.mp4"), 5.0, 20.0, "ffmpeg", width, height)
+                is False
+            )
+
+    def test_dark_neighbours_confirm_the_blank(self, tmp_path):
+        from btcedu.core.final_review import _blank_persists
+
+        width, height = 32, 24
+        black = _solid_frame(width, height, (0, 0, 0))
+        with patch(
+            "btcedu.core.final_review._extract_frame_at",
+            return_value=black,
+        ):
+            assert (
+                _blank_persists(str(tmp_path / "v.mp4"), 5.0, 20.0, "ffmpeg", width, height) is True
+            )
+
+    def test_undecodable_neighbour_keeps_the_finding(self, tmp_path):
+        """Fail closed: if the neighbourhood cannot be read, trust the sample."""
+        from btcedu.core.final_review import _blank_persists
+
+        with patch("btcedu.core.final_review._extract_frame_at", return_value=None):
+            assert _blank_persists(str(tmp_path / "v.mp4"), 5.0, 20.0, "ffmpeg", 32, 24) is True
+
+    def test_single_transition_dip_does_not_block(self, tmp_path):
+        """One dark sample between bright ones must not block the gate."""
+        video = tmp_path / "weather.mp4"
+        video.write_bytes(b"\x00" * 100_000)
+        width, height = 32, 24
+        bright = _varied_frame(width, height)
+        dark = _solid_frame(width, height, (2, 2, 2))
+        samples = [(_varied_frame(width, height, seed=i), width, height) for i in range(10)]
+        samples[4] = (dark, width, height)
+
+        result = FinalReviewResult()
+        with (
+            patch(
+                "btcedu.core.final_review._extract_frame_samples",
+                return_value=samples,
+            ),
+            patch("btcedu.core.final_review._extract_frame_at", return_value=bright),
+        ):
+            _check_video_frames(video, "ch01", {"duration_seconds": 20.0}, result)
+
+        assert result.publish_blocked is False
+        assert not [
+            f for f in result.findings if f.type == FindingType.BLANK_VISUAL_DURING_NARRATION
+        ]
+
+    def test_sustained_blackout_still_blocks(self, tmp_path):
+        """The confirmation must not defang the check for a real dropout."""
+        video = tmp_path / "weather.mp4"
+        video.write_bytes(b"\x00" * 100_000)
+        width, height = 32, 24
+        black = _solid_frame(width, height, (0, 0, 0))
+
+        result = FinalReviewResult()
+        with (
+            patch(
+                "btcedu.core.final_review._extract_frame_samples",
+                return_value=[(black, width, height)] * 10,
+            ),
+            patch("btcedu.core.final_review._extract_frame_at", return_value=black),
+        ):
+            _check_video_frames(video, "ch01", {"duration_seconds": 20.0}, result)
+
+        assert result.publish_blocked is True

@@ -400,6 +400,34 @@ apart out of the same shot differ by at most 4 of 255 across the whole picture
 area, which is codec noise. Only the bottom 60 rows change — that is the
 ticker, which is supposed to move.
 
+## The gate that failed with "None"
+
+The dashboard reported `Stage 'review_gate_3' failed: None`. Two separate faults
+sat behind that one line.
+
+**The message.** `review_gate_3` returned its blocking reason in the
+`detail` field of its `StageResult`, but the pipeline's failure handler reads
+`error`. Everything downstream — the episode's `error_message`, the dead-letter
+entry, the WhatsApp notification — therefore said `None`. The gate now fills
+`error` with the concrete findings, and the failure handler falls back to
+`detail` so no stage can lose its reason that way again.
+
+**The blink.** The real finding was
+`Weather segment for 'ch05' has ~4.5s of blank frames`. The weather scene video
+faded *every* scene in from black and out to black before concatenating them, so
+each card boundary carried a half-second dip through black. The picture never
+disappeared — it dimmed to about a third of its brightness while staying fully
+readable — but two of thirty samples landed inside a dip. Fades now happen only
+at the outer edges; between cards there is a hard cut, which is what a newscast
+does anyway.
+
+The checker also overstated what it saw: it multiplied the number of dark
+samples by the sampling interval, turning two 0.3 s blinks into "4.5 s of blank
+frames". A blank sample is now confirmed by probing 0.4 s to either side. A
+transition is rejected; a genuine dropout still blocks, verified against a
+synthetic all-black clip. The check stays fail-closed: an undecodable
+neighbourhood keeps the original verdict.
+
 ## Deliberately not done
 
 - **Reusable intro master asset.** The intro is generated procedurally by

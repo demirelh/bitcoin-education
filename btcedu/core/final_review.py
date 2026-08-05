@@ -767,11 +767,18 @@ def _check_video_frames(
     consecutive_freeze = 0
     max_consecutive_freeze = 0
 
-    for frame_rgb_data, width, height in frames_data:
+    for index, (frame_rgb_data, width, height) in enumerate(frames_data):
         analysis = _analyze_raw_rgb(frame_rgb_data, width, height)
 
         if analysis["is_near_black"] or analysis["is_near_white"] or analysis["is_near_uniform"]:
-            blank_frames += 1
+            # A single dark sample says nothing on its own: a cross-fade between
+            # two cards dims the picture for a fraction of a second while the
+            # content stays fully readable. Counting it would extrapolate that
+            # blink to a whole sampling interval. Only a dip that still covers
+            # its neighbourhood is a real dropout.
+            timestamp = (index + 0.5) * (duration / len(frames_data))
+            if _blank_persists(str(video_path), timestamp, duration, ffmpeg_path, width, height):
+                blank_frames += 1
 
         # Freeze detection: compare frame hash with previous
         frame_hash = hashlib.md5(frame_rgb_data).hexdigest()  # noqa: S324
@@ -865,6 +872,72 @@ def _probe_video_duration(path: Path) -> float | None:
     return None
 
 
+_BLANK_CONFIRM_OFFSET_SECONDS = 0.4
+
+
+def _extract_frame_at(
+    video_path: str,
+    timestamp: float,
+    ffmpeg_path: str,
+    frame_size: int,
+) -> bytes | None:
+    """Decode a single RGB24 frame at `timestamp`, or None if it cannot be read."""
+    cmd = [
+        ffmpeg_path,
+        "-ss",
+        f"{max(0.0, timestamp):.3f}",
+        "-i",
+        video_path,
+        "-vframes",
+        "1",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-v",
+        "quiet",
+        "pipe:1",
+    ]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=15)
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if proc.returncode != 0 or len(proc.stdout) != frame_size:
+        return None
+    return proc.stdout
+
+
+def _blank_persists(
+    video_path: str,
+    timestamp: float,
+    duration: float,
+    ffmpeg_path: str,
+    width: int,
+    height: int,
+) -> bool:
+    """Check whether a blank sample is a real dropout rather than a transition.
+
+    A cross-fade darkens the picture for a few hundred milliseconds; a genuinely
+    missing visual stays dark. Both neighbours a little before and after must be
+    blank as well before the sample counts.
+    """
+    frame_size = width * height * 3
+    for offset in (-_BLANK_CONFIRM_OFFSET_SECONDS, _BLANK_CONFIRM_OFFSET_SECONDS):
+        neighbour_ts = timestamp + offset
+        if neighbour_ts < 0 or neighbour_ts > duration:
+            continue
+        frame = _extract_frame_at(video_path, neighbour_ts, ffmpeg_path, frame_size)
+        if frame is None:
+            # Undecodable neighbour: fail closed and keep the original verdict.
+            continue
+        analysis = _analyze_raw_rgb(frame, width, height)
+        if not (
+            analysis["is_near_black"] or analysis["is_near_white"] or analysis["is_near_uniform"]
+        ):
+            return False
+    return True
+
+
 def _extract_frame_samples(
     video_path: str,
     num_frames: int,
@@ -887,28 +960,9 @@ def _extract_frame_samples(
 
     for i in range(num_frames):
         timestamp = (i + 0.5) * (duration / num_frames)
-        try:
-            cmd = [
-                ffmpeg_path,
-                "-ss",
-                f"{timestamp:.3f}",
-                "-i",
-                video_path,
-                "-vframes",
-                "1",
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "rgb24",
-                "-v",
-                "quiet",
-                "pipe:1",
-            ]
-            proc = subprocess.run(cmd, capture_output=True, timeout=15)
-            if proc.returncode == 0 and len(proc.stdout) == frame_size:
-                results.append((proc.stdout, width, height))
-        except (subprocess.TimeoutExpired, OSError):
-            continue
+        frame = _extract_frame_at(video_path, timestamp, ffmpeg_path, frame_size)
+        if frame is not None:
+            results.append((frame, width, height))
 
     return results
 

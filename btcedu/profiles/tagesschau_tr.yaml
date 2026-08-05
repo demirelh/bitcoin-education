@@ -117,13 +117,15 @@ stage_config:
     voices:
       anchor_female:
         # Main anchor: Nazlı Yeni (Istanbul accent, professional).
+        display_name: "Nazlı Yeni"
         voice_id: "o9DOmAyPjfFu8AfoFAnM"
         stability: 0.5
         similarity_boost: 0.75
         style: 0.3
         speed: 1.05
       reporter_male:
-        voice_id: "Q2IX97JeHBY3vNGzgM5s"  # Cavit
+        display_name: "Cavit"
+        voice_id: "Q2IX97JeHBY3vNGzgM5s"
         stability: 0.45
         similarity_boost: 0.75
         style: 0.35

@@ -15,6 +15,7 @@ from sqlalchemy import func
 from werkzeug.utils import secure_filename
 
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
+from btcedu.profiles import get_registry
 
 logger = logging.getLogger(__name__)
 
@@ -691,13 +692,78 @@ def _workflow_files(ep, settings) -> list[dict] | None:
     return result or None
 
 
+def _speaker_passages(chapter: dict) -> list[tuple[str, str]]:
+    """Return (role, text) passages of a chapter, consecutive same-role merged.
+
+    Chapters written before multi-voice casting carry no ``speaker_segments``;
+    for those the caller falls back to the undivided narration text.
+    """
+    raw = (chapter.get("metadata") or {}).get("speaker_segments") or []
+    passages: list[tuple[str, str]] = []
+    for seg in raw:
+        if not isinstance(seg, dict):
+            continue
+        text = (seg.get("text") or "").strip()
+        if not text:
+            continue
+        role = str(seg.get("role") or "").strip() or "narrator"
+        if passages and passages[-1][0] == role:
+            passages[-1] = (role, f"{passages[-1][1]}\n{text}")
+        else:
+            passages.append((role, text))
+    return passages
+
+
+# Fallback labels for speaker roles when the profile names no presenter.
+_SPEAKER_ROLE_LABELS = {
+    "anchor_female": "Anchor (female)",
+    "anchor_male": "Anchor (male)",
+    "reporter_female": "Reporter (female)",
+    "reporter_male": "Reporter (male)",
+}
+
+
+def _speaker_names(episode_id: str, settings) -> dict[str, str]:
+    """Map speaker roles to the presenter names configured in the profile.
+
+    Reads ``stage_config.tts.voices.<role>.display_name`` from the episode's
+    content profile. Roles without a name fall back to a readable role label,
+    so a profile that never named its presenters still yields useful output.
+    """
+    profile_name = None
+    session = _get_session()
+    try:
+        ep = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if ep is not None:
+            profile_name = getattr(ep, "content_profile", None)
+    except Exception:
+        logger.debug("Could not read content profile for %s", episode_id, exc_info=True)
+    finally:
+        session.close()
+
+    voices: dict = {}
+    if profile_name:
+        try:
+            profile = get_registry(settings).get(profile_name)
+            voices = ((profile.stage_config or {}).get("tts") or {}).get("voices") or {}
+        except Exception:
+            logger.debug("Could not load profile %s", profile_name, exc_info=True)
+
+    names = dict(_SPEAKER_ROLE_LABELS)
+    for role, cfg in voices.items():
+        if isinstance(cfg, dict) and cfg.get("display_name"):
+            names[str(role)] = str(cfg["display_name"])
+    return names
+
+
 def _build_tr_transcript(episode_id: str, settings) -> str | None:
     """Reconstruct the Turkish spoken transcript from chapters.json.
 
     Concatenates every chapter's narration text (the exact words spoken in the
     rendered video) into a readable document, prefixed with the episode title
-    and per-chapter headings. Returns None when chapters.json is missing or
-    unreadable.
+    and per-chapter headings. Where a chapter records which presenter speaks
+    which passage, each passage is attributed to that presenter by name.
+    Returns None when chapters.json is missing or unreadable.
     """
     path = Path(settings.outputs_dir) / episode_id / "chapters.json"
     if not path.exists():
@@ -717,14 +783,22 @@ def _build_tr_transcript(episode_id: str, settings) -> str | None:
         lines.append(f"# {title}")
         lines.append("")
 
+    names = _speaker_names(episode_id, settings)
+
     for ch in chapters:
         heading = ch.get("title") or ch.get("chapter_id") or ""
         order = ch.get("order")
         prefix = f"{order}. " if order else ""
         lines.append(f"## {prefix}{heading}".rstrip())
-        text = (ch.get("narration") or {}).get("text", "").strip()
-        lines.append(text)
-        lines.append("")
+        segments = _speaker_passages(ch)
+        if segments:
+            for role, text in segments:
+                lines.append(f"[{names.get(role, role)}]")
+                lines.append(text)
+                lines.append("")
+        else:
+            lines.append((ch.get("narration") or {}).get("text", "").strip())
+            lines.append("")
 
     return "\n".join(lines).strip() + "\n"
 

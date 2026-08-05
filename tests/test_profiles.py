@@ -208,6 +208,11 @@ class TestProfileRegistry:
         assert transcription["secondary"]["minimum_severity"] == "major"
         assert transcription["max_secondary_audio_seconds"] == 300
         assert transcription["max_secondary_clips"] == 10
+        voices = news.stage_config["tts"]["voices"]
+        # Presenter names are machine-readable so the dashboard can attribute
+        # each passage of the Turkish transcript to the voice that speaks it.
+        assert voices["anchor_female"]["display_name"] == "Nazlı Yeni"
+        assert voices["reporter_male"]["display_name"] == "Cavit"
         render = news.stage_config["render"]
         assert render["intro_show_name"] == "ALMANYA24"
         assert render["intro_slogan"] == "Almanya'nın nabzı burada atıyor."

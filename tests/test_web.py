@@ -695,6 +695,75 @@ class TestFileViewer:
         assert content.index("Birinci cümle.") < content.index("İkinci cümle.")
         assert "1. Birinci" in content and "2. İkinci" in content
 
+    def test_file_transcript_tr_attributes_speakers(self, client, test_settings):
+        ep_dir = Path(test_settings.outputs_dir) / "ep001"
+        ep_dir.mkdir(parents=True)
+        chapters = {
+            "schema_version": "1.0",
+            "episode_id": "ep001",
+            "title": "Test Bölümü",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 20,
+            "chapters": [
+                {
+                    "chapter_id": "c1",
+                    "title": "Birinci",
+                    "order": 1,
+                    "narration": {"text": "Sunucu. Muhabir. Kapanış."},
+                    "metadata": {
+                        "speaker_segments": [
+                            {"role": "anchor_female", "text": "Sunucu."},
+                            {"role": "reporter_male", "text": "Muhabir."},
+                            {"role": "anchor_female", "text": "Kapanış."},
+                        ]
+                    },
+                },
+            ],
+        }
+        (ep_dir / "chapters.json").write_text(
+            json.dumps(chapters, ensure_ascii=False), encoding="utf-8"
+        )
+
+        r = client.get("/api/episodes/ep001/files/transcript_tr")
+        assert r.status_code == 200
+        content = r.get_json()["content"]
+        # Every passage is attributed, in spoken order, without losing words
+        assert content.index("[Anchor (female)]") < content.index("[Reporter (male)]")
+        assert content.count("[Anchor (female)]") == 2
+        for spoken in ("Sunucu.", "Muhabir.", "Kapanış."):
+            assert spoken in content
+
+    def test_file_transcript_tr_merges_consecutive_passages(self, client, test_settings):
+        ep_dir = Path(test_settings.outputs_dir) / "ep001"
+        ep_dir.mkdir(parents=True)
+        chapters = {
+            "schema_version": "1.0",
+            "episode_id": "ep001",
+            "title": "Test",
+            "total_chapters": 1,
+            "estimated_duration_seconds": 10,
+            "chapters": [
+                {
+                    "chapter_id": "c1",
+                    "title": "Hava",
+                    "order": 1,
+                    "narration": {"text": "Bir. İki."},
+                    "metadata": {
+                        "speaker_segments": [
+                            {"role": "anchor_female", "text": "Bir."},
+                            {"role": "anchor_female", "text": "İki."},
+                        ]
+                    },
+                },
+            ],
+        }
+        (ep_dir / "chapters.json").write_text(
+            json.dumps(chapters, ensure_ascii=False), encoding="utf-8"
+        )
+
+        content = client.get("/api/episodes/ep001/files/transcript_tr").get_json()["content"]
+        assert content.count("[Anchor (female)]") == 1
+
     def test_file_transcript_tr_missing(self, client):
         r = client.get("/api/episodes/ep001/files/transcript_tr")
         assert r.status_code == 404

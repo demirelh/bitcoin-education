@@ -339,6 +339,36 @@ resolve the default stage list instead of the news one — `tests/test_web.py`
 failed depending on test order. An autouse fixture in `tests/conftest.py` resets
 the registry around every test.
 
+## The background hiss: a stochastic TTS defect
+
+The operator heard a hiss under the female voice from the second chapter on.
+Measuring it settled three false leads in turn:
+
+1. **It is not the render.** A null test - the rendered chapter against its TTS
+   source, one inverted - leaves 35 dB below the signal, which is ordinary codec
+   difference. The beat path reproduces the narration faithfully.
+2. **It is not a voice setting.** Speaker boost looked guilty: one take with
+   boost measured a -40 dB noise floor, one without -72 dB. Repeating the
+   experiment four times per setting destroyed the theory - with boost
+   -61/-37/-78/-74 dB, without boost -80/-48/-73/-77 dB. The first comparison
+   was luck.
+3. **It is the generation itself.** The result is bimodal: a take comes back
+   either around -80 dB or around -40 dB, with nothing in between, for the same
+   text and the same settings. Roughly one take in four is noisy.
+
+Because the fault is stochastic, the only remedy is to measure and repeat.
+`_noise_floor_db()` takes the 1st percentile of the 100 ms RMS levels of a file
+(ffmpeg only, no new dependency), and `_synthesize_clean_take()` re-synthesizes
+while a take is above -55 dB, at most three times, keeping the quietest. Every
+attempt is paid for, hence the small bound.
+
+Measured on `hrzrn0Wutak`: the worst part went from -38.9 dB to -54.5 dB, every
+other part is below -74 dB. One part of eighteen needed all three takes; TTS
+cost rose from $2.40 to $3.04.
+
+The noise floor and the number of takes are recorded per part in the TTS
+manifest, so a bad episode can be recognised without listening to it.
+
 ## Deliberately not done
 
 - **Reusable intro master asset.** The intro is generated procedurally by

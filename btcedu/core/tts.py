@@ -781,6 +781,126 @@ def _concat_mp3(parts: list[Path], target: Path, pause_seconds: float) -> None:
         raise RuntimeError(f"Could not join speaker audio for {target.name}: {result.stderr[:400]}")
 
 
+_NOISE_FLOOR_WARN_DB = -55.0
+_NOISE_MAX_TAKES = 3
+_NOISE_FLOOR_WINDOW_SAMPLES = 4410  # 100 ms at 44.1 kHz
+
+
+def _noise_floor_db(path: Path) -> float | None:
+    """Noise floor of an audio file: the 1st percentile of its 100 ms RMS levels.
+
+    ElevenLabs generations are not deterministic. The same text and the same
+    voice settings occasionally come back with an audible background hiss, and
+    the result is bimodal: a take is either around -80 dB or around -40 dB, with
+    nothing in between. Measuring the quiet passages makes that visible; the
+    loudness of the speech itself is unaffected, which is why the defect passes
+    every level check.
+
+    Returns None when ffmpeg cannot analyse the file - the measurement is
+    diagnostic only and must never fail a run.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-i",
+                str(path),
+                "-af",
+                f"asetnsamples=n={_NOISE_FLOOR_WINDOW_SAMPLES}:p=0,"
+                "astats=metadata=1:reset=1,"
+                "ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001
+        logger.debug("Could not measure the noise floor of %s: %s", path, exc)
+        return None
+
+    levels: list[float] = []
+    for line in (result.stdout or "").splitlines():
+        if "RMS_level=" not in line:
+            continue
+        try:
+            value = float(line.split("=", 1)[1].strip())
+        except ValueError:
+            continue
+        if value > -1000:  # -inf marks a digitally silent window
+            levels.append(value)
+    if len(levels) < 20:
+        return None
+    levels.sort()
+    return levels[len(levels) // 100]
+
+
+def _synthesize_clean_take(
+    tts_service,
+    request,
+    target: Path,
+    *,
+    max_attempts: int,
+    noise_floor_max_db: float,
+    label: str,
+):
+    """Synthesize *request*, retrying while the take has an audible noise bed.
+
+    Generation is stochastic: roughly one take in four comes back with a hiss
+    that no level or duration check notices. Retrying is the only remedy, so the
+    quietest of at most *max_attempts* takes is kept. Every attempt is paid for,
+    which is why the number of attempts is small and configurable.
+
+    Returns ``(response, noise_floor_db, attempts)``.
+    """
+    best_response = None
+    best_floor: float | None = None
+    attempts = 0
+
+    for attempt in range(1, max(1, max_attempts) + 1):
+        attempts = attempt
+        response = tts_service.synthesize(request)
+        target.write_bytes(response.audio_bytes)
+        floor = _noise_floor_db(target)
+
+        if floor is None:
+            return response, None, attempts
+        if best_floor is None or floor < best_floor:
+            best_response, best_floor = response, floor
+        if floor <= noise_floor_max_db:
+            if attempt > 1:
+                logger.info(
+                    "%s: take %d is clean (noise floor %.1f dB)", label, attempt, floor
+                )
+            return response, floor, attempts
+
+        logger.warning(
+            "%s: take %d has an audible noise bed (noise floor %.1f dB, "
+            "expected below %.0f dB)%s",
+            label,
+            attempt,
+            floor,
+            noise_floor_max_db,
+            " — retrying" if attempt < max(1, max_attempts) else "",
+        )
+
+    if best_response is not None:
+        target.write_bytes(best_response.audio_bytes)
+        logger.warning(
+            "%s: keeping the quietest of %d takes (noise floor %.1f dB)",
+            label,
+            attempts,
+            best_floor,
+        )
+    return best_response, best_floor, attempts
+
+
 def _generate_multi_voice_audio(
     chapter,
     segments: list[dict],
@@ -827,8 +947,11 @@ def _generate_multi_voice_audio(
             duration = 0.0
             cost = 0.0
             model = voice.get("model")
+            noise_floor = None
+            takes = 1
         else:
-            response = tts_service.synthesize(
+            response, noise_floor, takes = _synthesize_clean_take(
+                tts_service,
                 TTSRequest(
                     text=spoken,
                     voice_id=voice.get("voice_id") or settings.elevenlabs_voice_id,
@@ -838,11 +961,16 @@ def _generate_multi_voice_audio(
                     style=voice.get("style"),
                     use_speaker_boost=voice.get("use_speaker_boost"),
                     speed=voice.get("speed"),
-                )
+                ),
+                part_path,
+                max_attempts=int(voice.get("noise_retries", _NOISE_MAX_TAKES)),
+                noise_floor_max_db=float(
+                    voice.get("noise_floor_max_db", _NOISE_FLOOR_WARN_DB)
+                ),
+                label=f"Chapter {chapter.chapter_id} part {index:02d} ({role})",
             )
-            part_path.write_bytes(response.audio_bytes)
             duration = response.duration_seconds
-            cost = response.cost_usd
+            cost = response.cost_usd * takes
             model = response.model
 
         part_paths.append(part_path)
@@ -854,6 +982,8 @@ def _generate_multi_voice_audio(
                 "characters": len(segment["text"]),
                 "duration_seconds": round(duration, 3),
                 "file": part_path.name,
+                "noise_floor_db": None if noise_floor is None else round(noise_floor, 1),
+                "takes": takes,
             }
         )
         total_cost += cost
@@ -986,10 +1116,15 @@ def _generate_single_audio(
         speed=effective_speed,
     )
 
-    response = tts_service.synthesize(request)
+    response, noise_floor, takes = _synthesize_clean_take(
+        tts_service,
+        request,
+        mp3_path,
+        max_attempts=_NOISE_MAX_TAKES,
+        noise_floor_max_db=_NOISE_FLOOR_WARN_DB,
+        label=f"Chapter {chapter.chapter_id}",
+    )
 
-    # Write MP3 file
-    mp3_path.write_bytes(response.audio_bytes)
     size_bytes = mp3_path.stat().st_size
 
     logger.info(
@@ -997,7 +1132,7 @@ def _generate_single_audio(
         chapter.chapter_id,
         response.duration_seconds,
         response.character_count,
-        response.cost_usd,
+        response.cost_usd * takes,
     )
 
     return AudioEntry(
@@ -1012,10 +1147,12 @@ def _generate_single_audio(
         voice_id=response.voice_id,
         mime_type="audio/mpeg",
         size_bytes=size_bytes,
-        cost_usd=response.cost_usd,
+        cost_usd=response.cost_usd * takes,
         metadata={
             "generated_at": _utcnow().isoformat(),
             "lexicon_applied": lexicon_applied,
+            "noise_floor_db": None if noise_floor is None else round(noise_floor, 1),
+            "takes": takes,
         },
     )
 

@@ -308,3 +308,142 @@ def test_the_hash_changes_when_a_chapter_changes_speaker():
     reporter = _chapter_tts_hash("ch01", "Bir.", "Bir.", voice_sig, ["reporter_male"])
     anchor = _chapter_tts_hash("ch01", "Bir.", "Bir.", voice_sig, ["anchor_female"])
     assert reporter != anchor
+
+
+def test_the_noise_floor_is_the_first_percentile_of_the_window_levels():
+    """A raised background hiss must be measurable, not only audible."""
+    from unittest.mock import patch
+
+    from btcedu.core.tts import _noise_floor_db
+
+    levels = [-90.0] * 2 + [-60.0] * 18 + [-20.0] * 80
+    stdout = "\n".join(f"lavfi.astats.Overall.RMS_level={v}" for v in levels)
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+    with patch("subprocess.run", return_value=completed):
+        assert _noise_floor_db(Path("any.mp3")) == -90.0
+
+
+def test_the_noise_floor_ignores_digitally_silent_frames():
+    """-inf frames are true silence, not the hiss the check is looking for."""
+    from unittest.mock import patch
+
+    from btcedu.core.tts import _noise_floor_db
+
+    levels = ["-inf"] * 50 + ["-70.0"] * 30 + ["-15.0"] * 70
+    stdout = "\n".join(f"lavfi.astats.Overall.RMS_level={v}" for v in levels)
+    completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+    with patch("subprocess.run", return_value=completed):
+        assert _noise_floor_db(Path("any.mp3")) == -70.0
+
+
+def test_the_noise_floor_is_none_when_the_file_cannot_be_analysed():
+    """The measurement is diagnostic and must never break a run."""
+    from unittest.mock import patch
+
+    from btcedu.core.tts import _noise_floor_db
+
+    completed = subprocess.CompletedProcess(args=[], returncode=1, stdout="", stderr="boom")
+    with patch("subprocess.run", return_value=completed):
+        assert _noise_floor_db(Path("any.mp3")) is None
+
+    with patch("subprocess.run", side_effect=OSError("no ffmpeg")):
+        assert _noise_floor_db(Path("any.mp3")) is None
+
+
+def _take(noise_bytes: bytes) -> TTSResponse:
+    return TTSResponse(
+        audio_bytes=noise_bytes,
+        duration_seconds=10.0,
+        sample_rate=44100,
+        model="eleven_turbo_v2_5",
+        voice_id=ANCHOR_VOICE,
+        character_count=40,
+        cost_usd=0.05,
+    )
+
+
+def test_a_noisy_take_is_synthesized_again(tmp_path):
+    """Generation is stochastic: about one take in four comes back with a hiss."""
+    from unittest.mock import patch
+
+    from btcedu.core.tts import _synthesize_clean_take
+
+    service = type("S", (), {})()
+    service.synthesize = lambda request: _take(b"take")
+    floors = iter([-38.0, -41.0, -80.0])
+    target = tmp_path / "part.mp3"
+
+    with patch("btcedu.core.tts._noise_floor_db", side_effect=lambda _p: next(floors)):
+        response, floor, takes = _synthesize_clean_take(
+            service, object(), target, max_attempts=3, noise_floor_max_db=-55.0, label="ch01"
+        )
+
+    assert takes == 3
+    assert floor == -80.0
+    assert response is not None
+
+
+def test_a_clean_take_is_not_paid_for_twice(tmp_path):
+    """Every retry costs the same as the original, so a good take must stop it."""
+    from unittest.mock import patch
+
+    from btcedu.core.tts import _synthesize_clean_take
+
+    calls = []
+    service = type("S", (), {})()
+    service.synthesize = lambda request: (calls.append(1), _take(b"take"))[1]
+    target = tmp_path / "part.mp3"
+
+    with patch("btcedu.core.tts._noise_floor_db", return_value=-83.0):
+        _, floor, takes = _synthesize_clean_take(
+            service, object(), target, max_attempts=3, noise_floor_max_db=-55.0, label="ch01"
+        )
+
+    assert takes == 1
+    assert len(calls) == 1
+    assert floor == -83.0
+
+
+def test_the_quietest_take_is_kept_when_none_is_clean(tmp_path):
+    """A noisy programme is still better than an even noisier one."""
+    from unittest.mock import patch
+
+    from btcedu.core.tts import _synthesize_clean_take
+
+    audio = iter([b"loud-hiss", b"quietest", b"medium"])
+    service = type("S", (), {})()
+    service.synthesize = lambda request: _take(next(audio))
+    floors = iter([-38.0, -49.0, -44.0])
+    target = tmp_path / "part.mp3"
+
+    with patch("btcedu.core.tts._noise_floor_db", side_effect=lambda _p: next(floors)):
+        _, floor, takes = _synthesize_clean_take(
+            service, object(), target, max_attempts=3, noise_floor_max_db=-55.0, label="ch01"
+        )
+
+    assert takes == 3
+    assert floor == -49.0
+    assert target.read_bytes() == b"quietest"
+
+
+def test_an_unmeasurable_take_is_accepted(tmp_path):
+    """Without ffmpeg the check must not spend money on endless retries."""
+    from unittest.mock import patch
+
+    from btcedu.core.tts import _synthesize_clean_take
+
+    calls = []
+    service = type("S", (), {})()
+    service.synthesize = lambda request: (calls.append(1), _take(b"take"))[1]
+    target = tmp_path / "part.mp3"
+
+    with patch("btcedu.core.tts._noise_floor_db", return_value=None):
+        _, floor, takes = _synthesize_clean_take(
+            service, object(), target, max_attempts=3, noise_floor_max_db=-55.0, label="ch01"
+        )
+
+    assert takes == 1
+    assert len(calls) == 1
+    assert floor is None

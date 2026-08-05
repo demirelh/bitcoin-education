@@ -265,8 +265,13 @@ def generate_tts(
             # Per-chapter idempotency hash: chapter_id + original text + synthesis
             # text + voice + model + voice params + lexicon. A change to any of
             # these regenerates just that chapter (chapter-level retry/recovery).
+            segments = _speaker_segments(chapter) if _role_voices else []
             text_hash = _chapter_tts_hash(
-                chapter.chapter_id, narration_text, synthesis_text, voice_sig
+                chapter.chapter_id,
+                narration_text,
+                synthesis_text,
+                voice_sig,
+                [s["role"] for s in segments],
             )
 
             # Partial recovery: skip chapters whose text+synthesis+voice are
@@ -310,7 +315,6 @@ def generate_tts(
 
             # Generate audio (profile voice/model/params; synthesis text carries
             # any pronunciation-lexicon substitutions, display narration does not)
-            segments = _speaker_segments(chapter) if _role_voices else []
             if segments:
                 entry = _generate_multi_voice_audio(
                     chapter,
@@ -597,15 +601,25 @@ def _apply_pronunciation_lexicon(text: str, lexicon: dict) -> str:
 
 
 def _chapter_tts_hash(
-    chapter_id: str, original_text: str, synthesis_text: str, voice_sig: dict
+    chapter_id: str,
+    original_text: str,
+    synthesis_text: str,
+    voice_sig: dict,
+    roles: list[str] | None = None,
 ) -> str:
-    """Per-chapter idempotency hash over text + synthesis text + voice config."""
+    """Per-chapter idempotency hash over text + synthesis text + voice config.
+
+    The speaker roles are part of the hash because they decide which voice a
+    chapter is spoken in. Without them a chapter that changes hands between
+    presenters keeps the audio of the previous speaker.
+    """
     payload = json.dumps(
         {
             "chapter_id": chapter_id,
             "original_text": original_text,
             "synthesis_text": synthesis_text,
             "voice_config": voice_sig,
+            "roles": roles or [],
         },
         sort_keys=True,
         ensure_ascii=False,
@@ -683,14 +697,19 @@ def _is_tts_current(
 
 
 def _speaker_segments(chapter) -> list[dict]:
-    """Speaker segments of a chapter, or ``[]`` when it is single-voice.
+    """Speaker segments of a chapter, or ``[]`` when it names no speaker.
+
+    A chapter spoken by one presenter is returned too: it still says *which*
+    presenter, and that decides the voice. Discarding it fell back to the
+    profile's main voice, which gave the opening, the closing and the weather to
+    the reporter although the anchor presents them.
 
     Only returned when the segments actually reconstruct the chapter narration,
     so a stale or hand-edited ``metadata`` block can never change what is spoken.
     """
     metadata = getattr(chapter, "metadata", None) or {}
     raw = metadata.get("speaker_segments")
-    if not isinstance(raw, list) or len(raw) < 2:
+    if not isinstance(raw, list) or not raw:
         return []
     segments = []
     for item in raw:
@@ -701,8 +720,6 @@ def _speaker_segments(chapter) -> list[dict]:
         if not text or not role:
             return []
         segments.append({"role": role, "purpose": str(item.get("purpose") or ""), "text": text})
-    if len({s["role"] for s in segments}) < 2:
-        return []
 
     from btcedu.core.narration_lock import normalize_narration_text
 

@@ -98,12 +98,20 @@ class TestSpeakerSegmentDetection:
     def test_chapter_without_metadata_is_single_voice(self):
         assert _speaker_segments(_chapter()) == []
 
-    def test_single_role_is_single_voice(self):
+    def test_one_presenter_still_decides_the_voice(self):
+        """The opening, the closing and the weather have a single speaker — the
+        anchor — and must be spoken in her voice, not the profile default."""
         same_role = [
             {"role": "anchor_female", "purpose": "opening", "text": "Bir."},
             {"role": "anchor_female", "purpose": "report", "text": "İki."},
         ]
-        assert _speaker_segments(_chapter(same_role)) == []
+        segments = _speaker_segments(_chapter(same_role))
+        assert [s["role"] for s in segments] == ["anchor_female", "anchor_female"]
+
+    def test_a_single_segment_chapter_keeps_its_role(self):
+        one = [{"role": "anchor_female", "purpose": "closing", "text": "Bir. İki."}]
+        segments = _speaker_segments(_chapter(one, narration="Bir. İki."))
+        assert [s["role"] for s in segments] == ["anchor_female"]
 
     def test_segments_that_do_not_match_narration_are_rejected(self):
         """A stale metadata block must never change what is spoken."""
@@ -290,3 +298,13 @@ def _duration(path: Path) -> float:
         text=True,
     )
     return float(result.stdout.strip())
+
+
+def test_the_hash_changes_when_a_chapter_changes_speaker():
+    """A chapter that moves from one presenter to another must be re-synthesized."""
+    from btcedu.core.tts import _chapter_tts_hash
+
+    voice_sig = {"voice_id": "v1", "model": "m"}
+    reporter = _chapter_tts_hash("ch01", "Bir.", "Bir.", voice_sig, ["reporter_male"])
+    anchor = _chapter_tts_hash("ch01", "Bir.", "Bir.", voice_sig, ["anchor_female"])
+    assert reporter != anchor

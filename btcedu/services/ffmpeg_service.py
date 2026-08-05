@@ -1385,6 +1385,14 @@ def replace_audio_track(
         "aac",
         "-b:a",
         audio_bitrate,
+        # Every other segment is written as 44.1 kHz stereo. The narration MP3 is
+        # mono, and the concat demuxer cannot join segments whose channel layout
+        # differs - the joined file then plays silence for the mono parts. So the
+        # replacement track is resampled to match the rest of the programme.
+        "-ac",
+        "2",
+        "-ar",
+        "44100",
         "-shortest",
         output_path,
     ]
@@ -1418,6 +1426,60 @@ def replace_audio_track(
     )
 
 
+def _audio_layout(path: str) -> tuple[str, str, str] | None:
+    """Return (codec, channels, sample_rate) of the first audio stream, if any."""
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a:0",
+                "-show_entries",
+                "stream=codec_name,channels,sample_rate",
+                "-of",
+                "csv=p=0",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001
+        logger.warning("Could not probe audio layout of %s: %s", path, exc)
+        return None
+    line = (result.stdout or "").strip().splitlines()
+    if result.returncode != 0 or not line:
+        return None
+    parts = [p.strip() for p in line[0].split(",")]
+    if len(parts) < 3:
+        return None
+    return (parts[0], parts[1], parts[2])
+
+
+def _assert_uniform_audio(segment_paths: list[str]) -> None:
+    """Fail loudly when the segments do not share one audio layout.
+
+    The concat demuxer copies streams, so it cannot join segments whose codec,
+    channel count or sample rate differ. It does not error out either - it writes
+    a file that simply plays silence for the odd segments. Catching the mismatch
+    here turns a silent, hard-to-spot defect into a readable failure.
+    """
+    layouts: dict[tuple[str, str, str], list[str]] = {}
+    for seg_path in segment_paths:
+        layout = _audio_layout(seg_path)
+        if layout is None:
+            continue
+        layouts.setdefault(layout, []).append(Path(seg_path).name)
+    if len(layouts) < 2:
+        return
+    detail = "; ".join(
+        f"{'/'.join(layout)}: {', '.join(names)}" for layout, names in sorted(layouts.items())
+    )
+    raise RuntimeError(f"Segments have mismatched audio layouts and would play silent - {detail}")
+
+
 def concatenate_segments(
     segment_paths: list[str],
     output_path: str,
@@ -1447,6 +1509,9 @@ def concatenate_segments(
     for seg_path in segment_paths:
         if not Path(seg_path).exists():
             raise FileNotFoundError(f"Segment not found: {seg_path}")
+
+    if not dry_run:
+        _assert_uniform_audio(segment_paths)
 
     # Create concat list file (must use absolute paths)
     concat_list_path = Path(output_path).parent / "concat_list.txt"

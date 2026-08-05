@@ -1,6 +1,7 @@
 """Tests for Sprint 9: ffmpeg service layer."""
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -598,6 +599,60 @@ def test_replace_audio_track_copies_the_video_and_keeps_the_narration(tmp_path):
     assert "-shortest" in cmd
     assert cmd[cmd.index("-map") + 1] == "0:v:0"
     assert result.segment_path == str(output)
+    assert result.returncode == 0
+
+
+def test_replace_audio_track_matches_the_channel_layout_of_the_programme(tmp_path):
+    """A mono narration track would make the concat demuxer play silence."""
+    from btcedu.services.ffmpeg_service import replace_audio_track
+
+    video = tmp_path / "silent.mp4"
+    audio = tmp_path / "chapter.mp3"
+    video.write_bytes(b"video")
+    audio.write_bytes(b"audio")
+
+    result = replace_audio_track(
+        video_path=str(video),
+        audio_path=str(audio),
+        output_path=str(tmp_path / "segment.mp4"),
+        dry_run=True,
+    )
+
+    cmd = result.ffmpeg_command
+    assert cmd[cmd.index("-ac") + 1] == "2"
+    assert cmd[cmd.index("-ar") + 1] == "44100"
+
+
+def test_concat_rejects_segments_with_mismatched_audio_layouts(tmp_path):
+    """The demuxer copies streams, so a mismatch silently mutes whole chapters."""
+    from btcedu.services import ffmpeg_service
+
+    segments = [str(tmp_path / f"seg{i}.mp4") for i in range(3)]
+    for path in segments:
+        Path(path).write_bytes(b"seg")
+
+    layouts = {
+        segments[0]: ("aac", "2", "44100"),
+        segments[1]: ("aac", "1", "44100"),
+        segments[2]: ("aac", "2", "44100"),
+    }
+    with patch.object(ffmpeg_service, "_audio_layout", side_effect=lambda p: layouts[p]):
+        with pytest.raises(RuntimeError, match="mismatched audio layouts"):
+            ffmpeg_service.concatenate_segments(segments, str(tmp_path / "out.mp4"))
+
+
+def test_concat_accepts_segments_without_a_probeable_audio_stream(tmp_path):
+    """An unprobeable segment must not block a programme that is otherwise fine."""
+    from btcedu.services import ffmpeg_service
+
+    segments = [str(tmp_path / f"seg{i}.mp4") for i in range(2)]
+    for path in segments:
+        Path(path).write_bytes(b"seg")
+
+    layouts = {segments[0]: ("aac", "2", "44100"), segments[1]: None}
+    with patch.object(ffmpeg_service, "_audio_layout", side_effect=lambda p: layouts[p]):
+        with patch.object(ffmpeg_service, "_run_ffmpeg", return_value=(0, "")):
+            result = ffmpeg_service.concatenate_segments(segments, str(tmp_path / "out.mp4"))
     assert result.returncode == 0
 
 

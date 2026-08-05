@@ -15,6 +15,21 @@ FIXTURES = Path(__file__).parent / "fixtures"
 Settings.model_config["env_file"] = None
 
 
+@pytest.fixture(autouse=True)
+def _isolate_profile_registry():
+    """Keep the profile registry singleton from leaking between tests.
+
+    ``get_registry(settings)`` fills a module-level singleton on first use, so a
+    test that loads profiles from a temporary directory would otherwise leave an
+    empty registry behind and make later tests resolve the wrong stage list.
+    """
+    from btcedu.profiles import reset_registry
+
+    reset_registry()
+    yield
+    reset_registry()
+
+
 @pytest.fixture
 def db_engine():
     """In-memory SQLite engine for tests."""

@@ -298,6 +298,47 @@ against 527.68 s of picture, so nothing is clipped. Frames at 4 s, 20 s and 37 s
 of `ch03` show three different pictures of one story (Reichstag, the meeting,
 the ministry) with the lower third on the first shot only.
 
+## The anchor was silent — three faults behind one report
+
+The operator reported that the female voice was missing from the opening and the
+closing and that parts of the video were mute. Three separate causes:
+
+1. **Single-speaker chapters lost their voice assignment.** `_speaker_segments()`
+   discarded a chapter whose script had fewer than two segments *or* only one
+   distinct role, and TTS then fell back to the profile default voice — the male
+   reporter. Opening, closing and the weather block are anchor-only, so they were
+   all spoken by the reporter. Both filters are gone: one segment with one role
+   is a perfectly valid instruction about who speaks.
+2. **A changed voice assignment did not re-synthesize.** `_chapter_tts_hash()`
+   covered the narration text and the voice settings but not the speaker roles,
+   so swapping a chapter from reporter to anchor left the old audio in place.
+   The roles are now part of the hash. Consequence: the hash of every existing
+   episode changes once, so the next TTS run re-synthesizes at full price.
+3. **The outro was genuinely silent.** `create_outro_segment()` built its audio
+   from `anullsrc` — it never had an audio source at all. It now takes an
+   `audio_path`; the new `outro_audio` render key defaults to `intro_audio`, the
+   same way `topic_intro_audio` already did, and it feeds both render
+   enhancement hashes so an added or changed sting invalidates the render.
+
+Verified on `hrzrn0Wutak`: every chapter now carries the role voice its script
+asks for, and `render/segments/outro.mp4` carries the sting instead of measuring
+-91 dB.
+
+## Shareable link under the video
+
+The dashboard preview now shows the absolute URL of the rendered file under the
+inline player, with a copy button, so an episode can be shared without digging
+through the file list. The endpoint already answers range requests (HTTP 206),
+so the link plays in a browser directly.
+
+## Test isolation fix
+
+`get_registry()` keeps a module-level singleton. A test that loaded profiles from
+a temporary directory left an empty registry behind, which made later tests
+resolve the default stage list instead of the news one — `tests/test_web.py`
+failed depending on test order. An autouse fixture in `tests/conftest.py` resets
+the registry around every test.
+
 ## Deliberately not done
 
 - **Reusable intro master asset.** The intro is generated procedurally by

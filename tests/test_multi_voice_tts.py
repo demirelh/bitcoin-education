@@ -185,6 +185,31 @@ class TestMultiVoiceSynthesis:
             "reporter_male",
         ]
 
+    def test_previous_parts_of_the_chapter_are_removed(self, tmp_path, role_voices, fallback):
+        """A re-cast chapter must not leave its old speaker parts on disk."""
+        parts_dir = tmp_path / "parts"
+        parts_dir.mkdir()
+        stale = parts_dir / "ch01_02_reporter_male.mp3"
+        stale.write_bytes(b"old")
+        other_chapter = parts_dir / "ch02_00_anchor_female.mp3"
+        other_chapter.write_bytes(b"keep")
+
+        service = FakeTTSService(tmp_path)
+        _generate_multi_voice_audio(
+            _chapter(SEGMENTS),
+            SEGMENTS,
+            service,
+            tmp_path,
+            Settings(dry_run=False),
+            role_voices=role_voices,
+            fallback=fallback,
+            lexicon={},
+            text_hash="sha256:x",
+        )
+
+        assert not stale.exists()
+        assert other_chapter.exists()
+
     def test_parts_are_joined_into_one_chapter_file(self, tmp_path, role_voices, fallback):
         service = FakeTTSService(tmp_path)
         entry = _generate_multi_voice_audio(

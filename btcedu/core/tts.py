@@ -925,6 +925,15 @@ def _generate_multi_voice_audio(
 
     parts_dir = output_dir / "parts"
     parts_dir.mkdir(parents=True, exist_ok=True)
+    # Drop this chapter's previous parts. They are addressed by index and role,
+    # so a shorter or differently cast sequence leaves the old files behind —
+    # a stale `ch05_02_reporter_male.mp3` next to a forecast that is now spoken
+    # by the anchor alone reads like a bug that is not there.
+    for stale_part in parts_dir.glob(f"{chapter.chapter_id}_*.mp3"):
+        try:
+            stale_part.unlink()
+        except OSError:  # pragma: no cover - best effort cleanup
+            logger.debug("Could not remove stale TTS part %s", stale_part)
     mp3_filename = f"{chapter.chapter_id}.mp3"
     mp3_path = output_dir / mp3_filename
 

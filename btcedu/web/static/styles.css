@@ -2285,6 +2285,24 @@ body {
     display: block;
 }
 
+.video-share {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: 640px;
+    margin-top: 6px;
+}
+.video-share a {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 12px;
+    font-family: var(--font-mono, monospace);
+    color: var(--accent, #4ea1ff);
+}
+
 /* ── SSE live indicator (Phase 3d) ─────────────────────── */
 .sse-indicator {
     position: fixed;

@@ -589,6 +589,39 @@
         source.type = "video/mp4";
         video.appendChild(source);
         previewDiv.appendChild(video);
+
+        // Direct, shareable link to the rendered file. Built from the page
+        // origin so it also works when the dashboard is reached through the
+        // reverse proxy rather than on localhost.
+        const shareUrl = new URL(
+          "api/episodes/" + encodeURIComponent(ep.episode_id) + "/render/draft.mp4",
+          window.location.href
+        ).href;
+        const shareRow = document.createElement("div");
+        shareRow.className = "video-share";
+        const link = document.createElement("a");
+        link.href = shareUrl;
+        link.target = "_blank";
+        link.rel = "noopener";
+        link.textContent = shareUrl;
+        const copy = document.createElement("button");
+        copy.className = "btn btn-sm";
+        copy.type = "button";
+        copy.textContent = "Kopieren";
+        copy.onclick = () => {
+          const done = () => {
+            copy.textContent = "Kopiert";
+            setTimeout(() => (copy.textContent = "Kopieren"), 1500);
+          };
+          if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(shareUrl).then(done, () => window.prompt("Link", shareUrl));
+          } else {
+            window.prompt("Link", shareUrl);
+          }
+        };
+        shareRow.appendChild(link);
+        shareRow.appendChild(copy);
+        previewDiv.appendChild(shareRow);
         header.appendChild(previewDiv);
       }
     }

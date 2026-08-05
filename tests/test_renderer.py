@@ -18,6 +18,7 @@ from btcedu.core.renderer import (
     _resolve_chapter_media,
     render_is_current,
     render_video,
+    title_card_texts,
 )
 from btcedu.db import Base
 from btcedu.models.chapter_schema import ChapterDocument
@@ -1208,3 +1209,46 @@ def test_render_video_error_rollback(db_session, settings, tmp_path):
     db_session.refresh(episode)
     assert episode.error_message is not None
     assert "Cannot render complete episode" in episode.error_message
+
+
+def test_title_card_texts_prefers_the_profile(settings, db_session):
+    """The dashboard must read the same card texts the render puts on screen."""
+    episode = Episode(
+        episode_id="ep001",
+        source="youtube_rss",
+        title="Stored title",
+        url="https://example.com/ep001",
+        status=EpisodeStatus.CHAPTERIZED,
+        content_profile="tagesschau_tr",
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    texts = title_card_texts(episode, settings)
+
+    assert texts["show_name"] == "ALMANYA24"
+    assert texts["episode_title"] == "Almanya Gündemi"
+    assert texts["slogan"] == "Almanya'nın nabzı burada atıyor."
+    assert texts["topic_intro_enabled"] is True
+    assert texts["topic_intro_label"] == "GÜNDEM"
+    assert texts["outro_text"].startswith("ALMANYA24")
+
+
+def test_title_card_texts_falls_back_to_the_episode_title(settings, db_session):
+    """A profile that names no episode title shows the episode's own title."""
+    episode = Episode(
+        episode_id="ep002",
+        source="youtube_rss",
+        title="Stored title",
+        url="https://example.com/ep002",
+        status=EpisodeStatus.CHAPTERIZED,
+        content_profile="bitcoin_podcast",
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    texts = title_card_texts(episode, settings)
+
+    assert texts["episode_title"] == "Stored title"

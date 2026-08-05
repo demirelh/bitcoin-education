@@ -802,7 +802,14 @@ class TestFileViewer:
                     "file_path": "images/c1_beat01.png",
                     "metadata": {"beat_index": 1},
                 },
-                {"chapter_id": "c1", "file_path": "images/c1.png", "metadata": {}},
+                {
+                    "chapter_id": "c1",
+                    "file_path": "images/c1.png",
+                    "generation_method": "fal",
+                    "model": "fal-ai/flux/dev",
+                    "prompt": "An airport at night",
+                    "metadata": {},
+                },
                 {
                     "chapter_id": "c1",
                     "file_path": "images/c1_failed.png",
@@ -816,6 +823,10 @@ class TestFileViewer:
         content = client.get("/api/episodes/ep001/files/transcript_tr").get_json()["content"]
         # Opening shot first, then the beat picture; the failed one is not shown
         assert content.index("# images/c1.png") < content.index("# images/c1_beat01.png")
+        # Each picture carries a link, its maker and the prompt it was made from
+        assert "#   link: api/episodes/ep001/images/c1.png" in content
+        assert "#   made by: fal (fal-ai/flux/dev)" in content
+        assert "#   prompt: An airport at night" in content
         assert "c1_failed" not in content
         # Each picture sits directly above the passage spoken under it
         assert content.index("# images/c1_beat01.png") < content.index("Muhabir.")
@@ -858,6 +869,68 @@ class TestFileViewer:
         content = client.get("/api/episodes/ep001/files/transcript_tr").get_json()["content"]
         assert "# images/c1_weather.mp4" in content
         assert "c1_weather.png" not in content
+
+    def test_file_transcript_tr_shows_the_generated_cards(self, client, test_settings):
+        ep_dir = Path(test_settings.outputs_dir) / "ep001"
+        ep_dir.mkdir(parents=True)
+        chapters = {
+            "schema_version": "1.0",
+            "episode_id": "ep001",
+            "title": "Test",
+            "total_chapters": 2,
+            "estimated_duration_seconds": 20,
+            "chapters": [
+                {
+                    "chapter_id": "c1",
+                    "title": "Açılış",
+                    "order": 1,
+                    "story_type": "intro",
+                    "narration": {"text": "Merhaba."},
+                },
+                {
+                    "chapter_id": "c2",
+                    "title": "Haber",
+                    "order": 2,
+                    "story_type": "politik",
+                    "narration": {"text": "Haber."},
+                    "overlays": [
+                        {
+                            "type": "lower_third",
+                            "text": "HABER",
+                            "subtext": "Ayrıntılar",
+                            "start_offset_seconds": 1.0,
+                        }
+                    ],
+                },
+            ],
+        }
+        (ep_dir / "chapters.json").write_text(
+            json.dumps(chapters, ensure_ascii=False), encoding="utf-8"
+        )
+
+        cards = {
+            "intro_enabled": True,
+            "show_name": "ALMANYA24",
+            "episode_title": "Almanya Gündemi",
+            "episode_date": "05.08.2026",
+            "slogan": "Nabız burada.",
+            "topic_intro_enabled": True,
+            "topic_intro_label": "GÜNDEM",
+            "outro_enabled": True,
+            "outro_text": "Teşekkürler",
+        }
+        with patch("btcedu.core.renderer.title_card_texts", return_value=cards):
+            content = client.get("/api/episodes/ep001/files/transcript_tr").get_json()["content"]
+
+        assert "## Opening card" in content
+        assert "# show: ALMANYA24" in content
+        assert "# slogan: Nabız burada." in content
+        # Only real topics are counted; the intro chapter gets no topic card
+        assert "# topic card: GÜNDEM 1/1 - Haber" in content
+        assert content.count("# topic card:") == 1
+        assert "# lower third at +1.0s: HABER" in content
+        assert "#   Ayrıntılar" in content
+        assert content.rstrip().endswith("# Teşekkürler")
 
     def test_file_transcript_tr_missing(self, client):
         r = client.get("/api/episodes/ep001/files/transcript_tr")

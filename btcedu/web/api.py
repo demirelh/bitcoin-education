@@ -714,12 +714,14 @@ def _speaker_passages(chapter: dict) -> list[tuple[str, str]]:
     return passages
 
 
-def _chapter_images(episode_id: str, settings) -> dict[str, list[str]]:
-    """Per chapter, its generated image files in the order the video shows them.
+def _chapter_images(episode_id: str, settings) -> dict[str, list[dict]]:
+    """Per chapter, its pictures in the order the video shows them.
 
     Mirrors the renderer's ordering (``metadata.beat_index``, missing counts as
     the opening shot) so the transcript names the same picture the viewer sees.
     Failed generations are left out exactly as the renderer leaves them out.
+    Each entry is the manifest record plus the file actually shown and a link
+    that opens it in the dashboard.
     """
     episode_dir = Path(settings.outputs_dir) / episode_id
     path = episode_dir / "images" / "manifest.json"
@@ -736,10 +738,17 @@ def _chapter_images(episode_id: str, settings) -> dict[str, list[str]]:
             continue
         by_chapter.setdefault(str(entry.get("chapter_id") or ""), []).append(entry)
 
-    ordered: dict[str, list[str]] = {}
+    ordered: dict[str, list[dict]] = {}
     for chapter_id, entries in by_chapter.items():
         entries.sort(key=lambda e: int((e.get("metadata") or {}).get("beat_index") or 0))
-        ordered[chapter_id] = [_shown_asset(e, episode_dir) for e in entries]
+        ordered[chapter_id] = [
+            {
+                "entry": entry,
+                "path": _shown_asset(entry, episode_dir),
+                "link": _asset_link(episode_id, chapter_id, _shown_asset(entry, episode_dir)),
+            }
+            for entry in entries
+        ]
     return ordered
 
 
@@ -759,7 +768,35 @@ def _shown_asset(entry: dict, episode_dir: Path) -> str:
     return rel
 
 
-def _chapter_blocks(chapter: dict, images: list[str]) -> list[tuple[str, str, str | None]]:
+def _asset_link(episode_id: str, chapter_id: str, rel_path: str) -> str | None:
+    """Dashboard URL that opens a picture, or None when nothing can serve it.
+
+    Links are relative so they keep working behind the ``/dashboard/`` prefix.
+    """
+    if not rel_path:
+        return None
+    name = Path(rel_path).name
+    if name.lower().endswith(".png"):
+        return f"api/episodes/{episode_id}/images/{name}"
+    if name.lower().endswith(".mp4"):
+        return f"api/episodes/{episode_id}/weather/{chapter_id}/video"
+    return None
+
+
+def _image_credit(entry: dict) -> str:
+    """Who made the picture: the service, and the model or method behind it.
+
+    Deterministic renderers name themselves in ``metadata.provider``; generated
+    pictures name the API in ``generation_method`` and the model in ``model``.
+    """
+    meta = entry.get("metadata") or {}
+    method = str(entry.get("generation_method") or "").strip()
+    service = str(meta.get("provider") or "").strip() or method or "unknown"
+    detail = str(entry.get("model") or "").strip() or (method if method != service else "")
+    return f"{service} ({detail})" if detail else service
+
+
+def _chapter_blocks(chapter: dict, images: list[dict]) -> list[tuple[str, str, dict | None]]:
     """Split a chapter into (role, text, image) blocks as rendered.
 
     A chapter with at least two visual beats and at least two pictures is cut
@@ -770,7 +807,7 @@ def _chapter_blocks(chapter: dict, images: list[str]) -> list[tuple[str, str, st
     beats = (chapter.get("metadata") or {}).get("visual_beats") or []
     if len(beats) >= 2 and len(images) >= 2:
         usable = min(len(beats), len(images))
-        blocks: list[tuple[str, str, str | None]] = []
+        blocks: list[tuple[str, str, dict | None]] = []
         for index in range(usable):
             beat = beats[index]
             role = str(beat.get("role") or "").strip() or "narrator"
@@ -786,6 +823,36 @@ def _chapter_blocks(chapter: dict, images: list[str]) -> list[tuple[str, str, st
         (role, text, single if index == 0 else None)
         for index, (role, text) in enumerate(passages)
     ]
+
+
+def _title_card_texts(episode_id: str, settings) -> dict:
+    """What the generated opening, topic and closing cards say, or {} if unknown."""
+    session = _get_session()
+    try:
+        episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if episode is None:
+            return {}
+        from btcedu.core.renderer import title_card_texts
+
+        return title_card_texts(episode, settings)
+    except Exception:
+        logger.debug("Could not resolve title cards for %s", episode_id, exc_info=True)
+        return {}
+    finally:
+        session.close()
+
+
+def _image_lines(image: dict) -> list[str]:
+    """The picture under a passage: file, link, who made it and from what prompt."""
+    entry = image.get("entry") or {}
+    lines = [f"# {image.get('path') or ''}"]
+    if image.get("link"):
+        lines.append(f"#   link: {image['link']}")
+    lines.append(f"#   made by: {_image_credit(entry)}")
+    prompt = str(entry.get("prompt") or "").strip()
+    if prompt:
+        lines.append(f"#   prompt: {' '.join(prompt.split())}")
+    return lines
 
 
 # Fallback labels for speaker roles when the profile names no presenter.
@@ -859,19 +926,56 @@ def _build_tr_transcript(episode_id: str, settings) -> str | None:
 
     names = _speaker_names(episode_id, settings)
     images = _chapter_images(episode_id, settings)
+    cards = _title_card_texts(episode_id, settings)
+
+    if cards.get("intro_enabled"):
+        lines.append("## Opening card")
+        for label, key in (
+            ("show", "show_name"),
+            ("episode", "episode_title"),
+            ("date", "episode_date"),
+            ("slogan", "slogan"),
+        ):
+            if cards.get(key):
+                lines.append(f"# {label}: {cards[key]}")
+        lines.append("")
+
+    topic_label = cards.get("topic_intro_label") if cards.get("topic_intro_enabled") else None
+    topic_ids = [
+        c.get("chapter_id")
+        for c in chapters
+        if str(c.get("story_type") or "").lower() not in {"intro", "outro"}
+    ]
 
     for ch in chapters:
         heading = ch.get("title") or ch.get("chapter_id") or ""
         order = ch.get("order")
         prefix = f"{order}. " if order else ""
         lines.append(f"## {prefix}{heading}".rstrip())
+        if topic_label and ch.get("chapter_id") in topic_ids:
+            position = topic_ids.index(ch.get("chapter_id")) + 1
+            lines.append(f"# topic card: {topic_label} {position}/{len(topic_ids)} - {heading}")
+        for overlay in ch.get("overlays") or []:
+            if not isinstance(overlay, dict):
+                continue
+            kind = str(overlay.get("type") or "overlay").replace("_", " ")
+            at = overlay.get("start_offset_seconds")
+            when = f" at +{float(at):.1f}s" if isinstance(at, int | float) else ""
+            lines.append(f"# {kind}{when}: {overlay.get('text') or ''}")
+            if overlay.get("subtext"):
+                lines.append(f"#   {overlay['subtext']}")
         for role, text, image in _chapter_blocks(ch, images.get(ch.get("chapter_id"), [])):
             if image:
-                lines.append(f"# {image}")
+                lines.extend(_image_lines(image))
             if role:
                 lines.append(f"[{names.get(role, role)}]")
             lines.append(text)
             lines.append("")
+
+    if cards.get("outro_enabled") and cards.get("outro_text"):
+        lines.append("## Closing card")
+        lines.append(f"# {cards['outro_text']}")
+        lines.append("")
 
     return "\n".join(lines).strip() + "\n"
 

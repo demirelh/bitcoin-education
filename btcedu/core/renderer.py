@@ -1601,6 +1601,54 @@ def _render_beat_chapter(
     )
 
 
+def title_card_texts(episode, settings: Settings) -> dict:
+    """The words the generated cards put on screen, resolved as the render does.
+
+    Read by the dashboard so the transcript can state what the opening card,
+    the topic cards and the closing card say. Profile values win over settings,
+    exactly like the render stage resolves them.
+    """
+    render_cfg: dict = {}
+    try:
+        from btcedu.profiles import get_registry as _get_profile_registry
+
+        profile_name = getattr(episode, "content_profile", None) or "bitcoin_podcast"
+        profile = _get_profile_registry(settings).get(profile_name)
+        render_cfg = (profile.stage_config.get("render", {}) if profile else {}) or {}
+    except Exception:  # noqa: BLE001
+        render_cfg = {}
+
+    def _rc(key: str, default):
+        if key in render_cfg and render_cfg[key] is not None:
+            return render_cfg[key]
+        return default
+
+    episode_date = ""
+    published_at = getattr(episode, "published_at", None)
+    if published_at:
+        episode_date = published_at.strftime("%d.%m.%Y")
+
+    return {
+        "intro_enabled": bool(
+            _rc("intro_enabled", getattr(settings, "render_intro_enabled", False))
+        ),
+        "show_name": str(
+            _rc("intro_show_name", getattr(settings, "render_intro_show_name", "")) or ""
+        ),
+        "episode_title": str(
+            _rc("intro_episode_title", "") or getattr(episode, "title", "") or ""
+        ),
+        "episode_date": episode_date,
+        "slogan": str(_rc("intro_slogan", "") or ""),
+        "topic_intro_enabled": bool(_rc("topic_intro_enabled", False)),
+        "topic_intro_label": str(_rc("topic_intro_label", "GÜNDEM") or "GÜNDEM"),
+        "outro_enabled": bool(getattr(settings, "render_outro_enabled", False)),
+        "outro_text": str(
+            _rc("outro_text", getattr(settings, "render_outro_text", "")) or ""
+        ),
+    }
+
+
 def _beat_images(chapter_id: str, image_manifest: dict) -> list[str]:
     """Relative image paths of a chapter, ordered by presenter block."""
     entries = [img for img in image_manifest.get("images", []) if img["chapter_id"] == chapter_id]

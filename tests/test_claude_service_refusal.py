@@ -7,6 +7,7 @@ dropping source stories from the published video.
 """
 
 import json
+import os
 from subprocess import CompletedProcess
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -18,11 +19,13 @@ from btcedu.services.claude_service import (
     ClaudeResponse,
     ModelRefusalError,
     _call_copilot_cli,
+    _copilot_cli_fallback_text,
     _copilot_prompt_argument,
     _extract_json_object,
     _is_copilot_refusal,
     _parse_copilot_jsonl,
     call_claude,
+    copilot_cli_env,
 )
 
 # Real refusal variants captured from production outputs.
@@ -239,3 +242,70 @@ def test_call_claude_threads_model_override(mock_copilot):
     call_claude("system", "review this", settings, model_override="gpt-5.6")
 
     assert mock_copilot.call_args.kwargs["model_override"] == "gpt-5.6"
+
+
+class TestCopilotTokenEnvironment:
+    """The classic PAT in .env must never reach the Copilot CLI.
+
+    ``GITHUB_TOKEN`` belongs to the ``github_models`` provider and systemd hands
+    the whole ``.env`` to the pipeline. Copilot prefers that variable over its
+    stored device login and aborts with an auth error when it holds a classic
+    PAT, which failed ``review_gate_2`` in production.
+    """
+
+    @pytest.mark.parametrize("name", ["GITHUB_TOKEN", "GH_TOKEN"])
+    @pytest.mark.parametrize("prefix", ["ghp_", "ghs_"])
+    def test_unsupported_tokens_are_removed(self, name, prefix):
+        env = copilot_cli_env({name: prefix + "x" * 36, "PATH": "/usr/bin"})
+
+        assert name not in env
+        assert env["PATH"] == "/usr/bin"
+
+    @pytest.mark.parametrize("value", ["gho_abc123", "github_pat_abc123", "ghu_abc123"])
+    def test_supported_tokens_are_kept(self, value):
+        assert copilot_cli_env({"GITHUB_TOKEN": value})["GITHUB_TOKEN"] == value
+
+    def test_absent_token_is_not_invented(self):
+        assert "GITHUB_TOKEN" not in copilot_cli_env({"PATH": "/usr/bin"})
+
+    def test_real_environment_is_not_mutated(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "x" * 36)
+
+        assert "GITHUB_TOKEN" not in copilot_cli_env()
+        assert os.environ["GITHUB_TOKEN"].startswith("ghp_")
+
+    @patch("subprocess.run")
+    def test_json_call_passes_sanitized_environment(self, mock_run, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "x" * 36)
+        mock_run.return_value = CompletedProcess(
+            args=["copilot"],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "type": "assistant.message_delta",
+                    "data": {"messageId": "m1", "deltaContent": "ok"},
+                }
+            ),
+            stderr="",
+        )
+        settings = SimpleNamespace(
+            copilot_cli_model="claude-sonnet-4.5",
+            copilot_cli_binary="copilot",
+            copilot_cli_timeout=30,
+        )
+
+        _call_copilot_cli("system", "user", settings)
+
+        assert "GITHUB_TOKEN" not in mock_run.call_args.kwargs["env"]
+
+    @patch("subprocess.run")
+    def test_text_fallback_passes_sanitized_environment(self, mock_run, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_" + "x" * 36)
+        mock_run.return_value = CompletedProcess(
+            args=["copilot"], returncode=0, stdout="answer", stderr=""
+        )
+        settings = SimpleNamespace(copilot_cli_timeout=30)
+
+        _copilot_cli_fallback_text("copilot", "claude-sonnet-4.5", "prompt", settings)
+
+        assert "GITHUB_TOKEN" not in mock_run.call_args.kwargs["env"]

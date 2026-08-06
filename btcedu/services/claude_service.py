@@ -344,6 +344,7 @@ def _call_copilot_cli(
             capture_output=True,
             text=True,
             timeout=getattr(settings, "copilot_cli_timeout", 900),
+            env=copilot_cli_env(),
         )
     finally:
         try:
@@ -426,6 +427,35 @@ def _parse_copilot_jsonl(stdout: str) -> tuple[str, int, int, list[str]]:
             )
 
     return "".join(text_parts).strip(), input_tokens, output_tokens, event_types
+
+
+#: Token prefixes Copilot refuses. Classic PATs (``ghp_``) and the matching
+#: server-to-server tokens are rejected outright, which aborts the CLI before it
+#: ever falls back to the stored device login.
+UNSUPPORTED_COPILOT_TOKEN_PREFIXES = ("ghp_", "ghs_")
+
+#: Environment variables the Copilot CLI reads for authentication.
+COPILOT_TOKEN_ENV_VARS = ("GITHUB_TOKEN", "GH_TOKEN")
+
+
+def copilot_cli_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Return the environment for a Copilot CLI subprocess.
+
+    ``GITHUB_TOKEN`` is needed by the ``github_models`` provider and therefore
+    lives in ``.env``, which systemd hands to the whole pipeline process. The
+    Copilot CLI, however, prefers that variable over its own stored login and
+    exits with an auth error when it holds a classic PAT. Dropping only the
+    unsupported values lets the CLI use ``~/.copilot`` while every other
+    provider keeps its token.
+    """
+    import os as _os
+
+    env = dict(_os.environ if base_env is None else base_env)
+    for name in COPILOT_TOKEN_ENV_VARS:
+        value = env.get(name, "")
+        if value.startswith(UNSUPPORTED_COPILOT_TOKEN_PREFIXES):
+            env.pop(name, None)
+    return env
 
 
 def _copilot_prompt_argument(prompt: str, prompt_path: str) -> str:
@@ -575,6 +605,7 @@ def _copilot_cli_fallback_text(binary: str, model: str, prompt: str, settings) -
         capture_output=True,
         text=True,
         timeout=getattr(settings, "copilot_cli_timeout", 900),
+        env=copilot_cli_env(),
     )
     if proc.returncode != 0:
         raise RuntimeError(

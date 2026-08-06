@@ -767,10 +767,33 @@ class TestOpeningAndClosing:
         script, _, _ = _script(source_stories)
         headlines = " ".join(_segment_texts(script, SegmentPurpose.HEADLINES))
         assert headlines
-        assert headlines.strip().endswith("Ayrıntılarla başlıyoruz.")
+        # The block is announced and closes with a hand-over that names the
+        # first topic instead of a content-free "let's begin".
+        assert headlines.startswith("Bülteni açan başlıklar şöyle.")
+        assert headlines.strip().endswith("başlıyoruz.")
+        first_topic = next(
+            story.display_headline for story in script.stories if story.source_story_id == "s01"
+        )
+        from btcedu.core.scripter import turkish_sentence_case
+
+        assert turkish_sentence_case(first_topic) in headlines
         for word in headlines.split():
             letters = [c for c in word if c.isalpha()]
             assert not (len(letters) > 5 and all(c == c.upper() for c in letters))
+
+    def test_the_opening_frames_the_news_day(self, source_stories):
+        script, _, _ = _script(source_stories)
+        opening = " ".join(_segment_texts(script, SegmentPurpose.OPENING))
+        # Greeting plus a framing sentence: a bare "good evening" is a machine
+        # starting a file, not a programme opening.
+        assert "İyi akşamlar" in opening
+        assert len([s for s in opening.split(".") if s.strip()]) >= 2
+
+    def test_the_closing_promises_continued_coverage(self, source_stories):
+        script, _, _ = _script(source_stories)
+        closing = " ".join(_segment_texts(script, SegmentPurpose.CLOSING))
+        assert "iyi akşamlar" in closing.lower()
+        assert "devam ede" in closing.lower() or "sürdür" in closing.lower()
 
     def test_opening_has_no_empty_promise(self, source_stories):
         script, _, _ = _script(source_stories)
@@ -1216,7 +1239,9 @@ class TestWeatherAndPromptContract:
     def test_the_handover_leads_into_the_weather(self):
         from btcedu.core.scripter import DEFAULT_WEATHER_HANDOVERS
 
-        assert DEFAULT_WEATHER_HANDOVERS[0] == "Son olarak hava durumuna bakalım."
+        assert DEFAULT_WEATHER_HANDOVERS
+        for variant in DEFAULT_WEATHER_HANDOVERS:
+            assert "hava" in variant.lower()
 
     def test_the_prompt_asks_for_tonight_tomorrow_outlook(self):
         prompt = self._prompt()
@@ -1469,3 +1494,180 @@ class TestPromptTargetMatchesTheBand:
             encoding="utf-8"
         )
         assert "Bu bir kota değil" in prompt
+
+
+def _news_script(*, closing_purpose=SegmentPurpose.ANALYSIS, transition_text="") -> BroadcastScript:
+    """A one-story broadcast produced by the editorial model."""
+    sequence = [
+        SpeakerSegment(
+            role=SpeakerRole.ANCHOR,
+            purpose=SegmentPurpose.INTRODUCTION,
+            text=(
+                transition_text
+                or "İç politikadan ekonomi gündemine geçiyoruz. Emeklilik reformu bugün "
+                "yeniden Bundestag'ın önüne geldi."
+            ),
+        ),
+        SpeakerSegment(
+            role=SpeakerRole.REPORTER,
+            purpose=SegmentPurpose.REPORT,
+            text="Yetkililerin açıklamasına göre düzenleme 2027 yılında yürürlüğe girecek.",
+        ),
+    ]
+    if closing_purpose is not None:
+        sequence.append(
+            SpeakerSegment(
+                role=SpeakerRole.ANCHOR,
+                purpose=closing_purpose,
+                text="Bundestag'daki oylamanın sonucu önümüzdeki hafta belli olacak.",
+            )
+        )
+    return BroadcastScript(
+        episode_id="ep-x",
+        generated_by="llm",
+        stories=[
+            ScriptStory(
+                story_id="n01",
+                source_story_id="s01",
+                order=1,
+                priority=StoryPriority.TOP,
+                display_headline="EMEKLİLİK REFORMU",
+                speaker_sequence=sequence,
+            )
+        ],
+    )
+
+
+class TestStoryTransitions:
+    def test_an_empty_hand_over_formula_is_flagged(self):
+        from btcedu.core.script_qa import check_story_transitions
+
+        script = _news_script(transition_text="Sıradaki haberimiz Berlin'den geliyor.")
+        findings = check_story_transitions(script, _FindingFactory())
+        assert [f.category for f in findings] == ["empty_transition"]
+        assert findings[0].severity == "major"
+
+    def test_a_topic_naming_transition_passes(self):
+        from btcedu.core.script_qa import check_story_transitions
+
+        assert check_story_transitions(_news_script(), _FindingFactory()) == []
+
+    def test_the_prompt_forbids_content_free_transitions(self):
+        from btcedu.core.prompt_registry import TEMPLATES_DIR
+
+        prompt = (TEMPLATES_DIR / "tagesschau_tr" / "script_broadcast.md").read_text(
+            encoding="utf-8"
+        )
+        assert "KONU GEÇİŞLERİ (ZORUNLU)" in prompt
+        assert "İç politikadan ekonomi gündemine geçiyoruz." in prompt
+
+
+class TestAnchorClosure:
+    def test_a_story_ending_with_the_reporter_is_flagged(self):
+        from btcedu.core.script_qa import check_anchor_closure
+
+        script = _news_script(closing_purpose=None)
+        findings = check_anchor_closure(script, _FindingFactory())
+        assert [f.category for f in findings] == ["missing_anchor_closure"]
+        assert findings[0].structural_invariant is True
+
+    def test_an_anchor_analysis_closes_the_story(self):
+        from btcedu.core.script_qa import check_anchor_closure
+
+        assert check_anchor_closure(_news_script(), _FindingFactory()) == []
+
+    def test_the_deterministic_fallback_is_exempt(self):
+        from btcedu.core.script_qa import check_anchor_closure
+
+        script = _news_script(closing_purpose=None)
+        script.generated_by = "deterministic"
+        assert check_anchor_closure(script, _FindingFactory()) == []
+
+    def test_the_prompt_requires_the_anchor_to_take_over_again(self):
+        from btcedu.core.prompt_registry import TEMPLATES_DIR
+
+        prompt = (TEMPLATES_DIR / "tagesschau_tr" / "script_broadcast.md").read_text(
+            encoding="utf-8"
+        )
+        assert "MUHABİRDEN SONRA SUNUCU DEVRALIR" in prompt
+        assert "haber muhabirle bitemez" in prompt
+
+
+class TestModeratorIdentity:
+    def test_the_prompt_describes_the_anchor_as_a_moderator(self):
+        from btcedu.core.prompt_registry import TEMPLATES_DIR
+
+        prompt = (TEMPLATES_DIR / "tagesschau_tr" / "script_broadcast.md").read_text(
+            encoding="utf-8"
+        )
+        assert "ana sunucu / moderatör" in prompt
+        assert "MUHABİR NASIL BAŞLAR" in prompt
+        assert "YAYININ KİMLİĞİ" in prompt
+
+    def test_the_anchor_share_band_comes_from_the_profile(self):
+        from btcedu.config import Settings
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(Settings()).get("tagesschau_tr")
+        config = ScriptQAConfig.from_stage_config(profile.stage_config["script"])
+        assert (config.anchor_share_min, config.anchor_share_max) == (0.35, 0.45)
+
+    def test_the_system_half_of_the_prompt_sees_the_configured_band(self):
+        from btcedu.core.prompt_registry import TEMPLATES_DIR
+
+        prompt = (TEMPLATES_DIR / "tagesschau_tr" / "script_broadcast.md").read_text(
+            encoding="utf-8"
+        )
+        # The placeholders must be rendered for the system half as well, or the
+        # model reads a literal "{{anchor_share_min}}".
+        system_half = prompt.split("# Input")[0]
+        assert "{{anchor_share_min}}" in system_half
+
+
+class TestProgrammeLength:
+    def test_the_profile_targets_nine_to_eleven_minutes(self):
+        from btcedu.config import Settings
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(Settings()).get("tagesschau_tr")
+        config = ScriptQAConfig.from_stage_config(profile.stage_config["script"])
+        assert config.editorial_minimum_seconds == 540
+        assert config.preferred_duration_seconds == 600
+        assert config.soft_maximum_seconds == 660
+
+
+class TestShotVariety:
+    def _beat(self, index, role="reporter_male"):
+        return {"beat_index": index, "role": role}
+
+    def test_consecutive_shots_of_a_chapter_differ(self):
+        from types import SimpleNamespace
+
+        from btcedu.core.image_generator import _shot_hint
+
+        chapter = SimpleNamespace(chapter_id="ch03")
+        hints = {
+            _shot_hint(chapter, self._beat(0, "anchor_female")),
+            _shot_hint(chapter, self._beat(1, "reporter_male")),
+            _shot_hint(chapter, self._beat(2, "anchor_female")),
+        }
+        assert len(hints) == 3
+
+    def test_neighbouring_chapters_do_not_open_with_the_same_shot(self):
+        from types import SimpleNamespace
+
+        from btcedu.core.image_generator import _shot_hint
+
+        first = _shot_hint(SimpleNamespace(chapter_id="ch01"), self._beat(0, "anchor_female"))
+        second = _shot_hint(SimpleNamespace(chapter_id="ch02"), self._beat(0, "anchor_female"))
+        assert first != second
+
+    def test_every_shot_hint_keeps_the_presenters_off_screen(self):
+        from types import SimpleNamespace
+
+        from btcedu.core.image_generator import _SHOT_LADDER, _shot_hint
+
+        for index in range(len(_SHOT_LADDER)):
+            hint = _shot_hint(SimpleNamespace(chapter_id=f"ch{index:02d}"), self._beat(index))
+            assert "No news studio" in hint
+            assert "Framing:" in hint

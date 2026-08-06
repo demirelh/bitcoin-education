@@ -113,18 +113,55 @@ stage_config:
     provider: copilot_cli
     model: gpt-5.6-sol
     prompt_template: script_broadcast.md
-    target_seconds: 540
-    min_seconds: 480
-    max_seconds: 630
+    # QA reads the *_total_seconds keys; the programme aims at 9-11 minutes.
+    target_total_seconds: 600
+    min_total_seconds: 540
+    max_total_seconds: 660
+    # The anchor moderates the programme rather than reading a share of it, so
+    # she carries 35-45% of the spoken words.
+    anchor_share_target: [0.35, 0.45]
     max_revisions: 1
     editorial:
       # Duration is an editorial guideline, not a hard box. Going long is only
       # a problem when the extra minutes come from repetition or padding.
       minimum_duration_seconds: 540
       preferred_duration_seconds: 600
-      soft_maximum_duration_seconds: 720
+      soft_maximum_duration_seconds: 660
       hard_maximum_duration_seconds: null
       allow_longer_if_editorially_justified: true
+    # Programme framing. The system owns greeting, headline block and closing so
+    # the bulletin cannot greet its audience differently every day; the variants
+    # keep it from sounding identical either.
+    openings:
+      - "İyi akşamlar, {show_name_dative} hoş geldiniz.\
+         \ Almanya'nın ve dünyanın gündemindeki gelişmelerle karşınızdayız."
+      - "İyi akşamlar. {show_name} başlıyor.\
+         \ Günün öne çıkan haberlerini ve Almanya'daki yansımalarını aktarıyoruz."
+      - "İyi akşamlar, hoş geldiniz.\
+         \ {show_name} ile günün gelişmelerini ve bunların Almanya'daki anlamını konuşuyoruz."
+      - "İyi akşamlar. {show_name_dative} hoş geldiniz.\
+         \ Bugünün gündemini ve sizi doğrudan ilgilendiren gelişmeleri derledik."
+    headline_intros:
+      - "Bülteni açan başlıklar şöyle."
+      - "Önce günün öne çıkan başlıkları."
+      - "Bu akşamki bültenin başlıkları."
+    headline_outros:
+      - "{topic} ile başlıyoruz."
+      - "Bültene {topic} başlığıyla başlıyoruz."
+      - "İlk haberimiz {topic}."
+    weather_handovers:
+      - "Bültenimizi hava durumuyla tamamlıyoruz."
+      - "Haberlerin ardından şimdi hava durumuna bakıyoruz."
+      - "Son olarak Almanya genelinde hava nasıl olacak, ona bakalım."
+    closings:
+      - "Bugün öne çıkan gelişmeleri sizlere aktardık.\
+         \ Gün boyunca yaşanan gelişmeleri takip etmeye devam edeceğiz.\
+         \ Yeni haber bülteninde yeniden görüşmek üzere, iyi akşamlar."
+      - "Bugünkü bültenimizin sonuna geldik. Bizi izlediğiniz için teşekkür ederiz.\
+         \ Gelişmeleri izlemeye ve sizlere aktarmaya devam edeceğiz. İyi akşamlar."
+      - "Günün gündemini bu bültende topladık.\
+         \ Yeni gelişmeleri takip etmeyi sürdürüyoruz.\
+         \ Yeniden görüşmek üzere, iyi akşamlar."
   tts:
     voice_id: "Q2IX97JeHBY3vNGzgM5s"  # Cavit (fallback / single-voice episodes)
     voices:

@@ -64,30 +64,62 @@ OVERRIDES_FILENAME = "script_overrides.json"
 
 # Fallback opening variants. Profiles should configure their own; these keep the
 # stage usable (and testable) without any profile changes.
-# The greeting is only the greeting: the headlines follow as their own segment,
-# so no variant may end in an empty "here are the details" phrase.
+# An opening is a greeting *and* a framing of the news day: a bare "good evening"
+# sounds like a machine starting a file. The framing sentence stays generic on
+# purpose -- it must be true on any day, because nothing here is grounded in a
+# source story. The headlines follow as their own segment, so no variant may end
+# in an empty "here are the details" phrase.
 DEFAULT_OPENINGS: tuple[str, ...] = (
-    "İyi akşamlar. {show_name_dative} hoş geldiniz.",
-    "İyi akşamlar. {show_name} başlıyor.",
-    "İyi akşamlar, {show_name_dative} hoş geldiniz.",
+    "İyi akşamlar, {show_name_dative} hoş geldiniz."
+    " Almanya'nın ve dünyanın gündemindeki gelişmelerle karşınızdayız.",
+    "İyi akşamlar. {show_name} başlıyor."
+    " Günün öne çıkan haberlerini ve Almanya'daki yansımalarını aktarıyoruz.",
+    "İyi akşamlar, hoş geldiniz."
+    " {show_name} ile günün gelişmelerini ve bunların Almanya'daki anlamını konuşuyoruz.",
+    "İyi akşamlar. {show_name_dative} hoş geldiniz."
+    " Bugünün gündemini ve sizi doğrudan ilgilendiren gelişmeleri derledik.",
 )
 
+# A closing is a hand-off, not a full stop: it thanks the audience, promises
+# continued coverage and says good-bye.
 DEFAULT_CLOSINGS: tuple[str, ...] = (
-    "Bugünün gündemi bu kadar. Bizi izlediğiniz için teşekkür ederiz."
+    "Bugün öne çıkan gelişmeleri sizlere aktardık."
+    " Gün boyunca yaşanan gelişmeleri takip etmeye devam edeceğiz."
+    " Yeni haber bülteninde yeniden görüşmek üzere, iyi akşamlar.",
+    "Bugünkü bültenimizin sonuna geldik. Bizi izlediğiniz için teşekkür ederiz."
+    " Gelişmeleri izlemeye ve sizlere aktarmaya devam edeceğiz. İyi akşamlar.",
+    "Günün gündemini bu bültende topladık."
+    " Yeni gelişmeleri takip etmeyi sürdürüyoruz."
     " Yeniden görüşmek üzere, iyi akşamlar.",
-    "Bugünün öne çıkan gelişmeleri bunlardı. Yeni haberlerle yeniden görüşmek üzere, iyi akşamlar.",
-    "Bugünkü bültenimizin sonuna geldik. Bizi izlediğiniz için teşekkür ederiz. İyi akşamlar.",
+    "Bugünün haberleri bunlardı. Bizi izlediğiniz için teşekkür ederiz."
+    " Yarın yeni bir bültende buluşmak üzere, iyi akşamlar.",
 )
 
 DEFAULT_WEATHER_HANDOVERS: tuple[str, ...] = (
-    "Son olarak hava durumuna bakalım.",
-    "Şimdi hava durumuna geçelim.",
     "Bültenimizi hava durumuyla tamamlıyoruz.",
+    "Haberlerin ardından şimdi hava durumuna bakıyoruz.",
+    "Son olarak Almanya genelinde hava nasıl olacak, ona bakalım.",
 )
 
 DEFAULT_BRIEFS_LABEL = "Kısa haberlerle devam ediyoruz."
 
+# Line that introduces the spoken headline block.
+DEFAULT_HEADLINE_INTROS: tuple[str, ...] = (
+    "Bülteni açan başlıklar şöyle.",
+    "Önce günün öne çıkan başlıkları.",
+    "Bu akşamki bültenin başlıkları.",
+)
+
 # Sentence that closes the headline block and hands over to the first story.
+# ``{topic}`` is filled with the first broadcast story's own topic, so the
+# programme names where it starts instead of saying "let's begin".
+DEFAULT_HEADLINE_OUTROS: tuple[str, ...] = (
+    "{topic} ile başlıyoruz.",
+    "Bültene {topic} başlığıyla başlıyoruz.",
+    "İlk haberimiz {topic}.",
+)
+
+# Used when no story topic can be derived (e.g. captions unusable).
 DEFAULT_HEADLINE_OUTRO = "Ayrıntılarla başlıyoruz."
 
 # Turkish vowel harmony: the dative suffix follows the last vowel of the word.
@@ -112,6 +144,23 @@ def turkish_dative(name: str) -> str:
     if lowered[-1] in _VOWELS:
         suffix = "y" + suffix
     return f"{cleaned}'{suffix}"
+
+
+def turkish_sentence_case(text: str) -> str:
+    """Turn an all-caps overlay caption into a speakable phrase.
+
+    Overlay headlines are written in capitals for the screen. Read out they
+    sound like shouting, and Turkish casing is not the ASCII one: ``I`` lowers
+    to ``ı`` and ``İ`` to ``i``. Only the first letter stays capitalised, so the
+    result is a topic phrase a presenter can actually say.
+    """
+    cleaned = " ".join(str(text or "").split()).strip(" .,:;-—")
+    if not cleaned:
+        return ""
+    lowered = cleaned.replace("I", "ı").replace("İ", "i").lower()
+    first = lowered[0]
+    first = "İ" if first == "i" else first.upper()
+    return first + lowered[1:]
 
 
 def spoken_show_name(branding: dict[str, Any]) -> str:
@@ -522,10 +571,23 @@ def _is_shouted(text: str) -> bool:
     return all(ch == ch.upper() for ch in letters)
 
 
+def _topic_phrase(story: ScriptStory) -> str:
+    """A speakable topic name for a story, taken from its overlay headline."""
+    return turkish_sentence_case(story.display_headline)
+
+
 def _headline_block(
-    stories: list[ScriptStory], max_items: int = 4, outro: str = DEFAULT_HEADLINE_OUTRO
+    stories: list[ScriptStory],
+    max_items: int = 4,
+    outro: str = DEFAULT_HEADLINE_OUTRO,
+    intro: str = "",
 ) -> str:
-    """Two to four spoken teasers for stories that really are broadcast."""
+    """Two to four spoken teasers for stories that really are broadcast.
+
+    The block is introduced ("here are tonight's headlines") and closed by a
+    hand-over that names the first topic, so the programme moves into its first
+    story instead of jumping into it.
+    """
     teasers = [s for s in stories if s.priority == StoryPriority.TOP and not s.is_weather]
     if len(teasers) < 2:
         teasers = [s for s in stories if not s.is_weather][:max_items]
@@ -535,7 +597,12 @@ def _headline_block(
     lines = [sentence for sentence in (_teaser_sentence(s) for s in teasers) if sentence]
     if len(lines) < 2:
         return ""
+    if intro:
+        lines.insert(0, intro)
     if outro:
+        topic = _topic_phrase(teasers[0])
+        if "{topic}" in outro:
+            outro = outro.format(topic=topic) if topic else DEFAULT_HEADLINE_OUTRO
         lines.append(outro)
     return " ".join(lines)
 
@@ -552,6 +619,12 @@ def _frame_stories(
     openings = [str(v) for v in (config.get("openings") or DEFAULT_OPENINGS)]
     closings = [str(v) for v in (config.get("closings") or DEFAULT_CLOSINGS)]
     handovers = [str(v) for v in (config.get("weather_handovers") or DEFAULT_WEATHER_HANDOVERS)]
+    headline_intros = [
+        str(v) for v in (config.get("headline_intros") or DEFAULT_HEADLINE_INTROS)
+    ]
+    headline_outros = [
+        str(v) for v in (config.get("headline_outros") or DEFAULT_HEADLINE_OUTROS)
+    ]
 
     # Spoken text uses the pronounceable brand and its declined form; the screen
     # keeps the display name.
@@ -567,7 +640,11 @@ def _frame_stories(
     opening_segments = [
         SpeakerSegment(role=SpeakerRole.ANCHOR, purpose=SegmentPurpose.OPENING, text=opening_text)
     ]
-    headlines = _headline_block(script_stories)
+    headlines = _headline_block(
+        script_stories,
+        outro=_pick(tuple(headline_outros), episode_id, "headline_outro"),
+        intro=_pick(tuple(headline_intros), episode_id, "headline_intro"),
+    )
     if headlines:
         opening_segments.append(
             SpeakerSegment(
@@ -1012,14 +1089,22 @@ def _request_model_script(
     from btcedu.services.errors import ErrorCategory, PipelineError
 
     body, _, user_part = template_body.partition("# Input")
-    rendered = (
-        user_part.replace("{{broadcast_date}}", broadcast_date)
-        .replace("{{target_body_seconds}}", f"{_preferred_seconds(qa_config):.0f}")
-        .replace("{{anchor_share_min}}", f"{qa_config.anchor_share_min * 100:.0f}")
-        .replace("{{anchor_share_max}}", f"{qa_config.anchor_share_max * 100:.0f}")
-        .replace("{{selected_stories}}", _selected_stories_block(selected_docs, rankings))
-        .replace("{{revision_feedback}}", feedback)
-    )
+
+    def _render(text: str) -> str:
+        # The anchor-share band and the target length are configured in the
+        # profile, so the system half of the template must see the same numbers
+        # the input half does -- otherwise the rules contradict the brief.
+        return (
+            text.replace("{{broadcast_date}}", broadcast_date)
+            .replace("{{target_body_seconds}}", f"{_preferred_seconds(qa_config):.0f}")
+            .replace("{{anchor_share_min}}", f"{qa_config.anchor_share_min * 100:.0f}")
+            .replace("{{anchor_share_max}}", f"{qa_config.anchor_share_max * 100:.0f}")
+            .replace("{{selected_stories}}", _selected_stories_block(selected_docs, rankings))
+            .replace("{{revision_feedback}}", feedback)
+        )
+
+    rendered = _render(user_part)
+    system_prompt = _render(body.replace("# System", "").strip())
 
     if settings.dry_run:
         logger.info("Dry-run: using deterministic speaker split for %s", episode_id)
@@ -1035,7 +1120,7 @@ def _request_model_script(
 
     try:
         response = call_claude(
-            system_prompt=body.replace("# System", "").strip(),
+            system_prompt=system_prompt,
             user_message=rendered,
             settings=settings,
             max_tokens=int(config.get("max_tokens", 16384)),

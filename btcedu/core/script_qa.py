@@ -1157,6 +1157,120 @@ def check_short_news_transition(
     return findings
 
 
+# Empty hand-over formulas: they announce that something follows without saying
+# what. A transition either names the new topic or the link between two stories.
+EMPTY_TRANSITION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bsıradaki\s+haber(?:imiz)?\b", re.IGNORECASE),
+    re.compile(r"\bbir\s+diğer\s+haber\b", re.IGNORECASE),
+    re.compile(r"\bdiğer\s+haberlere\s+geç", re.IGNORECASE),
+    re.compile(r"\bbaşka\s+bir\s+konu(?:ya)?\b", re.IGNORECASE),
+    re.compile(r"\bgelelim\s+diğer\s+haber", re.IGNORECASE),
+    re.compile(r"\bşimdi\s+de\s+şu\s+haber\b", re.IGNORECASE),
+)
+
+# Purposes an anchor may use to open a story. The first spoken words of a story
+# belong to the anchor (``check_presentation_order``); this check judges what
+# those words do.
+_ANCHOR_OPENING_PURPOSES: frozenset[SegmentPurpose] = frozenset(
+    {SegmentPurpose.INTRODUCTION, SegmentPurpose.TRANSITION, SegmentPurpose.BRIEF}
+)
+
+
+def check_story_transitions(script: BroadcastScript, factory: _FindingFactory) -> list[QAFinding]:
+    """Every story change is moderated, and never with an empty formula.
+
+    A newscast does not cut from one topic to the next: the anchor names where
+    the programme is going. ``Sıradaki haberimiz`` announces a change without
+    naming anything, which is exactly the phrasing that makes a bulletin sound
+    automated.
+    """
+    findings: list[QAFinding] = []
+    for story in script.stories:
+        if is_frame_story(story):
+            continue
+        for segment in story.speaker_sequence:
+            if segment.role is not SpeakerRole.ANCHOR:
+                continue
+            if segment.purpose not in _ANCHOR_OPENING_PURPOSES:
+                continue
+            match = next(
+                (
+                    hit
+                    for hit in (p.search(segment.text) for p in EMPTY_TRANSITION_PATTERNS)
+                    if hit
+                ),
+                None,
+            )
+            if not match:
+                continue
+            findings.append(
+                factory.make(
+                    category="empty_transition",
+                    severity="major",
+                    story_id=story.story_id,
+                    target_excerpt=segment.text[:300],
+                    explanation=(
+                        f"Geçiş cümlesi konuyu adlandırmıyor: {match.group(0)!r} gibi "
+                        "boş kalıplar kullanılmış."
+                    ),
+                    required_action=(
+                        "Geçişi konuya bağla: yeni konunun adını ya da iki haber "
+                        "arasındaki ilişkiyi söyle."
+                    ),
+                )
+            )
+            break
+    return findings
+
+
+def check_anchor_closure(script: BroadcastScript, factory: _FindingFactory) -> list[QAFinding]:
+    """After the reporter, the anchor takes the programme back.
+
+    A report that ends with the reporter leaves the viewer at the end of a
+    paragraph instead of at the end of a topic. The anchor closes the story with
+    a short classification and, by doing so, owns the flow of the programme.
+
+    The deterministic fallback only re-splits approved sentences and cannot
+    write a closing line, so it is exempt: flagging it would produce findings no
+    revision could ever fix.
+    """
+    if script.generated_by != "llm":
+        return []
+    findings: list[QAFinding] = []
+    for story in script.stories:
+        if is_frame_story(story) or story.is_weather:
+            continue
+        if story.priority not in {StoryPriority.TOP, StoryPriority.NORMAL}:
+            continue
+        editorial = [s for s in story.speaker_sequence if s.purpose not in SYSTEM_PURPOSES]
+        if not editorial:
+            continue
+        has_reporter = any(s.role is SpeakerRole.REPORTER for s in editorial)
+        if not has_reporter:
+            continue
+        last = editorial[-1]
+        if last.role is SpeakerRole.ANCHOR and last.purpose is SegmentPurpose.ANALYSIS:
+            continue
+        findings.append(
+            factory.make(
+                category="missing_anchor_closure",
+                severity="major",
+                story_id=story.story_id,
+                target_excerpt=last.text[:300],
+                explanation=(
+                    "Haber muhabirle bitiyor; ana sunucu haberi devralıp "
+                    "değerlendirmiyor."
+                ),
+                required_action=(
+                    "Muhabirin ardından ana sunucudan iki-üç cümlelik somut bir "
+                    "değerlendirme (`analysis`) ekle."
+                ),
+                structural_invariant=True,
+            )
+        )
+    return findings
+
+
 def check_neutral_language(script: BroadcastScript, factory: _FindingFactory) -> list[QAFinding]:
     """Loaded wording repeated through the bulletin sharpens the tone."""
     findings: list[QAFinding] = []
@@ -1380,6 +1494,8 @@ def run_script_qa(
     findings += length_findings
     findings += check_headline_reading(script, factory)
     findings += check_short_news_transition(script, factory, briefs_label)
+    findings += check_story_transitions(script, factory)
+    findings += check_anchor_closure(script, factory)
     findings += check_neutral_language(script, factory)
     findings += check_lower_thirds(script, factory)
     findings += check_hedging(script, factory)

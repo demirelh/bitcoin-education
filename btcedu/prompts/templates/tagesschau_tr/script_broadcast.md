@@ -14,15 +14,18 @@ haber metinlerini iki sunuculu bir yayın metnine dönüştürmek.
 
 ## SUNUCULAR
 
-- `anchor_female` — ana sunucu (kadın). Bülteni açar, başlıkları okur, önemli
-  konuları tanıtır, bağlamı açıklar, haberin Almanya'daki izleyici için ne
-  anlama geldiğini anlatır, muhabirin ardından kısa değerlendirme yapar, kısa
-  haberleri sunar, hava durumuna geçiş yapar ve bülteni kapatır.
+- `anchor_female` — **ana sunucu / moderatör** (kadın). O yalnızca metin okumaz,
+  bülteni yönetir. Görevleri: bülteni açar, izleyiciyi selamlar, başlıkları
+  duyurur, her haberi tanıtır ve bağlamını kurar, muhabire devreder, muhabirden
+  sonra sözü geri alır, haberin ne anlama geldiğini açıklar, bir sonraki konuya
+  moderasyonla geçer, hava durumunu anons eder ve bülteni kapatır.
 - `reporter_male` — muhabir (erkek). Olgular, sayılar, alıntılar, olayların
   seyri, siyasi pozisyonlar ve kaynak metindeki ayrıntılar onun bölümüdür.
 
-Ana sunucunun payı toplam kelimelerin **%40–50**'si olmalı. Ana sunucu her konuda
-yalnızca bir iki cümle söylemez; önemli konuları gerçekten tanıtır ve bağlar.
+Ana sunucunun payı toplam kelimelerin **%{{anchor_share_min}}–%{{anchor_share_max}}**'i
+olmalı. Ritim şöyle olmamalı: sunucu iki cümle, muhabir beş dakika, sunucu bir
+cümle. Sunucu her önemli haberi gerçekten tanıtır, muhabirden sonra gerçekten
+devralır; ortaya karşılıklı bir haber akışı çıkar.
 
 **Görev ayrımı:** ana sunucu açıklar ve bağlam kurar, muhabir aktarır. Muhabir
 yorum yapmaz, ana sunucu olay aktarmaz. İkisi aynı olguyu iki kez söylemez.
@@ -31,14 +34,86 @@ yorum yapmaz, ana sunucu olay aktarmaz. İkisi aynı olguyu iki kez söylemez.
 
 | Öncelik | Sunucu tanıtımı | Muhabir aktarımı | Sunucu değerlendirmesi |
 | --- | --- | --- | --- |
-| `top` | 40–70 | 130–220 | 20–50 |
-| `normal` | 20–40 | 80–150 | 15–30 |
-| `brief` | 10–25 | 30–60 | — |
+| `top` | 50–90 | 130–200 | 30–60 |
+| `normal` | 30–55 | 80–140 | 20–40 |
+| `brief` | 12–30 | 30–60 | — |
 
 Konusu gerçekten karmaşıksa üst sınır aşılabilir. Ama anlamı değiştirmeyen yan
 ayrıntı, benzer uzman görüşleri, tekrarlanan yer ve kurum adları ve haber değeri
 olmayan teknik ayrıntı çıkarılır. Bir bilgiyi yalnızca kelime sınırı yüzünden
 atma; anlamak için gerekliyse kalsın.
+
+## KONU GEÇİŞLERİ (ZORUNLU)
+
+İki haber arasında sert kesme yoktur. Her yeni haber, ana sunucunun konuyu
+adlandıran kısa bir moderasyon cümlesiyle başlar. Geçiş ya yeni konunun ne
+olduğunu ya da iki haber arasındaki ilişkiyi söyler:
+
+> "İç politikadan ekonomi gündemine geçiyoruz."
+> "Şimdi dış politikadaki gelişmelere bakalım."
+> "Mahkeme kararlarının ardından şimdi ulaştırma sektörüne gidiyoruz."
+> "Almanya'daki bu tablonun ardından şimdi uluslararası gelişmeler."
+
+"Sıradaki haberimiz", "bir diğer haber", "başka bir konu" gibi hiçbir şey
+söylemeyen kalıplar YASAKTIR. Geçiş cümlesi, ardından gelen tanıtımın ilk
+cümlesi olabilir; ayrı bir segment açman gerekmez.
+
+## SUNUCU HABERİ NASIL TANITIR
+
+Ana sunucu olguyu tekrarlamaz, anlamını söyler. Tanıtım kuru bir başlık
+okuması değildir:
+
+Yanlış:
+
+> "Leipzig-Halle Havalimanı'nda bir olay yaşandı."
+
+Doğru:
+
+> "Leipzig-Halle'de yaşanan olay yalnızca havalimanını değil, Almanya'nın
+> kritik altyapı güvenliğini de yeniden gündeme taşıdı. Ayrıntılar Cavit'te."
+
+Devir cümlesi her haberde aynı olmasın; bazen "Ayrıntılar şimdi muhabirimizde",
+bazen doğrudan konuyla ("Soruşturmanın nasıl ilerlediğine bakalım.") devret.
+
+## MUHABİR NASIL BAŞLAR
+
+Muhabir hiçbir zaman kuru bir kurum adıyla, tabelaya benzer bir ifadeyle
+başlamaz. Her aktarım doğal bir girişle açılır:
+
+Yanlış:
+
+> "Federal Savcılık..."
+
+Doğru:
+
+> "Olayın ardından güvenlik kurumları kapsamlı bir soruşturma başlattı."
+> "Yetkililerin açıklamalarına göre..."
+> "Mahkemenin bugün açıkladığı karara göre..."
+
+## MUHABİRDEN SONRA SUNUCU DEVRALIR
+
+`top` ve `normal` her haber, muhabirin ardından ana sunucunun `analysis`
+bölümüyle biter. Sunucu özet geçmez; ne anlama geldiğini söyler:
+
+> "Bu kararın etkileri önümüzdeki günlerde daha net görülecek."
+> "Şimdi gözler yeni güvenlik önlemlerine çevrilmiş durumda."
+> "Konuyla ilgili gelişmeleri takip etmeye devam edeceğiz."
+
+Bu cümleler de kaynağa dayanmalı ve somut bir isme, kuruma, sayıya veya tarihe
+bağlanmalı.
+
+## YAYININ KİMLİĞİ
+
+Bu bülten, Almanya'da yaşayan Türkçe konuşan izleyici için Almanya gündemini
+anlatır. Her haber şu üç soruya örtük olarak yanıt vermeli:
+
+1. Bu konu neden önemli?
+2. Ne gibi sonuçlar doğurabilir?
+3. İzleyicinin bundan çıkarması gereken nedir?
+
+Bu, yorum yapmak değildir. Görüş bildirilmez, taraf tutulmaz, tavsiye
+verilmez — yalnızca kaynağa dayanan bağlam kurulur. Dayanak yoksa bağlam
+cümlesi yazılmaz.
 
 ## SUNUCU DEĞERLENDİRMESİ NASIL YAZILIR
 
@@ -114,13 +189,16 @@ Her haberi aynı kalıba sokma. Önceliğe göre:
 konuşmacısı olamaz. Bülteni ana sunucu açar, her haberi o anons eder, bülteni o
 kapatır. Muhabir yalnızca ana sunucunun devrettiği yerde konuşur.
 
-- `top`: ana sunucu tanıtır (`introduction`) → muhabir aktarır (`report`) →
-  ana sunucu değerlendirir (`analysis`)
-- `normal`: ana sunucu kısa tanıtır (`introduction`) → muhabir aktarır (`report`)
-  → ana sunucu toparlar (`analysis`)
-- `brief`: ana sunucu kısa anons eder (`transition`) → muhabir tek kompakt
-  paragraf aktarır (`brief`); ya da haberin tamamını ana sunucu tek başına
-  okur (`brief`)
+- `top`: ana sunucu geçiş + tanıtım yapar (`introduction`) → muhabir aktarır
+  (`report`) → ana sunucu devralıp değerlendirir (`analysis`)
+- `normal`: ana sunucu geçiş + kısa tanıtım yapar (`introduction`) → muhabir
+  aktarır (`report`) → ana sunucu toparlar (`analysis`)
+- `brief`: ana sunucu konuyu adlandırarak anons eder (`transition`) → muhabir tek
+  kompakt paragraf aktarır (`brief`); ya da haberin tamamını ana sunucu tek
+  başına okur (`brief`)
+
+`top` ve `normal` haberlerde `analysis` bölümünü atlamak yasaktır:
+haber muhabirle bitemez.
 
 ## GÖRSEL ALT YAZI
 

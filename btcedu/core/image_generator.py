@@ -1145,20 +1145,56 @@ def _visual_beats(chapter) -> list[dict]:
     return [beat for beat in beats if isinstance(beat, dict)]
 
 
-# The programme never shows its presenters, so a beat hint may only change the
+# The programme never shows its presenters, so a shot hint may only change the
 # framing of the subject. Naming a studio or a presenter makes the image model
 # invent an on-screen anchor, which is both wrong and, since the anchor is a
 # woman, usually the wrong person as well.
-_ROLE_SCENE_HINT = {
-    "anchor_female": (
-        "Framing: a calm, wide establishing view of the subject. "
-        "No news studio, no presenter, no person addressing the camera."
-    ),
-    "reporter_male": (
-        "Framing: a closer view at ground level showing the situation itself rather "
-        "than an overview. No news studio, no presenter, no person addressing the camera."
-    ),
-}
+_NO_STUDIO = "No news studio, no presenter, no person addressing the camera."
+
+# Shot grammar of a television report: the sequence tells the story visually
+# instead of showing the same subject three times. Each entry is a different
+# distance, height or object, so two consecutive pictures can never be near
+# duplicates of each other.
+_SHOT_LADDER: tuple[str, ...] = (
+    "Framing: a wide establishing shot that places the story in its location, "
+    "eye level, showing the surroundings.",
+    "Framing: a close detail shot of a single concrete object central to the "
+    "story, shallow depth of field, filling the frame.",
+    "Framing: a medium shot of people involved in the situation, seen from the "
+    "side or from behind, going about the event.",
+    "Framing: the exterior of the building or institution at the centre of the "
+    "story, seen from a low angle.",
+    "Framing: a top-down shot of documents, papers or equipment relevant to the "
+    "story on a surface.",
+    "Framing: a high aerial view of the area, showing the wider infrastructure "
+    "and its context.",
+    "Framing: a ground-level shot of the infrastructure itself — roads, rails, "
+    "machinery, cables or terminals — without any overview.",
+    "Framing: a quiet closing image of the scene in the same location, taken "
+    "from a distance in soft light.",
+)
+
+# The role decides where in the ladder a shot starts: the anchor introduces and
+# classifies (overview), the reporter is on the ground (detail).
+_ROLE_LADDER_OFFSET = {"anchor_female": 0, "reporter_male": 1}
+
+
+def _shot_hint(chapter, beat: dict) -> str:
+    """Framing instruction for one shot, varied across the whole programme.
+
+    Two neighbouring chapters that both open with an establishing shot look like
+    the same picture twice, so the ladder is rotated per chapter as well as per
+    shot within the chapter. The result is deterministic: the same chapter and
+    the same shot always produce the same framing.
+    """
+    chapter_id = str(getattr(chapter, "chapter_id", "") or "")
+    chapter_number = int(re.sub(r"\D", "", chapter_id) or 0)
+    beat_index = int(beat.get("beat_index") or 0)
+    offset = _ROLE_LADDER_OFFSET.get(str(beat.get("role") or ""), 0)
+    # 3 is coprime with the ladder length, so consecutive chapters never reuse
+    # the same starting rung.
+    position = (chapter_number * 3 + beat_index * 2 + offset) % len(_SHOT_LADDER)
+    return f"{_SHOT_LADDER[position]} {_NO_STUDIO}"
 
 
 def _generate_beat_prompt(
@@ -1171,7 +1207,10 @@ def _generate_beat_prompt(
 
     The subject stays the same — it is the same story — but the shot must not be.
     A change of presenter is a change of scene, so the beat's own words and a
-    role-specific framing hint drive the prompt.
+    shot-specific framing hint drive the prompt. The hints rotate through a
+    television shot grammar (establishing, detail, people, building, documents,
+    aerial, infrastructure, closing image), so no two neighbouring pictures show
+    the same view.
 
     Every shot of a chapter is written by this function, including the first one.
     Building the first shot from the chapter's one-line ``image_prompt`` and the
@@ -1182,7 +1221,7 @@ def _generate_beat_prompt(
     visual = chapter.visual
     beat_text = str(beat.get("text") or "")
     narration_context = beat_text[:300] + "..." if len(beat_text) > 300 else beat_text
-    hint = _ROLE_SCENE_HINT.get(str(beat.get("role") or ""), "")
+    hint = _shot_hint(chapter, beat)
 
     user_message = user_template.replace("{{ chapter_title }}", chapter.title)
     user_message = user_message.replace("{{ visual_type }}", visual.type)

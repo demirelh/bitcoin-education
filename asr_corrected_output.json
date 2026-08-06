@@ -1,0 +1,337 @@
+{
+  "segments": [
+    {
+      "segment_id": "seg-0117",
+      "corrected_text": "Situation, unter der auch die Frachtschifffahrt massiv leidet. Voll beladen ist die Donau",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0118",
+      "corrected_text": "aktuell nicht durchgängig zu befahren. Also der ist jetzt da beladen auf maximal 30, 40",
+      "status": "uncertain",
+      "severity": "minor",
+      "flags": ["incomplete_sentence"],
+      "reason": "Segment endet mit unvollständiger Zahl; keine sichere Rekonstruktion möglich",
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0119",
+      "corrected_text": "Prozent seiner Kapazität und damit ist er komplett unwirtschaftlich. Der Klimawandel",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0120",
+      "corrected_text": "stellt die Binnenschifffahrt vor immer größere Herausforderungen, denn an Bilder wie diese",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0121",
+      "corrected_text": "wird man sich gewöhnen müssen. Wacken, bekannt für Staub, Schlamm und laute Musik, ist das",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0122",
+      "corrected_text": "größte Heavy-Metal-Festival der Welt. Im gleichnamigen 2000-Seelen-Dorf in Schleswig-Holstein",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0123",
+      "corrected_text": "öffnet die diesjährige Metal-Party heute ihre Türen. Das Festival ist in den 35 Jahren",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0124",
+      "corrected_text": "mit mehr als 85.000 verkauften Tickets weit über das Dorf hinausgewachsen. Das Publikum älter,",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0125",
+      "corrected_text": "aber nicht leiser. Es ist halb vier, die Fans stürmen den Holy Ground, den Platz vor der",
+      "status": "uncertain",
+      "severity": "minor",
+      "flags": ["incomplete_sentence"],
+      "reason": "Segment endet mit Artikel 'der'; keine sichere Rekonstruktion möglich",
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0126",
+      "corrected_text": "Hauptbühne. Wacken 2026, das Metal-Festival, ist erneut komplett ausverkauft. Viele Besucher",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0127",
+      "corrected_text": "halten ihm seit Jahrzehnten die Treue und sind inzwischen im Rentenalter. Ganz viele zum Renten",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0128",
+      "corrected_text": "beginnen, gönnen sich eine Kreuzfahrt. Scheiße, wir fahren nach Wacken, das ist unser Rentenbeginn.",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0129",
+      "corrected_text": "Ich habe mein komplettes Bett mit, mit Matratze, mit alles drum und dran, wie es sich gehört.",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0130",
+      "corrected_text": "Eine offizielle Altersstatistik nennt der Veranstalter nicht, aber der Blick aufs Gelände",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0131",
+      "corrected_text": "zeigt, hier treffen finanzielle Möglichkeiten und der Anspruch auf Komfort zusammen. Eine solche",
+      "status": "uncertain",
+      "severity": "minor",
+      "flags": ["incomplete_sentence"],
+      "reason": "Segment endet mit 'Eine solche'; keine sichere Rekonstruktion möglich",
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0132",
+      "corrected_text": "Hütte mietet man ab zweieinhalb tausend Euro für eine Woche. Mit 30 hätte ich mir das noch nicht",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0133",
+      "corrected_text": "leisten können. Also da wäre ich auf den Zeltplatz gegangen. Wir haben lange genug gearbeitet und unser",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0134",
+      "corrected_text": "letztes Hemd hat keine Taschen. Richtig. Den älteren Semestern dürfte auch entgegenkommen, dass in",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0135",
+      "corrected_text": "diesem Jahr deutlich mehr feste Bodenplatten verlegt wurden. Wir haben gestern noch eine Dame getroffen,",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0136",
+      "corrected_text": "die wird in Kürze 70 mit dem Rollator. Das ist das, was die Atmosphäre hier ausmacht. Ob Rollator,",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0137",
+      "corrected_text": "ob Krücken, ob Rollstuhl, es wird überall geholfen. Es wird für alle gesorgt. Es ist einfach nur perfekt.",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0138",
+      "corrected_text": "Also es sind schon viele Alte, aber es sind auch viele, sag ich mal, in unserem Alter, oder?",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0139",
+      "corrected_text": "Es ist eine Line-up-Frage. Das Line-up, also die Auswahl an Bands, ist in diesem Jahr eine Mischung",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0140",
+      "corrected_text": "aus vielen altbekannten Bands und einigen Newcomern. Eben ein bisschen wie die Besucher selbst.",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0141",
+      "corrected_text": "Und nun die Wettervorhersage für morgen, Donnerstag, den 30. Juli.",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0142",
+      "corrected_text": "Das Hoch zieht weiter nach Osteuropa und macht den Weg frei für mehr Tiefdruckeinfluss. Heute Nacht",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0143",
+      "corrected_text": "ist es meist klar. Gegen Morgen ziehen im Westen lockere Wolken auf. Der Tag beginnt noch mit viel",
+      "status": "uncertain",
+      "severity": "minor",
+      "flags": ["incomplete_sentence"],
+      "reason": "Segment endet mit 'viel'; keine sichere Rekonstruktion möglich",
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0144",
+      "corrected_text": "Sonne. Im Verlauf werden die Wolken von Westen her dichter. Der Wind frischt auf mit stürmischen",
+      "status": "uncertain",
+      "severity": "minor",
+      "flags": ["incomplete_sentence"],
+      "reason": "Segment endet mit 'stürmischen'; keine sichere Rekonstruktion möglich",
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0145",
+      "corrected_text": "Böen bis hin zu Orkanböen. Dazu gibt es örtlich Schauer und heftige Gewitter. Die Nacht wird im",
+      "status": "uncertain",
+      "severity": "minor",
+      "flags": ["incomplete_sentence"],
+      "reason": "Segment endet mit Präposition 'im'; keine sichere Rekonstruktion möglich",
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0146",
+      "corrected_text": "Südwesten und Westen häufiger tropisch, am frischesten im Erzgebirge. Morgen Höchstwerte",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0147",
+      "corrected_text": "von meist 32 bis 40 Grad. Kühler bleibt es auf den Nordseeinseln. Am Freitag Sonne und Wolken,",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0148",
+      "corrected_text": "ab dem Nachmittag in schwüler Luft, regional Schauer und zum Teil heftige Gewitter. Die",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0149",
+      "corrected_text": "gibt es am Samstag noch in der Südosthälfte, am Sonntag am ehesten im Süden, oft aber trocken",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0150",
+      "corrected_text": "und sonnig. In den Tagesthemen heute um 22.30 Uhr fragt Susanne Stichler den neuen",
+      "status": "uncertain",
+      "severity": "minor",
+      "flags": ["incomplete_sentence"],
+      "reason": "Segment endet mit 'neuen'; keine sichere Rekonstruktion möglich",
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0151",
+      "corrected_text": "Bundesverkehrsminister Steffen Bilger, wie er Straße und Schiene jetzt schnell sanieren will.",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0152",
+      "corrected_text": "Außerdem geht es um die umstrittenen Pläne von FIFA-Präsident Infantino,",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    },
+    {
+      "segment_id": "seg-0153",
+      "corrected_text": "private Investoren an WM-Turnieren zu beteiligen.",
+      "status": "verified",
+      "severity": "none",
+      "flags": [],
+      "reason": null,
+      "verification_ids": []
+    }
+  ]
+}

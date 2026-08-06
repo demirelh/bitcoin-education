@@ -148,13 +148,40 @@ class ScriptQAConfig:
     # tight, it is a different programme than promised, so it is sent back.
     duration_revision_below: float = 432.0
     max_automatic_revisions: int = 2
+    # Editorial duration band. When a profile configures ``script.editorial`` the
+    # length stops being a hard box: below the minimum is a review note instead
+    # of an order to pad, and above the soft maximum only matters when the extra
+    # minutes come from repetition. Without the block the historic hard limits
+    # stay in force, so existing profiles do not change behaviour.
+    editorial_duration_mode: bool = False
+    editorial_minimum_seconds: float = 480.0
+    preferred_duration_seconds: float = 540.0
+    soft_maximum_seconds: float = 630.0
+    hard_maximum_seconds: float | None = None
 
     @classmethod
     def from_stage_config(cls, config: dict[str, Any] | None) -> ScriptQAConfig:
         config = config or {}
         share = config.get("anchor_share_target") or [0.40, 0.50]
         min_total = float(config.get("min_total_seconds", 480))
+        editorial = dict(config.get("editorial") or {})
+        hard_max = editorial.get("hard_maximum_duration_seconds")
         return cls(
+            editorial_duration_mode=bool(editorial),
+            editorial_minimum_seconds=float(
+                editorial.get("minimum_duration_seconds", min_total)
+            ),
+            preferred_duration_seconds=float(
+                editorial.get(
+                    "preferred_duration_seconds", config.get("target_total_seconds", 540)
+                )
+            ),
+            soft_maximum_seconds=float(
+                editorial.get(
+                    "soft_maximum_duration_seconds", config.get("max_total_seconds", 630)
+                )
+            ),
+            hard_maximum_seconds=None if hard_max is None else float(hard_max),
             min_total_seconds=min_total,
             max_total_seconds=float(config.get("max_total_seconds", 630)),
             target_total_seconds=float(config.get("target_total_seconds", 540)),
@@ -575,6 +602,199 @@ def check_repetition(script: BroadcastScript, factory: _FindingFactory) -> list[
                         required_action="Sunucu metnini bağlam/değerlendirme olarak yeniden yaz.",
                     )
                 )
+        findings += _overlap_findings(story, factory)
+    findings += _headline_body_findings(script, factory)
+    return findings
+
+
+_STOPWORDS: frozenset[str] = frozenset(
+    {
+        "bir",
+        "bu",
+        "da",
+        "de",
+        "ve",
+        "ile",
+        "için",
+        "olarak",
+        "olan",
+        "daha",
+        "ama",
+        "ancak",
+        "the",
+    }
+)
+
+
+def _content_tokens(text: str) -> set[str]:
+    return {t for t in re.findall(r"\w+", _fold(text)) if len(t) > 3 and t not in _STOPWORDS}
+
+
+def _sentences(text: str, min_chars: int = 40) -> list[str]:
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text) if len(s.strip()) >= min_chars]
+
+
+def _overlap(first: str, second: str) -> float:
+    """Share of the shorter sentence's content words that also appear in the other."""
+    a, b = _content_tokens(first), _content_tokens(second)
+    if len(a) < 4 or len(b) < 4:
+        return 0.0
+    return len(a & b) / min(len(a), len(b))
+
+
+def _overlap_findings(story: ScriptStory, factory: _FindingFactory) -> list[QAFinding]:
+    """Near-duplicate sentences inside one story.
+
+    Verbatim repeats were already caught; the bulletin's real problem is the
+    same fact said twice in slightly different words, across speakers or within
+    a single segment.
+    """
+    findings: list[QAFinding] = []
+    entries: list[tuple[SpeakerRole, str]] = []
+    for segment in story.speaker_sequence:
+        if segment.purpose in SYSTEM_PURPOSES:
+            continue
+        entries.extend((segment.role, sentence) for sentence in _sentences(segment.text))
+    for index, (role, sentence) in enumerate(entries):
+        for other_role, other in entries[index + 1 :]:
+            if _overlap(sentence, other) < 0.7:
+                continue
+            cross = role != other_role
+            findings.append(
+                factory.make(
+                    category="cross_speaker_repetition" if cross else "redundant_story_detail",
+                    severity="major" if cross else "minor",
+                    story_id=story.story_id,
+                    target_excerpt=other[:300],
+                    explanation=(
+                        "Aynı bilgi iki farklı sunucu tarafından tekrarlanıyor."
+                        if cross
+                        else "Aynı ayrıntı aynı bölüm içinde tekrar ediliyor."
+                    ),
+                    required_action="Tekrarı sil, yerine yeni bilgi ver.",
+                )
+            )
+            break
+    return findings
+
+
+def _headline_body_findings(
+    script: BroadcastScript, factory: _FindingFactory
+) -> list[QAFinding]:
+    """A teaser may point at a story; it must not be its first sentence again."""
+    findings: list[QAFinding] = []
+    headlines = [
+        segment.text
+        for story in script.stories
+        for segment in story.speaker_sequence
+        if segment.purpose == SegmentPurpose.HEADLINES
+    ]
+    if not headlines:
+        return findings
+    teasers = _sentences(" ".join(headlines), min_chars=30)
+    for story in script.stories:
+        if is_frame_story(story):
+            continue
+        body = editorial_narration(story)
+        first = next(iter(_sentences(body, min_chars=30)), "")
+        if not first:
+            continue
+        for teaser in teasers:
+            if _overlap(teaser, first) >= 0.75:
+                findings.append(
+                    factory.make(
+                        category="headline_body_duplication",
+                        severity="minor",
+                        story_id=story.story_id,
+                        target_excerpt=first[:300],
+                        explanation="Haberin ilk cümlesi başlık bloğunun tekrarı.",
+                        required_action="Habere yeni bir bilgiyle gir.",
+                    )
+                )
+                break
+    return findings
+
+
+def _editorial_duration_revisions(
+    duration: float, config: ScriptQAConfig, redundancy_detected: bool
+) -> list[str]:
+    """Only length that is both excessive and redundant is sent back."""
+    if config.hard_maximum_seconds is not None and duration > config.hard_maximum_seconds:
+        return ["duration_above_hard_maximum"]
+    if duration > config.soft_maximum_seconds and redundancy_detected:
+        return ["episode_overlong_due_to_redundancy"]
+    return []
+
+
+def _editorial_duration_findings(
+    duration: float,
+    config: ScriptQAConfig,
+    factory: _FindingFactory,
+    redundancy_detected: bool,
+) -> list[QAFinding]:
+    """Duration notes that never ask for filler text.
+
+    Falling short is reported for the human review; it is never a reason to
+    stretch the bulletin, because padding is what made the programme repetitive
+    in the first place.
+    """
+    findings: list[QAFinding] = []
+    if config.hard_maximum_seconds is not None and duration > config.hard_maximum_seconds:
+        findings.append(
+            factory.make(
+                category="duration_above_hard_maximum",
+                severity="major",
+                explanation=(
+                    f"Toplam süre {duration / 60:.1f} dk, kesin üst sınır "
+                    f"{config.hard_maximum_seconds / 60:.1f} dk."
+                ),
+                required_action="Bir haberi kısa habere indir veya yayından çıkar.",
+                structural_invariant=True,
+            )
+        )
+        return findings
+    if duration > config.soft_maximum_seconds:
+        if redundancy_detected:
+            findings.append(
+                factory.make(
+                    category="episode_overlong_due_to_redundancy",
+                    severity="major",
+                    explanation=(
+                        f"Toplam süre {duration / 60:.1f} dk ve metinde tekrar var; "
+                        "uzunluk içerikten değil tekrardan kaynaklanıyor."
+                    ),
+                    required_action="Tekrar eden bölümleri sil, süreyi böylece kısalt.",
+                    structural_invariant=True,
+                )
+            )
+        else:
+            findings.append(
+                factory.make(
+                    category="episode_longer_than_preferred",
+                    severity="minor",
+                    explanation=(
+                        f"Toplam süre {duration / 60:.1f} dk, tercih edilen süre "
+                        f"{config.preferred_duration_seconds / 60:.1f} dk. İçerik "
+                        "gerekçelendiriyorsa kabul edilebilir."
+                    ),
+                    required_action="Editoryal gerekçe yoksa en zayıf haberi kısalt.",
+                )
+            )
+    elif duration < config.editorial_minimum_seconds:
+        findings.append(
+            factory.make(
+                category="episode_below_editorial_minimum",
+                severity="minor",
+                explanation=(
+                    f"Toplam süre {duration / 60:.1f} dk, hedeflenen alt sınır "
+                    f"{config.editorial_minimum_seconds / 60:.1f} dk."
+                ),
+                required_action=(
+                    "Haber değeri olan bir konuyu daha yayına al. Mevcut haberleri "
+                    "uzatmak için dolgu cümle ekleme."
+                ),
+            )
+        )
     return findings
 
 
@@ -583,6 +803,7 @@ def check_balance_and_duration(
     config: ScriptQAConfig,
     factory: _FindingFactory,
     actual_duration_seconds: float | None = None,
+    redundancy_detected: bool = False,
 ) -> tuple[list[QAFinding], bool, list[str]]:
     """Anchor share and total airtime."""
     findings: list[QAFinding] = []
@@ -622,6 +843,15 @@ def check_balance_and_duration(
     duration = (
         actual_duration_seconds if actual_duration_seconds else script.estimated_duration_seconds
     )
+    if config.editorial_duration_mode:
+        findings.extend(
+            _editorial_duration_findings(duration, config, factory, redundancy_detected)
+        )
+        revision_reasons.extend(
+            _editorial_duration_revisions(duration, config, redundancy_detected)
+        )
+        return findings, bool(revision_reasons), revision_reasons
+
     if duration > config.max_total_seconds:
         findings.append(
             factory.make(
@@ -659,12 +889,163 @@ def check_balance_and_duration(
     return findings, bool(revision_reasons), revision_reasons
 
 
+# Repetition categories that make a long bulletin a padded bulletin.
+REDUNDANCY_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "anchor_repeats_reporter",
+        "cross_speaker_repetition",
+        "redundant_story_detail",
+        "headline_body_duplication",
+    }
+)
+
+
+def check_brand_pronunciation(
+    script: BroadcastScript,
+    factory: _FindingFactory,
+    spoken_name: str,
+    display_name: str,
+) -> list[QAFinding]:
+    """The on-screen brand must never end up in spoken text.
+
+    "ALMANYA24" read aloud produces both the wrong pronunciation and the wrong
+    Turkish suffix, so the script has to use the written-out spoken form.
+    """
+    if not spoken_name or not display_name or spoken_name == display_name:
+        return []
+    findings: list[QAFinding] = []
+    for story in script.stories:
+        for segment in story.speaker_sequence:
+            if display_name not in segment.text:
+                continue
+            findings.append(
+                factory.make(
+                    category="invalid_spoken_brand_suffix",
+                    severity="major",
+                    story_id=story.story_id,
+                    target_excerpt=segment.text[:300],
+                    explanation=(
+                        f"Seslendirilen metinde ekran adı {display_name!r} geçiyor; "
+                        f"okunuşu {spoken_name!r} olmalı."
+                    ),
+                    required_action=f"{display_name} yerine {spoken_name} yaz.",
+                )
+            )
+    return findings
+
+
+def check_story_counting(script: BroadcastScript, factory: _FindingFactory) -> list[QAFinding]:
+    """Greeting and goodbye are framing, not stories.
+
+    They carry no source story, so a script that gives them a real category
+    would make every downstream count (topic cards, QA, dashboard) wrong.
+    """
+    findings: list[QAFinding] = []
+    for story in script.stories:
+        if not is_frame_story(story):
+            continue
+        if story.category not in FRAME_CATEGORIES:
+            findings.append(
+                factory.make(
+                    category="non_story_counted_as_story",
+                    severity="minor",
+                    story_id=story.story_id,
+                    explanation=(
+                        f"Açılış/kapanış bölümü {story.category!r} kategorisiyle haber "
+                        "gibi sayılıyor."
+                    ),
+                    required_action="Çerçeve bölümlerini haber sayımından çıkar.",
+                )
+            )
+    return findings
+
+
+FRAME_CATEGORIES: frozenset[str] = frozenset({"opening", "closing", "intro", "outro"})
+
+
+# Upper word bounds per role. Beyond these a segment stops reporting and starts
+# restating, which is what made the bulletin feel padded.
+MAX_REPORTER_WORDS = 170
+MIN_ANCHOR_ANALYSIS_WORDS = 12
+
+
+def check_segment_lengths(script: BroadcastScript, factory: _FindingFactory) -> list[QAFinding]:
+    """Reporter segments that run long and anchor analysis that says nothing."""
+    findings: list[QAFinding] = []
+    for story in script.stories:
+        if is_frame_story(story):
+            continue
+        for segment in story.speaker_sequence:
+            if segment.purpose in SYSTEM_PURPOSES:
+                continue
+            words = len(segment.text.split())
+            if segment.role == SpeakerRole.REPORTER and words > MAX_REPORTER_WORDS:
+                findings.append(
+                    factory.make(
+                        category="reporter_segment_too_verbose",
+                        severity="minor",
+                        story_id=story.story_id,
+                        target_excerpt=segment.text[:300],
+                        explanation=(
+                            f"Muhabir bölümü {words} kelime (üst sınır "
+                            f"{MAX_REPORTER_WORDS})."
+                        ),
+                        required_action="Tekrar eden ayrıntıları çıkararak bölümü kısalt.",
+                    )
+                )
+            if (
+                segment.role == SpeakerRole.ANCHOR
+                and segment.purpose == SegmentPurpose.ANALYSIS
+                and words >= MIN_ANCHOR_ANALYSIS_WORDS
+                and _is_abstract(segment.text)
+            ):
+                findings.append(
+                    factory.make(
+                        category="anchor_analysis_too_abstract",
+                        severity="minor",
+                        story_id=story.story_id,
+                        target_excerpt=segment.text[:300],
+                        explanation=(
+                            "Sunucu değerlendirmesi somut bir isim, kurum, sayı veya "
+                            "tarih içermiyor."
+                        ),
+                        required_action="Değerlendirmeyi haberdeki somut bir unsura bağla.",
+                    )
+                )
+    return findings
+
+
+def _is_abstract(text: str) -> bool:
+    """True when a sentence names nothing concrete.
+
+    A useful anchor comment ties back to a person, an institution, a number or a
+    date; a comment with none of those is a phrase that would fit any story.
+    """
+    if any(ch.isdigit() for ch in text):
+        return False
+    words = text.split()
+    for index, word in enumerate(words):
+        stripped = word.strip(".,;:!?\"'()")
+        if not stripped or not stripped[0].isalpha():
+            continue
+        if index > 0 and stripped[0] == stripped[0].upper() and stripped[0].isalpha():
+            return False
+    return True
+
+
+def broadcast_story_count(script: BroadcastScript) -> int:
+    """Number of real stories: framing segments do not count."""
+    return sum(1 for story in script.stories if not is_frame_story(story))
+
+
 def run_script_qa(
     script: BroadcastScript,
     approved_by_story: dict[str, str],
     selected_story_ids: list[str],
     config: ScriptQAConfig,
     actual_duration_seconds: float | None = None,
+    spoken_show_name: str = "",
+    display_show_name: str = "",
 ) -> ScriptQAResult:
     """Run every deterministic script check."""
     factory = _FindingFactory()
@@ -675,9 +1056,17 @@ def run_script_qa(
     findings += check_overlays(script, approved_by_story, factory)
     findings += check_opinion(script, factory)
     findings += check_headline_promises(script, factory)
-    findings += check_repetition(script, factory)
+    repetition_findings = check_repetition(script, factory)
+    findings += repetition_findings
+    findings += check_brand_pronunciation(script, factory, spoken_show_name, display_show_name)
+    findings += check_story_counting(script, factory)
+    findings += check_segment_lengths(script, factory)
+    redundancy_detected = any(
+        f.category in REDUNDANCY_CATEGORIES and f.severity in {"major", "critical"}
+        for f in repetition_findings
+    )
     balance_findings, revision_required, reasons = check_balance_and_duration(
-        script, config, factory, actual_duration_seconds
+        script, config, factory, actual_duration_seconds, redundancy_detected
     )
     findings += balance_findings
 

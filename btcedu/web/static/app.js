@@ -1210,11 +1210,25 @@
       const minutes = ((data.estimated_seconds || 0) / 60).toFixed(1);
       const share = Math.round((data.anchor_share || 0) * 100);
 
+      const ed = data.editorial || {};
+      const band = ed.duration_band || {};
+      const verdictText = {
+        below_minimum: "unter der redaktionellen Mindestlänge",
+        longer_than_preferred: "länger als bevorzugt",
+        within_band: "im Rahmen",
+      }[ed.duration_verdict] || "";
+      const bandText = band.minimum_seconds
+        ? `${Math.round(band.minimum_seconds / 60)}–${Math.round((band.soft_maximum_seconds || 0) / 60)} min`
+        : "nicht konfiguriert";
+
       const rows = (data.stories || []).map(s => {
         const roles = (s.segments || [])
-          .map(x => x.role === "anchor_female"
-            ? '<span class="spk spk-a" title="Moderatorin">A</span>'
-            : '<span class="spk spk-r" title="Reporter">R</span>')
+          .map(x => {
+            const label = x.role === "anchor_female" ? "Moderatorin" : "Reporter";
+            const cls = x.role === "anchor_female" ? "spk-a" : "spk-r";
+            const title = `${label} · ${x.purpose || ''} · ${x.words || 0} Wörter · ${Math.round(x.estimated_seconds || 0)}s`;
+            return `<span class="spk ${cls}" title="${esc(title)}">${label[0]}</span>`;
+          })
           .join('');
         const secs = (s.estimated_seconds || 0).toFixed(0);
         return `
@@ -1247,10 +1261,21 @@
         <div class="tts-panel broadcast-panel">
           <div class="tts-summary">
             <strong>${esc(data.show_name || '')}</strong> — ${esc(data.slogan || '')}<br>
-            ${esc(data.broadcast_date || '')} &middot; ${data.story_count} Beiträge &middot;
+            ${esc(data.broadcast_date || '')} &middot; ${data.story_count} Beiträge
+            (ohne An-/Absage) &middot;
             ${minutes} min &middot; Moderatorin ${share}% &middot;
             ${esc(data.generated_by || '')}${data.revision ? ' (Revision ' + data.revision + ')' : ''}
           </div>
+
+          <h4>Redaktion</h4>
+          <ul class="broadcast-editorial">
+            <li>Marke: <code>${esc(ed.display_name || '—')}</code> im Bild,
+                gesprochen „${esc(ed.spoken_name || '—')}“</li>
+            <li>Länge: ${minutes} min &middot; Zielband ${esc(bandText)} &middot; ${esc(verdictText)}</li>
+            <li>Kurznachrichten-Block: ${data.brief_block ? 'ja' : 'nein'}</li>
+            <li>Begrüßung: ${esc(ed.opening_text || '—')}</li>
+            <li>Verabschiedung: ${esc(ed.closing_text || '—')}</li>
+          </ul>
 
           <h4>Sendeablauf</h4>
           <table class="broadcast-table">

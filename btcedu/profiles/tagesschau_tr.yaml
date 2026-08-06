@@ -6,6 +6,11 @@ domain: news
 pipeline_version: 2
 branding:
   show_name: "ALMANYA24"
+  # How the brand looks on screen and how it is pronounced. "ALMANYA24" read
+  # literally produces the wrong Turkish suffix ("ALMANYA24'na"), so spoken
+  # text uses the written-out form and declines that instead.
+  display_name: "ALMANYA24"
+  spoken_name: "Almanya Yirmi Dört"
   slogan: "Almanya'nın nabzı burada atıyor."
   # The programme is an independent Turkish-language production. Source
   # provenance stays in the story documents, QA artifacts and the video
@@ -112,6 +117,14 @@ stage_config:
     min_seconds: 480
     max_seconds: 630
     max_revisions: 1
+    editorial:
+      # Duration is an editorial guideline, not a hard box. Going long is only
+      # a problem when the extra minutes come from repetition or padding.
+      minimum_duration_seconds: 540
+      preferred_duration_seconds: 600
+      soft_maximum_duration_seconds: 720
+      hard_maximum_duration_seconds: null
+      allow_longer_if_editorially_justified: true
   tts:
     voice_id: "Q2IX97JeHBY3vNGzgM5s"  # Cavit (fallback / single-voice episodes)
     voices:

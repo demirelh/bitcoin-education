@@ -12,12 +12,21 @@ import pytest
 from btcedu.core import branding_guard
 from btcedu.core.chapterizer import _chapters_from_script
 from btcedu.core.narration_lock import check_narration_lock, compose_chapter_narration
-from btcedu.core.script_qa import ScriptQAConfig, run_script_qa
-from btcedu.core.scripter import _build_script_stories, _frame_stories
+from btcedu.core.script_qa import (
+    ScriptQAConfig,
+    _FindingFactory,
+    broadcast_story_count,
+    check_balance_and_duration,
+    check_repetition,
+    check_segment_lengths,
+    run_script_qa,
+)
+from btcedu.core.scripter import _build_script_stories, _frame_stories, turkish_dative
 from btcedu.core.story_ranking import RankingBudget, rank_stories
 from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.script_schema import (
     BroadcastScript,
+    ScriptStory,
     SegmentPurpose,
     SpeakerRole,
     SpeakerSegment,
@@ -696,3 +705,285 @@ class TestVisualBeats:
             ]
         }
         assert _beat_images("ch02", manifest) == ["images/b0.png", "images/b1.png"]
+
+
+SPOKEN_BRANDING = {
+    **BRANDING,
+    "display_name": "ALMANYA24",
+    "spoken_name": "Almanya Yirmi Dört",
+}
+
+
+def _segment_texts(script, purpose):
+    return [
+        segment.text
+        for story in script.stories
+        for segment in story.speaker_sequence
+        if segment.purpose == purpose
+    ]
+
+
+class TestSpokenBrandName:
+    def test_dative_follows_vowel_harmony(self):
+        assert turkish_dative("Almanya Yirmi Dört") == "Almanya Yirmi Dört'e"
+        assert turkish_dative("Almanya") == "Almanya'ya"
+        assert turkish_dative("Kanal Bir") == "Kanal Bir'e"
+        assert turkish_dative("Bulut") == "Bulut'a"
+
+    def test_opening_uses_the_spoken_name_not_the_logo(self, source_stories):
+        script, _, _ = _script(source_stories)
+        body = [s for s in script.stories if not s.source_story_id.startswith("__")]
+        framed = _frame_stories(body, "ep-test", SPOKEN_BRANDING, {})
+        opening = " ".join(
+            s.text for st in framed for s in st.speaker_sequence if s.purpose.value == "opening"
+        )
+        assert "ALMANYA24" not in opening
+        assert "Almanya Yirmi Dört" in opening
+        assert "Dört'na" not in opening
+
+    def test_the_screen_keeps_the_logo_spelling(self, source_stories):
+        script, _, _ = _script(source_stories)
+        body = [s for s in script.stories if not s.source_story_id.startswith("__")]
+        framed = _frame_stories(body, "ep-test", SPOKEN_BRANDING, {})
+        assert framed[0].display_headline == "ALMANYA24"
+
+    def test_qa_flags_the_logo_inside_spoken_text(self, source_stories):
+        script, by_id, selected = _script(source_stories)
+        script.stories[0].speaker_sequence[0].text = "İyi akşamlar. ALMANYA24'na hoş geldiniz."
+        result = run_script_qa(
+            script,
+            {sid: by_id[sid]["text_adapted_tr"] for sid in selected},
+            selected,
+            ScriptQAConfig(),
+            spoken_show_name="Almanya Yirmi Dört",
+            display_show_name="ALMANYA24",
+        )
+        assert any(f.category == "invalid_spoken_brand_suffix" for f in result.findings)
+
+
+class TestOpeningAndClosing:
+    def test_headlines_are_sentences_not_screen_titles(self, source_stories):
+        script, _, _ = _script(source_stories)
+        headlines = " ".join(_segment_texts(script, SegmentPurpose.HEADLINES))
+        assert headlines
+        assert headlines.strip().endswith("Ayrıntılarla başlıyoruz.")
+        for word in headlines.split():
+            letters = [c for c in word if c.isalpha()]
+            assert not (len(letters) > 5 and all(c == c.upper() for c in letters))
+
+    def test_opening_has_no_empty_promise(self, source_stories):
+        script, _, _ = _script(source_stories)
+        opening = " ".join(_segment_texts(script, SegmentPurpose.OPENING))
+        assert "İşte ayrıntılar" not in opening
+
+
+class TestShortNewsTransition:
+    def _brief_label_count(self, stories):
+        return sum(
+            1
+            for story in stories
+            for segment in story.speaker_sequence
+            if segment.text == "Kısa haberlerle devam ediyoruz."
+        )
+
+    def test_single_brief_story_gets_no_block_announcement(self, source_stories):
+        script, _, _ = _script(source_stories)
+        stories = [s for s in script.stories if not s.source_story_id.startswith("__")]
+        briefs = [s for s in stories if s.priority == StoryPriority.BRIEF and not s.is_weather]
+        for story in briefs[1:]:
+            story.priority = StoryPriority.NORMAL
+        framed = _frame_stories(stories, "ep-test", BRANDING, {})
+        assert self._brief_label_count(framed) == 0
+
+    def test_a_real_block_is_still_announced_once(self, source_stories):
+        script, _, _ = _script(source_stories)
+        stories = [s for s in script.stories if not s.source_story_id.startswith("__")]
+        for story in stories:
+            if not story.is_weather:
+                story.priority = StoryPriority.BRIEF
+        framed = _frame_stories(stories, "ep-test", BRANDING, {})
+        assert self._brief_label_count(framed) == 1
+
+
+def _duration_reasons(reasons):
+    return [r for r in reasons if "duration" in r or "episode_" in r]
+
+
+class TestEditorialDuration:
+    def _script_with_share(self):
+        """A script whose anchor share is fine, so only duration is judged."""
+        return BroadcastScript(
+            episode_id="ep",
+            stories=[
+                ScriptStory(
+                    story_id="ch01",
+                    source_story_id="s01",
+                    order=1,
+                    priority=StoryPriority.TOP,
+                    category="politik",
+                    display_headline="BAŞLIK",
+                    display_summary="Özet.",
+                    speaker_sequence=[
+                        SpeakerSegment(
+                            role=SpeakerRole.ANCHOR,
+                            purpose=SegmentPurpose.INTRODUCTION,
+                            text=" ".join(f"a{n}" for n in range(45)),
+                        ),
+                        SpeakerSegment(
+                            role=SpeakerRole.REPORTER,
+                            purpose=SegmentPurpose.REPORT,
+                            text=" ".join(f"r{n}" for n in range(55)),
+                        ),
+                    ],
+                )
+            ],
+        )
+
+    def _config(self):
+        return ScriptQAConfig.from_stage_config(
+            {
+                "editorial": {
+                    "minimum_duration_seconds": 540,
+                    "preferred_duration_seconds": 600,
+                    "soft_maximum_duration_seconds": 720,
+                    "hard_maximum_duration_seconds": None,
+                    "allow_longer_if_editorially_justified": True,
+                }
+            }
+        )
+
+    def test_long_but_dense_is_not_sent_back(self):
+        findings, revision, reasons = check_balance_and_duration(
+            self._script_with_share(),
+            self._config(),
+            _FindingFactory(),
+            actual_duration_seconds=800,
+            redundancy_detected=False,
+        )
+        assert revision is False
+        assert _duration_reasons(reasons) == []
+        categories = [
+            f.category for f in findings if "duration" in f.category or "longer" in f.category
+        ]
+        assert categories == ["episode_longer_than_preferred"]
+
+    def test_long_and_repetitive_is_sent_back(self):
+        _, revision, reasons = check_balance_and_duration(
+            self._script_with_share(),
+            self._config(),
+            _FindingFactory(),
+            actual_duration_seconds=800,
+            redundancy_detected=True,
+        )
+        assert revision is True
+        assert _duration_reasons(reasons) == ["episode_overlong_due_to_redundancy"]
+
+    def test_short_episode_is_reported_but_never_padded(self):
+        findings, revision, reasons = check_balance_and_duration(
+            self._script_with_share(),
+            self._config(),
+            _FindingFactory(),
+            actual_duration_seconds=400,
+            redundancy_detected=False,
+        )
+        assert revision is False
+        assert _duration_reasons(reasons) == []
+        finding = next(f for f in findings if f.category == "episode_below_editorial_minimum")
+        assert "dolgu" in finding.required_action
+
+    def test_without_the_editorial_block_the_hard_limits_stay(self):
+        _, revision, reasons = check_balance_and_duration(
+            self._script_with_share(),
+            ScriptQAConfig(),
+            _FindingFactory(),
+            actual_duration_seconds=800,
+            redundancy_detected=False,
+        )
+        assert revision is True
+        assert _duration_reasons(reasons) == ["duration_too_long"]
+
+
+class TestRepetitionChecks:
+    def _story_with(self, segments):
+        return ScriptStory(
+            story_id="ch01",
+            source_story_id="s01",
+            order=1,
+            priority=StoryPriority.TOP,
+            category="politik",
+            display_headline="BAŞLIK",
+            display_summary="Özet cümlesi.",
+            speaker_sequence=segments,
+        )
+
+    def test_the_same_fact_from_both_presenters_is_flagged(self):
+        story = self._story_with(
+            [
+                SpeakerSegment(
+                    role=SpeakerRole.ANCHOR,
+                    purpose=SegmentPurpose.INTRODUCTION,
+                    text=(
+                        "Federal hükümet emeklilik reformunu bugün kabul etti ve "
+                        "düzenleme gelecek yıl yürürlüğe girecek."
+                    ),
+                ),
+                SpeakerSegment(
+                    role=SpeakerRole.REPORTER,
+                    purpose=SegmentPurpose.REPORT,
+                    text=(
+                        "Emeklilik reformunu federal hükümet bugün kabul etti, "
+                        "düzenleme gelecek yıl yürürlüğe girecek."
+                    ),
+                ),
+            ]
+        )
+        script = BroadcastScript(episode_id="ep", stories=[story])
+        findings = check_repetition(script, _FindingFactory())
+        assert any(f.category == "cross_speaker_repetition" for f in findings)
+
+    def test_distinct_information_is_not_flagged(self):
+        story = self._story_with(
+            [
+                SpeakerSegment(
+                    role=SpeakerRole.ANCHOR,
+                    purpose=SegmentPurpose.INTRODUCTION,
+                    text="Federal hükümet emeklilik reformunu bugün kabul etti.",
+                ),
+                SpeakerSegment(
+                    role=SpeakerRole.REPORTER,
+                    purpose=SegmentPurpose.REPORT,
+                    text="Sendikalar düzenlemenin genç çalışanları zorlayacağını savunuyor.",
+                ),
+            ]
+        )
+        script = BroadcastScript(episode_id="ep", stories=[story])
+        assert check_repetition(script, _FindingFactory()) == []
+
+
+class TestSegmentLengths:
+    def test_a_very_long_reporter_segment_is_flagged(self):
+        story = ScriptStory(
+            story_id="ch01",
+            source_story_id="s01",
+            order=1,
+            priority=StoryPriority.TOP,
+            category="politik",
+            display_headline="BAŞLIK",
+            display_summary="Özet.",
+            speaker_sequence=[
+                SpeakerSegment(
+                    role=SpeakerRole.REPORTER,
+                    purpose=SegmentPurpose.REPORT,
+                    text=" ".join(f"kelime{n}" for n in range(200)),
+                )
+            ],
+        )
+        script = BroadcastScript(episode_id="ep", stories=[story])
+        findings = check_segment_lengths(script, _FindingFactory())
+        assert [f.category for f in findings] == ["reporter_segment_too_verbose"]
+
+
+class TestStoryCounting:
+    def test_framing_is_not_counted_as_a_story(self, source_stories):
+        script, _, _ = _script(source_stories)
+        assert broadcast_story_count(script) == len(script.stories) - 2

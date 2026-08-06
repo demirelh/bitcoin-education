@@ -982,6 +982,66 @@ def _build_tr_transcript(episode_id: str, settings) -> str | None:
     return "\n".join(lines).strip() + "\n"
 
 
+def _script_editorial_summary(
+    script: dict, settings, total_words: int
+) -> dict[str, object]:
+    """Brand names, duration band and the opening/closing actually broadcast.
+
+    The dashboard reads the same profile keys the script stage uses, so the two
+    cannot drift apart.
+    """
+    from btcedu.models.script_schema import WORDS_PER_MINUTE
+
+    branding: dict = {}
+    editorial: dict = {}
+    try:
+        from btcedu.profiles import get_registry
+
+        profile_name = str(script.get("profile") or "")
+        if profile_name:
+            profile = get_registry(settings).get(profile_name)
+            branding = dict(getattr(profile, "branding", {}) or {})
+            editorial = dict(
+                (profile.stage_config.get("script") or {}).get("editorial") or {}
+            )
+    except Exception:  # noqa: BLE001 - a missing profile must not break the view
+        branding, editorial = {}, {}
+
+    from btcedu.core.scripter import display_show_name, spoken_show_name
+
+    seconds = round(total_words / WORDS_PER_MINUTE * 60, 1)
+    minimum = editorial.get("minimum_duration_seconds")
+    soft_max = editorial.get("soft_maximum_duration_seconds")
+    if minimum is not None and seconds < float(minimum):
+        verdict = "below_minimum"
+    elif soft_max is not None and seconds > float(soft_max):
+        verdict = "longer_than_preferred"
+    else:
+        verdict = "within_band"
+
+    opening, closing = "", ""
+    for story in script.get("stories", []):
+        for segment in story.get("speaker_sequence", []):
+            if segment.get("purpose") == "opening" and not opening:
+                opening = str(segment.get("text") or "")
+            if segment.get("purpose") == "closing":
+                closing = str(segment.get("text") or "")
+
+    return {
+        "display_name": display_show_name(branding),
+        "spoken_name": spoken_show_name(branding),
+        "duration_band": {
+            "minimum_seconds": minimum,
+            "preferred_seconds": editorial.get("preferred_duration_seconds"),
+            "soft_maximum_seconds": soft_max,
+            "hard_maximum_seconds": editorial.get("hard_maximum_duration_seconds"),
+        },
+        "duration_verdict": verdict,
+        "opening_text": opening,
+        "closing_text": closing,
+    }
+
+
 def _get_story_count(episode_id: str, settings) -> int | None:
     """Return total_stories from stories.json if it exists, else None."""
     stories_path = Path(settings.outputs_dir) / episode_id / "stories.json"
@@ -1743,8 +1803,16 @@ def get_broadcast(episode_id: str):
                 "words": words,
                 "estimated_seconds": round(words / WORDS_PER_MINUTE * 60, 1),
                 "anchor_share": round(anchor / words, 3) if words else 0.0,
+                "is_frame": str(story.get("source_story_id") or "").startswith("__"),
                 "segments": [
-                    {"role": s.get("role"), "purpose": s.get("purpose")}
+                    {
+                        "role": s.get("role"),
+                        "purpose": s.get("purpose"),
+                        "words": len(str(s.get("text") or "").split()),
+                        "estimated_seconds": round(
+                            len(str(s.get("text") or "").split()) / WORDS_PER_MINUTE * 60, 1
+                        ),
+                    }
                     for s in story.get("speaker_sequence", [])
                 ],
             }
@@ -1801,7 +1869,10 @@ def get_broadcast(episode_id: str):
             "broadcast_date": script.get("broadcast_date"),
             "generated_by": script.get("generated_by"),
             "revision": script.get("revision"),
-            "story_count": len(stories),
+            "story_count": sum(1 for s in stories if not s["is_frame"]),
+            "frame_count": sum(1 for s in stories if s["is_frame"]),
+            "brief_block": sum(1 for s in stories if s.get("priority") == "brief") >= 2,
+            "editorial": _script_editorial_summary(script, settings, total_words),
             "omitted_count": len(omissions),
             "total_words": total_words,
             "estimated_seconds": round(total_words / WORDS_PER_MINUTE * 60, 1),

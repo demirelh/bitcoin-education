@@ -63,30 +63,74 @@ OVERRIDES_FILENAME = "script_overrides.json"
 
 # Fallback opening variants. Profiles should configure their own; these keep the
 # stage usable (and testable) without any profile changes.
+# The greeting is only the greeting: the headlines follow as their own segment,
+# so no variant may end in an empty "here are the details" phrase.
 DEFAULT_OPENINGS: tuple[str, ...] = (
-    "İyi akşamlar. {show_name}'na hoş geldiniz. Günün öne çıkan haberleriyle"
-    " karşınızdayız. İşte ayrıntılar.",
-    "İyi akşamlar. {show_name} başlıyor. Bugün Almanya'da ve dünyada öne çıkan"
-    " gelişmeleri aktarıyoruz.",
-    "İyi akşamlar. Almanya'nın gündemindeki önemli gelişmelerle karşınızdayız.",
-    "İyi akşamlar, {show_name}'na hoş geldiniz. Bugünün öne çıkan başlıklarıyla başlıyoruz.",
+    "İyi akşamlar. {show_name_dative} hoş geldiniz.",
+    "İyi akşamlar. {show_name} başlıyor.",
+    "İyi akşamlar, {show_name_dative} hoş geldiniz.",
 )
 
 DEFAULT_CLOSINGS: tuple[str, ...] = (
-    "Bugün öne çıkan gelişmeler böyleydi. Bizi izlediğiniz için teşekkür ederiz."
-    " Yeniden görüşmek üzere. İyi akşamlar.",
-    "Günün özeti böyleydi. İzlediğiniz için teşekkürler. Yarın yeniden birlikte"
-    " olmak üzere, iyi akşamlar.",
-    "Bugünkü bültenimizin sonuna geldik. Bizi izlediğiniz için teşekkür ederiz. İyi akşamlar.",
+    "Bugünün gündemi bu kadar. Bizi izlediğiniz için teşekkür ederiz."
+    " Yeniden görüşmek üzere, iyi akşamlar.",
+    "Bugünün öne çıkan gelişmeleri bunlardı. Yeni haberlerle yeniden görüşmek"
+    " üzere, iyi akşamlar.",
+    "Bugünkü bültenimizin sonuna geldik. Bizi izlediğiniz için teşekkür ederiz."
+    " İyi akşamlar.",
 )
 
 DEFAULT_WEATHER_HANDOVERS: tuple[str, ...] = (
+    "Son olarak hava durumuna bakalım.",
     "Şimdi hava durumuna geçelim.",
     "Bültenimizi hava durumuyla tamamlıyoruz.",
-    "Gelelim hava durumuna.",
 )
 
 DEFAULT_BRIEFS_LABEL = "Kısa haberlerle devam ediyoruz."
+
+# Sentence that closes the headline block and hands over to the first story.
+DEFAULT_HEADLINE_OUTRO = "Ayrıntılarla başlıyoruz."
+
+# Turkish vowel harmony: the dative suffix follows the last vowel of the word.
+_BACK_VOWELS = "aıou"
+_FRONT_VOWELS = "eiöü"
+_VOWELS = _BACK_VOWELS + _FRONT_VOWELS
+
+
+def turkish_dative(name: str) -> str:
+    """``name`` with the Turkish dative suffix, e.g. 'Almanya Yirmi Dört'e'.
+
+    Vowel harmony decides between ``a`` and ``e``; a name ending in a vowel gets
+    the buffer consonant ``y``. Written for the spoken brand name, which is why
+    it works on the last word only -- that is what carries the suffix.
+    """
+    cleaned = name.strip()
+    if not cleaned:
+        return ""
+    lowered = cleaned.lower()
+    last_vowel = next((ch for ch in reversed(lowered) if ch in _VOWELS), "")
+    suffix = "a" if last_vowel in _BACK_VOWELS else "e"
+    if lowered[-1] in _VOWELS:
+        suffix = "y" + suffix
+    return f"{cleaned}'{suffix}"
+
+
+def spoken_show_name(branding: dict[str, Any]) -> str:
+    """How the brand is pronounced. Falls back to the on-screen name.
+
+    The display name may contain digits or be all caps ("ALMANYA24"); reading
+    that aloud produces the wrong Turkish grammar, so profiles configure a
+    separate ``spoken_name``.
+    """
+    spoken = str(branding.get("spoken_name") or "").strip()
+    if spoken:
+        return spoken
+    return str(branding.get("display_name") or branding.get("show_name") or "").strip()
+
+
+def display_show_name(branding: dict[str, Any]) -> str:
+    """The brand as it appears on screen."""
+    return str(branding.get("display_name") or branding.get("show_name") or "").strip()
 
 
 class ScriptError(RuntimeError):
@@ -431,16 +475,47 @@ def _first_sentence(text: str, max_words: int = 15) -> str:
     return sentence.rstrip(",;:") + ("." if not sentence.endswith(".") else "")
 
 
-def _headline_block(stories: list[ScriptStory], max_items: int = 4) -> str:
-    """Two to four teasers for stories that really are broadcast."""
+def _teaser_sentence(story: ScriptStory) -> str:
+    """One spoken headline sentence for a story.
+
+    The on-screen title is two to six words in capitals -- a caption, not a
+    sentence. Reading it aloud is what made the opening sound like a machine,
+    so the teaser comes from the one-sentence summary and falls back to the
+    first sentence the anchor speaks about that story.
+    """
+    summary = (story.display_summary or "").strip()
+    if summary and not _is_shouted(summary):
+        return summary.rstrip(".") + "."
+    for segment in story.speaker_sequence:
+        if segment.role == SpeakerRole.ANCHOR and segment.text.strip():
+            return _first_sentence(segment.text, max_words=20)
+    return ""
+
+
+def _is_shouted(text: str) -> bool:
+    """True for an all-caps caption, which must never be read out as a sentence."""
+    letters = [ch for ch in text if ch.isalpha()]
+    if len(letters) < 6:
+        return False
+    return all(ch == ch.upper() for ch in letters)
+
+
+def _headline_block(
+    stories: list[ScriptStory], max_items: int = 4, outro: str = DEFAULT_HEADLINE_OUTRO
+) -> str:
+    """Two to four spoken teasers for stories that really are broadcast."""
     teasers = [s for s in stories if s.priority == StoryPriority.TOP and not s.is_weather]
     if len(teasers) < 2:
         teasers = [s for s in stories if not s.is_weather][:max_items]
     teasers = teasers[:max_items]
     if len(teasers) < 2:
         return ""
-    lines = [s.display_headline.rstrip(".") + "." for s in teasers]
-    return "\n".join(lines)
+    lines = [sentence for sentence in (_teaser_sentence(s) for s in teasers) if sentence]
+    if len(lines) < 2:
+        return ""
+    if outro:
+        lines.append(outro)
+    return " ".join(lines)
 
 
 def _frame_stories(
@@ -450,13 +525,20 @@ def _frame_stories(
     config: dict[str, Any],
 ) -> list[ScriptStory]:
     """Prepend opening + headline block and append the closing."""
-    show_name = str(branding.get("show_name") or "").strip()
+    display_name = display_show_name(branding)
+    spoken_name = spoken_show_name(branding)
     openings = [str(v) for v in (config.get("openings") or DEFAULT_OPENINGS)]
     closings = [str(v) for v in (config.get("closings") or DEFAULT_CLOSINGS)]
     handovers = [str(v) for v in (config.get("weather_handovers") or DEFAULT_WEATHER_HANDOVERS)]
 
-    opening_text = _pick(tuple(openings), episode_id, "opening").format(show_name=show_name)
-    closing_text = _pick(tuple(closings), episode_id, "closing").format(show_name=show_name)
+    # Spoken text uses the pronounceable brand and its declined form; the screen
+    # keeps the display name.
+    brand_fields = {
+        "show_name": spoken_name,
+        "show_name_dative": turkish_dative(spoken_name),
+    }
+    opening_text = _pick(tuple(openings), episode_id, "opening").format(**brand_fields)
+    closing_text = _pick(tuple(closings), episode_id, "closing").format(**brand_fields)
     handover_text = _pick(tuple(handovers), episode_id, "weather")
 
     framed: list[ScriptStory] = []
@@ -477,7 +559,7 @@ def _frame_stories(
             order=1,
             priority=StoryPriority.NORMAL,
             category="opening",
-            display_headline=show_name.upper() or "HABERLER",
+            display_headline=display_name.upper() or "HABERLER",
             display_summary=str(branding.get("slogan") or ""),
             speaker_sequence=opening_segments,
             overlay_duration_seconds=5.0,
@@ -485,6 +567,13 @@ def _frame_stories(
         )
     )
 
+    # "Kısa haberlerle devam ediyoruz" announces a block. With a single brief
+    # story there is no block, and the sentence promises something the bulletin
+    # never delivers.
+    brief_count = sum(
+        1 for s in script_stories if s.priority == StoryPriority.BRIEF and not s.is_weather
+    )
+    has_brief_block = brief_count >= 2
     briefs_started = False
     for story in script_stories:
         if story.is_weather:
@@ -506,7 +595,7 @@ def _frame_stories(
                     text=handover_text,
                 ),
             )
-        elif story.priority == StoryPriority.BRIEF and not briefs_started:
+        elif story.priority == StoryPriority.BRIEF and has_brief_block and not briefs_started:
             briefs_started = True
             label = str(config.get("briefs_label") or DEFAULT_BRIEFS_LABEL)
             story.speaker_sequence.insert(
@@ -524,7 +613,7 @@ def _frame_stories(
             order=1,
             priority=StoryPriority.NORMAL,
             category="closing",
-            display_headline=show_name.upper() or "HABERLER",
+            display_headline=display_name.upper() or "HABERLER",
             display_summary=str(branding.get("slogan") or ""),
             speaker_sequence=[
                 SpeakerSegment(
@@ -621,10 +710,24 @@ def generate_script(
     provenance_path = base / "provenance" / "script_provenance.json"
 
     qa_config = ScriptQAConfig.from_stage_config(config)
+    # Ranking works inside the same band QA judges by, otherwise selection fills
+    # to one target and QA complains about another.
     budget = RankingBudget(
-        target_seconds=qa_config.target_total_seconds,
-        min_seconds=qa_config.min_total_seconds,
-        max_seconds=qa_config.max_total_seconds,
+        target_seconds=(
+            qa_config.preferred_duration_seconds
+            if qa_config.editorial_duration_mode
+            else qa_config.target_total_seconds
+        ),
+        min_seconds=(
+            qa_config.editorial_minimum_seconds
+            if qa_config.editorial_duration_mode
+            else qa_config.min_total_seconds
+        ),
+        max_seconds=(
+            qa_config.soft_maximum_seconds
+            if qa_config.editorial_duration_mode
+            else qa_config.max_total_seconds
+        ),
         overhead_seconds=float(config.get("overhead_seconds", 55)),
         delivery_factor=float(config.get("delivery_factor", 0.88)),
     )
@@ -746,7 +849,14 @@ def generate_script(
                 revision=revision,
                 generated_by="llm" if model_stories else "deterministic",
             )
-            qa_result = run_script_qa(script, approved_by_story, selected, qa_config)
+            qa_result = run_script_qa(
+                script,
+                approved_by_story,
+                selected,
+                qa_config,
+                spoken_show_name=spoken_show_name(branding),
+                display_show_name=display_show_name(branding),
+            )
             if not qa_result.revision_required or revision >= max_revisions:
                 break
             if not model_stories:

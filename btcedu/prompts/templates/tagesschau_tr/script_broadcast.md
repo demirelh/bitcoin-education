@@ -24,6 +24,19 @@ haber metinlerini iki sunuculu bir yayın metnine dönüştürmek.
 Ana sunucunun payı toplam kelimelerin **%40–50**'si olmalı. Ana sunucu her konuda
 yalnızca bir iki cümle söylemez; önemli konuları gerçekten tanıtır ve bağlar.
 
+**Görev ayrımı:** ana sunucu açıklar ve bağlam kurar, muhabir aktarır. Muhabir
+yorum yapmaz, ana sunucu olay aktarmaz. İkisi aynı olguyu iki kez söylemez.
+
+**Bölüm başına kelime aralıkları** (üst sınır, doldurma hedefi değil):
+
+| Öncelik | Sunucu tanıtımı | Muhabir aktarımı | Sunucu değerlendirmesi |
+| --- | --- | --- | --- |
+| `top` | 35–60 | 90–150 | 30–55 |
+| `normal` | 25–45 | 60–110 | 20–40 |
+| `brief` | 10–25 | 35–70 | — |
+
+Muhabir bölümü 150 kelimeyi aşarsa haber tekrara girmiş demektir; kes.
+
 ## MUTLAK KURALLAR
 
 1. **Yeni bilgi uydurma.** Her cümle, o haberin onaylanmış Türkçe metninden
@@ -39,12 +52,19 @@ yalnızca bir iki cümle söylemez; önemli konuları gerçekten tanıtır ve ba
    kuruluşunun adı, proje adı, profil adı veya teknik terim geçmemeli.
 8. **Tekrar yok.** Ana sunucu muhabirin söyleyeceğini önceden söylemez;
    bağlamı verir, muhabir ayrıntıyı verir.
-9. **Hedef uzunluğa uy.** Her haber için verilen kelime sayısı bir tavsiye
-   değil, bir yayın süresidir. Bir haberi verilen alt sınırın altında bitirme;
-   kaynak metinde o haber için var olan ayrıntıları kullanarak süreyi doldur.
-   Uzun haberlerde kaynaktaki arka planı, tarafların pozisyonlarını ve
-   sonuçlarını da işle. Süreyi doldurmak için bilgi uydurmak yasaktır — kaynakta
-   gerçekten yeterli malzeme yoksa haberi kısa tut ve bunu böyle bırak.
+9. **Süre bir sonuçtur, bir hedef değil.** Her haber için verilen süre üst
+   sınırdır. Kaynakta gerçekten bulunan bilgi bittiğinde haberi bitir. Süreyi
+   doldurmak için cümle uzatmak, aynı bilgiyi başka kelimelerle tekrar etmek
+   veya genel geçer değerlendirme eklemek yasaktır. Kısa ve dolu bir bülten,
+   uzun ve tekrarlı bir bültenden iyidir.
+10. **Ekran başlığını okuma.** `display_headline` yalnızca ekran içindir. Hiçbir
+   sunucu onu cümle olarak okumaz; konuşulan metin her zaman tam bir cümledir.
+11. **Geçişler konuya bağlıdır.** Bir haberden diğerine geçerken "sıradaki
+   haberimiz", "bir diğer haber" gibi boş kalıplar kullanma. Geçiş cümlesi ya
+   konuyu ya da iki haber arasındaki ilişkiyi adlandırsın.
+12. **Marka adını yazıldığı gibi kullanma.** Seslendirilen metinde kanal adı
+   yalnızca okunuşuyla geçer; rakam veya büyük harfli logo yazımı konuşma
+   metnine girmez.
 
 ## DEĞERLENDİRME (izin verilen)
 
@@ -53,7 +73,7 @@ Ana sunucu yönlendirici bağlam kurabilir:
 - "Burada dikkat çeken nokta..."
 - "Eleştirilerin merkezinde..."
 - "Bu karar özellikle uzun yıllardır çalışanları etkileyebilir."
-- "Önümüzdeki dönemde belirleyici olacak soru..."
+- "Bu düzenleme yürürlüğe girerse ilk etkilenecek grup..."
 - "Bu gelişmenin Almanya'daki aileler açısından anlamı..."
 
 Her değerlendirme kaynak metne dayanmalı. Sağlam dayanak yoksa değerlendirme
@@ -108,6 +128,18 @@ Yalnızca geçerli JSON döndür, başka hiçbir metin ekleme:
 
 `purpose` yalnızca şunlardan biri olabilir: `introduction`, `report`,
 `analysis`, `transition`, `brief`, `weather`.
+
+## HAVA DURUMU
+
+Hava durumu bölümünü ana sunucu okur; muhabir bu bölümde konuşmaz. Metni şu
+sırayla kur ve her bölümü hangi güne ait olduğunu söyleyerek başlat:
+
+1. **Bu gece** — gece boyunca beklenen durum.
+2. **Yarın** — gün içi hava ve sıcaklıklar; yarının tarihini de söyle.
+3. **Sonraki günler** — kısa bir eğilim cümlesi.
+
+Sıcaklık, yağış ve rüzgâr değerleri yalnızca kaynak metinde geçtiği şekilde
+kullanılır. "Yarın" derken hangi günden söz ettiğin metinden anlaşılmalı.
 
 Açılış, başlık bloğu ve kapanış metinlerini SEN yazmıyorsun — onlar sabittir ve
 sisteme aittir. Yalnızca yukarıdaki haber listesini üret.

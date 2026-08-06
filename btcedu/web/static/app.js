@@ -1271,7 +1271,8 @@
           <ul class="broadcast-editorial">
             <li>Marke: <code>${esc(ed.display_name || '—')}</code> im Bild,
                 gesprochen „${esc(ed.spoken_name || '—')}“</li>
-            <li>Länge: ${minutes} min &middot; Zielband ${esc(bandText)} &middot; ${esc(verdictText)}</li>
+            <li>Länge: ${minutes} min &middot; Zielband ${esc(bandText)} &middot; ${esc(verdictText)}
+              ${ed.duration_justification ? '<br><span class="muted">' + esc(ed.duration_justification) + '</span>' : ''}</li>
             <li>Kurznachrichten-Block: ${data.brief_block ? 'ja' : 'nein'}</li>
             <li>Begrüßung: ${esc(ed.opening_text || '—')}</li>
             <li>Verabschiedung: ${esc(ed.closing_text || '—')}</li>

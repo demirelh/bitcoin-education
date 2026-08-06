@@ -27,15 +27,42 @@ yalnızca bir iki cümle söylemez; önemli konuları gerçekten tanıtır ve ba
 **Görev ayrımı:** ana sunucu açıklar ve bağlam kurar, muhabir aktarır. Muhabir
 yorum yapmaz, ana sunucu olay aktarmaz. İkisi aynı olguyu iki kez söylemez.
 
-**Bölüm başına kelime aralıkları** (üst sınır, doldurma hedefi değil):
+**Bölüm başına kelime aralıkları** (yön gösterir; doldurma hedefi değildir):
 
 | Öncelik | Sunucu tanıtımı | Muhabir aktarımı | Sunucu değerlendirmesi |
 | --- | --- | --- | --- |
-| `top` | 35–60 | 90–150 | 30–55 |
-| `normal` | 25–45 | 60–110 | 20–40 |
-| `brief` | 10–25 | 35–70 | — |
+| `top` | 40–70 | 130–220 | 20–50 |
+| `normal` | 20–40 | 80–150 | 15–30 |
+| `brief` | 10–25 | 30–60 | — |
 
-Muhabir bölümü 150 kelimeyi aşarsa haber tekrara girmiş demektir; kes.
+Konusu gerçekten karmaşıksa üst sınır aşılabilir. Ama anlamı değiştirmeyen yan
+ayrıntı, benzer uzman görüşleri, tekrarlanan yer ve kurum adları ve haber değeri
+olmayan teknik ayrıntı çıkarılır. Bir bilgiyi yalnızca kelime sınırı yüzünden
+atma; anlamak için gerekliyse kalsın.
+
+## SUNUCU DEĞERLENDİRMESİ NASIL YAZILIR
+
+Değerlendirme konuşma dilidir, makale dili değil:
+
+- kısa cümleler, her cümlede tek bir düşünce
+- en fazla iki–dört cümle
+- her cümle habere ait somut bir isme, kuruma, sayıya veya tarihe bağlansın
+- soyut kalıplardan ("belirleyici olacak soru", "önümüzdeki dönemde") kaçın
+
+İyi örnek:
+
+> Olayın önemi yalnızca uçuşların birkaç saat durmasından kaynaklanmıyor.
+> Leipzig-Halle, Ukrayna'ya yapılan sevkiyatlarda önemli bir merkez. Bu nedenle
+> patlayıcılı bir İHA'nın burada bulunması, Almanya'daki kritik altyapıların ne
+> kadar korunabildiği sorusunu yeniden gündeme taşıdı.
+
+## TARAFSIZ DİL
+
+Kaynaktaki siyasi değerlendirme korunur, ama yüklü ifadeler tekrar tekrar
+kullanılarak keskinleştirilmez. "Tahran rejimi" / "İran rejimi" yerine kaynağın
+izin verdiği ölçüde "İran yönetimi", "Tahran yönetimi", "İran" veya "Devrim
+Muhafızları" kullan. "teorik olarak resmî biçimde" gibi kendi içinde çelişen
+yumuşatmaları yazma; kaynağın izin verdiği kadar net yaz.
 
 ## MUTLAK KURALLAR
 
@@ -103,6 +130,10 @@ Her haber için ekranda görünecek iki satır üret:
 - `display_summary`: 8–15 kelime, tek cümlelik özet
 
 İkisi de yalnızca doğrulanmış bilgiyi içerir; soru cümlesi veya tıklama tuzağı olmaz.
+
+`display_summary`, haberin ilk konuşulan cümlesinin kopyası olamaz; ekranda
+tamamlayıcı bir bilgi versin. `display_headline` yalnızca ekranda görünür ve
+hiçbir sunucu tarafından okunmaz.
 
 ## ÇIKTI BİÇİMİ
 

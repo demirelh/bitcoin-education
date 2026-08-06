@@ -502,6 +502,7 @@ def create_topic_intro_segment(
     total_topics: int,
     channel_name: str = "ALMANYA24",
     section_label: str = "GÜNDEM",
+    show_counter: bool = True,
     audio_path: str | None = None,
     duration: float = 2.4,
     resolution: str = "1920x1080",
@@ -525,6 +526,14 @@ def create_topic_intro_segment(
     escaped_channel = _escape_drawtext(channel_name)
     escaped_section = _escape_drawtext(section_label)
     escaped_progress = _escape_drawtext(f"{topic_index:02d} / {total_topics:02d}")
+    # The counter is a production detail, not news. Profiles can hide it so the
+    # card carries nothing but the headline.
+    progress_layer = (
+        f"drawtext=fontfile={font_path}:text='{escaped_progress}'"
+        f":fontsize=28:fontcolor={accent_color}:x=w-text_w-95:y=h-115,"
+        if show_counter
+        else ""
+    )
     fade_out_start = max(0, duration - 0.55)
     audio_fade_out_start = max(0, duration - 0.9)
 
@@ -539,8 +548,7 @@ def create_topic_intro_segment(
             f":fontsize={title_fontsize}:fontcolor=white:x=95:y=(h-text_h)/2,"
             f"drawtext=fontfile={font_path}:text='{escaped_channel}'"
             f":fontsize=28:fontcolor=white@0.65:x=95:y=h-115,"
-            f"drawtext=fontfile={font_path}:text='{escaped_progress}'"
-            f":fontsize=28:fontcolor={accent_color}:x=w-text_w-95:y=h-115,"
+            f"{progress_layer}"
             f"fade=t=in:st=0:d=0.25,fade=t=out:st={fade_out_start}:d=0.55[v]",
             f"[1:a]atrim=duration={duration},asetpts=PTS-STARTPTS,"
             f"volume=0.72,afade=t=in:st=0:d=0.2,"
@@ -682,31 +690,31 @@ def create_outro_segment(
         cmd.extend(["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"])
     cmd.extend(
         [
-        "-filter_complex",
-        filter_complex,
-        "-map",
-        "[v]",
-        "-map",
-        "[a]" if has_audio else "1:a",
-        "-c:v",
-        "libx264",
-        "-preset",
-        preset,
-        "-crf",
-        str(crf),
-        "-pix_fmt",
-        "yuv420p",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "192k",
-        "-ac",
-        "2",
-        "-ar",
-        "44100",
-        "-t",
-        str(duration),
-        output_path,
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            "[v]",
+            "-map",
+            "[a]" if has_audio else "1:a",
+            "-c:v",
+            "libx264",
+            "-preset",
+            preset,
+            "-crf",
+            str(crf),
+            "-pix_fmt",
+            "yuv420p",
+            "-c:a",
+            "aac",
+            "-b:a",
+            "192k",
+            "-ac",
+            "2",
+            "-ar",
+            "44100",
+            "-t",
+            str(duration),
+            output_path,
         ]
     )
 

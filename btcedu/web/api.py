@@ -820,8 +820,7 @@ def _chapter_blocks(chapter: dict, images: list[dict]) -> list[tuple[str, str, d
         text = (chapter.get("narration") or {}).get("text", "").strip()
         return [("", text, single)]
     return [
-        (role, text, single if index == 0 else None)
-        for index, (role, text) in enumerate(passages)
+        (role, text, single if index == 0 else None) for index, (role, text) in enumerate(passages)
     ]
 
 
@@ -983,7 +982,7 @@ def _build_tr_transcript(episode_id: str, settings) -> str | None:
 
 
 def _script_editorial_summary(
-    script: dict, settings, total_words: int
+    script: dict, settings, total_words: int, qa_document: dict | None = None
 ) -> dict[str, object]:
     """Brand names, duration band and the opening/closing actually broadcast.
 
@@ -1001,9 +1000,7 @@ def _script_editorial_summary(
         if profile_name:
             profile = get_registry(settings).get(profile_name)
             branding = dict(getattr(profile, "branding", {}) or {})
-            editorial = dict(
-                (profile.stage_config.get("script") or {}).get("editorial") or {}
-            )
+            editorial = dict((profile.stage_config.get("script") or {}).get("editorial") or {})
     except Exception:  # noqa: BLE001 - a missing profile must not break the view
         branding, editorial = {}, {}
 
@@ -1012,12 +1009,17 @@ def _script_editorial_summary(
     seconds = round(total_words / WORDS_PER_MINUTE * 60, 1)
     minimum = editorial.get("minimum_duration_seconds")
     soft_max = editorial.get("soft_maximum_duration_seconds")
-    if minimum is not None and seconds < float(minimum):
-        verdict = "below_minimum"
-    elif soft_max is not None and seconds > float(soft_max):
-        verdict = "longer_than_preferred"
-    else:
-        verdict = "within_band"
+    # The QA run already decided this and recorded why; recomputing it here
+    # would let the dashboard and the gate disagree.
+    assessment = dict((qa_document or {}).get("duration_assessment") or {})
+    verdict = str(assessment.get("verdict") or "")
+    if not verdict:
+        if minimum is not None and seconds < float(minimum):
+            verdict = "below_minimum"
+        elif soft_max is not None and seconds > float(soft_max):
+            verdict = "longer_than_preferred"
+        else:
+            verdict = "within_band"
 
     opening, closing = "", ""
     for story in script.get("stories", []):
@@ -1037,6 +1039,8 @@ def _script_editorial_summary(
             "hard_maximum_seconds": editorial.get("hard_maximum_duration_seconds"),
         },
         "duration_verdict": verdict,
+        "duration_justification": str(assessment.get("justification") or ""),
+        "omitted_story_count": assessment.get("omitted_story_count"),
         "opening_text": opening,
         "closing_text": closing,
     }
@@ -1830,10 +1834,12 @@ def get_broadcast(episode_id: str):
     ]
 
     findings = []
+    qa_document: dict = {}
     qa_path = outputs / "script_qa.json"
     if qa_path.exists():
         try:
             qa = json.loads(qa_path.read_text(encoding="utf-8"))
+            qa_document = qa
             findings = [
                 {
                     "severity": f.get("severity"),
@@ -1872,7 +1878,7 @@ def get_broadcast(episode_id: str):
             "story_count": sum(1 for s in stories if not s["is_frame"]),
             "frame_count": sum(1 for s in stories if s["is_frame"]),
             "brief_block": sum(1 for s in stories if s.get("priority") == "brief") >= 2,
-            "editorial": _script_editorial_summary(script, settings, total_words),
+            "editorial": _script_editorial_summary(script, settings, total_words, qa_document),
             "omitted_count": len(omissions),
             "total_words": total_words,
             "estimated_seconds": round(total_words / WORDS_PER_MINUTE * 60, 1),

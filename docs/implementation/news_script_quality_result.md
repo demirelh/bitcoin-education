@@ -14,7 +14,12 @@ Implements the plan in `news_script_quality_plan.md`.
 | Length sent the script back | `duration_too_long` / `duration_too_short` were structural invariants | editorial band: long is only a defect together with redundancy, short is a review note that never asks for filler |
 | Repetition survived QA | only verbatim anchor sentences were caught | sentence-level overlap: `cross_speaker_repetition`, `redundant_story_detail`, `headline_body_duplication` |
 | Greeting/goodbye counted as stories | frame stories were counted like real ones | `broadcast_story_count()`, `non_story_counted_as_story`, dashboard counts without framing |
-| Weather said "today/tomorrow" without a date | the prompt gave no structure | prompt structures tonight → tomorrow (with date) → outlook |
+| Weather said "today/tomorrow" without a date | the prompt gave no structure | prompt structures tonight → tomorrow (with date) → outlook, handover "Son olarak hava durumuna bakalım." |
+| Topic card showed `03 / 06` | the counter was drawn unconditionally | `topic_intro_show_counter`, off for `tagesschau_tr` |
+| Closing card repeated the spoken thanks | card text was hardcoded to the thanks | card carries the slogan; `redundant_closing_card_text` guards it |
+| Reporter/anchor segments had no per-rank bounds | one global limit | per-priority reporter limits and an anchor commentary limit |
+| Loaded wording repeated ("Tahran rejimi") | no rule | `loaded_language_repeated` plus a prompt section |
+| Lower third repeated the first spoken sentence | no rule | `lower_third_duplicates_first_sentence` |
 
 ## New profile keys
 
@@ -31,9 +36,12 @@ historic hard duration limits stay in force. `pipeline_version=1` and
 ## New QA findings
 
 `invalid_spoken_brand_suffix`, `non_story_counted_as_story`,
+`headline_read_as_script`, `false_short_news_transition`,
 `reporter_segment_too_verbose`, `anchor_analysis_too_abstract`,
 `cross_speaker_repetition`, `redundant_story_detail`,
-`headline_body_duplication`, `episode_below_editorial_minimum`,
+`headline_body_duplication`, `loaded_language_repeated`,
+`lower_third_duplicates_first_sentence`, `missing_lower_third_summary`,
+`redundant_closing_card_text`, `episode_below_editorial_minimum`,
 `episode_longer_than_preferred`, `episode_overlong_due_to_redundancy`,
 `duration_above_hard_maximum`.
 
@@ -56,12 +64,23 @@ Stored artifacts of already rendered episodes are left as they are.
 
 ## Tests
 
-16 new tests in `tests/test_broadcast_script.py` covering the dative helper,
+40 new tests in `tests/test_broadcast_script.py` covering the dative helper,
 spoken vs on-screen brand, the brand QA finding, sentence headlines, the
 missing filler promise, the short-news label in both directions, all four
 editorial duration cases plus the legacy hard-limit path, cross-speaker
 repetition and its false-positive guard, reporter verbosity, and story
-counting. Full suite: 2081 passed.
+counting, screen titles read aloud, the false short-news announcement, loaded
+wording, lower thirds, the closing card, the stored duration justification, the
+prompt contract for the weather structure, `auto_publish: false`, the hidden
+topic counter and the untouched legacy profile. Full suite: 2105 passed.
+
+## Preview
+
+`docs`-free local preview via the deterministic fallback (no model call, no
+paid API): 5 broadcast stories, 8.5 min, anchor share 43 %, verdict
+`below_minimum` with the stored reason that six stories were dropped for
+relevance and the runtime was not padded. A real ffmpeg render of the topic
+card confirms the `03 / 06` counter is gone.
 
 ## Limitations
 

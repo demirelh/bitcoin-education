@@ -187,6 +187,7 @@ def render_video(
     _eff_topic_intro_enabled = bool(_rc("topic_intro_enabled", False))
     _eff_topic_intro_duration = float(_rc("topic_intro_duration", 2.4))
     _eff_topic_intro_label = str(_rc("topic_intro_label", "GÜNDEM") or "GÜNDEM")
+    _eff_topic_intro_show_counter = bool(_rc("topic_intro_show_counter", True))
     _eff_topic_intro_audio = str(_rc("topic_intro_audio", _eff_intro_audio) or "")
     # The closing card uses the same sting as the intro unless a profile names
     # its own, so the programme never ends on a silent picture.
@@ -263,6 +264,7 @@ def render_video(
             "topic_intro_enabled": _eff_topic_intro_enabled,
             "topic_intro_duration": _eff_topic_intro_duration,
             "topic_intro_label": _eff_topic_intro_label,
+            "topic_intro_show_counter": _eff_topic_intro_show_counter,
             "topic_intro_audio": _eff_topic_intro_audio,
             "topic_intro_audio_sha256": (
                 hashlib.sha256(_topic_intro_audio_bytes).hexdigest()
@@ -779,6 +781,7 @@ def render_video(
                         total_topics=topic_total,
                         channel_name=_eff_intro_show_name or settings.render_intro_show_name,
                         section_label=_eff_topic_intro_label,
+                        show_counter=_eff_topic_intro_show_counter,
                         audio_path=(
                             str(_topic_intro_audio_snapshot)
                             if _topic_intro_audio_snapshot
@@ -1228,6 +1231,7 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
             "topic_intro_enabled": bool(_rc("topic_intro_enabled", False)),
             "topic_intro_duration": float(_rc("topic_intro_duration", 2.4)),
             "topic_intro_label": str(_rc("topic_intro_label", "GÜNDEM") or "GÜNDEM"),
+            "topic_intro_show_counter": bool(_rc("topic_intro_show_counter", True)),
             "topic_intro_audio": topic_intro_audio,
             "topic_intro_audio_sha256": (
                 hashlib.sha256(Path(topic_intro_audio).read_bytes()).hexdigest()
@@ -1645,17 +1649,14 @@ def title_card_texts(episode, settings: Settings) -> dict:
         "show_name": str(
             _rc("intro_show_name", getattr(settings, "render_intro_show_name", "")) or ""
         ),
-        "episode_title": str(
-            _rc("intro_episode_title", "") or getattr(episode, "title", "") or ""
-        ),
+        "episode_title": str(_rc("intro_episode_title", "") or getattr(episode, "title", "") or ""),
         "episode_date": episode_date,
         "slogan": str(_rc("intro_slogan", "") or ""),
         "topic_intro_enabled": bool(_rc("topic_intro_enabled", False)),
         "topic_intro_label": str(_rc("topic_intro_label", "GÜNDEM") or "GÜNDEM"),
+        "topic_intro_show_counter": bool(_rc("topic_intro_show_counter", True)),
         "outro_enabled": bool(getattr(settings, "render_outro_enabled", False)),
-        "outro_text": str(
-            _rc("outro_text", getattr(settings, "render_outro_text", "")) or ""
-        ),
+        "outro_text": str(_rc("outro_text", getattr(settings, "render_outro_text", "")) or ""),
     }
 
 

@@ -17,8 +17,14 @@ from btcedu.core.script_qa import (
     _FindingFactory,
     broadcast_story_count,
     check_balance_and_duration,
+    check_closing_card,
+    check_headline_reading,
+    check_lower_thirds,
+    check_neutral_language,
     check_repetition,
     check_segment_lengths,
+    check_short_news_transition,
+    describe_duration,
     run_script_qa,
 )
 from btcedu.core.scripter import _build_script_stories, _frame_stories, turkish_dative
@@ -607,9 +613,7 @@ class TestPresentationOrder:
         from btcedu.core.script_qa import _FindingFactory, check_presentation_order
 
         script, _, _ = _script(source_stories)
-        target = next(
-            s for s in script.stories if len({x.role for x in s.speaker_sequence}) == 2
-        )
+        target = next(s for s in script.stories if len({x.role for x in s.speaker_sequence}) == 2)
         target.speaker_sequence = list(reversed(target.speaker_sequence))
         findings = check_presentation_order(script, _FindingFactory())
         assert [f.category for f in findings] == ["reporter_opens_story"]
@@ -622,9 +626,7 @@ class TestVisualBeats:
 
         script, _, _ = _script(source_stories)
         story = next(
-            s
-            for s in script.stories
-            if len({seg.role for seg in s.speaker_sequence}) == 2
+            s for s in script.stories if len({seg.role for seg in s.speaker_sequence}) == 2
         )
         beats = _visual_beats(story)
         assert len(beats) >= 2
@@ -638,9 +640,7 @@ class TestVisualBeats:
 
         script, _, _ = _script(source_stories)
         story = next(
-            s
-            for s in script.stories
-            if len({seg.role for seg in s.speaker_sequence}) == 1
+            s for s in script.stories if len({seg.role for seg in s.speaker_sequence}) == 1
         )
         assert _visual_beats(story) == []
 
@@ -974,7 +974,7 @@ class TestSegmentLengths:
                 SpeakerSegment(
                     role=SpeakerRole.REPORTER,
                     purpose=SegmentPurpose.REPORT,
-                    text=" ".join(f"kelime{n}" for n in range(200)),
+                    text=" ".join(f"kelime{n}" for n in range(260)),
                 )
             ],
         )
@@ -987,3 +987,325 @@ class TestStoryCounting:
     def test_framing_is_not_counted_as_a_story(self, source_stories):
         script, _, _ = _script(source_stories)
         assert broadcast_story_count(script) == len(script.stories) - 2
+
+
+class TestHeadlineReading:
+    def _story(self, text):
+        return ScriptStory(
+            story_id="ch01",
+            source_story_id="s01",
+            order=1,
+            priority=StoryPriority.TOP,
+            category="politik",
+            display_headline="LEIPZIG'DE İHA ALARMI",
+            display_summary="Patlayıcılı İHA havalimanındaki uçuşları durdurdu.",
+            speaker_sequence=[
+                SpeakerSegment(
+                    role=SpeakerRole.ANCHOR, purpose=SegmentPurpose.INTRODUCTION, text=text
+                )
+            ],
+        )
+
+    def test_a_screen_title_spoken_verbatim_is_flagged(self):
+        script = BroadcastScript(episode_id="ep", stories=[self._story("LEIPZIG'DE İHA ALARMI.")])
+        findings = check_headline_reading(script, _FindingFactory())
+        assert [f.category for f in findings] == ["headline_read_as_script"]
+
+    def test_a_natural_sentence_is_accepted(self):
+        script = BroadcastScript(
+            episode_id="ep",
+            stories=[
+                self._story(
+                    "Leipzig-Halle Havalimanı'nda patlayıcı taşıdığı belirtilen bir İHA "
+                    "uçuşları saatlerce durdurdu."
+                )
+            ],
+        )
+        assert check_headline_reading(script, _FindingFactory()) == []
+
+
+class TestFalseShortNewsTransition:
+    def _script(self, brief_count):
+        stories = []
+        for index in range(brief_count):
+            stories.append(
+                ScriptStory(
+                    story_id=f"ch{index:02d}",
+                    source_story_id=f"s{index:02d}",
+                    order=index + 1,
+                    priority=StoryPriority.BRIEF,
+                    category="politik",
+                    display_headline="BAŞLIK",
+                    display_summary="Özet.",
+                    speaker_sequence=[
+                        SpeakerSegment(
+                            role=SpeakerRole.ANCHOR,
+                            purpose=SegmentPurpose.TRANSITION,
+                            text="Kısa haberlerle devam ediyoruz." if index == 0 else "Devam.",
+                        )
+                    ],
+                )
+            )
+        return BroadcastScript(episode_id="ep", stories=stories)
+
+    def test_announcement_without_a_block_is_flagged(self):
+        findings = check_short_news_transition(
+            self._script(1), _FindingFactory(), "Kısa haberlerle devam ediyoruz."
+        )
+        assert [f.category for f in findings] == ["false_short_news_transition"]
+
+    def test_a_real_block_is_accepted(self):
+        findings = check_short_news_transition(
+            self._script(3), _FindingFactory(), "Kısa haberlerle devam ediyoruz."
+        )
+        assert findings == []
+
+
+class TestNeutralLanguageAndOverlays:
+    def _story(self, story_id, text, summary="Sekiz sanığa ceza verildi.", order=1):
+        return ScriptStory(
+            story_id=story_id,
+            source_story_id=story_id.replace("ch", "s"),
+            order=order,
+            priority=StoryPriority.NORMAL,
+            category="international",
+            display_headline="BAŞLIK",
+            display_summary=summary,
+            speaker_sequence=[
+                SpeakerSegment(role=SpeakerRole.REPORTER, purpose=SegmentPurpose.REPORT, text=text)
+            ],
+        )
+
+    def test_repeated_loaded_wording_is_flagged(self):
+        script = BroadcastScript(
+            episode_id="ep",
+            stories=[
+                self._story("ch01", "Tahran rejimi açıklama yaptı."),
+                self._story("ch02", "İran rejimi kararı reddetti.", order=2),
+            ],
+        )
+        findings = check_neutral_language(script, _FindingFactory())
+        assert [f.category for f in findings] == ["loaded_language_repeated"]
+
+    def test_single_use_is_not_flagged(self):
+        script = BroadcastScript(
+            episode_id="ep", stories=[self._story("ch01", "Tahran yönetimi açıklama yaptı.")]
+        )
+        assert check_neutral_language(script, _FindingFactory()) == []
+
+    def test_lower_third_repeating_the_first_sentence_is_flagged(self):
+        sentence = "Sekiz sanığa terör ve saldırı suçlamalarıyla hapis cezası verildi."
+        script = BroadcastScript(
+            episode_id="ep", stories=[self._story("ch01", sentence, summary=sentence)]
+        )
+        findings = check_lower_thirds(script, _FindingFactory())
+        assert [f.category for f in findings] == ["lower_third_duplicates_first_sentence"]
+
+    def test_a_complementary_lower_third_is_accepted(self):
+        script = BroadcastScript(
+            episode_id="ep",
+            stories=[
+                self._story(
+                    "ch01",
+                    "Hamburg Eyalet Mahkemesi bugün kararını açıkladı ve sanıklar "
+                    "tutuklu yargılanmaya devam edecek.",
+                    summary="Sekiz sanığa terör suçlamasıyla ceza verildi.",
+                )
+            ],
+        )
+        assert check_lower_thirds(script, _FindingFactory()) == []
+
+
+class TestClosingCard:
+    def _script(self):
+        return BroadcastScript(
+            episode_id="ep",
+            stories=[
+                ScriptStory(
+                    story_id="ch99",
+                    source_story_id="__closing",
+                    order=1,
+                    priority=StoryPriority.NORMAL,
+                    category="closing",
+                    display_headline="ALMANYA24",
+                    display_summary="Almanya'nın nabzı burada atıyor.",
+                    speaker_sequence=[
+                        SpeakerSegment(
+                            role=SpeakerRole.ANCHOR,
+                            purpose=SegmentPurpose.CLOSING,
+                            text=(
+                                "Bugünün gündemi bu kadar. Bizi izlediğiniz için "
+                                "teşekkür ederiz. Yeniden görüşmek üzere, iyi akşamlar."
+                            ),
+                        )
+                    ],
+                )
+            ],
+        )
+
+    def test_card_repeating_the_spoken_thanks_is_flagged(self):
+        findings = check_closing_card(
+            self._script(),
+            _FindingFactory(),
+            "ALMANYA24 — Bizi izlediğiniz için teşekkürler",
+        )
+        assert [f.category for f in findings] == ["redundant_closing_card_text"]
+
+    def test_a_slogan_card_is_accepted(self):
+        findings = check_closing_card(
+            self._script(),
+            _FindingFactory(),
+            "ALMANYA24 — Almanya'nın nabzı burada atıyor.",
+        )
+        assert findings == []
+
+
+class TestDurationJustification:
+    def test_a_short_episode_records_why(self, source_stories):
+        script, _, _ = _script(source_stories)
+        config = ScriptQAConfig.from_stage_config({"editorial": {"minimum_duration_seconds": 900}})
+        assessment = describe_duration(script, config, 400.0, [])
+        assert assessment["verdict"] == "below_minimum"
+        assert "dolgu" in assessment["justification"]
+        assert assessment["broadcast_story_count"] == broadcast_story_count(script)
+
+    def test_a_long_clean_episode_is_justified_by_content(self, source_stories):
+        script, _, _ = _script(source_stories)
+        config = ScriptQAConfig.from_stage_config(
+            {"editorial": {"soft_maximum_duration_seconds": 720}}
+        )
+        assessment = describe_duration(script, config, 800.0, [])
+        assert assessment["verdict"] == "longer_than_preferred"
+        assert "gerekçeli" in assessment["justification"]
+
+
+class TestProfileGuarantees:
+    def test_the_profile_never_publishes_automatically(self):
+        from btcedu.config import Settings
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(Settings()).get("tagesschau_tr")
+        assert profile.auto_publish is False
+
+    def test_the_topic_card_hides_the_technical_counter(self):
+        from btcedu.config import Settings
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(Settings()).get("tagesschau_tr")
+        render = profile.stage_config["render"]
+        assert render["topic_intro_show_counter"] is False
+        assert "teşekkür" not in render["outro_text"]
+
+    def test_the_editorial_band_is_configured(self):
+        from btcedu.config import Settings
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(Settings()).get("tagesschau_tr")
+        editorial = profile.stage_config["script"]["editorial"]
+        assert editorial["minimum_duration_seconds"] == 540
+        assert editorial["hard_maximum_duration_seconds"] is None
+
+
+class TestWeatherAndPromptContract:
+    def _prompt(self):
+        from btcedu.core.prompt_registry import TEMPLATES_DIR
+
+        return (TEMPLATES_DIR / "tagesschau_tr" / "script_broadcast.md").read_text(encoding="utf-8")
+
+    def test_the_handover_leads_into_the_weather(self):
+        from btcedu.core.scripter import DEFAULT_WEATHER_HANDOVERS
+
+        assert DEFAULT_WEATHER_HANDOVERS[0] == "Son olarak hava durumuna bakalım."
+
+    def test_the_prompt_asks_for_tonight_tomorrow_outlook(self):
+        prompt = self._prompt()
+        assert "Bu gece" in prompt
+        assert "Yarın" in prompt
+        assert "Sonraki günler" in prompt
+        assert prompt.index("Bu gece") < prompt.index("Sonraki günler")
+
+    def test_the_prompt_no_longer_orders_the_model_to_fill_the_airtime(self):
+        prompt = self._prompt()
+        assert "süreyi doldur" not in prompt
+        assert "Süre bir sonuçtur" in prompt
+
+    def test_the_prompt_bans_reading_the_screen_title(self):
+        assert "Ekran başlığını okuma" in self._prompt()
+
+    def test_the_prompt_asks_for_neutral_wording(self):
+        prompt = self._prompt()
+        assert "TARAFSIZ DİL" in prompt
+        assert "İran yönetimi" in prompt
+
+
+class TestAnchorAnalysisLength:
+    def test_a_long_analysis_is_flagged_but_a_short_one_is_not(self):
+        def _story(words):
+            return ScriptStory(
+                story_id="ch01",
+                source_story_id="s01",
+                order=1,
+                priority=StoryPriority.TOP,
+                category="politik",
+                display_headline="BAŞLIK",
+                display_summary="Özet.",
+                speaker_sequence=[
+                    SpeakerSegment(
+                        role=SpeakerRole.ANCHOR,
+                        purpose=SegmentPurpose.ANALYSIS,
+                        text="Leipzig " + " ".join(f"kelime{n}" for n in range(words)),
+                    )
+                ],
+            )
+
+        long_script = BroadcastScript(episode_id="ep", stories=[_story(90)])
+        short_script = BroadcastScript(episode_id="ep", stories=[_story(25)])
+        assert any(
+            f.category == "anchor_analysis_too_abstract"
+            for f in check_segment_lengths(long_script, _FindingFactory())
+        )
+        assert check_segment_lengths(short_script, _FindingFactory()) == []
+
+
+class TestNoAggressiveTrimming:
+    def test_the_editorial_band_keeps_more_stories_than_the_old_hard_box(self, source_stories):
+        editorial = ScriptQAConfig.from_stage_config(
+            {
+                "editorial": {
+                    "minimum_duration_seconds": 540,
+                    "preferred_duration_seconds": 600,
+                    "soft_maximum_duration_seconds": 720,
+                }
+            }
+        )
+        wide = rank_stories(
+            source_stories,
+            budget=RankingBudget(
+                target_seconds=editorial.preferred_duration_seconds,
+                min_seconds=editorial.editorial_minimum_seconds,
+                max_seconds=editorial.soft_maximum_seconds,
+            ),
+        )
+        narrow = rank_stories(
+            source_stories,
+            budget=RankingBudget(target_seconds=540, min_seconds=480, max_seconds=630),
+        )
+        kept = sum(1 for r in wide if r.priority != StoryPriority.OMIT)
+        old_kept = sum(1 for r in narrow if r.priority != StoryPriority.OMIT)
+        assert kept >= old_kept
+
+
+class TestLegacyPipelineUnaffected:
+    def test_the_bitcoin_profile_has_no_broadcast_script(self):
+        from btcedu.config import Settings
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(Settings()).get("bitcoin_podcast")
+        assert not (profile.stage_config.get("script") or {}).get("enabled", False)
+        assert not (profile.branding or {}).get("spoken_name")
+
+    def test_a_profile_without_the_editorial_block_keeps_the_hard_limits(self):
+        config = ScriptQAConfig.from_stage_config({})
+        assert config.editorial_duration_mode is False
+        assert config.min_total_seconds == 480.0
+        assert config.max_total_seconds == 630.0

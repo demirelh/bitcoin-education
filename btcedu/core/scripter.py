@@ -35,6 +35,7 @@ from btcedu.core.prompt_registry import TEMPLATES_DIR, PromptRegistry
 from btcedu.core.script_qa import (
     ScriptQAConfig,
     ScriptQAResult,
+    broadcast_story_count,
     revision_feedback,
     run_script_qa,
     write_script_qa,
@@ -74,10 +75,8 @@ DEFAULT_OPENINGS: tuple[str, ...] = (
 DEFAULT_CLOSINGS: tuple[str, ...] = (
     "Bugünün gündemi bu kadar. Bizi izlediğiniz için teşekkür ederiz."
     " Yeniden görüşmek üzere, iyi akşamlar.",
-    "Bugünün öne çıkan gelişmeleri bunlardı. Yeni haberlerle yeniden görüşmek"
-    " üzere, iyi akşamlar.",
-    "Bugünkü bültenimizin sonuna geldik. Bizi izlediğiniz için teşekkür ederiz."
-    " İyi akşamlar.",
+    "Bugünün öne çıkan gelişmeleri bunlardı. Yeni haberlerle yeniden görüşmek üzere, iyi akşamlar.",
+    "Bugünkü bültenimizin sonuna geldik. Bizi izlediğiniz için teşekkür ederiz. İyi akşamlar.",
 )
 
 DEFAULT_WEATHER_HANDOVERS: tuple[str, ...] = (
@@ -173,6 +172,18 @@ def _pick(variants: tuple[str, ...] | list[str], episode_id: str, salt: str) -> 
         return ""
     digest = hashlib.sha256(f"{episode_id}:{salt}".encode()).digest()
     return variants[digest[0] % len(variants)]
+
+
+def _closing_card_text(settings: Settings, episode: Episode) -> str:
+    """The text the render stage will burn into the closing card."""
+    try:
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(settings).get(getattr(episode, "content_profile", ""))
+        render_config = profile.stage_config.get("render") or {}
+        return str(render_config.get("outro_text") or "")
+    except Exception:  # noqa: BLE001 - QA must not fail on a missing profile
+        return ""
 
 
 def _story_config(settings: Settings, episode: Episode) -> tuple[dict, dict, str | None]:
@@ -761,7 +772,7 @@ def generate_script(
             omissions_path=str(base / OMISSIONS_FILENAME),
             qa_path=str(base / "script_qa.json"),
             provenance_path=str(provenance_path),
-            story_count=len(script.stories),
+            story_count=broadcast_story_count(script),
             anchor_share=script.anchor_share(),
             estimated_duration_seconds=script.estimated_duration_seconds,
             skipped=True,
@@ -856,6 +867,8 @@ def generate_script(
                 qa_config,
                 spoken_show_name=spoken_show_name(branding),
                 display_show_name=display_show_name(branding),
+                briefs_label=str(config.get("briefs_label") or DEFAULT_BRIEFS_LABEL),
+                closing_card_text=_closing_card_text(settings, episode),
             )
             if not qa_result.revision_required or revision >= max_revisions:
                 break
@@ -896,7 +909,7 @@ def generate_script(
                     "prompt_hash": prompt_hash,
                     "prompt_name": prompt_name,
                     "revision": script.revision,
-                    "story_count": len(script.stories),
+                    "story_count": broadcast_story_count(script),
                     "omitted_count": len(omissions),
                     "anchor_share": script.anchor_share(),
                     "estimated_duration_seconds": script.estimated_duration_seconds,
@@ -931,7 +944,7 @@ def generate_script(
         logger.info(
             "Broadcast script for %s: %d stories, %d omitted, anchor %.0f%%, %.1f min",
             episode_id,
-            len(script.stories),
+            broadcast_story_count(script),
             len(omissions),
             script.anchor_share() * 100,
             script.estimated_duration_seconds / 60,
@@ -944,7 +957,7 @@ def generate_script(
             omissions_path=str(omissions_path),
             qa_path=str(qa_path),
             provenance_path=str(provenance_path),
-            story_count=len(script.stories),
+            story_count=broadcast_story_count(script),
             omitted_count=len(omissions),
             anchor_share=script.anchor_share(),
             estimated_duration_seconds=script.estimated_duration_seconds,

@@ -174,8 +174,13 @@ stage_config:
     topic_intro_enabled: true
     topic_intro_duration: 2.4
     topic_intro_label: "GÜNDEM"
+    # The card names the topic; "03 / 06" is production bookkeeping and adds
+    # nothing for the viewer.
+    topic_intro_show_counter: false
     topic_intro_audio: "data/assets/tagesschau_tr/intro.mp3"
-    outro_text: "ALMANYA24 — Bizi izlediğiniz için teşekkürler"
+    # The anchor already thanks the audience out loud, so the card carries the
+    # brand instead of repeating it.
+    outro_text: "ALMANYA24 — Almanya'nın nabzı burada atıyor."
     font: "Roboto-Condensed-Bold"
     music_bed: "data/assets/music/news_bed.mp3"
   weather:

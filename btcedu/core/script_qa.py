@@ -899,6 +899,13 @@ REDUNDANCY_CATEGORIES: frozenset[str] = frozenset(
     }
 )
 
+# Everything that makes a long bulletin a padded one rather than a full one:
+# repeated information, over-long reporter blocks and rambling commentary.
+PADDING_CATEGORIES: frozenset[str] = REDUNDANCY_CATEGORIES | {
+    "reporter_segment_too_verbose",
+    "anchor_analysis_too_abstract",
+}
+
 
 def check_brand_pronunciation(
     script: BroadcastScript,
@@ -980,6 +987,19 @@ MAX_ANCHOR_ANALYSIS_WORDS = 60
 # Wordings that carry a judgement the source did not necessarily make. Repeating
 # them sharpens the tone with every mention, so the second occurrence is flagged.
 LOADED_TERMS: tuple[str, ...] = ("rejimi", "rejimin", "sözde", "terörist devlet")
+
+# Hedges that cancel each other out. "teorik olarak resmî biçimde" claims to be
+# both hypothetical and official, which tells the viewer nothing.
+CONTRADICTORY_HEDGES: tuple[tuple[str, str], ...] = (
+    ("teorik olarak", "resmî"),
+    ("teorik olarak", "kesin"),
+    ("iddiaya göre", "kesinlikle"),
+    ("muhtemelen", "kesinlikle"),
+)
+
+# An on-screen strap is read in a couple of seconds. Beyond this it either gets
+# cut off or competes with the subtitles.
+MAX_LOWER_THIRD_CHARS = 120
 
 
 def check_segment_lengths(script: BroadcastScript, factory: _FindingFactory) -> list[QAFinding]:
@@ -1162,6 +1182,39 @@ def check_neutral_language(script: BroadcastScript, factory: _FindingFactory) ->
     return findings
 
 
+def check_hedging(script: BroadcastScript, factory: _FindingFactory) -> list[QAFinding]:
+    """Sentences that hedge in two opposite directions at once."""
+    findings: list[QAFinding] = []
+    for story in script.stories:
+        for segment in story.speaker_sequence:
+            for sentence in _sentences(segment.text, min_chars=20):
+                lowered = sentence.lower()
+                hit = next(
+                    (
+                        pair
+                        for pair in CONTRADICTORY_HEDGES
+                        if pair[0] in lowered and pair[1] in lowered
+                    ),
+                    None,
+                )
+                if not hit:
+                    continue
+                findings.append(
+                    factory.make(
+                        category="contradictory_hedging",
+                        severity="minor",
+                        story_id=story.story_id,
+                        target_excerpt=sentence[:300],
+                        explanation=(
+                            f"Cümlede {hit[0]!r} ve {hit[1]!r} birlikte kullanılmış; "
+                            "ifade kendi içinde çelişiyor."
+                        ),
+                        required_action="Kaynağın izin verdiği kadar net tek bir ifade kullan.",
+                    )
+                )
+    return findings
+
+
 def check_lower_thirds(script: BroadcastScript, factory: _FindingFactory) -> list[QAFinding]:
     """The strap must add something the first spoken sentence does not."""
     findings: list[QAFinding] = []
@@ -1180,6 +1233,19 @@ def check_lower_thirds(script: BroadcastScript, factory: _FindingFactory) -> lis
                 )
             )
             continue
+        if len(summary) > MAX_LOWER_THIRD_CHARS:
+            findings.append(
+                factory.make(
+                    category="lower_third_too_long",
+                    severity="minor",
+                    story_id=story.story_id,
+                    target_excerpt=summary[:300],
+                    explanation=(
+                        f"Alt bant {len(summary)} karakter (üst sınır {MAX_LOWER_THIRD_CHARS})."
+                    ),
+                    required_action="Tek cümlelik, 8-15 kelimelik bir özete indir.",
+                )
+            )
         first = next(iter(_sentences(editorial_narration(story), min_chars=30)), "")
         if first and _overlap(summary, first) >= 0.8:
             findings.append(
@@ -1310,16 +1376,16 @@ def run_script_qa(
     findings += repetition_findings
     findings += check_brand_pronunciation(script, factory, spoken_show_name, display_show_name)
     findings += check_story_counting(script, factory)
-    findings += check_segment_lengths(script, factory)
+    length_findings = check_segment_lengths(script, factory)
+    findings += length_findings
     findings += check_headline_reading(script, factory)
     findings += check_short_news_transition(script, factory, briefs_label)
     findings += check_neutral_language(script, factory)
     findings += check_lower_thirds(script, factory)
+    findings += check_hedging(script, factory)
     findings += check_closing_card(script, factory, closing_card_text)
-    redundancy_detected = any(
-        f.category in REDUNDANCY_CATEGORIES and f.severity in {"major", "critical"}
-        for f in repetition_findings
-    )
+    padding_findings = repetition_findings + length_findings
+    redundancy_detected = any(f.category in PADDING_CATEGORIES for f in padding_findings)
     balance_findings, revision_required, reasons = check_balance_and_duration(
         script, config, factory, actual_duration_seconds, redundancy_detected
     )

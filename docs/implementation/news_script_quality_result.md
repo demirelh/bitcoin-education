@@ -43,7 +43,7 @@ historic hard duration limits stay in force. `pipeline_version=1` and
 `lower_third_duplicates_first_sentence`, `missing_lower_third_summary`,
 `redundant_closing_card_text`, `episode_below_editorial_minimum`,
 `episode_longer_than_preferred`, `episode_overlong_due_to_redundancy`,
-`duration_above_hard_maximum`.
+`duration_above_hard_maximum`, `contradictory_hedging`, `lower_third_too_long`.
 
 Only `episode_overlong_due_to_redundancy` and `duration_above_hard_maximum`
 force a revision.
@@ -72,7 +72,8 @@ repetition and its false-positive guard, reporter verbosity, and story
 counting, screen titles read aloud, the false short-news announcement, loaded
 wording, lower thirds, the closing card, the stored duration justification, the
 prompt contract for the weather structure, `auto_publish: false`, the hidden
-topic counter and the untouched legacy profile. Full suite: 2105 passed.
+topic counter, the accepted 9-12 minute range, weather determinism and the
+untouched legacy profile. Full suite: 2119 passed.
 
 ## Preview
 
@@ -81,6 +82,10 @@ paid API): 5 broadcast stories, 8.5 min, anchor share 43 %, verdict
 `below_minimum` with the stored reason that six stories were dropped for
 relevance and the runtime was not padded. A real ffmpeg render of the topic
 card confirms the `03 / 06` counter is gone.
+
+A real CLI dry run (`DRY_RUN=true`, copied database and outputs) reproduces the
+same numbers at `$0.0000` and writes the artifacts, so the whole stage is
+proven end to end without a paid call.
 
 ## Limitations
 

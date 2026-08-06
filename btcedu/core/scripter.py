@@ -174,6 +174,17 @@ def _pick(variants: tuple[str, ...] | list[str], episode_id: str, salt: str) -> 
     return variants[digest[0] % len(variants)]
 
 
+def _preferred_seconds(qa_config: ScriptQAConfig) -> float:
+    """The length the prompt should aim at.
+
+    Must match the band ranking and QA use, otherwise the model writes to one
+    number and is judged against another.
+    """
+    if qa_config.editorial_duration_mode:
+        return qa_config.preferred_duration_seconds
+    return qa_config.target_total_seconds
+
+
 def _closing_card_text(settings: Settings, episode: Episode) -> str:
     """The text the render stage will burn into the closing card."""
     try:
@@ -1003,7 +1014,7 @@ def _request_model_script(
     body, _, user_part = template_body.partition("# Input")
     rendered = (
         user_part.replace("{{broadcast_date}}", broadcast_date)
-        .replace("{{target_body_seconds}}", f"{qa_config.target_total_seconds:.0f}")
+        .replace("{{target_body_seconds}}", f"{_preferred_seconds(qa_config):.0f}")
         .replace("{{anchor_share_min}}", f"{qa_config.anchor_share_min * 100:.0f}")
         .replace("{{anchor_share_max}}", f"{qa_config.anchor_share_max * 100:.0f}")
         .replace("{{selected_stories}}", _selected_stories_block(selected_docs, rankings))

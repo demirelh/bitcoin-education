@@ -19,6 +19,7 @@ from btcedu.core.script_qa import (
     check_balance_and_duration,
     check_closing_card,
     check_headline_reading,
+    check_hedging,
     check_lower_thirds,
     check_neutral_language,
     check_repetition,
@@ -1309,3 +1310,162 @@ class TestLegacyPipelineUnaffected:
         assert config.editorial_duration_mode is False
         assert config.min_total_seconds == 480.0
         assert config.max_total_seconds == 630.0
+
+
+class TestAcceptedDurationRange:
+    def _config(self):
+        return ScriptQAConfig.from_stage_config(
+            {
+                "editorial": {
+                    "minimum_duration_seconds": 540,
+                    "preferred_duration_seconds": 600,
+                    "soft_maximum_duration_seconds": 720,
+                }
+            }
+        )
+
+    @pytest.mark.parametrize("seconds", [545.0, 600.0, 700.0, 719.0])
+    def test_nine_to_twelve_minutes_is_accepted_without_a_finding(self, seconds):
+        findings, revision, reasons = check_balance_and_duration(
+            TestEditorialDuration()._script_with_share(),
+            self._config(),
+            _FindingFactory(),
+            actual_duration_seconds=seconds,
+            redundancy_detected=False,
+        )
+        assert revision is False
+        assert _duration_reasons(reasons) == []
+        assert [f for f in findings if "duration" in f.category or "episode_" in f.category] == []
+
+    def test_an_overlong_reporter_block_counts_as_padding(self):
+        story = ScriptStory(
+            story_id="ch01",
+            source_story_id="s01",
+            order=1,
+            priority=StoryPriority.BRIEF,
+            category="politik",
+            display_headline="BAŞLIK",
+            display_summary="Özet cümlesi burada.",
+            speaker_sequence=[
+                SpeakerSegment(
+                    role=SpeakerRole.ANCHOR,
+                    purpose=SegmentPurpose.INTRODUCTION,
+                    text=" ".join(f"a{n}" for n in range(60)),
+                ),
+                SpeakerSegment(
+                    role=SpeakerRole.REPORTER,
+                    purpose=SegmentPurpose.BRIEF,
+                    text=" ".join(f"r{n}" for n in range(120)),
+                ),
+            ],
+        )
+        script = BroadcastScript(episode_id="ep", stories=[story])
+        result = run_script_qa(script, {"s01": "kaynak"}, ["s01"], self._config(), 900.0)
+        assert "episode_overlong_due_to_redundancy" in result.revision_reasons
+
+
+class TestHedgingAndStrapLength:
+    def _story(self, text, summary="Kısa ve somut bir özet cümlesi."):
+        return ScriptStory(
+            story_id="ch01",
+            source_story_id="s01",
+            order=1,
+            priority=StoryPriority.NORMAL,
+            category="politik",
+            display_headline="BAŞLIK",
+            display_summary=summary,
+            speaker_sequence=[
+                SpeakerSegment(role=SpeakerRole.REPORTER, purpose=SegmentPurpose.REPORT, text=text)
+            ],
+        )
+
+    def test_contradictory_hedging_is_flagged(self):
+        script = BroadcastScript(
+            episode_id="ep",
+            stories=[
+                self._story("Anlaşma teorik olarak resmî biçimde yürürlüğe girmiş sayılıyor.")
+            ],
+        )
+        findings = check_hedging(script, _FindingFactory())
+        assert [f.category for f in findings] == ["contradictory_hedging"]
+
+    def test_a_clear_sentence_is_accepted(self):
+        script = BroadcastScript(
+            episode_id="ep",
+            stories=[self._story("Anlaşma bugün resmî olarak yürürlüğe girdi.")],
+        )
+        assert check_hedging(script, _FindingFactory()) == []
+
+    def test_an_overlong_strap_is_flagged(self):
+        long_summary = (
+            "Hamburg Eyalet Mahkemesi aşırı sağcı bir yapılanmanın sekiz üyesine terör "
+            "örgütü kurmak ve saldırı hazırlığı suçlamalarıyla hapis cezası verdi."
+        )
+        script = BroadcastScript(
+            episode_id="ep", stories=[self._story("Başka bir cümle.", summary=long_summary)]
+        )
+        assert any(
+            f.category == "lower_third_too_long"
+            for f in check_lower_thirds(script, _FindingFactory())
+        )
+
+
+class TestWeatherStaysDeterministic:
+    def test_the_profile_never_takes_weather_data_from_outside_the_narration(self):
+        from btcedu.config import Settings
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(Settings()).get("tagesschau_tr")
+        weather = profile.stage_config["weather"]
+        assert weather["extraction"]["allow_external_weather_data"] is False
+        assert weather["extraction"]["provider"] == "deterministic"
+        assert weather["review"]["block_on_unsupported_claim"] is True
+        assert weather["fallback"]["prohibit_blank_frames"] is True
+
+    def test_weather_visuals_are_not_routed_to_an_image_model(self):
+        from btcedu.config import Settings
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(Settings()).get("tagesschau_tr")
+        weather = profile.stage_config["weather"]
+        assert weather["enabled"] is True
+        assert weather["rendering"]["engine"] == "html_svg_chromium"
+
+
+class TestLegacyPipelineVersionOne:
+    def test_a_v1_episode_cannot_enter_the_script_stage(self, tmp_path):
+        from btcedu.config import Settings
+        from btcedu.core.scripter import script_enabled
+
+        class _Episode:
+            content_profile = "bitcoin_podcast"
+            pipeline_version = 1
+
+        assert script_enabled(Settings(), _Episode()) is False
+
+    def test_the_bundled_v1_profile_still_loads(self):
+        from btcedu.config import Settings
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(Settings()).get("bitcoin_podcast")
+        assert profile.name == "bitcoin_podcast"
+        assert profile.prompt_namespace == "bitcoin_podcast"
+
+
+class TestPromptTargetMatchesTheBand:
+    def test_the_prompt_is_told_the_preferred_length_not_the_old_target(self):
+        from btcedu.core.scripter import _preferred_seconds
+
+        editorial = ScriptQAConfig.from_stage_config(
+            {"target_total_seconds": 540, "editorial": {"preferred_duration_seconds": 600}}
+        )
+        assert _preferred_seconds(editorial) == 600.0
+        assert _preferred_seconds(ScriptQAConfig.from_stage_config({})) == 540.0
+
+    def test_the_prompt_says_the_length_is_not_a_quota(self):
+        from btcedu.core.prompt_registry import TEMPLATES_DIR
+
+        prompt = (TEMPLATES_DIR / "tagesschau_tr" / "script_broadcast.md").read_text(
+            encoding="utf-8"
+        )
+        assert "Bu bir kota değil" in prompt

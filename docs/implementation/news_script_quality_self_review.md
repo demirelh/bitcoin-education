@@ -42,6 +42,30 @@ Checked against the brief point by point, using the reference episode
   `tests/test_final_review_weather.py` passes.
 - **Secrets**: no credential is read, logged or committed.
 
+## Second pass — further gaps found and fixed
+
+| Finding | Severity | Resolution |
+| --- | --- | --- |
+| The prompt still received the old 540 s target while ranking and QA worked to 600 s, so the model wrote to one number and was judged against another | major | `_preferred_seconds()`; the prompt now also states the length is not a quota |
+| A very long episode was only "major" for repetition, but the brief also names over-long reporter blocks and rambling commentary | major | `PADDING_CATEGORIES` extends the redundancy set with the length findings |
+| The brief asks to check contradictory hedges (`teorik olarak resmî biçimde`); only a prompt rule existed | minor | `contradictory_hedging` |
+| No rule against an over-long strap | minor | `lower_third_too_long` (120 characters) |
+| Tests 16, 20 and 22 of the brief's list were missing | minor | accepted 9–12 min range, weather determinism, `pipeline_version=1` |
+
+## Verified by a real dry run
+
+`btcedu script --episode-id o4Y4qK2OEk8 --force` against a **copied** database
+and outputs directory, `DRY_RUN=true`: cost `$0.0000`, 5 broadcast stories,
+8.5 min, anchor share 43 %, no forced revision. The stored assessment reads
+`below_minimum` with the reason that six stories were dropped for relevance and
+the runtime was not padded. Spoken opening:
+`İyi akşamlar, Almanya Yirmi Dört'e hoş geldiniz.`
+Spoken closing: `Bugünün gündemi bu kadar. Bizi izlediğiniz için teşekkür
+ederiz. Yeniden görüşmek üzere, iyi akşamlar.`
+
+Speaker shares in that run: Nazlı 443 words (43 %, ~3:38), Cavit 598 words
+(57 %, ~4:54).
+
 ## Known limitations
 
 - The weather structure (tonight → tomorrow with its date → outlook) and the
@@ -62,7 +86,7 @@ Checked against the brief point by point, using the reference episode
 
 ## Commands run
 
-`pytest` (2105 passed), `ruff check` on all touched files,
+`pytest` (2119 passed), 46 dry-run tests, `ruff check` on all touched files,
 `ruff format` on all touched files, `git diff --check`, the deterministic
 preview, a real ffmpeg topic-card render with and without the counter, and the
 final-review, publish-gate and pipeline test modules.

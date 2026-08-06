@@ -178,7 +178,9 @@ sisteme aittir. Yalnızca yukarıdaki haber listesini üret.
 # Input
 
 Yayın tarihi: {{broadcast_date}}
-Hedef toplam süre (haber gövdesi): {{target_body_seconds}} saniye
+Tercih edilen toplam süre (haber gövdesi): yaklaşık {{target_body_seconds}} saniye.
+Bu bir kota değil: kaynakta yeterli bilgi varsa daha uzun olabilir, yoksa daha
+kısa. Süreyi tutturmak için tekrar veya dolgu cümle yazma.
 Hedef ana sunucu payı: %{{anchor_share_min}}–%{{anchor_share_max}}
 
 Yayına girecek haberler (öncelik ve hedef süre ile birlikte):

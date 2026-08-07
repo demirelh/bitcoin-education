@@ -2,9 +2,11 @@
 
 import json
 import logging
+import re
 import subprocess
 import time
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -98,6 +100,28 @@ def get_ffmpeg_version() -> str:
         return "unknown"
 
 
+# Debian nests families in per-package subdirectories (for example
+# roboto/unhinted/), so the font trees are scanned as a whole: naming the leaf
+# directories individually silently misses whole families.
+_FONT_SEARCH_PATHS = [
+    Path("/usr/share/fonts"),
+    Path("/usr/local/share/fonts"),
+    Path.home() / ".fonts",
+]
+
+
+def _font_key(name: str) -> str:
+    """Comparable form of a font name: lowercase, punctuation removed.
+
+    Lets the configured ``Roboto-Condensed-Bold`` match the file Debian ships as
+    ``RobotoCondensed-Bold.ttf``.
+    """
+    return re.sub(r"[^a-z0-9]", "", name.lower())
+
+
+# Font files live on a read-only system directory and this runs once per
+# overlay, so the recursive scan is cached for the life of the process.
+@lru_cache(maxsize=64)
 def find_font_path(font_name: str) -> str:
     """Find font file path or return fontconfig name.
 
@@ -107,27 +131,37 @@ def find_font_path(font_name: str) -> str:
     Returns:
         Absolute path to font file or original name if not found
     """
-    # Search common Linux font paths
-    search_paths = [
-        Path("/usr/share/fonts/truetype/noto"),
-        Path("/usr/share/fonts/truetype/dejavu"),
-        Path("/usr/share/fonts/TTF"),
-    ]
+    wanted = _font_key(font_name)
+    exact: str | None = None
+    prefixed: str | None = None
 
-    # Try exact match first
-    for base_dir in search_paths:
+    for base_dir in _FONT_SEARCH_PATHS:
         if not base_dir.exists():
             continue
-        for font_file in base_dir.rglob("*.ttf"):
-            if font_name in font_file.stem:
-                return str(font_file.absolute())
+        # sorted() keeps the choice deterministic; rglob order is filesystem
+        # dependent and would otherwise vary between machines.
+        for font_file in sorted(base_dir.rglob("*.ttf")):
+            key = _font_key(font_file.stem)
+            if key == wanted:
+                exact = str(font_file.absolute())
+                break
+            # Only accept a longer name if nothing exact turns up, otherwise
+            # "NotoSans-Bold" resolves to "NotoSans-BoldItalic" and every
+            # overlay silently renders in italic.
+            if prefixed is None and key.startswith(wanted):
+                prefixed = str(font_file.absolute())
+        if exact:
+            break
+
+    resolved = exact or prefixed
+    if resolved:
+        return resolved
 
     # Fallback: try DejaVu-Bold as a known-good fallback
-    for base_dir in search_paths:
+    for base_dir in _FONT_SEARCH_PATHS:
         if not base_dir.exists():
             continue
-        dejavu_bold = base_dir / "DejaVuSans-Bold.ttf"
-        if dejavu_bold.exists():
+        for dejavu_bold in sorted(base_dir.rglob("DejaVuSans-Bold.ttf")):
             logger.warning("Font %s not found, using DejaVuSans-Bold fallback", font_name)
             return str(dejavu_bold.absolute())
 

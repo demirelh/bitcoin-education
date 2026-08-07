@@ -68,9 +68,71 @@ def test_extract_audio_clip_uses_bounded_range(tmp_path):
 def test_find_font_path_returns_name_when_not_found():
     """Test font path fallback to name."""
     # Mock all paths to not exist
+    find_font_path.cache_clear()
     with patch("pathlib.Path.exists", return_value=False):
         result = find_font_path("NonExistentFont")
         assert result == "NonExistentFont"
+
+
+def _font_dir(tmp_path, *names):
+    """A fake font tree containing empty .ttf files with the given stems."""
+    root = tmp_path / "fonts"
+    (root / "nested").mkdir(parents=True)
+    for name in names:
+        (root / "nested" / f"{name}.ttf").write_bytes(b"")
+    return root
+
+
+def test_find_font_path_prefers_exact_match_over_longer_name(tmp_path):
+    """A font must not resolve to a longer relative of the same family.
+
+    The old lookup matched on substrings, so ``NotoSans`` could resolve to
+    ``NotoSans-Bold.ttf`` and ``NotoSans-Bold`` to ``NotoSans-BoldItalic.ttf`` —
+    every overlay then silently rendered in the wrong weight or in italic.
+    """
+    root = _font_dir(tmp_path, "NotoSans", "NotoSans-Bold", "NotoSans-BoldItalic")
+
+    with patch("btcedu.services.ffmpeg_service._FONT_SEARCH_PATHS", [root]):
+        # Discriminating case: "NotoSans-Bold.ttf" sorts before "NotoSans.ttf",
+        # so a substring match returns the bold cut for a regular request.
+        find_font_path.cache_clear()
+        assert find_font_path("NotoSans").endswith("NotoSans.ttf")
+
+        find_font_path.cache_clear()
+        assert find_font_path("NotoSans-Bold").endswith("NotoSans-Bold.ttf")
+
+
+def test_find_font_path_ignores_punctuation_differences(tmp_path):
+    """The configured name and the shipped filename may punctuate differently.
+
+    Debian ships Roboto Condensed as ``RobotoCondensed-Bold.ttf`` while the
+    render settings ask for ``Roboto-Condensed-Bold``.
+    """
+    root = _font_dir(tmp_path, "RobotoCondensed-Bold")
+
+    find_font_path.cache_clear()
+    with patch("btcedu.services.ffmpeg_service._FONT_SEARCH_PATHS", [root]):
+        assert find_font_path("Roboto-Condensed-Bold").endswith("RobotoCondensed-Bold.ttf")
+
+
+def test_find_font_path_searches_nested_family_directories(tmp_path):
+    """Families nested in per-package subdirectories must still be found."""
+    root = tmp_path / "fonts"
+    (root / "roboto" / "unhinted").mkdir(parents=True)
+    (root / "roboto" / "unhinted" / "RobotoCondensed-Bold.ttf").write_bytes(b"")
+
+    find_font_path.cache_clear()
+    with patch("btcedu.services.ffmpeg_service._FONT_SEARCH_PATHS", [root]):
+        assert find_font_path("RobotoCondensed-Bold").endswith("RobotoCondensed-Bold.ttf")
+
+
+def test_find_font_path_falls_back_to_dejavu(tmp_path):
+    """An unknown font still resolves to the known-good DejaVu bold."""
+    root = _font_dir(tmp_path, "DejaVuSans-Bold")
+
+    find_font_path.cache_clear()
+    with patch("btcedu.services.ffmpeg_service._FONT_SEARCH_PATHS", [root]):
+        assert find_font_path("SomethingMissing").endswith("DejaVuSans-Bold.ttf")
 
 
 def test_escape_drawtext_plain_text():

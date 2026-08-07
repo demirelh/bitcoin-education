@@ -41,13 +41,16 @@ SCRIPT_QA_FILENAME = "script_qa.json"
 
 # Segments the system owns: greeting, headline block, transitions, weather
 # hand-over and closing. They are profile-configured constants, not derived from
-# a source story, so grounding them against a story would be meaningless.
+# a source story, so grounding them against a story would be meaningless. The
+# external forecast joins them for the same reason: it is attributed to a named
+# third party precisely because the broadcast did not supply it.
 SYSTEM_PURPOSES: frozenset[SegmentPurpose] = frozenset(
     {
         SegmentPurpose.OPENING,
         SegmentPurpose.HEADLINES,
         SegmentPurpose.TRANSITION,
         SegmentPurpose.WEATHER_HANDOVER,
+        SegmentPurpose.WEATHER_EXTERNAL,
         SegmentPurpose.CLOSING,
     }
 )

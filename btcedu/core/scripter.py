@@ -24,7 +24,7 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -102,6 +102,14 @@ DEFAULT_WEATHER_HANDOVERS: tuple[str, ...] = (
 )
 
 DEFAULT_BRIEFS_LABEL = "Kısa haberlerle devam ediyoruz."
+
+#: Spoken when the broadcast announced a forecast but never delivered one, so
+#: the audience is told where the numbers come from before hearing them.
+DEFAULT_WEATHER_EXTERNAL_INTRO = (
+    "Yayında hava durumu ayrıntıları aktarılmadı."
+    " Bu nedenle tahmini {source} verileriyle veriyoruz."
+)
+DEFAULT_WEATHER_EXTERNAL_OUTRO = "Bu değerler {source} kaynaklıdır."
 
 # Line that introduces the spoken headline block.
 DEFAULT_HEADLINE_INTROS: tuple[str, ...] = (
@@ -244,6 +252,17 @@ def _closing_card_text(settings: Settings, episode: Episode) -> str:
         return str(render_config.get("outro_text") or "")
     except Exception:  # noqa: BLE001 - QA must not fail on a missing profile
         return ""
+
+
+def _weather_config(settings: Settings, episode: Episode) -> dict[str, Any]:
+    """The profile's ``weather:`` block, or empty when it cannot be read."""
+    try:
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(settings).get(getattr(episode, "content_profile", ""))
+        return dict(profile.stage_config.get("weather") or {})
+    except Exception:  # noqa: BLE001 - a missing profile must not fail the stage
+        return {}
 
 
 def _story_config(settings: Settings, episode: Episode) -> tuple[dict, dict, str | None]:
@@ -536,6 +555,116 @@ def _is_weather_story(source: dict[str, Any], headline: str) -> bool:
     ).is_weather_story
 
 
+def _weather_lacks_forecast(text: str, broadcast_date: str) -> bool:
+    """True when a weather story announces a forecast but carries none.
+
+    The 2026-08-07 bulletin ended mid-hand-over — "Und damit zur Wettervorhersage
+    für morgen, Samstag, den 8. August" — because the recording was cut short.
+    Everything downstream behaved correctly on that input: the chapter title and
+    date were derived from the hand-over, the extractor honestly found no claims
+    and the model, refusing to invent any, narrated that no details were given.
+
+    Uses the canonical extractor so this agrees with what the weather card will
+    later decide about the very same text.
+    """
+    if not text.strip():
+        return True
+    from datetime import date as _date
+
+    from btcedu.core.weather.extractor import extract_weather_data
+
+    parsed: _date | None = None
+    if broadcast_date:
+        try:
+            parsed = _date.fromisoformat(broadcast_date)
+        except ValueError:
+            parsed = None
+    data = extract_weather_data(text, story_id="script_substance", broadcast_date=parsed)
+    return not (
+        data.regions
+        or data.outlook
+        or data.warnings
+        or data.overview.temperature_min_c is not None
+        or data.overview.temperature_max_c is not None
+    )
+
+
+def _external_weather_text(
+    text: str,
+    broadcast_date: str,
+    weather_config: dict[str, Any],
+    config: dict[str, Any],
+) -> str | None:
+    """A spoken forecast built from an attributed external provider.
+
+    Returns ``None`` whenever the substitute cannot be made trustworthy — no
+    provider data, no resolvable date. Saying nothing is better than saying
+    something unsourced, and the caller then keeps the original wording.
+    """
+    from datetime import date as _date
+
+    from btcedu.core.weather.cities import MAP_CITIES
+    from btcedu.core.weather.extractor import extract_weather_data
+    from btcedu.services.meteo_service import OpenMeteoService
+
+    city_config = (weather_config.get("city_temperatures") or {}) if weather_config else {}
+    if not city_config.get("enabled", True):
+        return None
+
+    broadcast: _date | None = None
+    if broadcast_date:
+        try:
+            broadcast = _date.fromisoformat(broadcast_date)
+        except ValueError:
+            broadcast = None
+
+    reference = extract_weather_data(
+        text, story_id="script_external", broadcast_date=broadcast
+    ).forecast_reference
+    target: _date | None = None
+    if reference.anchor_date:
+        try:
+            target = _date.fromisoformat(reference.anchor_date)
+        except ValueError:
+            target = None
+    if target is None and broadcast is not None:
+        target = broadcast + timedelta(days=1)
+    if target is None:
+        return None
+
+    selected = city_config.get("cities")
+    cities = tuple(c for c in MAP_CITIES if not selected or c.city_id in selected)
+    if not cities:
+        return None
+
+    service = OpenMeteoService(
+        timeout=float(city_config.get("timeout_seconds", 20) or 20),
+        model=str(city_config.get("model", "icon_seamless") or "icon_seamless"),
+    )
+    forecasts = [
+        f
+        for f in service.fetch_city_forecasts(cities, [target])
+        if f.date_iso == target.isoformat() and f.temperature_max_c is not None
+    ]
+    if not forecasts:
+        return None
+
+    day_label = (reference.date_text or "").strip()
+    readings = ", ".join(f"{f.label_tr} {f.temperature_max_c}" for f in forecasts)
+    intro = str(
+        config.get("weather_external_intro") or DEFAULT_WEATHER_EXTERNAL_INTRO
+    ).format(source=service.source_label)
+    outro = str(
+        config.get("weather_external_outro") or DEFAULT_WEATHER_EXTERNAL_OUTRO
+    ).format(source=service.source_label)
+    headline = (
+        f"{day_label} günü beklenen en yüksek sıcaklıklar"
+        if day_label
+        else "Yarın beklenen en yüksek sıcaklıklar"
+    )
+    return f"{intro} {headline}: {readings} derece. {outro}"
+
+
 def _first_sentence(text: str, max_words: int = 15) -> str:
     if not text:
         return ""
@@ -612,6 +741,8 @@ def _frame_stories(
     episode_id: str,
     branding: dict[str, Any],
     config: dict[str, Any],
+    weather_config: dict[str, Any] | None = None,
+    broadcast_date: str = "",
 ) -> list[ScriptStory]:
     """Prepend opening + headline block and append the closing."""
     display_name = display_show_name(branding)
@@ -686,6 +817,30 @@ def _frame_stories(
                 else segment
                 for segment in story.speaker_sequence
             ]
+            spoken = " ".join(s.text for s in story.speaker_sequence).strip()
+            if _weather_lacks_forecast(spoken, broadcast_date):
+                substitute = _external_weather_text(
+                    spoken, broadcast_date, weather_config or {}, config
+                )
+                if substitute:
+                    logger.warning(
+                        "Weather story carries no forecast; substituting attributed "
+                        "external data for %s",
+                        episode_id,
+                    )
+                    story.speaker_sequence = [
+                        SpeakerSegment(
+                            role=SpeakerRole.ANCHOR,
+                            purpose=SegmentPurpose.WEATHER_EXTERNAL,
+                            text=substitute,
+                        )
+                    ]
+                else:
+                    logger.warning(
+                        "Weather story carries no forecast and no external data is "
+                        "available for %s; keeping the original wording",
+                        episode_id,
+                    )
             story.speaker_sequence.insert(
                 0,
                 SpeakerSegment(
@@ -935,7 +1090,14 @@ def generate_script(
             total_cost += usage[2]
 
             script_stories = _build_script_stories(model_stories, source_by_id, rankings, selected)
-            framed = _frame_stories(script_stories, episode_id, branding, config)
+            framed = _frame_stories(
+                script_stories,
+                episode_id,
+                branding,
+                config,
+                weather_config=_weather_config(settings, episode),
+                broadcast_date=str(stories_doc.get("broadcast_date") or ""),
+            )
             script = BroadcastScript(
                 episode_id=episode_id,
                 profile=str(getattr(episode, "content_profile", "") or ""),

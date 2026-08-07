@@ -48,6 +48,9 @@ class SegmentPurpose(str, Enum):
     BRIEF = "brief"
     WEATHER_HANDOVER = "weather_handover"
     WEATHER = "weather"
+    #: Forecast read from an attributed external source because the broadcast
+    #: itself carried none — see ``scripter._external_weather_segment``.
+    WEATHER_EXTERNAL = "weather_external"
     CLOSING = "closing"
 
 

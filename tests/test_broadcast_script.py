@@ -1671,3 +1671,143 @@ class TestShotVariety:
             hint = _shot_hint(SimpleNamespace(chapter_id=f"ch{index:02d}"), self._beat(index))
             assert "No news studio" in hint
             assert "Framing:" in hint
+
+
+class TestWeatherWithoutAForecast:
+    """The 2026-08-07 failure mode: a weather chapter with nothing in it.
+
+    The recorder cut the broadcast a minute early, so the transcript ended on
+    the hand-over — "Und damit zur Wettervorhersage für morgen" — and the
+    forecast itself never reached the pipeline. Every stage then behaved
+    correctly on that input and still produced a weather chapter that told the
+    audience nothing. The substitute closes that gap with named external data.
+    """
+
+    WITHOUT_FORECAST = (
+        "Bültenimizi hava durumuyla tamamlıyoruz."
+        " Bu gece için ayrıntı verilmedi."
+        " Yarın, 8 Ağustos Cumartesi günü için hava tahmini bulunuyor."
+        " Sonraki günlere ilişkin ayrıntı verilmedi."
+    )
+    WITH_FORECAST = (
+        "Yarın kuzeyde bulutlu, sıcaklık 18 ile 24 derece arasında."
+        " Güneyde güneşli, en yüksek 27 derece."
+    )
+
+    @staticmethod
+    def _weather_story(text):
+        return ScriptStory(
+            story_id="w1",
+            source_story_id="s07",
+            order=1,
+            category="wetter",
+            display_headline="HAVA DURUMU",
+            is_weather=True,
+            speaker_sequence=[
+                SpeakerSegment(role=SpeakerRole.ANCHOR, purpose=SegmentPurpose.WEATHER, text=text)
+            ],
+        )
+
+    @staticmethod
+    def _forecasts(day):
+        from btcedu.core.weather.models import CityForecast
+
+        return [
+            CityForecast(
+                city_id=cid, label_tr=label, date_iso=day, temperature_max_c=temp
+            )
+            for cid, label, temp in [
+                ("hamburg", "Hamburg", 22),
+                ("munich", "Münih", 27),
+            ]
+        ]
+
+    def _frame(self, monkeypatch, text, forecasts):
+        import btcedu.services.meteo_service as meteo
+
+        class _Stub:
+            source_label = "Open-Meteo / DWD ICON"
+
+            def __init__(self, **kwargs):
+                pass
+
+            def fetch_city_forecasts(self, cities, dates):
+                return forecasts
+
+        monkeypatch.setattr(meteo, "OpenMeteoService", _Stub)
+        return _frame_stories(
+            [self._weather_story(text)],
+            "ep-test",
+            BRANDING,
+            {},
+            weather_config={"city_temperatures": {"enabled": True}},
+            broadcast_date="2026-08-07",
+        )
+
+    def _weather_text(self, framed):
+        # Framing also adds the opening and closing to this single story; only
+        # the forecast body itself is under test here.
+        return " ".join(
+            s.text
+            for story in framed
+            for s in story.speaker_sequence
+            if s.purpose in {SegmentPurpose.WEATHER, SegmentPurpose.WEATHER_EXTERNAL}
+        )
+
+    def test_a_real_forecast_is_never_replaced(self, monkeypatch):
+        framed = self._frame(monkeypatch, self.WITH_FORECAST, self._forecasts("2026-08-08"))
+        assert self._weather_text(framed) == self.WITH_FORECAST
+        purposes = {s.purpose for s in framed[0].speaker_sequence}
+        assert SegmentPurpose.WEATHER_EXTERNAL not in purposes
+
+    def test_an_empty_forecast_is_filled_from_the_external_provider(self, monkeypatch):
+        framed = self._frame(monkeypatch, self.WITHOUT_FORECAST, self._forecasts("2026-08-08"))
+        spoken = self._weather_text(framed)
+        assert "Hamburg 22" in spoken
+        assert "Münih 27" in spoken
+        assert "ayrıntı verilmedi" not in spoken
+
+    def test_the_substitute_names_its_source(self, monkeypatch):
+        # The user allowed external data on the condition that it is declared,
+        # and the profile forbids passing it off as broadcast content.
+        framed = self._frame(monkeypatch, self.WITHOUT_FORECAST, self._forecasts("2026-08-08"))
+        spoken = self._weather_text(framed)
+        assert spoken.count("Open-Meteo / DWD ICON") >= 2
+
+    def test_the_substitute_keeps_the_day_announced_on_air(self, monkeypatch):
+        framed = self._frame(monkeypatch, self.WITHOUT_FORECAST, self._forecasts("2026-08-08"))
+        assert "8 Ağustos Cumartesi" in self._weather_text(framed)
+
+    def test_a_silent_provider_leaves_the_original_wording_alone(self, monkeypatch):
+        # Better an honest "no details given" than an unsourced invention.
+        framed = self._frame(monkeypatch, self.WITHOUT_FORECAST, [])
+        assert self._weather_text(framed) == self.WITHOUT_FORECAST
+
+    def test_forecasts_for_another_day_are_not_used(self, monkeypatch):
+        framed = self._frame(monkeypatch, self.WITHOUT_FORECAST, self._forecasts("2026-08-09"))
+        assert self._weather_text(framed) == self.WITHOUT_FORECAST
+
+    def test_the_handover_still_opens_the_chapter(self, monkeypatch):
+        framed = self._frame(monkeypatch, self.WITHOUT_FORECAST, self._forecasts("2026-08-08"))
+        weather = next(st for st in framed if st.is_weather)
+        purposes = [s.purpose for s in weather.speaker_sequence]
+        assert (
+            purposes.index(SegmentPurpose.WEATHER_HANDOVER)
+            < purposes.index(SegmentPurpose.WEATHER_EXTERNAL)
+        )
+        assert all(s.role == SpeakerRole.ANCHOR for s in weather.speaker_sequence)
+
+    def test_the_substitute_survives_script_qa(self, monkeypatch):
+        # A substitute the QA rejects would block the gate instead of saving it.
+        framed = self._frame(monkeypatch, self.WITHOUT_FORECAST, self._forecasts("2026-08-08"))
+        script = BroadcastScript(
+            episode_id="ep-test",
+            stories=framed,
+            rankings=[],
+            show_name=BRANDING["show_name"],
+        )
+        result = run_script_qa(
+            script, {"s07": self.WITHOUT_FORECAST}, ["s07"], ScriptQAConfig()
+        )
+        blocking = [f for f in result.findings if f.severity == "error"]
+        assert not [f for f in blocking if "s07" in str(f.location or "")]

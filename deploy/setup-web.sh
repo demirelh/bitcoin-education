@@ -65,20 +65,27 @@ else
   ok "sqlite3 installiert"
 fi
 
-# Noto Font (für Video-Rendering)
-if fc-list 2>/dev/null | grep -qi "NotoSans-Bold"; then
-  ok "NotoSans-Bold Font vorhanden"
+# Fonts für Video-Rendering (RENDER_FONT und die Overlay-Schriften)
+# Auf Dateinamen prüfen statt auf Familiennamen: die Render-Settings benennen
+# konkrete Schnitte, und nur deren Dateien stellen sicher, dass find_font_path()
+# nicht auf DejaVu zurückfällt. Roboto Condensed fehlte hier bisher ganz.
+missing_fonts=()
+fc-list 2>/dev/null | grep -q "NotoSans-Bold\.ttf" || missing_fonts+=("fonts-noto-core")
+fc-list 2>/dev/null | grep -q "RobotoCondensed-Bold\.ttf" || missing_fonts+=("fonts-roboto-unhinted")
+
+if [ ${#missing_fonts[@]} -eq 0 ]; then
+  ok "Render-Fonts vorhanden (NotoSans, Roboto Condensed)"
 else
-  warn "Noto Fonts werden installiert..."
-  sudo apt-get install -y -qq fonts-noto-core 2>/dev/null \
-    || sudo apt-get install -y -qq fonts-noto 2>/dev/null \
-    || true
+  warn "Fonts werden installiert: ${missing_fonts[*]}"
+  sudo apt-get install -y -qq "${missing_fonts[@]}" 2>/dev/null || true
   fc-cache -f 2>/dev/null || true
-  if fc-list 2>/dev/null | grep -qi "Noto"; then
-    ok "Noto Fonts installiert"
-  else
-    warn "Noto Font nicht gefunden — RENDER_FONT in .env ggf. anpassen"
-  fi
+  for f in "NotoSans-Bold.ttf" "RobotoCondensed-Bold.ttf"; do
+    if fc-list 2>/dev/null | grep -q "$f"; then
+      ok "$f installiert"
+    else
+      warn "$f fehlt — Overlays fallen auf DejaVu zurück"
+    fi
+  done
 fi
 
 # ═══════════════════════════════════════════════════════════════════

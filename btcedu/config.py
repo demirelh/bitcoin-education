@@ -169,7 +169,7 @@ class Settings(BaseSettings):
 
     # Render / ffmpeg (Sprint 9-10)
     render_resolution: str = "1920x1080"
-    render_fps: int = 30
+    render_fps: int = 25
     render_crf: int = 23
     render_preset: str = "medium"
     render_audio_bitrate: str = "192k"

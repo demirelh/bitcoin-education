@@ -192,7 +192,7 @@ def _build_kenburns_filter(
     pattern: str,
     duration: float,
     resolution: str = "1920x1080",
-    fps: int = 30,
+    fps: int = 25,
     zoom_ratio: float = 0.04,
 ) -> str:
     """Build zoompan filter string for Ken Burns effect.
@@ -355,7 +355,7 @@ def create_intro_segment(
     audio_path: str | None = None,
     duration: float = 4.0,
     resolution: str = "1920x1080",
-    fps: int = 30,
+    fps: int = 25,
     bg_color: str = "#004B87",
     accent_color: str = "#F7931A",
     font: str = "NotoSans-Bold",
@@ -506,7 +506,7 @@ def create_topic_intro_segment(
     audio_path: str | None = None,
     duration: float = 2.4,
     resolution: str = "1920x1080",
-    fps: int = 30,
+    fps: int = 25,
     bg_color: str = "#004B87",
     accent_color: str = "#F7931A",
     font: str = "NotoSans-Bold",
@@ -632,7 +632,7 @@ def create_outro_segment(
     audio_path: str | None = None,
     duration: float = 3.0,
     resolution: str = "1920x1080",
-    fps: int = 30,
+    fps: int = 25,
     bg_color: str = "#004B87",
     accent_color: str = "#F7931A",
     font: str = "NotoSans-Bold",
@@ -754,7 +754,7 @@ def create_segment(
     duration: float,
     overlays: list[OverlaySpec],
     resolution: str = "1920x1080",
-    fps: int = 30,
+    fps: int = 25,
     crf: int = 23,
     preset: str = "medium",
     audio_bitrate: str = "192k",
@@ -1041,7 +1041,7 @@ def normalize_video_clip(
     output_path: str,
     target_duration: float | None = None,
     resolution: str = "1920x1080",
-    fps: int = 30,
+    fps: int = 25,
     crf: int = 23,
     preset: str = "medium",
     timeout_seconds: int = 300,
@@ -1147,7 +1147,7 @@ def create_video_segment(
     duration: float,
     overlays: list[OverlaySpec],
     resolution: str = "1920x1080",
-    fps: int = 30,
+    fps: int = 25,
     crf: int = 23,
     preset: str = "medium",
     audio_bitrate: str = "192k",
@@ -1718,7 +1718,7 @@ def generate_test_video(
     output_path: str,
     duration: float = 2.0,
     resolution: str = "1920x1080",
-    fps: int = 30,
+    fps: int = 25,
     dry_run: bool = False,
 ) -> SegmentResult:
     """Generate a synthetic test video using ffmpeg's testsrc2 filter.
@@ -1730,7 +1730,7 @@ def generate_test_video(
         output_path: Destination path for the generated MP4.
         duration: Duration in seconds (default 2s).
         resolution: Output resolution as WxH (default 1920x1080).
-        fps: Frame rate (default 30).
+        fps: Frame rate (default 25).
         dry_run: If True, build command but don't execute.
 
     Returns:

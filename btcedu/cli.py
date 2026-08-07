@@ -2188,7 +2188,7 @@ def smoke_test_video(ctx: click.Context, resolution: str | None, keep: bool) -> 
 
     settings = ctx.obj["settings"]
     target_resolution = resolution or getattr(settings, "render_resolution", "1920x1080")
-    fps = getattr(settings, "render_fps", 30)
+    fps = getattr(settings, "render_fps", 25)
     crf = getattr(settings, "render_crf", 23)
     preset = getattr(settings, "render_preset", "medium")
     timeout = getattr(settings, "render_timeout_segment", 300)

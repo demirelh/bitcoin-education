@@ -2924,7 +2924,7 @@
         const size = ((m.total_size_bytes || 0) / 1024 / 1024).toFixed(1);
         html += `<div class="review-render-info">
           <strong>Render Info:</strong> ${(m.segments || []).length} segments &middot; ${dur}s &middot; ${size} MB &middot;
-          ${m.resolution || '1920x1080'} @ ${m.fps || 30}fps
+          ${m.resolution || '1920x1080'} @ ${m.fps || 25}fps
         </div>`;
       }
 

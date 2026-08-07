@@ -1435,7 +1435,7 @@ def finalize_selections(
                         output_path=str(normalized_path),
                         target_duration=None,  # Trimming happens at render time
                         resolution=getattr(settings, "render_resolution", "1920x1080"),
-                        fps=getattr(settings, "render_fps", 30),
+                        fps=getattr(settings, "render_fps", 25),
                         crf=getattr(settings, "render_crf", 23),
                         preset=getattr(settings, "render_preset", "medium"),
                         timeout_seconds=getattr(settings, "render_timeout_segment", 300),

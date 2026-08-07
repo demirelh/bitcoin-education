@@ -1,0 +1,44 @@
+name: Render Benchmark
+
+# Rendering an episode takes about an hour on the Raspberry Pi. This workflow
+# runs the same measurement on a GitHub-hosted runner so the speedup can be
+# compared with real numbers before any part of the render stage is moved off
+# the Pi. It is a manual experiment -- nothing in the pipeline depends on it.
+
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: "Length of the rendered test segment in seconds"
+        required: false
+        default: "60"
+
+jobs:
+  benchmark:
+    name: Render benchmark on ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure ffmpeg and fonts
+        run: |
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y ffmpeg
+          fi
+          # create_segment falls back to DejaVuSans-Bold when a font is missing
+          sudo apt-get install -y fonts-dejavu-core
+          ffmpeg -version | head -1
+
+      - name: Run benchmark
+        run: python3 scripts/bench_render.py --seconds "${{ inputs.seconds }}" --workdir bench-out
+
+      - name: Upload rendered segment
+        # The transfer time in this step is part of the answer: an offloaded
+        # render has to ship its result back to the Pi.
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-benchmark-segment
+          path: bench-out/segment.mp4
+          retention-days: 3

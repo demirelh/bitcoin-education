@@ -31,8 +31,11 @@ on:
 # so the Pi locates its run by matching this name.
 run-name: "render ${{ inputs.episode_id }} (${{ inputs.job_id }})"
 
+# The payload rides on a draft release, and a draft is invisible to a token
+# that only has `contents: read` -- GitHub treats drafts as writer-only. Read
+# access therefore is not enough to fetch the job, however odd that reads.
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   render:

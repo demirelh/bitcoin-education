@@ -79,8 +79,10 @@ run.sh deployment script
         +- gunicorn -> Flask app (port 8091)
     btcedu-detect.timer (every 6h)
         +- btcedu detect
-    btcedu-run.timer (daily 02:00)
+    btcedu-run.timer (every 10 min)
         +- btcedu run-latest
+    ard-recorder.service (OnSuccess=)
+        +- btcedu-run.service   <- fires as soon as a recording is finished
 ```
 
 ---
@@ -105,9 +107,34 @@ run.sh deployment script
 
 ### btcedu-run.timer
 
-- Runs `btcedu run-latest` daily at 02:00 (with up to 10 min random delay)
-- Processes the latest pending episode through the v2 pipeline
-- Timeout: 30 minutes (`TimeoutStartSec=1800`)
+- Runs `btcedu run-latest --profile tagesschau_tr --all-channels` every 10
+  minutes (`OnCalendar=*:0/10`, up to 30 s random delay)
+- Processes the newest pending episode through the v2 pipeline
+- Timeout: 2 hours (`TimeoutStartSec=7200`), capped at 3 of 4 cores
+  (`CPUQuota=300%`) so a local render cannot starve PID 1 and trip the
+  hardware watchdog
+- Overlapping runs are impossible: systemd skips a trigger while the unit is
+  still active, and `pipeline_lock` guards the process as well
+
+### Event trigger from the recorder
+
+`deploy/ard-recorder-btcedu-trigger.conf` is a drop-in for the neighbouring
+`ard-recorder.service`. It starts `btcedu-run.service` the moment a recording
+finishes, so the pipeline no longer waits up to ten minutes for the next tick:
+
+```bash
+sudo mkdir -p /etc/systemd/system/ard-recorder.service.d/
+sudo cp deploy/ard-recorder-btcedu-trigger.conf \
+  /etc/systemd/system/ard-recorder.service.d/10-btcedu-trigger.conf
+sudo systemctl daemon-reload
+systemctl show ard-recorder.service -p OnSuccess   # OnSuccess=btcedu-run.service
+```
+
+It hooks the *service*, not the `.DONE` marker: the marker is written before
+the recording is remuxed into its final `.mp4`, and the ingest rejects a
+recording whose final file is not there yet. `OnSuccess=` only fires on a
+clean exit, so the ten-minute timer stays in place as the safety net for a
+failed recorder run and for the YouTube fallback path.
 
 **View logs:**
 ```bash

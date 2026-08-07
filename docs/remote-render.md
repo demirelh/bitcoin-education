@@ -29,10 +29,13 @@ that chain would help locally *and* remotely.
 ```
 Pi                                  GitHub
 --------------------------------    ------------------------------------
-build_job_package()  ~33 MB
-  job.json (episode + settings)
+build_job_package()  ~30 MB
+  job.json (episode + settings
+            + expected hash/font)
   episode/ (chapters, images,
             tts, render/inputs)
+  assets/  (profile audio that
+            is not in git)
         |
         |  draft release asset
         v
@@ -73,8 +76,23 @@ throwaway SQLite database with a single episode row and calls
 - **Same settings**: every `render_*` setting is shipped. This matters twice
   over, because those values also feed the `.render_settings` fingerprint — a
   missing one would make the Pi re-render forever.
+- **Same assets**: the audio a profile references (`intro_audio`,
+  `topic_intro_audio`, `outro_audio`, `music_bed`) lives under `data/assets/`,
+  which is git-ignored, so the runner has no copy. It travels with the job and
+  is restored under the same relative path. Without this the intro jingle is
+  silently missing from the video — this actually happened on the first
+  successful offload.
 - **Same fonts**: the workflow installs `fonts-noto-core` and
-  `fonts-roboto-unhinted`, mirroring `deploy/setup-web.sh`.
+  `fonts-roboto-unhinted`, mirroring `deploy/setup-web.sh`. Because
+  `find_font_path()` falls back to DejaVuSans-Bold with only a warning, the Pi
+  additionally ships the font *file* it resolved and the runner refuses to
+  render unless it resolves the same one. Comparing files rather than names
+  means a Pi that is itself on the fallback still matches.
+- **Same input hash**: the Pi sends the content hash it will validate the
+  result against, and the runner recomputes it before rendering. This is the
+  backstop for all of the above: anything the payload forgets to carry shows
+  up here, and the job fails in seconds instead of returning a video the Pi
+  would reject — which would put it in an endless re-render loop.
 - **Idempotency**: an already-current draft is detected *before* anything is
   uploaded.
 - **Weather chapters** need no Chromium on the runner: `imagegen` has already
@@ -98,6 +116,26 @@ would otherwise fill the account's artifact storage quota.
 | `GITHUB_RENDER_FALLBACK_LOCAL` | `true` | Render locally when the offload fails |
 
 `GITHUB_TOKEN` needs the `repo` and `workflow` scopes.
+
+The workflow itself runs with `permissions: contents: write`. That is not
+cosmetic: a draft release is invisible to a token that only has
+`contents: read`, so the job cannot download its own payload without it.
+
+## Measured
+
+One daily bulletin (8 chapters, 657 s of video):
+
+| | Pi | GitHub runner |
+| --- | --- | --- |
+| Wall clock | ~47 min | ~18 min |
+| Payload up | — | 30 MB in ~5 s |
+| Result down | — | 462 MB |
+
+The runner is only ~2.5x faster per frame; most of the render time is the
+overlay filter chain (Ken Burns, animated lower thirds, colour correction),
+not x264 encoding. The bigger win is that the Pi stays responsive — a
+CPU-saturating local render is what triggered the watchdog reset that started
+this work.
 
 ## Switching
 

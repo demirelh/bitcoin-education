@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
-from werkzeug.exceptions import RequestEntityTooLarge
+from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
 from btcedu.config import get_settings
 from btcedu.db import get_session_factory, init_db
@@ -54,6 +54,13 @@ def create_app(settings=None) -> Flask:
     @app.errorhandler(Exception)
     def handle_exception(e):
         """Global exception handler for unhandled errors."""
+        # HTTPExceptions are deliberate outcomes, not failures: they already
+        # carry the right status code. Falling through to the generic branch
+        # below turned every unknown URL and every wrong HTTP method into a 500
+        # with a full traceback in the log.
+        if isinstance(e, HTTPException):
+            return jsonify({"error": e.name, "details": e.description}), e.code
+
         # Log full stack trace to web_errors.log
         error_log = Path(logs_dir) / "web_errors.log"
         try:

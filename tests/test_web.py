@@ -1156,3 +1156,37 @@ class TestSourceVideoRoute:
             if str(r) == "/api/episodes/<episode_id>/render" and "POST" in r.methods
         ]
         assert rules, "POST /api/episodes/<episode_id>/render is not registered"
+
+
+class TestHttpErrorStatusCodes:
+    """HTTPExceptions must keep their own status code.
+
+    The catch-all Exception handler used to swallow them, so every unknown URL
+    and every wrong HTTP method answered 500 and wrote a full traceback to the
+    error log. That hid real failures among routine 404 noise and made the API
+    impossible to consume programmatically.
+    """
+
+    def test_unknown_url_is_404(self, client):
+        assert client.get("/totally/unknown").status_code == 404
+
+    def test_unknown_api_route_is_404(self, client):
+        assert client.get("/api/does-not-exist").status_code == 404
+
+    def test_wrong_method_is_405(self, client):
+        """The episodes listing is GET-only."""
+        assert client.post("/api/episodes").status_code == 405
+
+    def test_error_response_is_json(self, client):
+        r = client.get("/api/does-not-exist")
+        assert r.is_json
+        assert "error" in r.get_json()
+
+    def test_real_errors_still_return_500(self, client, app):
+        """The generic branch must still catch genuine bugs."""
+
+        @app.route("/api/_boom")
+        def _boom():
+            raise RuntimeError("kaboom")
+
+        assert client.get("/api/_boom").status_code == 500

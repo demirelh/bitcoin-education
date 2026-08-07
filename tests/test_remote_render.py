@@ -177,6 +177,26 @@ def test_job_package_omits_source_url(db_session, episode, episode_dir):
     assert job["episode"]["url"] == ""
 
 
+def test_job_package_names_the_font_file_the_pi_resolved(db_session, episode, episode_dir):
+    """A font missing on the runner must be detectable, not silently swapped.
+
+    The runner compares resolved font *files*, so the descriptor has to carry
+    the file name rather than the configured font name.
+    """
+    settings = Settings(outputs_dir=str(episode_dir.parent))
+    episode.content_profile = "tagesschau_tr"  # this profile overrides the font
+    db_session.commit()
+    archive = build_job_package(db_session, episode.episode_id, settings, episode_dir.parent)
+    with tarfile.open(archive) as tar:
+        job = json.loads(tar.extractfile("job.json").read().decode())
+
+    # The profile's font wins over the global setting, and it is the resolved
+    # *file* that ships -- whatever this machine resolves it to.
+    from btcedu.services.ffmpeg_service import find_font_path
+
+    assert job["expected_font_file"] == Path(find_font_path("Roboto-Condensed-Bold")).name
+
+
 def test_job_package_rejects_unknown_episode(db_session, tmp_path):
     settings = Settings(outputs_dir=str(tmp_path))
     with pytest.raises(ValueError, match="Episode not found"):

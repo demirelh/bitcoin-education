@@ -63,9 +63,28 @@ jobs:
       - name: Install ffmpeg and the fonts the Pi uses
         # Font differences would show up as different pixels in the overlays,
         # so this mirrors deploy/setup-web.sh.
+        #
+        # Every apt call is bounded: a hung mirror or a lock held by the
+        # image's own background updater once ate 20 minutes of a 90 minute
+        # job budget without ever failing.
+        timeout-minutes: 12
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          set -eu
+          apt_try() {
+            timeout 300 sudo -E apt-get -y -o Dpkg::Lock::Timeout=180 "$@"
+          }
+          apt_retry() {
+            for attempt in 1 2 3; do
+              if apt_try "$@"; then return 0; fi
+              echo "apt-get $1 failed (attempt ${attempt}), retrying..."
+              sleep $((attempt * 15))
+            done
+            return 1
+          }
+          apt_retry update
+          apt_retry install --no-install-recommends \
             ffmpeg fonts-noto-core fonts-roboto-unhinted fonts-dejavu-core
           ffmpeg -version | head -1
 

@@ -196,6 +196,30 @@ def _job_filter(episode_dir: Path):
     return _keep
 
 
+def _expected_font_file(settings: Settings, episode) -> str:
+    """The font file the Pi would use, so the runner can prove it matches.
+
+    ``find_font_path`` silently falls back to DejaVuSans-Bold when a font is
+    missing. Comparing resolved *files* rather than font names is what makes a
+    remote render provably identical: it catches a font missing on the runner
+    without failing when the Pi itself is using the fallback.
+    """
+    try:
+        from btcedu.profiles import get_registry
+
+        profile_name = getattr(episode, "content_profile", "") or "bitcoin_podcast"
+        profile = get_registry(settings).get(profile_name)
+        cfg = (profile.stage_config.get("render", {}) if profile else {}) or {}
+        wanted = str(cfg.get("font") or settings.render_font or "")
+        if not wanted:
+            return ""
+        from btcedu.services.ffmpeg_service import find_font_path
+
+        return Path(find_font_path(wanted)).name
+    except Exception:  # a font hint must never break packing
+        return ""
+
+
 def build_job_package(
     session: Session,
     episode_id: str,
@@ -226,6 +250,7 @@ def build_job_package(
             "url": "",  # never ship source URLs; the runner does not need them
         },
         "settings": render_settings_snapshot(settings),
+        "expected_font_file": _expected_font_file(settings, episode),
         "force": bool(force),
     }
 

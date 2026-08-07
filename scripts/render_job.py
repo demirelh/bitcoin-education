@@ -50,6 +50,45 @@ def _build_settings(job: dict, outputs_dir: Path, db_path: Path) -> Settings:
     return Settings(**overrides)
 
 
+def _effective_font(settings: Settings, profile_name: str) -> str:
+    """The font the renderer will actually use (a profile override wins)."""
+    try:
+        from btcedu.profiles import get_registry
+
+        profile = get_registry(settings).get(profile_name)
+        cfg = (profile.stage_config.get("render", {}) if profile else {}) or {}
+    except Exception:
+        cfg = {}
+    return str(cfg.get("font") or settings.render_font or "")
+
+
+def _verify_font(settings: Settings, job: dict) -> None:
+    """Refuse to render with a different typeface than the Pi would use.
+
+    ``find_font_path`` falls back to DejaVuSans-Bold and only logs a warning.
+    On the Pi that is a reasonable last resort, but here it would quietly
+    return a video whose overlays are set in a different font than every
+    episode before it -- and nothing downstream would notice. The Pi ships the
+    font *file* it resolved, so this compares like for like: a Pi that is
+    itself on the fallback expects the fallback here too.
+    """
+    expected = str(job.get("expected_font_file") or "")
+    if not expected:
+        return
+
+    from btcedu.services.ffmpeg_service import find_font_path
+
+    profile_name = job["episode"].get("content_profile") or "bitcoin_podcast"
+    wanted = _effective_font(settings, profile_name)
+    resolved = Path(find_font_path(wanted)).name if wanted else ""
+    print(f"Font {wanted} -> {resolved} (Pi used {expected})", flush=True)
+    if resolved != expected:
+        raise SystemExit(
+            f"Font mismatch: the Pi renders {wanted!r} with {expected!r}, this runner would "
+            f"use {resolved!r}. Install the package providing {expected!r} before rendering."
+        )
+
+
 def _seed_episode(session, job: dict) -> str:
     """Insert the single episode row the renderer reads."""
     info = job["episode"]
@@ -119,6 +158,7 @@ def main() -> int:
 
     try:
         _seed_episode(session, job)
+        _verify_font(settings, job)
         print(
             f"Rendering {episode_id} at {settings.render_resolution}@{settings.render_fps} "
             f"(preset={settings.render_preset}, crf={settings.render_crf})",

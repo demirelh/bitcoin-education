@@ -31,6 +31,14 @@ the narration but cannot rewrite it. Review gates create artifact-bound
 segments, conditional fact-preserving adaptation, profile-routed image/TTS
 providers, and `auto_publish: false`.
 
+`tagesschau_tr` is fed by the local `ard-recorder` capture
+(`/mnt/photo-backup/tagesschau/recordings/`), which is ready about twenty
+minutes after the broadcast — one to two hours before the same broadcast is
+uploaded to YouTube. The YouTube feed remains the fallback and is used unchanged
+whenever no local recording exists. Both ingest directions are deduplicated on
+the broadcast date so a broadcast is never processed twice. See
+[docs/local-recorder-ingest.md](docs/local-recorder-ingest.md).
+
 Tagesschau weather chapters use a grounded local HTML/SVG renderer with timed
 FFmpeg scenes instead of generative weather images. See
 [docs/weather-renderer.md](docs/weather-renderer.md).

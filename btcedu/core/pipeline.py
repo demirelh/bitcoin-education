@@ -1824,12 +1824,33 @@ def _run_latest_locked(
     Returns:
         PipelineReport for the processed episode, or None if nothing to do.
     """
-    from btcedu.core.detector import detect_all_active_channels, detect_episodes
+    # The locally recorded broadcast is ready about twenty minutes after air
+    # time, one to two hours before the same broadcast reaches YouTube. Checking
+    # it first is what turns this ten-minute timer into a same-evening pipeline.
+    # It is a no-op for profiles without a local recorder, and any failure falls
+    # through to the feed below rather than stopping the run.
+    from btcedu.core.detector import (
+        DetectResult,
+        detect_all_active_channels,
+        detect_episodes,
+        detect_local_recordings,
+    )
+
+    try:
+        local_result = detect_local_recordings(session, settings, profile_name=profile)
+    except Exception:
+        logger.exception("Local recorder detection failed; falling back to the feed")
+        session.rollback()
+        local_result = DetectResult()
+    if local_result.new:
+        logger.info("Local recorder supplied %d new episode(s)", local_result.new)
 
     if detect_all:
         detect_result = detect_all_active_channels(session, settings)
     else:
         detect_result = detect_episodes(session, settings)
+    detect_result.found += local_result.found
+    detect_result.new += local_result.new
     logger.info(
         "Detection: found=%d, new=%d, total=%d",
         detect_result.found,

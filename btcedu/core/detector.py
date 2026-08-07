@@ -47,6 +47,53 @@ def _resolve_title_filter(settings: Settings) -> re.Pattern | None:
         return None
 
 
+def _resolve_profile(settings: Settings, profile_name: str | None = None):
+    """Load the active content profile, or ``None`` when it cannot be resolved.
+
+    Profile lookup must never be the reason detection fails, so every error path
+    degrades to "no profile-specific behaviour".
+    """
+    name = profile_name or getattr(settings, "default_content_profile", None)
+    if not name:
+        return None
+    try:
+        from btcedu.profiles import get_registry
+
+        return get_registry(settings).get(name)
+    except Exception:
+        logger.debug("cannot resolve content profile %r", name, exc_info=True)
+        return None
+
+
+def _local_recorder_settings(settings: Settings, profile_name: str | None = None) -> dict:
+    """The active profile's ``ingest.local_recorder`` config, or ``{}``."""
+    profile = _resolve_profile(settings, profile_name)
+    if profile is None:
+        return {}
+    try:
+        return profile.local_recorder_config()
+    except AttributeError:
+        return {}
+
+
+def _broadcast_day_from_title(title: str) -> date | None:
+    """Extract the broadcast date from a tagesschau title.
+
+    The YouTube title carries the broadcast date (``..., 06.08.2026``) while its
+    publication timestamp is the upload time, which can fall on the following
+    day. Deduplicating against the local recording therefore has to key on the
+    date in the title, not on ``published_at``.
+    """
+    match = re.search(r"(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})", title or "")
+    if not match:
+        return None
+    day, month, year = (int(part) for part in match.groups())
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
 def _resolve_channel_id(
     session: Session, settings: Settings, explicit_channel_id: str | None = None
 ) -> str | None:
@@ -165,6 +212,24 @@ def detect_episodes(
         if skipped:
             logger.info("Title filter skipped %d/%d episodes", skipped, before)
 
+    # The local recorder supersedes the feed for broadcasts it already captured.
+    # The upload of the same broadcast appears one to two hours later; ingesting
+    # it as well would run the whole pipeline a second time at full API cost.
+    if _local_recorder_settings(settings).get("supersedes_feed", True):
+        local_days = _local_episode_days(session)
+        if local_days:
+            before = len(episodes)
+            episodes = [
+                ep
+                for ep in episodes
+                if _feed_broadcast_day(ep) is None or _feed_broadcast_day(ep) not in local_days
+            ]
+            superseded = before - len(episodes)
+            if superseded:
+                logger.info(
+                    "Skipped %d feed episode(s) already recorded locally", superseded
+                )
+
     result = DetectResult(found=len(episodes))
 
     existing_ids = {row[0] for row in session.query(Episode.episode_id).all()}
@@ -185,6 +250,157 @@ def detect_episodes(
         )
         session.add(episode)
         result.new += 1
+
+    session.commit()
+    result.total = session.query(Episode).count()
+    return result
+
+
+def _feed_broadcast_day(ep_info: EpisodeInfo) -> date | None:
+    """The broadcast day a feed entry refers to.
+
+    Prefers the date in the title, because a broadcast uploaded after midnight
+    carries the next day's ``published_at`` and would otherwise not match the
+    local recording it duplicates.
+    """
+    day = _broadcast_day_from_title(ep_info.title or "")
+    if day is not None:
+        return day
+    return ep_info.published_at.date() if ep_info.published_at else None
+
+
+def _local_episode_days(session: Session) -> set[date]:
+    """Broadcast days already ingested from the recorder."""
+    return _episode_days_by_source(session, local=True)
+
+
+def _episode_days_by_source(session: Session, *, local: bool) -> set[date]:
+    """Broadcast days already stored, restricted to (or excluding) the recorder.
+
+    Deduplication has to work in *both* directions. Suppressing only the feed is
+    not enough: when the YouTube upload was ingested first — which is the case
+    for every broadcast recorded before the local source existed, and for any
+    evening the recorder misses — the local file would arrive afterwards and
+    start a second, fully paid run for a broadcast that is already done.
+    """
+    from btcedu.services.local_recorder_service import SOURCE_NAME
+
+    query = session.query(Episode.episode_id, Episode.title, Episode.published_at)
+    query = (
+        query.filter(Episode.source == SOURCE_NAME)
+        if local
+        else query.filter(Episode.source != SOURCE_NAME)
+    )
+
+    days: set[date] = set()
+    for episode_id, title, published_at in query.all():
+        day = _broadcast_day_from_slug(episode_id) or _broadcast_day_from_title(title or "")
+        if day is None and published_at is not None:
+            day = published_at.date()
+        if day is not None:
+            days.add(day)
+    return days
+
+
+def _broadcast_day_from_slug(slug: str) -> date | None:
+    """Recover the broadcast day from a recorder slug (``..._YYYY-MM-DD_2000``)."""
+    match = re.search(r"(\d{4}-\d{2}-\d{2})", slug or "")
+    if not match:
+        return None
+    try:
+        return date.fromisoformat(match.group(1))
+    except ValueError:
+        return None
+
+
+def detect_local_recordings(
+    session: Session,
+    settings: Settings,
+    *,
+    profile_name: str | None = None,
+    channel_id: str | None = None,
+) -> DetectResult:
+    """Ingest finished recordings produced by the local recorder.
+
+    This is the preferred source: the file is ready about twenty minutes after
+    the broadcast, well before the same broadcast is uploaded to YouTube. When
+    the recorder is not configured, not installed, or has nothing finished yet,
+    this is a no-op and the feed path takes over unchanged.
+
+    Idempotent: a recording whose ``episode_id`` is already stored is skipped,
+    so the ten-minute timer can call this as often as it likes.
+    """
+    profile_name = profile_name or getattr(settings, "default_content_profile", None)
+    config = _local_recorder_settings(settings, profile_name)
+    if not config:
+        return DetectResult()
+
+    from btcedu.core.retention import retention_cutoff
+    from btcedu.services.local_recorder_service import scan_recordings
+
+    cutoff = retention_cutoff(settings, profile_name=profile_name)
+    since = cutoff.date() if cutoff is not None else None
+
+    try:
+        recordings = scan_recordings(config["base_dir"], since=since)
+    except OSError:
+        # An unreadable or unmounted recorder directory must not stop detection;
+        # the feed fallback exists precisely for this case.
+        logger.warning("cannot scan local recorder directory", exc_info=True)
+        return DetectResult()
+
+    episodes = [rec.to_episode_info() for rec in recordings]
+    result = DetectResult(found=len(episodes))
+    if not episodes:
+        logger.debug("no finished local recordings found")
+        return result
+
+    title_filter = _resolve_title_filter(
+        settings.model_copy(update={"default_content_profile": profile_name})
+        if profile_name
+        else settings
+    )
+    if title_filter is not None:
+        episodes = [ep for ep in episodes if title_filter.search(ep.title or "")]
+
+    # The mirror image of the feed-side filter: a broadcast already ingested
+    # from YouTube must not be picked up again from disk. Without this, every
+    # broadcast that the feed happened to deliver first - including all of them
+    # from before the recorder existed - would be transcribed, translated,
+    # voiced and rendered a second time.
+    if config.get("supersedes_feed", True):
+        feed_days = _episode_days_by_source(session, local=False)
+        if feed_days:
+            before = len(episodes)
+            episodes = [
+                ep for ep in episodes if _feed_broadcast_day(ep) not in feed_days
+            ]
+            skipped = before - len(episodes)
+            if skipped:
+                logger.info(
+                    "Skipped %d local recording(s) already ingested from the feed", skipped
+                )
+
+    resolved_channel_id = _resolve_channel_id(session, settings, channel_id)
+    existing_ids = {row[0] for row in session.query(Episode.episode_id).all()}
+
+    for ep_info in episodes:
+        if ep_info.episode_id in existing_ids:
+            continue
+        episode = Episode(
+            episode_id=ep_info.episode_id,
+            channel_id=resolved_channel_id,
+            source=ep_info.source,
+            title=ep_info.title,
+            url=ep_info.url,
+            published_at=ep_info.published_at,
+            status=EpisodeStatus.NEW,
+            content_profile=profile_name or settings.default_content_profile,
+            pipeline_version=settings.pipeline_version,
+        )
+        session.add(episode)
+        result.new += 1
+        logger.info("Ingested local recording %s (%s)", ep_info.episode_id, ep_info.url)
 
     session.commit()
     result.total = session.query(Episode).count()
@@ -394,11 +610,19 @@ def download_episode(
             logger.info("Already downloaded: %s", episode.audio_path)
             return episode.audio_path
 
-    audio_path = download_audio(
-        url=episode.url,
-        output_dir=output_dir,
-        audio_format=settings.audio_format,
-    )
+    from btcedu.services.local_recorder_service import is_local_source
+
+    if is_local_source(episode.source):
+        # The file is already on disk. Running yt-dlp against a filesystem path
+        # would fail, and re-downloading the broadcast from YouTube would throw
+        # away the very time this source exists to save.
+        audio_path = _ingest_local_recording(episode, output_dir, settings)
+    else:
+        audio_path = download_audio(
+            url=episode.url,
+            output_dir=output_dir,
+            audio_format=settings.audio_format,
+        )
 
     episode.audio_path = audio_path
     episode.status = EpisodeStatus.DOWNLOADED
@@ -408,10 +632,79 @@ def download_episode(
     # Trigger when globally enabled OR when the episode's content profile needs
     # video-derived images (imagegen provider == gemini_frame_edit, e.g.
     # tagesschau_tr), so news episodes always get their source video.
-    if settings.frame_extraction_enabled or _profile_requires_video(episode, settings):
+    # Locally recorded episodes already have their video in place, linked by
+    # _ingest_local_recording; downloading it again from YouTube would defeat
+    # the purpose of using the local source.
+    needs_video = settings.frame_extraction_enabled or _profile_requires_video(episode, settings)
+    if needs_video and not is_local_source(episode.source):
         _try_download_video(episode.url, output_dir, settings)
 
     return audio_path
+
+
+def _ingest_local_recording(episode: Episode, output_dir: str, settings: Settings) -> str:
+    """Prepare a locally recorded broadcast for the pipeline.
+
+    Extracts the audio track and makes the video available under the name the
+    downstream stages expect, so everything after ``download`` is identical for
+    locally recorded and downloaded episodes.
+
+    The video is hard-linked rather than copied: a broadcast is roughly 350 MB
+    and the recorder's copy is retained anyway, so copying would double the
+    storage for no benefit. A hard link also cannot go stale the way a symlink
+    would if the pipeline later moved the file.
+    """
+    import json
+    from datetime import UTC, datetime
+
+    from btcedu.services.local_recorder_service import (
+        extract_audio,
+        resolve_local_video,
+    )
+
+    config = _local_recorder_settings(settings, getattr(episode, "content_profile", None))
+    base_dir = config.get("base_dir")
+    if not base_dir:
+        raise RuntimeError(
+            f"episode {episode.episode_id} came from the local recorder, but the "
+            "profile no longer configures ingest.local_recorder.base_dir"
+        )
+
+    source_video = resolve_local_video(episode.url, base_dir)
+    out_path = Path(output_dir)
+    out_path.mkdir(parents=True, exist_ok=True)
+
+    audio_path = extract_audio(
+        source_video,
+        out_path / f"audio.{settings.audio_format}",
+        audio_format=settings.audio_format,
+    )
+
+    video_path = out_path / "video.mp4"
+    if not video_path.exists():
+        try:
+            video_path.hardlink_to(source_video)
+        except OSError:
+            # Different filesystems (the recorder writes to a separate disk)
+            # cannot be hard-linked; a symlink keeps this working without
+            # duplicating hundreds of megabytes.
+            video_path.symlink_to(source_video)
+
+    meta_path = out_path / "video_meta.json"
+    meta_path.write_text(
+        json.dumps(
+            {
+                "video_path": str(video_path),
+                "source": "local_recorder",
+                "source_video": str(source_video),
+                "downloaded_at": datetime.now(UTC).isoformat(),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    logger.info("Prepared local recording %s -> %s", source_video, audio_path)
+    return str(audio_path)
 
 
 def _profile_requires_video(episode: Episode, settings: Settings) -> bool:

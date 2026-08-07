@@ -43,6 +43,23 @@ class ContentProfile(BaseModel):
         pattern = (self.ingest or {}).get("title_include")
         return pattern or None
 
+    def local_recorder_config(self) -> dict:
+        """Return the ``ingest.local_recorder`` settings, or ``{}`` if unset.
+
+        An absent or disabled section means "this profile has no local source",
+        which is the correct default for every profile that is only fed by a
+        feed.
+        """
+        config = (self.ingest or {}).get("local_recorder") or {}
+        if not isinstance(config, dict) or not config.get("enabled"):
+            return {}
+        if not config.get("base_dir"):
+            logger.warning(
+                "profile %s enables local_recorder without a base_dir; ignoring it", self.name
+            )
+            return {}
+        return config
+
     @field_validator("pipeline_version")
     @classmethod
     def _validate_pipeline_version(cls, v: int) -> int:

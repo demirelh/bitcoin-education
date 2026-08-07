@@ -273,3 +273,14 @@ ingest:
   # skip 16:00 Uhr, tagesthemen, nachtmagazin and other formats.
   title_include: "(?i)tagesschau.*(20[:.]?00\\s*Uhr|100\\s*Sekunden)"
   retention_days: 10
+  # Preferred source: the local ard-recorder capture, ready ~20:21 - one to two
+  # hours before the same broadcast appears on YouTube. The YouTube feed remains
+  # the fallback and is used unchanged whenever no local file exists.
+  local_recorder:
+    enabled: true
+    base_dir: /mnt/photo-backup/tagesschau/recordings
+    # Once the local file for a broadcast day has been ingested, the YouTube
+    # entry for that same day must not create a second episode. A full duplicate
+    # run would repeat transcription, translation, TTS and image generation at
+    # full API cost.
+    supersedes_feed: true

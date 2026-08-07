@@ -64,6 +64,14 @@ Per-city temperatures from Open-Meteo/DWD ICON
 (`services/meteo_service.py`) are attributed context data only and are excluded
 from claim validation.
 
+**Ingest sources (tagesschau_tr):** the profile prefers the *local* recording
+produced by `ard-recorder` (`/mnt/photo-backup/tagesschau/recordings/<date>/`)
+over the YouTube feed. The local file is ready ~20:21, one to two hours before
+the same broadcast is uploaded, which is the single largest latency saving in
+the pipeline. The YouTube branch is untouched and remains the fallback whenever
+no local file exists. Configured under `ingest.local_recorder` in the profile;
+see `services/local_recorder_service.py` and `docs/local-recorder-ingest.md`.
+
 **Retention**: `core/retention.py` prunes expired episodes (files + DB rows)
 during `detect`. Controlled by `episode_retention_days` (0 = off); profiles may
 override via `ingest.retention_days`.
@@ -93,6 +101,17 @@ override via `ingest.retention_days`.
 - **Lazy imports**: stage functions lazy-imported in `_run_stage()` to avoid circular deps.
 - **YouTube deps are optional**: `pip install -e ".[youtube]"`. `run.sh` auto-installs if `data/client_secret.json` exists.
 - **SQLAlchemy string relationships** (e.g. `"ReviewItemDecision"`) require the target module to be imported at runtime, not just under `TYPE_CHECKING`.
+- **Local recorder deduplication is bidirectional.** The same broadcast reaches
+  the DB by two routes: the local file at ~20:21 and the YouTube upload one to
+  two hours later. Both directions must be suppressed — filtering only the feed
+  lets any broadcast that YouTube delivered first (all of them from before the
+  recorder existed, plus every evening the recorder misses) be re-ingested from
+  disk and run again at full API cost. Matching keys on the broadcast date in
+  the *title*, because an upload past midnight carries the next day's
+  `published_at`.
+- **A local episode must never reach yt-dlp.** `Episode.url` holds a filesystem
+  path for `source == "local_recorder"`; `download_episode` extracts audio with
+  ffmpeg and links the video instead. `_validate_url` would reject the path.
 - **Raspberry Pi**: ffmpeg uses software encoding (slow). Production
   recommendation: `RENDER_PRESET=ultrafast`, `RENDER_TIMEOUT_SEGMENT=900`;
   these are tuning values, not generic Settings defaults.

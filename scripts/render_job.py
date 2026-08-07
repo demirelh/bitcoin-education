@@ -89,6 +89,47 @@ def _verify_font(settings: Settings, job: dict) -> None:
         )
 
 
+def _place_assets(workdir: Path, job: dict) -> None:
+    """Put the profile's audio where the profile's relative paths expect it.
+
+    Profiles reference files like ``data/assets/<profile>/intro.mp3``, which
+    are git-ignored and therefore absent on a runner. They resolve against the
+    working directory, so that is where they are restored.
+    """
+    source_root = workdir / "assets"
+    for rel in job.get("assets") or []:
+        source = source_root / rel
+        if not source.is_file():
+            raise SystemExit(f"Job package is missing the asset it declared: {rel}")
+        target = Path.cwd() / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, target)
+        print(f"Asset {rel} -> {target}", flush=True)
+
+
+def _verify_content_hash(session, settings: Settings, job: dict) -> None:
+    """Refuse to render something the Pi would reject anyway.
+
+    The Pi accepts a render only if it can recompute the same input hash. If
+    the runner's view of the settings, profile, assets or episode differs, the
+    render is wasted work and the Pi would immediately queue another one --
+    an endless loop that is far cheaper to catch here.
+    """
+    expected = str(job.get("expected_content_hash") or "")
+    if not expected:
+        return
+
+    from btcedu.core.renderer import _current_render_content_hash
+
+    actual = _current_render_content_hash(session, job["episode"]["episode_id"], settings) or ""
+    if actual != expected:
+        raise SystemExit(
+            f"Render input hash mismatch: the Pi expects {expected[:12]}..., this runner "
+            f"computes {actual[:12]}.... The result would be rejected as out of date."
+        )
+    print(f"Render input hash matches the Pi: {expected[:12]}...", flush=True)
+
+
 def _seed_episode(session, job: dict) -> str:
     """Insert the single episode row the renderer reads."""
     info = job["episode"]
@@ -158,7 +199,9 @@ def main() -> int:
 
     try:
         _seed_episode(session, job)
+        _place_assets(workdir, job)
         _verify_font(settings, job)
+        _verify_content_hash(session, settings, job)
         print(
             f"Rendering {episode_id} at {settings.render_resolution}@{settings.render_fps} "
             f"(preset={settings.render_preset}, crf={settings.render_crf})",

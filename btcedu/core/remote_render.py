@@ -196,6 +196,44 @@ def _job_filter(episode_dir: Path):
     return _keep
 
 
+_PROFILE_ASSET_KEYS = ("intro_audio", "topic_intro_audio", "outro_audio", "music_bed")
+
+
+def _profile_render_config(settings: Settings, episode) -> dict:
+    """The profile's ``render`` block, or an empty one."""
+    try:
+        from btcedu.profiles import get_registry
+
+        profile_name = getattr(episode, "content_profile", "") or "bitcoin_podcast"
+        profile = get_registry(settings).get(profile_name)
+        return (profile.stage_config.get("render", {}) if profile else {}) or {}
+    except Exception:
+        return {}
+
+
+def _profile_assets(settings: Settings, episode) -> list[str]:
+    """Audio the profile pulls in from outside the episode directory.
+
+    These live under ``data/assets/``, which is git-ignored, so a runner that
+    only has the repository has no copy of them. Without shipping them the
+    intro jingle silently disappears from the video *and* the idempotency hash
+    stops matching, which would leave the Pi re-rendering the same episode for
+    ever.
+    """
+    cfg = _profile_render_config(settings, episode)
+    assets: list[str] = []
+    for key in _PROFILE_ASSET_KEYS:
+        value = str(cfg.get(key) or "")
+        if not value or value in assets:
+            continue
+        if Path(value).is_absolute():
+            logger.warning("Profile asset %s=%r is absolute and cannot be shipped", key, value)
+            continue
+        if Path(value).is_file():
+            assets.append(value)
+    return assets
+
+
 def _expected_font_file(settings: Settings, episode) -> str:
     """The font file the Pi would use, so the runner can prove it matches.
 
@@ -205,11 +243,7 @@ def _expected_font_file(settings: Settings, episode) -> str:
     without failing when the Pi itself is using the fallback.
     """
     try:
-        from btcedu.profiles import get_registry
-
-        profile_name = getattr(episode, "content_profile", "") or "bitcoin_podcast"
-        profile = get_registry(settings).get(profile_name)
-        cfg = (profile.stage_config.get("render", {}) if profile else {}) or {}
+        cfg = _profile_render_config(settings, episode)
         wanted = str(cfg.get("font") or settings.render_font or "")
         if not wanted:
             return ""
@@ -217,6 +251,16 @@ def _expected_font_file(settings: Settings, episode) -> str:
 
         return Path(find_font_path(wanted)).name
     except Exception:  # a font hint must never break packing
+        return ""
+
+
+def _expected_content_hash(session: Session, episode_id: str, settings: Settings) -> str:
+    """The idempotency hash the Pi will check the returned render against."""
+    try:
+        from btcedu.core.renderer import _current_render_content_hash
+
+        return _current_render_content_hash(session, episode_id, settings) or ""
+    except Exception:  # a hint must never break packing
         return ""
 
 
@@ -251,6 +295,11 @@ def build_job_package(
         },
         "settings": render_settings_snapshot(settings),
         "expected_font_file": _expected_font_file(settings, episode),
+        "assets": _profile_assets(settings, episode),
+        # The runner recomputes this. Any drift in settings, profile, assets or
+        # episode metadata changes it, and a mismatch means the result would be
+        # rejected by render_is_current -- i.e. the Pi would re-render for ever.
+        "expected_content_hash": _expected_content_hash(session, episode_id, settings),
         "force": bool(force),
     }
 
@@ -264,6 +313,8 @@ def build_job_package(
     with tarfile.open(archive_path, "w:gz", compresslevel=1) as tar:
         tar.add(job_json, arcname="job.json")
         tar.add(episode_dir, arcname="episode", filter=_job_filter(episode_dir))
+        for rel in job["assets"]:
+            tar.add(rel, arcname=f"assets/{rel}")
     job_json.unlink(missing_ok=True)
 
     logger.info(

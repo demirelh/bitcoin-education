@@ -197,6 +197,63 @@ def test_job_package_names_the_font_file_the_pi_resolved(db_session, episode, ep
     assert job["expected_font_file"] == Path(find_font_path("Roboto-Condensed-Bold")).name
 
 
+def test_job_package_ships_the_profile_audio_the_runner_cannot_have(
+    db_session, episode, episode_dir, tmp_path, monkeypatch
+):
+    """data/assets/ is git-ignored, so without this the intro jingle vanishes.
+
+    A missing intro also changes the idempotency hash, which would leave the
+    Pi re-rendering the same episode for ever.
+    """
+    monkeypatch.chdir(tmp_path)
+    jingle = Path("data/assets/demo/intro.mp3")
+    jingle.parent.mkdir(parents=True)
+    jingle.write_bytes(b"jingle")
+
+    settings = Settings(outputs_dir=str(episode_dir.parent))
+    with patch(
+        "btcedu.core.remote_render._profile_render_config",
+        return_value={"intro_audio": str(jingle)},
+    ):
+        archive = build_job_package(db_session, episode.episode_id, settings, episode_dir.parent)
+
+    with tarfile.open(archive) as tar:
+        names = set(tar.getnames())
+        job = json.loads(tar.extractfile("job.json").read().decode())
+
+    assert job["assets"] == [str(jingle)]
+    assert f"assets/{jingle}" in names
+
+
+def test_job_package_skips_absolute_asset_paths(
+    db_session, episode, episode_dir, tmp_path, monkeypatch
+):
+    """An absolute path cannot be recreated on the runner, so it is not shipped."""
+    monkeypatch.chdir(tmp_path)
+    settings = Settings(outputs_dir=str(episode_dir.parent))
+    with patch(
+        "btcedu.core.remote_render._profile_render_config",
+        return_value={"intro_audio": "/etc/hostname"},
+    ):
+        archive = build_job_package(db_session, episode.episode_id, settings, episode_dir.parent)
+
+    with tarfile.open(archive) as tar:
+        job = json.loads(tar.extractfile("job.json").read().decode())
+    assert job["assets"] == []
+
+
+def test_job_package_carries_the_hash_the_pi_will_check(db_session, episode, episode_dir):
+    """The runner compares against this; a mismatch means a wasted render."""
+    settings = Settings(outputs_dir=str(episode_dir.parent))
+    with patch(
+        "btcedu.core.renderer._current_render_content_hash", return_value="deadbeef"
+    ):
+        archive = build_job_package(db_session, episode.episode_id, settings, episode_dir.parent)
+    with tarfile.open(archive) as tar:
+        job = json.loads(tar.extractfile("job.json").read().decode())
+    assert job["expected_content_hash"] == "deadbeef"
+
+
 def test_job_package_rejects_unknown_episode(db_session, tmp_path):
     settings = Settings(outputs_dir=str(tmp_path))
     with pytest.raises(ValueError, match="Episode not found"):

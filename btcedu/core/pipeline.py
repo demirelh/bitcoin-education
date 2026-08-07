@@ -1240,9 +1240,33 @@ def _run_stage(
                 )
 
         elif stage_name == "render":
+            from btcedu.core.remote_render import get_render_mode, render_video_remote
             from btcedu.core.renderer import render_video
 
-            result = render_video(session, episode.episode_id, settings, force=force)
+            mode = get_render_mode(session, settings)
+            where = "local"
+            if mode == "github":
+                try:
+                    result = render_video_remote(
+                        session, episode.episode_id, settings, force=force
+                    )
+                    where = "github"
+                except Exception as exc:
+                    if not getattr(settings, "github_render_fallback_local", True):
+                        raise
+                    # The Pi can still do the work, just slower. Losing an
+                    # episode because GitHub was unreachable would be worse.
+                    logger.warning(
+                        "Remote render failed for %s (%s); falling back to local render",
+                        episode.episode_id,
+                        exc,
+                    )
+                    session.rollback()
+                    episode.error_message = None
+                    session.commit()
+                    result = render_video(session, episode.episode_id, settings, force=force)
+            else:
+                result = render_video(session, episode.episode_id, settings, force=force)
             elapsed = time.monotonic() - t0
 
             if result.skipped:
@@ -1255,7 +1279,8 @@ def _run_stage(
                     detail=(
                         f"{result.segment_count} segments, "
                         f"{result.total_duration_seconds:.1f}s, "
-                        f"{result.total_size_bytes / 1024 / 1024:.1f}MB"
+                        f"{result.total_size_bytes / 1024 / 1024:.1f}MB "
+                        f"[{where}]"
                     ),
                 )
 

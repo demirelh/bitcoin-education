@@ -752,6 +752,49 @@ class DropV1ChunksTableMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateAppSettingsTableMigration(Migration):
+    """Migration 014: Create app_settings table for operator-editable runtime values.
+
+    ``Settings`` is loaded from ``.env`` at process start, so the dashboard
+    cannot change it while the pipeline runs. This table stores the few values
+    that must be switchable at runtime (currently the render execution mode).
+    """
+
+    @property
+    def version(self) -> str:
+        return "014_create_app_settings_table"
+
+    @property
+    def description(self) -> str:
+        return "Create app_settings table for runtime-editable settings (e.g. render mode)"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        existing = {row[0] for row in result.fetchall()}
+
+        if "app_settings" not in existing:
+            session.execute(
+                text(
+                    """
+                    CREATE TABLE app_settings (
+                        key VARCHAR(64) PRIMARY KEY,
+                        value TEXT NOT NULL DEFAULT '',
+                        updated_at DATETIME NOT NULL
+                    )
+                    """
+                )
+            )
+            session.commit()
+            logger.info("Created app_settings table")
+        else:
+            logger.info("app_settings table already exists (skipped)")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -767,6 +810,7 @@ MIGRATIONS = [
     AddChannelContentProfileMigration(),
     AddPipelineRunGitCommitMigration(),
     DropV1ChunksTableMigration(),
+    CreateAppSettingsTableMigration(),
 ]
 
 

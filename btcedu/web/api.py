@@ -106,6 +106,53 @@ def sse_stream():
     )
 
 
+@api_bp.route("/render-mode", methods=["GET"])
+def get_render_mode_endpoint():
+    """Current render target plus the info the UI needs to explain it."""
+    from btcedu.core.remote_render import VALID_RENDER_MODES, get_render_mode, resolve_repo
+
+    settings = current_app.config["settings"]
+    session = _get_session()
+    try:
+        mode = get_render_mode(session, settings)
+    finally:
+        session.close()
+
+    try:
+        repo = resolve_repo(settings)
+    except Exception:
+        repo = ""
+    return jsonify(
+        {
+            "mode": mode,
+            "modes": list(VALID_RENDER_MODES),
+            "default": getattr(settings, "render_execution_mode", "github"),
+            "repo": repo,
+            "workflow": getattr(settings, "github_render_workflow", "render.yml"),
+            "fallback_local": bool(getattr(settings, "github_render_fallback_local", True)),
+            "github_available": bool(getattr(settings, "github_token", "")) and bool(repo),
+        }
+    )
+
+
+@api_bp.route("/render-mode", methods=["POST"])
+def set_render_mode_endpoint():
+    """Switch between rendering on GitHub Actions and on this machine."""
+    from btcedu.core.remote_render import VALID_RENDER_MODES, set_render_mode
+
+    payload = request.get_json(silent=True) or {}
+    mode = str(payload.get("mode", "")).strip()
+    if mode not in VALID_RENDER_MODES:
+        return jsonify({"error": f"mode must be one of {list(VALID_RENDER_MODES)}"}), 400
+
+    session = _get_session()
+    try:
+        set_render_mode(session, mode)
+    finally:
+        session.close()
+    return jsonify({"mode": mode})
+
+
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------

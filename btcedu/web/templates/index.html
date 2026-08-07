@@ -27,6 +27,14 @@
       <button class="btn" onclick="showReviews()">Reviews <span class="review-badge" id="review-badge"></span></button>
       <button class="btn" onclick="showIntroAudio()">Intro MP3</button>
       <button class="btn" onclick="location.href='whatsapp'" title="WhatsApp-Benachrichtigungen verknüpfen">WhatsApp</button>
+      <div class="render-mode" id="render-mode" title="Wo der Render läuft. GitHub ist rund 2,5x schneller als der Pi; Lokal rendert auf diesem Rechner.">
+        <span class="render-mode-title">Render</span>
+        <label class="switch">
+          <input type="checkbox" id="render-mode-toggle" onchange="setRenderMode(this.checked)">
+          <span class="switch-slider"></span>
+        </label>
+        <span class="render-mode-label" id="render-mode-label">…</span>
+      </div>
       <button class="btn" onclick="refresh()">Refresh</button>
     </div>
   </div>

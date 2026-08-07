@@ -1,3 +1,4 @@
+from btcedu.models.app_setting import AppSetting, get_setting, set_setting  # noqa: F401
 from btcedu.models.channel import Channel  # noqa: F401
 from btcedu.models.content_artifact import ContentArtifact  # noqa: F401
 from btcedu.models.episode import Episode, PipelineRun  # noqa: F401

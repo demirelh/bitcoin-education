@@ -34,12 +34,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from btcedu.config import Settings  # noqa: E402
 from btcedu.services.ffmpeg_service import OverlaySpec, create_segment  # noqa: E402
 
-RESOLUTION = "1920x1080"
-FPS = 30
-CRF = 18
-PRESET = "veryfast"
+# Defaults come from Settings so the benchmark cannot silently drift away from
+# the production render again. The runner has no .env, so it sees the code
+# defaults; pass --preset/--crf explicitly to measure a deployment that
+# overrides them (the Pi runs ultrafast, not the medium default).
+_DEFAULTS = Settings()
+RESOLUTION = _DEFAULTS.render_resolution
+FPS = _DEFAULTS.render_fps
+CRF = _DEFAULTS.render_crf
+PRESET = _DEFAULTS.render_preset
 
 
 def _run(cmd: list[str]) -> None:
@@ -234,6 +240,9 @@ def bench_pipeline_segment(image: Path, audio: Path, output: Path, seconds: floa
 
 
 def main() -> int:
+    # The bench_* helpers read these module-level values; --fps etc. override them.
+    global RESOLUTION, FPS, CRF, PRESET
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--seconds",
@@ -246,7 +255,15 @@ def main() -> int:
         default="",
         help="Where to write the benchmark files (default: a temp directory)",
     )
+    parser.add_argument("--fps", type=int, default=FPS, help=f"Frame rate (default: {FPS})")
+    parser.add_argument("--crf", type=int, default=CRF, help=f"x264 CRF (default: {CRF})")
+    parser.add_argument("--preset", default=PRESET, help=f"x264 preset (default: {PRESET})")
+    parser.add_argument(
+        "--resolution", default=RESOLUTION, help=f"Output resolution (default: {RESOLUTION})"
+    )
     args = parser.parse_args()
+
+    RESOLUTION, FPS, CRF, PRESET = args.resolution, args.fps, args.crf, args.preset
 
     if not shutil.which("ffmpeg"):
         print("ffmpeg not found on PATH", file=sys.stderr)

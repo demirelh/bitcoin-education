@@ -1364,14 +1364,22 @@ def tts(
     default=False,
     help="Generate render manifest and segments without executing ffmpeg.",
 )
+@click.option(
+    "--where",
+    type=click.Choice(["auto", "github", "local"]),
+    default="auto",
+    help="Where to render. 'auto' follows the dashboard/.env setting.",
+)
 @click.pass_context
 def render(
     ctx: click.Context,
     episode_ids: tuple[str, ...],
     force: bool,
     dry_run: bool,
+    where: str,
 ) -> None:
     """Render draft video from chapters, images, and TTS audio (v2 pipeline, Sprint 9)."""
+    from btcedu.core.remote_render import get_render_mode, render_video_remote
     from btcedu.core.renderer import render_video
     from btcedu.core.runlock import PipelineBusyError, pipeline_lock
 
@@ -1381,18 +1389,25 @@ def render(
 
     session = ctx.obj["session_factory"]()
     try:
+        mode = get_render_mode(session, settings) if where == "auto" else where
+        if dry_run and mode == "github":
+            mode = "local"  # the runner has nothing to do in dry-run mode
+        click.echo(f"Render mode: {mode}")
         try:
             with pipeline_lock(settings):
                 for eid in episode_ids:
                     try:
-                        result = render_video(session, eid, settings, force=force)
+                        if mode == "github":
+                            result = render_video_remote(session, eid, settings, force=force)
+                        else:
+                            result = render_video(session, eid, settings, force=force)
                         if result.skipped:
                             click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
                         else:
                             click.echo(
                                 f"[OK] {eid} -> {result.segment_count} segments, "
                                 f"{result.total_duration_seconds:.1f}s, "
-                                f"{result.total_size_bytes / 1024 / 1024:.1f}MB"
+                                f"{result.total_size_bytes / 1024 / 1024:.1f}MB [{mode}]"
                             )
                     except Exception as e:
                         click.echo(f"[FAIL] {eid}: {e}", err=True)

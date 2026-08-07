@@ -205,6 +205,17 @@ class Settings(BaseSettings):
     render_color_brightness: float = 0.02
     render_color_blue_shift: float = 0.05  # cool tint
 
+    # Remote render (offload the ffmpeg work to a GitHub Actions runner).
+    # The Pi needs ~47 min for a 10-minute bulletin and saturates all cores
+    # doing it; a hosted runner is roughly 2.5x faster. The local renderer
+    # stays fully functional and is the fallback.
+    render_execution_mode: str = "github"  # "github" | "local"
+    github_render_repo: str = ""  # "owner/repo"; empty -> derived from git remote
+    github_render_workflow: str = "render.yml"
+    github_render_timeout: int = 5400  # seconds to wait for the run (90 min)
+    github_render_poll_interval: int = 20  # seconds between run status polls
+    github_render_fallback_local: bool = True  # render locally if the offload fails
+
     # YouTube Publishing (Sprint 11)
     youtube_client_secrets_path: str = "data/client_secret.json"
     youtube_credentials_path: str = "data/.youtube_credentials.json"

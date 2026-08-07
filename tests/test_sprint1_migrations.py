@@ -7,6 +7,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
 from btcedu.migrations import (
+    MIGRATIONS,
     AddV2PipelineColumnsMigration,
     CreatePromptVersionsTableMigration,
     CreateReviewTablesMigration,
@@ -284,8 +285,8 @@ def test_all_migrations_run_sequentially(post_001_session):
     session = post_001_session
 
     pending = get_pending_migrations(session)
-    # 001 is already applied, so we should see 002 through 013
-    assert len(pending) == 12
+    # 001 is already applied, so every other registered migration is pending.
+    assert len(pending) == len(MIGRATIONS) - 1
 
     run_migrations(session, dry_run=False)
 

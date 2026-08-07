@@ -2681,3 +2681,86 @@ body {
 .sev-minor { background: #444; color: #ccc; }
 .sev-info { background: #335; color: #bcd; }
 .broadcast-findings, .broadcast-voices { margin: 0; padding-left: 18px; font-size: 13px; }
+
+/* ---------------------------------------------------------------------------
+   Render mode switch (GitHub Actions vs. local ffmpeg)
+   --------------------------------------------------------------------------- */
+
+.render-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.render-mode-title {
+  opacity: 0.75;
+}
+
+.render-mode-label {
+  min-width: 52px;
+  font-weight: 600;
+}
+
+.render-mode.is-github .render-mode-label {
+  color: #4aa3ff;
+}
+
+.render-mode.is-local .render-mode-label {
+  color: #e6a23c;
+}
+
+.render-mode.is-unavailable {
+  opacity: 0.6;
+}
+
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 20px;
+  flex: none;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-slider {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  background-color: #e6a23c;
+  border-radius: 20px;
+  transition: background-color 0.15s ease;
+}
+
+.switch-slider::before {
+  content: "";
+  position: absolute;
+  height: 14px;
+  width: 14px;
+  left: 3px;
+  bottom: 3px;
+  background-color: #fff;
+  border-radius: 50%;
+  transition: transform 0.15s ease;
+}
+
+.switch input:checked + .switch-slider {
+  background-color: #4aa3ff;
+}
+
+.switch input:checked + .switch-slider::before {
+  transform: translateX(18px);
+}
+
+.switch input:disabled + .switch-slider {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

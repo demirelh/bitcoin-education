@@ -1,0 +1,108 @@
+name: Render Episode
+
+# Renders one episode on a hosted runner instead of on the Raspberry Pi.
+#
+# The Pi packs the episode's render inputs (images, TTS audio, chapters, and a
+# snapshot of its render settings) and attaches them to a temporary draft
+# release, because a workflow cannot be handed an artifact before it exists.
+# This job unpacks that payload and calls the very same renderer the Pi would
+# have used -- there is no second render implementation.
+#
+# Triggered by btcedu/core/remote_render.py, not by hand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Unique id; also used to find this run again"
+        required: true
+      episode_id:
+        description: "Episode being rendered"
+        required: true
+      release_id:
+        description: "Draft release holding the render-job payload"
+        required: true
+      commit:
+        description: "Commit the Pi expects; the run aborts on a mismatch"
+        required: false
+        default: ""
+
+# The job id has to appear here: workflow_dispatch does not return a run id,
+# so the Pi locates its run by matching this name.
+run-name: "render ${{ inputs.episode_id }} (${{ inputs.job_id }})"
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: Render ${{ inputs.episode_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the runner has the code the Pi expects
+        # workflow_dispatch only accepts a branch name, so the Pi sends the
+        # commit it packed the job with. Rendering different code than the Pi
+        # believes it is running would produce silently wrong video.
+        if: inputs.commit != ''
+        run: |
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "${{ inputs.commit }}" ]; then
+            echo "::error::Expected ${{ inputs.commit }} but checked out $actual"
+            exit 1
+          fi
+          echo "Rendering at $actual"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install ffmpeg and the fonts the Pi uses
+        # Font differences would show up as different pixels in the overlays,
+        # so this mirrors deploy/setup-web.sh.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg fonts-noto-core fonts-roboto-unhinted fonts-dejavu-core
+          ffmpeg -version | head -1
+
+      - name: Install btcedu
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Download render job payload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset_id=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}/assets" \
+            --jq '.[] | select(.name == "render-job.tar.gz") | .id')
+          if [ -z "$asset_id" ]; then
+            echo "::error::No render-job.tar.gz on release ${{ inputs.release_id }}"
+            exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+            -H "Accept: application/octet-stream" > render-job.tar.gz
+          ls -lh render-job.tar.gz
+
+      - name: Render
+        run: |
+          python scripts/render_job.py \
+            --job render-job.tar.gz \
+            --out result/render-result.tar.gz \
+            --workdir render-work
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: render-result
+          path: result/render-result.tar.gz
+          # The Pi deletes the artifact right after downloading it; this is
+          # only a safety net if that fails.
+          retention-days: 1
+          compression-level: 0

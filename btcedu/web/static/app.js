@@ -3642,3 +3642,88 @@ function closeCredits() {
 setInterval(loadCredits, 5 * 60 * 1000);
 // Initial load (delayed so page renders first)
 setTimeout(loadCredits, 3000);
+
+// ============================================================
+// Render mode switch (GitHub Actions vs. local ffmpeg)
+// ============================================================
+//
+// Rendering on the Pi saturates all four cores for ~47 minutes and was what
+// tripped the hardware watchdog. A hosted runner does the same job roughly
+// 2.5x faster, so GitHub is the default; the switch flips back to local for
+// offline work or when the Actions quota is exhausted.
+
+function _renderModeNotify(message, ok) {
+  if (typeof toast === "function") {
+    toast(message, ok);
+  } else if (!ok) {
+    console.warn(message);
+  }
+}
+
+function _applyRenderModeUI(mode, info) {
+  const box = document.getElementById("render-mode");
+  const input = document.getElementById("render-mode-toggle");
+  const label = document.getElementById("render-mode-label");
+  if (!box || !input || !label) return;
+
+  const isGithub = mode === "github";
+  input.checked = isGithub;
+  label.textContent = isGithub ? "GitHub" : "Lokal";
+  box.classList.toggle("is-github", isGithub);
+  box.classList.toggle("is-local", !isGithub);
+
+  if (info && info.github_available === false) {
+    box.classList.add("is-unavailable");
+    box.title =
+      "GitHub-Render nicht konfiguriert (Token oder Repository fehlt) - es wird lokal gerendert.";
+  } else if (info) {
+    box.classList.remove("is-unavailable");
+    box.title = isGithub
+      ? `Render laeuft auf GitHub Actions (${info.repo || "?"}, ${info.workflow || "render.yml"}).` +
+        (info.fallback_local ? " Faellt bei Fehlern automatisch auf lokal zurueck." : "")
+      : "Render laeuft lokal auf diesem Rechner (langsamer, belastet den Pi).";
+  }
+}
+
+async function loadRenderMode() {
+  try {
+    const response = await fetch("api/render-mode");
+    if (!response.ok) return;
+    const data = await response.json();
+    _applyRenderModeUI(data.mode, data);
+  } catch (err) {
+    console.warn("Could not load render mode", err);
+  }
+}
+
+async function setRenderMode(useGithub) {
+  const input = document.getElementById("render-mode-toggle");
+  const mode = useGithub ? "github" : "local";
+  if (input) input.disabled = true;
+  try {
+    const response = await fetch("api/render-mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      _renderModeNotify(data.error || "Render-Modus konnte nicht gesetzt werden", false);
+      await loadRenderMode(); // snap back to the stored value
+      return;
+    }
+    _applyRenderModeUI(data.mode, null);
+    _renderModeNotify(
+      data.mode === "github" ? "Render laeuft ab jetzt auf GitHub" : "Render laeuft ab jetzt lokal",
+      true
+    );
+    loadRenderMode(); // refresh the tooltip details
+  } catch (err) {
+    _renderModeNotify("Render-Modus konnte nicht gesetzt werden", false);
+    await loadRenderMode();
+  } finally {
+    if (input) input.disabled = false;
+  }
+}
+
+document.addEventListener("DOMContentLoaded", loadRenderMode);

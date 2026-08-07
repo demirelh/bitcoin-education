@@ -12,6 +12,18 @@ on:
         description: "Length of the rendered test segment in seconds"
         required: false
         default: "60"
+      preset:
+        description: "x264 preset (the Pi runs ultrafast)"
+        required: false
+        default: "ultrafast"
+      fps:
+        description: "Frame rate"
+        required: false
+        default: "25"
+      crf:
+        description: "x264 CRF"
+        required: false
+        default: "18"
 
 jobs:
   benchmark:
@@ -32,7 +44,15 @@ jobs:
           ffmpeg -version | head -1
 
       - name: Run benchmark
-        run: python3 scripts/bench_render.py --seconds "${{ inputs.seconds }}" --workdir bench-out
+        # The runner has no .env, so the production overrides are passed in
+        # explicitly -- otherwise this would measure the code defaults instead.
+        run: |
+          python3 scripts/bench_render.py \
+            --seconds "${{ inputs.seconds }}" \
+            --fps "${{ inputs.fps }}" \
+            --crf "${{ inputs.crf }}" \
+            --preset "${{ inputs.preset }}" \
+            --workdir bench-out
 
       - name: Upload rendered segment
         # The transfer time in this step is part of the answer: an offloaded

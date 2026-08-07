@@ -76,6 +76,15 @@ see `services/local_recorder_service.py` and `docs/local-recorder-ingest.md`.
 during `detect`. Controlled by `episode_retention_days` (0 = off); profiles may
 override via `ingest.retention_days`.
 
+**Remote render**: the render stage can run on a GitHub Actions runner
+(~2.5x faster than the Pi). `core/remote_render.py` packs the episode's render
+inputs plus a `render_*` settings snapshot, ships them via a temporary draft
+release, and the workflow calls the *same* `render_video()` — there is no second
+render implementation. The result comes back as a run artifact; the Pi writes
+the DB records. Default `RENDER_EXECUTION_MODE=github`, switchable at runtime in
+the dashboard (`app_settings` table) or via `btcedu render --where local`.
+Failures fall back to a local render. See `docs/remote-render.md`.
+
 ## Coding Conventions
 
 - Python 3.12, ruff-enforced (line-length 100, select E/W/F/I/UP, ignore UP042)

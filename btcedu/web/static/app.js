@@ -547,7 +547,9 @@
         <div class="detail-meta">
           ${renderStatusBadges(ep)}
           ${ep.episode_id} &middot; ${ep.published_at ? ep.published_at.slice(0, 10) : "\u2014"}
-          &middot; <a href="${esc(ep.url)}" target="_blank" style="color:var(--accent)">source</a>
+          ${ep.source === "local_recorder"
+            ? `&middot; <a href="/api/episodes/${encodeURIComponent(ep.episode_id)}/source.mp4" target="_blank" style="color:var(--accent)">source</a>`
+            : `&middot; <a href="${esc(ep.url)}" target="_blank" style="color:var(--accent)">source</a>`}
           ${ep.youtube_video_id ? `&middot; <a href="https://youtu.be/${esc(ep.youtube_video_id)}" target="_blank" style="color:#f90">▶ YouTube</a>` : ""}
           ${ep.error_message ? `<br><span style="color:var(--red)">Error: ${esc(trunc(ep.error_message, 120))}</span>` : ""}
           ${ep.retry_count > 0 ? ` &middot; retries: ${ep.retry_count}` : ""}

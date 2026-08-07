@@ -584,6 +584,40 @@ def _validate_episode_path(episode_id: str, base_dir: Path, *path_parts: str) ->
         session.close()
 
 
+def _resolve_source_video(episode_id: str, base_dir: Path) -> Path | None:
+    """Resolve ``data/raw/<episode_id>/video.mp4``, tolerating a symlinked file.
+
+    ``_validate_episode_path`` cannot serve this route. It resolves the *full*
+    path and rejects anything landing outside ``base_dir``, but for locally
+    recorded episodes ``video.mp4`` is deliberately a symlink onto the
+    recorder's SSD, so that check would reject every local episode.
+
+    Containment is enforced one level up instead, on the episode directory:
+    its name is sanitized and must match a database row, and the final path
+    component is a fixed literal rather than caller input. The symlink itself
+    is written by the ingest code, never by a request.
+    """
+    episode_id = secure_filename(episode_id)
+    if not episode_id or not _SAFE_PATH_COMPONENT_RE.match(episode_id):
+        return None
+
+    session = _get_session()
+    try:
+        known = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    finally:
+        session.close()
+    if not known:
+        return None
+
+    try:
+        episode_dir = (base_dir / episode_id).resolve()
+        episode_dir.relative_to(base_dir.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+    return episode_dir / "video.mp4"
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -3310,6 +3344,37 @@ def get_render_video(episode_id: str):
     # stale content (e.g. old placeholder colors) after a fix.
     resp.headers["Cache-Control"] = "no-cache, must-revalidate"
     return resp
+
+
+@api_bp.route("/episodes/<episode_id>/source.mp4")
+def get_source_video(episode_id: str):
+    """Serve the acquired source video with byte-range support.
+
+    Episodes taken from the local recorder carry a filesystem path in
+    ``Episode.url``, which the UI cannot link to directly: the browser resolves
+    it against the dashboard origin and 404s. This route exposes the same file
+    over HTTP instead. It works for feed episodes too, since yt-dlp writes its
+    download to the identical location.
+
+    ``video.mp4`` is a symlink to the recorder's SSD for local episodes, so a
+    missing mount surfaces here as a 404 rather than a traceback.
+    """
+    from flask import send_file
+
+    settings = _get_settings()
+    video_path = _resolve_source_video(episode_id, Path(settings.raw_data_dir))
+
+    if not video_path:
+        return jsonify({"error": "Episode not found"}), 404
+
+    if not video_path.is_file():
+        return jsonify({"error": "Source video not available"}), 404
+
+    return send_file(str(video_path), mimetype="video/mp4", conditional=True)
+
+
+@api_bp.route("/episodes/<episode_id>/render", methods=["POST"])
+def trigger_render(episode_id: str):
     """Trigger render job."""
     body = request.get_json(silent=True) or {}
     return _submit_job("render", episode_id, force=body.get("force", False))

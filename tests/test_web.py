@@ -1069,3 +1069,90 @@ class TestBatchJobProgress:
 
         total = sum(STAGE_WEIGHTS.values())
         assert total == 100
+
+
+class TestSourceVideoRoute:
+    """The 'source' link must resolve to a playable file, not a filesystem path.
+
+    Locally recorded episodes carry a path in Episode.url, which the browser
+    resolves against the dashboard origin and 404s on. These tests pin the
+    HTTP route that replaces that link, including the symlink case that the
+    generic path validator rejects.
+    """
+
+    @staticmethod
+    def _add_local_episode(factory, raw_dir, *, video_target=None):
+        session = factory()
+        session.add(
+            Episode(
+                episode_id="tagesschau_2026-08-06_2000",
+                source="local_recorder",
+                title="tagesschau 20:00 Uhr, 06.08.2026",
+                url="/mnt/photo-backup/tagesschau/recordings/x.mp4",
+                status=EpisodeStatus.NEW,
+            )
+        )
+        session.commit()
+        session.close()
+
+        episode_dir = Path(raw_dir) / "tagesschau_2026-08-06_2000"
+        episode_dir.mkdir(parents=True, exist_ok=True)
+        video = episode_dir / "video.mp4"
+        if video_target is not None:
+            video.symlink_to(video_target)
+        return video
+
+    def test_serves_symlinked_recording(self, client, app, test_settings, seeded_db, tmp_path):
+        """A symlink onto the recorder's SSD must still be served.
+
+        This is the case that fails with the generic validator: resolving the
+        symlink lands outside raw_data_dir, so containment has to be checked on
+        the episode directory instead.
+        """
+        _engine, factory = seeded_db
+        target = tmp_path / "ssd_recording.mp4"
+        target.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"payload" * 64)
+        self._add_local_episode(factory, test_settings.raw_data_dir, video_target=target)
+
+        r = client.get("/api/episodes/tagesschau_2026-08-06_2000/source.mp4")
+        assert r.status_code == 200
+        assert r.mimetype == "video/mp4"
+
+    def test_supports_range_requests(self, client, test_settings, seeded_db, tmp_path):
+        """Without ranges the browser cannot seek in a 340 MB broadcast."""
+        _engine, factory = seeded_db
+        target = tmp_path / "ssd_recording.mp4"
+        target.write_bytes(b"A" * 4096)
+        self._add_local_episode(factory, test_settings.raw_data_dir, video_target=target)
+
+        r = client.get(
+            "/api/episodes/tagesschau_2026-08-06_2000/source.mp4",
+            headers={"Range": "bytes=0-99"},
+        )
+        assert r.status_code == 206
+        assert r.headers["Content-Range"] == "bytes 0-99/4096"
+
+    def test_missing_file_is_404(self, client, test_settings, seeded_db):
+        """A broken symlink (unmounted SSD) must not raise."""
+        _engine, factory = seeded_db
+        self._add_local_episode(factory, test_settings.raw_data_dir, video_target=None)
+
+        r = client.get("/api/episodes/tagesschau_2026-08-06_2000/source.mp4")
+        assert r.status_code == 404
+
+    def test_unknown_episode_is_404(self, client):
+        r = client.get("/api/episodes/ep_does_not_exist/source.mp4")
+        assert r.status_code == 404
+
+    def test_render_trigger_route_exists(self, app):
+        """Regression: the POST render route lost its decorator and def line.
+
+        Its body survived as dead code after get_render_video's return, so the
+        UI's Render button hit a route that only accepted GET.
+        """
+        rules = [
+            r
+            for r in app.url_map.iter_rules()
+            if str(r) == "/api/episodes/<episode_id>/render" and "POST" in r.methods
+        ]
+        assert rules, "POST /api/episodes/<episode_id>/render is not registered"

@@ -119,7 +119,8 @@ def generate_tts(
     tts_config = _resolve_tts_config(episode, settings)
     voice_sig = _voice_config_signature(tts_config)
     lexicon = tts_config["pronunciation_lexicon"]
-    chapters_hash = _compute_tts_content_hash(chapters_doc, lexicon, voice_sig)
+    normalize = tts_config["speech_normalization"]
+    chapters_hash = _compute_tts_content_hash(chapters_doc, lexicon, voice_sig, normalize)
 
     # Idempotency check
     if not force and chapter_id is None:
@@ -228,7 +229,7 @@ def generate_tts(
                         f"Cannot regenerate only {chapter_id}: audio for "
                         f"{chapter.chapter_id} is missing; run the full TTS stage"
                     )
-                synthesis_text = _apply_pronunciation_lexicon(chapter.narration.text, lexicon)
+                synthesis_text = _synthesis_text(chapter.narration.text, lexicon, normalize)
                 expected_hash = _chapter_tts_hash(
                     chapter.chapter_id,
                     chapter.narration.text,
@@ -261,7 +262,7 @@ def generate_tts(
 
         for chapter in chapters_to_process:
             narration_text = chapter.narration.text
-            synthesis_text = _apply_pronunciation_lexicon(narration_text, lexicon)
+            synthesis_text = _synthesis_text(narration_text, lexicon, normalize)
             # Per-chapter idempotency hash: chapter_id + original text + synthesis
             # text + voice + model + voice params + lexicon. A change to any of
             # these regenerates just that chapter (chapter-level retry/recovery).
@@ -335,6 +336,7 @@ def generate_tts(
                     },
                     lexicon=lexicon,
                     text_hash=text_hash,
+                    normalize=normalize,
                 )
             else:
                 entry = _generate_single_audio(
@@ -528,6 +530,7 @@ def _resolve_tts_config(episode, settings: Settings) -> dict:
         "speed": cfg.get("speed", settings.elevenlabs_speed),
         "use_speaker_boost": cfg.get("use_speaker_boost", settings.elevenlabs_use_speaker_boost),
         "pronunciation_lexicon": {str(k): str(v) for k, v in lexicon.items()},
+        "speech_normalization": bool(cfg.get("speech_normalization", True)),
         "voices": _resolve_role_voices(cfg, settings),
     }
 
@@ -600,6 +603,25 @@ def _apply_pronunciation_lexicon(text: str, lexicon: dict) -> str:
     return out
 
 
+def _synthesis_text(text: str, lexicon: dict, normalize: bool = True) -> str:
+    """The text the engine actually speaks.
+
+    Two transformations, in order: the lexicon fixes proper nouns and tickers,
+    then the numbers are spelled out. The lexicon goes first so an entry can
+    still match the digits it was written against.
+
+    Nothing here reaches the display side. The approved narration, the chapter
+    titles, the topic cards and the lower thirds keep their digits, because
+    "%70" is easier to read than "yüzde yetmiş" and only harder to say.
+    """
+    spoken = _apply_pronunciation_lexicon(text, lexicon)
+    if normalize:
+        from btcedu.core.speech_normalize import normalize_speech
+
+        spoken = normalize_speech(spoken)
+    return spoken
+
+
 def _chapter_tts_hash(
     chapter_id: str,
     original_text: str,
@@ -628,7 +650,9 @@ def _chapter_tts_hash(
     return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def _compute_tts_content_hash(chapters_doc: ChapterDocument, lexicon: dict, voice_sig: dict) -> str:
+def _compute_tts_content_hash(
+    chapters_doc: ChapterDocument, lexicon: dict, voice_sig: dict, normalize: bool = True
+) -> str:
     """Stage-level idempotency hash: narration + synthesis text + voice config.
 
     Changing the voice, model, voice params or lexicon changes this hash and so
@@ -640,7 +664,7 @@ def _compute_tts_content_hash(chapters_doc: ChapterDocument, lexicon: dict, voic
             {
                 "chapter_id": ch.chapter_id,
                 "narration_text": ch.narration.text,
-                "synthesis_text": _apply_pronunciation_lexicon(ch.narration.text, lexicon),
+                "synthesis_text": _synthesis_text(ch.narration.text, lexicon, normalize),
             }
             for ch in chapters_doc.chapters
         ],
@@ -913,6 +937,7 @@ def _generate_multi_voice_audio(
     lexicon: dict,
     text_hash: str,
     pause_seconds: float = 0.35,
+    normalize: bool = True,
 ) -> AudioEntry:
     """Synthesize a chapter with one voice per speaker segment.
 
@@ -948,7 +973,7 @@ def _generate_multi_voice_audio(
         voice = role_voices.get(role) or fallback
         if not voice.get("voice_id_configured", True):
             used_fallback.add(role)
-        spoken = _apply_pronunciation_lexicon(segment["text"], lexicon)
+        spoken = _synthesis_text(segment["text"], lexicon, normalize)
         part_path = parts_dir / f"{chapter.chapter_id}_{index:02d}_{role}.mp3"
 
         if settings.dry_run:

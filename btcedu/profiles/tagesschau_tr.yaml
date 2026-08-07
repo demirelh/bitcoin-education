@@ -192,6 +192,12 @@ stage_config:
     #     "Scholz": "Şolts"
     #     "Bundeswehr": "Bundesver"
     pronunciation_lexicon: {}
+    # Spell numbers out for the engine: "%70" -> "yüzde yetmiş", "20.00" ->
+    # "saat sekiz", "2,75 milyon" -> "iki milyon yedi yüz elli bin". Applied to
+    # the synthesized audio only — the narration, topic cards and lower thirds
+    # keep their digits, which read better on screen than in the ear.
+    # Set to false to hand the digits to ElevenLabs unchanged.
+    speech_normalization: true
   render:
     accent_color: "#004B87"
     ticker_enabled: true

@@ -60,10 +60,44 @@ _SCALE_WORDS = {
 
 _CURRENCY = {"€": "avro", "$": "dolar", "£": "sterlin", "₺": "lira"}
 
+#: Ordinal endings attach to the last word of the cardinal, and the vowel
+#: harmony is irregular enough to be worth a table. "dört" also softens its
+#: final consonant: "dördüncü", never "dörtüncü".
+_ORDINALS = {
+    "bir": "birinci",
+    "iki": "ikinci",
+    "üç": "üçüncü",
+    "dört": "dördüncü",
+    "beş": "beşinci",
+    "altı": "altıncı",
+    "yedi": "yedinci",
+    "sekiz": "sekizinci",
+    "dokuz": "dokuzuncu",
+    "on": "onuncu",
+    "yirmi": "yirminci",
+    "otuz": "otuzuncu",
+    "kırk": "kırkıncı",
+    "elli": "ellinci",
+    "altmış": "altmışıncı",
+    "yetmiş": "yetmişinci",
+    "seksen": "sekseninci",
+    "doksan": "doksanıncı",
+    "yüz": "yüzüncü",
+    "bin": "bininci",
+    "milyon": "milyonuncu",
+    "milyar": "milyarıncı",
+}
+
 #: Above this a written number is an identifier, not a quantity — an account
 #: number or a code. Reading it as one enormous word would be worse than
 #: leaving the digits for the engine.
 _MAX_SPOKEN = 10**15
+
+#: A digit welded to letters is part of a name or a code -- "ALMANYA24", "G7",
+#: "B12" -- and spelling it out destroys the word: "ALMANYAyirmi dört". The
+#: show name alone appears in every opening, so this guard comes before every
+#: numeric rule. Names that still need help belong in the pronunciation lexicon.
+_GLUED_TO_LETTER = r"(?<![A-Za-zÀ-ÖØ-öø-ÿÇĞİıÖŞÜçğöşü])"
 
 
 def _group_to_words(group: int, scale_index: int) -> str:
@@ -125,13 +159,15 @@ def _decimal_to_words(whole: int, fraction: str) -> str:
     fractional digits read as a number, except leading zeros, which have to stay
     audible: 2,05 is "iki virgül sıfır beş", never "iki virgül beş".
     """
-    fraction = fraction.rstrip("0")
-    if not fraction:
+    if not fraction.strip("0"):
+        # 2,0 and 2,00 are just two.
         return number_to_turkish_words(whole)
-    if fraction == "5":
+    if fraction.rstrip("0") == "5":
         # 0,5 is "yarım" standing alone — "sıfır buçuk" is not Turkish.
         return "yarım" if whole == 0 else f"{number_to_turkish_words(whole)} buçuk"
 
+    # Trailing zeros are read, not dropped: 2,70 is "iki virgül yetmiş", and
+    # "iki virgül yedi" is a different number written a different way.
     leading_zeros = len(fraction) - len(fraction.lstrip("0"))
     spoken_fraction = " ".join(["sıfır"] * leading_zeros)
     remainder = fraction.lstrip("0")
@@ -180,6 +216,20 @@ def _sub_dates(text: str) -> str:
         )
 
     text = re.sub(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4})(?!\d)", full_date, text)
+
+    def day_span(match: re.Match[str]) -> str:
+        """"2-3 Ağustos" is the night from the 2nd to the 3rd, not "2 to 3"."""
+        first, second = int(match.group(1)), int(match.group(2))
+        if not (1 <= first <= 31 and 1 <= second <= 31):
+            return match.group(0)
+        return (
+            f"{number_to_turkish_words(first)} {number_to_turkish_words(second)} "
+            f"{match.group(3)}"
+        )
+
+    text = re.sub(
+        rf"(?<!\d)(\d{{1,2}})\s*-\s*(\d{{1,2}})\s+({_MONTH_NAMES})\b", day_span, text
+    )
 
     def day_month(match: re.Match[str]) -> str:
         day = int(match.group(1))
@@ -285,12 +335,38 @@ def _sub_plain_numbers(text: str) -> str:
     def decimal(match: re.Match[str]) -> str:
         return _decimal_to_words(int(match.group(1)), match.group(2))
 
-    text = re.sub(r"(?<!\d)(\d+),(\d+)(?!\d)", decimal, text)
+    text = re.sub(_GLUED_TO_LETTER + r"(?<!\d)(\d+),(\d+)(?!\d)", decimal, text)
 
     def integer(match: re.Match[str]) -> str:
         return number_to_turkish_words(int(match.group(1)))
 
-    return re.sub(r"(?<!\d)(\d+)(?!\d)", integer, text)
+    return re.sub(_GLUED_TO_LETTER + r"(?<!\d)(\d+)(?!\d)", integer, text)
+
+
+def _ordinal_to_words(value: int) -> str:
+    """Spell a Turkish ordinal: only the last word of the cardinal inflects."""
+    cardinal = number_to_turkish_words(value)
+    head, _, last = cardinal.rpartition(" ")
+    suffixed = _ORDINALS.get(last)
+    if suffixed is None:
+        return cardinal
+    return f"{head} {suffixed}".strip()
+
+
+def _sub_ordinals(text: str) -> str:
+    """A digit followed by a dot is an ordinal — unless it ends the sentence.
+
+    Turkish writes ordinals as "4." and sentences also end in a dot, so the two
+    are indistinguishable on the character alone. What separates them is what
+    follows: an ordinal is followed by its noun in lower case, a full stop by a
+    new sentence in upper case. Left unconverted the dot becomes an audible
+    pause in the middle of a phrase.
+    """
+
+    def repl(match: re.Match[str]) -> str:
+        return f"{_ordinal_to_words(int(match.group(1)))} {match.group(2)}"
+
+    return re.sub(r"(?<!\d)(\d{1,4})\.\s+([a-zçğıöşü])", repl, text)
 
 
 def _sub_ranges(text: str) -> str:
@@ -311,6 +387,36 @@ def _sub_negatives(text: str) -> str:
     return re.sub(r"(?<![\w\d])-(?=\d)", "eksi ", text)
 
 
+#: Stands in for an apostrophe that only existed because its stem was written
+#: as a numeral. Marking it up front is what keeps proper nouns out of it:
+#: "Türkiye'nin" must keep its apostrophe even in a sentence full of figures.
+_SUFFIX_MARK = "\x00"
+
+
+def _mark_digit_suffixes(text: str) -> str:
+    """Set aside the apostrophes that belong to numbers, before spelling them.
+
+    Turkish attaches suffixes to digits with an apostrophe -- "150'si",
+    "%70'ini" -- purely because the stem is a numeral. Once the stem is a word
+    the apostrophe has no reason to exist, and the engine reads it as a break:
+    "yüz elli | si".
+    """
+    return re.sub(
+        _GLUED_TO_LETTER + r"(?<!\d)(\d[\d.,:]*)['’](?=[a-zçğıöşü])",
+        lambda m: m.group(1) + _SUFFIX_MARK,
+        text,
+    )
+
+
+def _join_suffixes(text: str) -> str:
+    """Drop the marked apostrophes, gluing each suffix to its spelled-out stem.
+
+    The suffix needs no adjustment: it was already chosen to harmonise with the
+    spoken form, which is the form it is now attached to.
+    """
+    return text.replace(_SUFFIX_MARK, "")
+
+
 def normalize_speech(text: str) -> str:
     """Spell out every number in ``text`` as Turkish words.
 
@@ -321,9 +427,10 @@ def normalize_speech(text: str) -> str:
     if not text or not any(character.isdigit() for character in text):
         return text
 
-    result = text
+    result = _mark_digit_suffixes(text)
     # Order matters: each rule consumes digits the next one would misread.
     result = _sub_dates(result)
+    result = _sub_ordinals(result)
     result = _sub_times(result)
     result = _sub_currency_symbols(result)
     result = _sub_percent(result)
@@ -332,6 +439,7 @@ def normalize_speech(text: str) -> str:
     result = _sub_ranges(result)
     result = _sub_negatives(result)
     result = _sub_plain_numbers(result)
+    result = _join_suffixes(result)
 
     # Spelling out numbers leaves double spaces where digits used to be glued
     # to punctuation; the engine reads those as hesitations.

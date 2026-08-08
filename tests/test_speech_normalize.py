@@ -193,3 +193,152 @@ class TestItNeverTouchesTheDisplaySide:
         plain = _chapter_tts_hash("ch01", "%70", "%70", {})
         spoken = _chapter_tts_hash("ch01", "%70", "yüzde yetmiş", {})
         assert plain != spoken
+
+
+class TestFoundInRealEpisodes:
+    """Cases the first version got wrong, found by replaying ten real bulletins.
+
+    Every one of these appeared in a broadcast that had already aired, which is
+    why they are pinned here rather than left to the general rules.
+    """
+
+    def test_the_show_name_survives(self):
+        # "ALMANYA24" became "ALMANYAyirmi dört" — in every single opening.
+        assert normalize_speech("İyi akşamlar. ALMANYA24 başlıyor.") == (
+            "İyi akşamlar. ALMANYA24 başlıyor."
+        )
+
+    def test_a_suffixed_show_name_keeps_its_apostrophe(self):
+        assert normalize_speech("ALMANYA24'na hoş geldiniz") == "ALMANYA24'na hoş geldiniz"
+
+    @pytest.mark.parametrize("name", ["G7", "B12", "COVID19"])
+    def test_a_digit_welded_to_letters_is_a_name_not_a_number(self, name):
+        assert normalize_speech(f"{name} konusu") == f"{name} konusu"
+
+    def test_a_suffix_is_glued_to_the_spelled_out_stem(self):
+        # "yüz elli'si" reads as "yüz elli | si": the apostrophe is a pause.
+        assert normalize_speech("255 çocuktan 150'si") == "iki yüz elli beş çocuktan yüz ellisi"
+
+    @pytest.mark.parametrize(
+        ("written", "spoken"),
+        [
+            ("40'tan fazla", "kırktan fazla"),
+            ("yüzde 70'ini", "yüzde yetmişini"),
+            ("yüzde 59'a", "yüzde elli dokuza"),
+            ("2022'deki", "iki bin yirmi ikideki"),
+            ("saat 13.00'e kadar", "saat bire kadar"),
+            ("100'den fazla", "yüzden fazla"),
+        ],
+    )
+    def test_every_suffix_shape_seen_on_air(self, written, spoken):
+        assert normalize_speech(written) == spoken
+
+    def test_a_proper_noun_keeps_its_apostrophe_in_a_numeric_sentence(self):
+        # The suffix rule must not reach past the numbers it was written for.
+        assert normalize_speech("Yasası'nın 4. kitabı") == "Yasası'nın dördüncü kitabı"
+        assert normalize_speech("Türkiye'nin 3 şehri") == "Türkiye'nin üç şehri"
+
+    def test_trailing_zeros_are_spoken(self):
+        # "2,70" read as "iki virgül yedi" is a different number.
+        assert normalize_speech("2,70 metre") == "iki virgül yetmiş metre"
+        assert normalize_speech("3,40 metreye") == "üç virgül kırk metreye"
+
+    def test_an_ordinal_is_not_a_full_stop(self):
+        # "dört. kitabı" puts an audible pause inside the phrase.
+        assert normalize_speech("4. kitabı") == "dördüncü kitabı"
+        assert normalize_speech("17. sırada") == "on yedinci sırada"
+
+    def test_dort_softens_its_consonant(self):
+        assert normalize_speech("4. kez") == "dördüncü kez"
+
+    def test_a_dash_between_days_is_a_span_not_a_range(self):
+        # "2-3 Ağustos gecesi" is the night from the 2nd to the 3rd; reading it
+        # as "iki ile üç" would claim something the bulletin did not say.
+        assert normalize_speech("2-3 Ağustos 1944 gecesi") == (
+            "iki üç Ağustos bin dokuz yüz kırk dört gecesi"
+        )
+
+    def test_a_dash_between_quantities_is_still_a_range(self):
+        assert normalize_speech("150-200 çocuğa") == "yüz elli ile iki yüz çocuğa"
+        assert normalize_speech("1-1,5 metre") == "bir ile bir buçuk metre"
+
+    def test_a_year_is_read_as_a_number(self):
+        assert normalize_speech("1908 yapımı") == "bin dokuz yüz sekiz yapımı"
+        assert normalize_speech("2010 yılında") == "iki bin on yılında"
+
+
+class TestTheLastTenEpisodes:
+    """Replay every real bulletin on disk through the normalizer.
+
+    A rule that works on invented examples and fails on the archive is not
+    working. This asserts the property that matters -- no digit reaches the
+    engine unspoken -- rather than a fixed expected string per episode.
+    """
+
+    @staticmethod
+    def _episodes():
+        import json
+        import pathlib
+
+        paths = sorted(
+            pathlib.Path("data/outputs").glob("*/chapters.json"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        found = []
+        for path in paths:
+            try:
+                chapters = json.loads(path.read_text()).get("chapters", [])
+            except Exception:  # noqa: BLE001 - a broken fixture is not this test's business
+                continue
+            words = sum(
+                len(((c.get("narration") or {}).get("text", "")).split()) for c in chapters
+            )
+            if words > 200:  # skip synthetic fixtures
+                found.append((path.parent.name, chapters))
+        return found[:10]
+
+    def test_no_digit_reaches_the_engine_unspoken(self):
+        import re
+
+        episodes = self._episodes()
+        if not episodes:
+            pytest.skip("no rendered episodes on this machine")
+
+        # A digit still attached to letters is a protected name, not a leftover.
+        protected = re.compile(r"[A-Za-zÇĞİÖŞÜçğıöşü]\d|\d[A-Za-zÇĞİÖŞÜçğıöşü]")
+        leftovers = []
+        for name, chapters in episodes:
+            for chapter in chapters:
+                text = (chapter.get("narration") or {}).get("text", "")
+                for match in re.finditer(r"\S*\d\S*", normalize_speech(text)):
+                    if not protected.search(match.group(0)):
+                        leftovers.append((name, match.group(0)))
+        assert not leftovers
+
+    def test_no_markers_or_orphaned_apostrophes_are_left_behind(self):
+        import re
+
+        episodes = self._episodes()
+        if not episodes:
+            pytest.skip("no rendered episodes on this machine")
+
+        for _name, chapters in episodes:
+            for chapter in chapters:
+                spoken = normalize_speech((chapter.get("narration") or {}).get("text", ""))
+                assert "\x00" not in spoken
+                assert not re.search(r"\s['’]|['’]\s", spoken)
+
+    def test_the_stored_narration_is_never_modified(self):
+        # The display side must keep its digits: chapter titles, topic cards
+        # and lower thirds are read with the eyes.
+        episodes = self._episodes()
+        if not episodes:
+            pytest.skip("no rendered episodes on this machine")
+
+        for _name, chapters in episodes:
+            for chapter in chapters:
+                original = (chapter.get("narration") or {}).get("text", "")
+                before = original
+                normalize_speech(original)
+                assert original == before

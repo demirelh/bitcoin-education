@@ -449,6 +449,8 @@ def generate_tts(
             total_cost,
         )
 
+        _prune_cache(settings)
+
         return TTSResult(
             episode_id=episode_id,
             tts_path=tts_dir,
@@ -865,6 +867,36 @@ def _noise_floor_db(path: Path) -> float | None:
     return levels[len(levels) // 100]
 
 
+def _cache_dir(settings: Settings) -> Path | None:
+    """Where reusable takes live, or ``None`` when reuse is switched off.
+
+    Both values are checked for their actual type, not merely for being
+    truthy. A stand-in settings object hands back a placeholder that would
+    otherwise be turned into a path and quietly fill a directory named after
+    it. Anything that is not a real switch and a real path means no cache.
+    """
+    enabled = getattr(settings, "tts_cache_enabled", True)
+    if not isinstance(enabled, bool) or not enabled:
+        return None
+    directory = getattr(settings, "tts_cache_dir", None)
+    if not isinstance(directory, (str, Path)) or not str(directory).strip():
+        return None
+    return Path(directory)
+
+
+def _prune_cache(settings: Settings) -> None:
+    """Keep the store bounded. Never let housekeeping fail a finished stage."""
+    cache_dir = _cache_dir(settings)
+    if cache_dir is None:
+        return
+    try:
+        from btcedu.core import tts_cache
+
+        tts_cache.prune(cache_dir, int(getattr(settings, "tts_cache_max_mb", 512)) * 1024 * 1024)
+    except Exception as exc:  # pragma: no cover - housekeeping must not throw
+        logger.warning("TTS cache pruning skipped (%s)", exc)
+
+
 def _synthesize_clean_take(
     tts_service,
     request,
@@ -873,6 +905,7 @@ def _synthesize_clean_take(
     max_attempts: int,
     noise_floor_max_db: float,
     label: str,
+    cache_dir: Path | None = None,
 ):
     """Synthesize *request*, retrying while the take has an audible noise bed.
 
@@ -881,11 +914,31 @@ def _synthesize_clean_take(
     quietest of at most *max_attempts* takes is kept. Every attempt is paid for,
     which is why the number of attempts is small and configurable.
 
+    With *cache_dir* set, a line already recorded with this voice and these
+    parameters is taken from disk instead of bought again. This is the only
+    place synthesis happens, so it is the only place the cache has to reach.
+
     Returns ``(response, noise_floor_db, attempts)``.
     """
+    from btcedu.core import tts_cache
+
+    key = tts_cache.cache_key(request) if cache_dir is not None else None
+    if key is not None:
+        hit = tts_cache.lookup(cache_dir, key, target)
+        if hit is not None:
+            logger.info("%s: reusing a stored take (no ElevenLabs call)", label)
+            return hit.response, hit.noise_floor_db, 0
+
     best_response = None
     best_floor: float | None = None
     attempts = 0
+
+    def _keep(response, floor: float | None) -> None:
+        if key is None:
+            return
+        tts_cache.store(
+            cache_dir, key, target, response, noise_floor_db=floor, text=request.text
+        )
 
     for attempt in range(1, max(1, max_attempts) + 1):
         attempts = attempt
@@ -894,6 +947,7 @@ def _synthesize_clean_take(
         floor = _noise_floor_db(target)
 
         if floor is None:
+            _keep(response, None)
             return response, None, attempts
         if best_floor is None or floor < best_floor:
             best_response, best_floor = response, floor
@@ -902,6 +956,7 @@ def _synthesize_clean_take(
                 logger.info(
                     "%s: take %d is clean (noise floor %.1f dB)", label, attempt, floor
                 )
+            _keep(response, floor)
             return response, floor, attempts
 
         logger.warning(
@@ -922,6 +977,9 @@ def _synthesize_clean_take(
             attempts,
             best_floor,
         )
+        # Deliberately not cached: this take failed the noise check. Storing it
+        # would freeze the hiss into every future episode, and the retry logic
+        # exists precisely to get away from it.
     return best_response, best_floor, attempts
 
 
@@ -1002,6 +1060,7 @@ def _generate_multi_voice_audio(
                     voice.get("noise_floor_max_db", _NOISE_FLOOR_WARN_DB)
                 ),
                 label=f"Chapter {chapter.chapter_id} part {index:02d} ({role})",
+                cache_dir=_cache_dir(settings),
             )
             duration = response.duration_seconds
             cost = response.cost_usd * takes
@@ -1157,6 +1216,7 @@ def _generate_single_audio(
         max_attempts=_NOISE_MAX_TAKES,
         noise_floor_max_db=_NOISE_FLOOR_WARN_DB,
         label=f"Chapter {chapter.chapter_id}",
+        cache_dir=_cache_dir(settings),
     )
 
     size_bytes = mp3_path.stat().st_size

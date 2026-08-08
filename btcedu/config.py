@@ -159,6 +159,14 @@ class Settings(BaseSettings):
     # Higher = faster/less sluggish delivery.
     elevenlabs_speed: float = 1.0
 
+    # Reuse of takes across episodes. Recurring lines (the greeting, the
+    # sign-off) are identical every evening and are billed every evening
+    # unless the audio is kept. Keyed on text plus voice plus parameters, so
+    # a changed line simply pays for a new recording.
+    tts_cache_enabled: bool = True
+    tts_cache_dir: str = "data/tts_cache"
+    tts_cache_max_mb: int = 512  # 0 disables pruning
+
     # Anchor / D-ID (talking-head video generation)
     did_api_key: str = ""
     did_source_image_path: str = "data/anchor/default.png"

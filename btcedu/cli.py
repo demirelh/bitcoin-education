@@ -55,6 +55,12 @@ def cli(ctx: click.Context) -> None:
         else:
             settings = ctx.obj["settings"]
 
+        # Before anything can log: a library that rejects a credential tends
+        # to quote it back in its own error text, and that text lands on disk.
+        from btcedu.utils.secrets import install_log_redaction
+
+        install_log_redaction(settings)
+
         if "session_factory" not in ctx.obj:
             init_db(settings.database_url)
             ctx.obj["session_factory"] = get_session_factory(settings.database_url)

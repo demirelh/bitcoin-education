@@ -260,6 +260,24 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
+    def __repr_args__(self):
+        """Never spell out a credential when this object is printed.
+
+        A settings instance reaches a log or a traceback more easily than it
+        looks — an exception raised while a value is being passed around
+        carries the whole object with it, and that used to mean every key the
+        process holds ended up on disk in clear text. Masking here closes it
+        for ``repr``, ``str`` and every message that interpolates the object,
+        without asking any caller to remember.
+        """
+        from btcedu.utils.secrets import is_secret_field
+
+        for name, value in super().__repr_args__():
+            if name and is_secret_field(str(name)) and value:
+                yield name, "[REDACTED]"
+            else:
+                yield name, value
+
     @property
     def rss_url(self) -> str:
         if self.podcast_rss_url:

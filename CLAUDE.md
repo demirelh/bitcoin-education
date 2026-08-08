@@ -108,6 +108,11 @@ Failures fall back to a local render. See `docs/remote-render.md`.
 - **pydub + Python 3.13**: `audioop` removed. Tests mock via `sys.modules`. Production needs `pyaudioop`.
 - **Chapter.visual is singular** (`Visual`), not a list. Narration has `.text`, `.word_count`, `.estimated_duration_seconds`.
 - **Lazy imports**: stage functions lazy-imported in `_run_stage()` to avoid circular deps.
+- **TTS takes are reused across episodes**: keyed on synthesis text + voice + every
+  sound-shaping parameter (`core/tts_cache.py`, hooked into `_synthesize_clean_take`).
+  The greeting, sign-off and weather handover come from short fixed profile lists, so
+  they stop costing anything once recorded. Takes that failed the noise check are never
+  stored. Tests must not write into the real `data/tts_cache` — `conftest.py` redirects it.
 - **YouTube deps are optional**: `pip install -e ".[youtube]"`. `run.sh` auto-installs if `data/client_secret.json` exists.
 - **SQLAlchemy string relationships** (e.g. `"ReviewItemDecision"`) require the target module to be imported at runtime, not just under `TYPE_CHECKING`.
 - **Local recorder deduplication is bidirectional.** The same broadcast reaches
@@ -130,9 +135,13 @@ Failures fall back to a local render. See `docs/remote-render.md`.
 Key settings: transcription primary/secondary providers, transcript QA
 thresholds, `qa_review_enabled`, `qa_model`, LLM/provider credentials,
 `default_content_profile`, `dry_run`, `max_episode_cost_usd`,
-`episode_retention_days`, image/TTS/render providers, `NOTIFY_WHATSAPP_*`, and
-YouTube OAuth paths. Profile YAML owns stage routing and may override
-applicable `.env` values. Full list: `btcedu/config.py`.
+`episode_retention_days`, image/TTS/render providers, `TTS_CACHE_*`,
+`NOTIFY_WHATSAPP_*`, and YouTube OAuth paths. Profile YAML owns stage routing
+and may override applicable `.env` values. Full list: `btcedu/config.py`.
+
+Credentials never reach a log: `Settings` masks them in its own `repr`, and
+`utils/secrets.install_log_redaction()` strikes the configured values out of
+every log record (a library can quote a rejected key back in its error text).
 
 ## Notifications
 

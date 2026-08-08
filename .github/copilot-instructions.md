@@ -99,6 +99,10 @@ calls. `settings.dry_run` must produce placeholders instead of API calls.
 
 Credentials come from `.env` / environment only. **Never** commit secrets, keys,
 tokens or `auth/` session data, and never print them in logs or output.
+Two safeguards back this up: `Settings` masks credential fields in its own
+`repr`, and `utils/secrets.install_log_redaction()` strikes the configured
+values out of every log record — needed because a third-party library may
+quote a rejected key back in its own error text.
 External data that is not part of the approved narration (e.g. Open-Meteo
 temperatures) must be attributed and excluded from claim validation.
 

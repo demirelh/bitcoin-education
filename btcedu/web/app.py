@@ -32,6 +32,12 @@ def create_app(settings=None) -> Flask:
         settings = get_settings()
 
     app.config["settings"] = settings
+    # The dashboard runs as its own service and writes its own log; the same
+    # third-party error texts reach it as reach the CLI.
+    from btcedu.utils.secrets import install_log_redaction
+
+    install_log_redaction(settings)
+
     init_db(settings.database_url)
     app.config["session_factory"] = get_session_factory(settings.database_url)
 

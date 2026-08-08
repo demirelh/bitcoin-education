@@ -342,3 +342,55 @@ class TestTheLastTenEpisodes:
                 before = original
                 normalize_speech(original)
                 assert original == before
+
+
+class TestUnits:
+    """Abbreviations are spelled letter by letter otherwise: "yedi yüz ke em"."""
+
+    @pytest.mark.parametrize(
+        ("written", "spoken"),
+        [
+            ("700 km uzaktaki", "yedi yüz kilometre uzaktaki"),
+            ("2,5 km uzunluğunda", "iki buçuk kilometre uzunluğunda"),
+            ("500 kg", "beş yüz kilogram"),
+            ("3 m derinlik", "üç metre derinlik"),
+            ("20 ha orman", "yirmi hektar orman"),
+            ("40 cm", "kırk santimetre"),
+            ("100 MW", "yüz megavat"),
+        ],
+    )
+    def test_an_abbreviation_after_a_number_is_spelled_out(self, written, spoken):
+        assert normalize_speech(written) == spoken
+
+    def test_degrees_are_read_as_derece(self):
+        assert normalize_speech("20 °C") == "yirmi derece"
+        assert normalize_speech("20°C") == "yirmi derece"
+
+    def test_a_suffix_on_the_abbreviation_joins_the_spoken_unit(self):
+        assert normalize_speech("700 km'lik yol") == "yedi yüz kilometrelik yol"
+        assert normalize_speech("5 kg'lık paket") == "beş kilogramlık paket"
+
+    def test_the_currency_word_matches_the_currency_symbol(self):
+        # Otherwise "€5" says "avro" and "5 Euro" says "Euro" in one bulletin.
+        assert normalize_speech("50.000 Euro'dan fazla") == "elli bin avrodan fazla"
+        assert normalize_speech("20 Euro tazminat") == "yirmi avro tazminat"
+        assert normalize_speech("€5 milyon") == "beş milyon avro"
+
+    def test_a_unit_is_only_read_directly_after_a_number(self):
+        # Otherwise the single-letter entries would eat ordinary words.
+        assert normalize_speech("3 metre m harfi") == "üç metre m harfi"
+        assert normalize_speech("Ali g harfini yazdı 5 kez") == "Ali g harfini yazdı beş kez"
+
+    def test_an_ordinary_word_after_a_number_is_left_alone(self):
+        assert normalize_speech("15 nehir gemisi") == "on beş nehir gemisi"
+        assert normalize_speech("4 hafta içinde") == "dört hafta içinde"
+        assert normalize_speech("20 depoya") == "yirmi depoya"
+        assert normalize_speech("5 milyon") == "beş milyon"
+
+    def test_an_ambiguous_abbreviation_needs_the_right_case(self):
+        # "M" in an all-caps headline is not metres.
+        assert normalize_speech("DAX 26.000 M ENDEKSİ") == "DAX yirmi altı bin M ENDEKSİ"
+
+    def test_the_longer_abbreviation_wins(self):
+        assert normalize_speech("5 km²") == "beş kilometrekare"
+        assert normalize_speech("5 kWh") == "beş kilovatsaat"

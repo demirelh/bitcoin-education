@@ -60,6 +60,46 @@ _SCALE_WORDS = {
 
 _CURRENCY = {"€": "avro", "$": "dolar", "£": "sterlin", "₺": "lira"}
 
+#: Abbreviated units, spelled out because the engine spells them letter by
+#: letter: "yedi yüz ke em" for "700 km". Only applied directly after a number,
+#: which is what keeps the single-letter entries from eating ordinary words.
+#: Longest first at match time, so "km²" wins over "km" and "kWh" over "kW".
+_UNITS = {
+    "km²": "kilometrekare",
+    "m²": "metrekare",
+    "cm²": "santimetrekare",
+    "km": "kilometre",
+    "cm": "santimetre",
+    "mm": "milimetre",
+    "m": "metre",
+    "kg": "kilogram",
+    "mg": "miligram",
+    "g": "gram",
+    "ml": "mililitre",
+    "lt": "litre",
+    "ha": "hektar",
+    "kWh": "kilovatsaat",
+    "MWh": "megavatsaat",
+    "GW": "gigavat",
+    "MW": "megavat",
+    "kW": "kilovat",
+    "°C": "derece",
+    "°": "derece",
+    "sn": "saniye",
+    "dk": "dakika",
+    # Currency words the bulletin inherits from the German source. Without
+    # these "€5" reads "beş avro" while "5 Euro" reads "5 Euro" — the same
+    # amount said two ways in one broadcast.
+    "Euro": "avro",
+    "EUR": "avro",
+    "USD": "dolar",
+    "TL": "lira",
+}
+
+#: Ambiguous on their own, so they are only read as units when the case matches
+#: exactly. "M" in an all-caps headline is not metres.
+_CASE_SENSITIVE_UNITS = frozenset({"m", "g", "lt", "ml", "TL", "MW", "GW", "kW", "kWh", "MWh"})
+
 #: Ordinal endings attach to the last word of the cardinal, and the vowel
 #: harmony is irregular enough to be worth a table. "dört" also softens its
 #: final consonant: "dördüncü", never "dörtüncü".
@@ -297,6 +337,44 @@ def _sub_currency_symbols(text: str) -> str:
     )
 
 
+def _sub_units(text: str) -> str:
+    """Spell out an abbreviated unit standing right after a number.
+
+    Runs before the digits are spelled out, because "700 km" is recognisable as
+    a measurement and "yedi yüz km" is just a word followed by two letters.
+
+    A suffix attached to the abbreviation ("km'lik") is glued on the same way a
+    suffix on a numeral is: it was chosen to harmonise with the spoken unit,
+    which is the form it ends up on.
+    """
+
+    def repl(match: re.Match[str]) -> str:
+        written = match.group("unit")
+        spoken = _UNITS.get(written)
+        if spoken is None:
+            # Only a case difference away from a unit; accept it unless the
+            # abbreviation is one of the ambiguous ones.
+            for key, value in _UNITS.items():
+                if key.lower() == written.lower() and key not in _CASE_SENSITIVE_UNITS:
+                    spoken = value
+                    break
+        if spoken is None:
+            return match.group(0)
+        suffix = _SUFFIX_MARK if match.group("apos") else ""
+        return f"{match.group('number')} {spoken}{suffix}"
+
+    # Longest abbreviation first: "km²" must be tried before "km".
+    alternatives = "|".join(re.escape(u) for u in sorted(_UNITS, key=len, reverse=True))
+    pattern = re.compile(
+        rf"(?P<number>\d)\s*(?P<unit>{alternatives})"
+        # Either a suffix follows, or nothing word-like does. Written as one
+        # alternation because a trailing "not a word character" check would
+        # reject the suffix it is meant to allow.
+        rf"(?:(?P<apos>['’])(?=[a-zçğıöşü])|(?![\w²³]))"
+    )
+    return pattern.sub(repl, text)
+
+
 def _sub_scaled_decimals(text: str) -> str:
     """Spell "2,75 milyon" as the amount it is: "iki milyon yedi yüz elli bin".
 
@@ -434,6 +512,7 @@ def normalize_speech(text: str) -> str:
     result = _sub_times(result)
     result = _sub_currency_symbols(result)
     result = _sub_percent(result)
+    result = _sub_units(result)
     result = _sub_scaled_decimals(result)
     result = _strip_thousands(result)
     result = _sub_ranges(result)

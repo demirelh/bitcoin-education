@@ -473,6 +473,23 @@ class TestPipelineActions:
 # ---------------------------------------------------------------------------
 
 
+
+def _await_job(client, job_id, *, timeout: float = 15.0) -> dict:
+    """Wait until a background job leaves the running state.
+
+    Sleeping a fixed half second was enough on an idle machine and not enough
+    on a loaded one, which made a full suite run fail at random on the Pi.
+    """
+    deadline = time.monotonic() + timeout
+    data = {}
+    while time.monotonic() < deadline:
+        data = client.get(f"/api/jobs/{job_id}").get_json()
+        if data.get("state") not in ("queued", "running"):
+            return data
+        time.sleep(0.05)
+    return data
+
+
 class TestJobsAndLogs:
     def test_job_lifecycle_queued_to_success(self, client, app):
         """Submit a job, poll it, verify it completes."""
@@ -494,12 +511,9 @@ class TestJobsAndLogs:
 
             # Let the job finish
             event.set()
-            time.sleep(0.5)
 
             # Poll: should be success
-            r3 = client.get(f"/api/jobs/{job_id}")
-            assert r3.status_code == 200
-            data = r3.get_json()
+            data = _await_job(client, job_id)
             assert data["state"] == "success"
             assert data["result"]["path"] == "/tmp/audio.m4a"
 
@@ -511,10 +525,8 @@ class TestJobsAndLogs:
         ):
             r = client.post("/api/episodes/ep002/download", json={})
             job_id = r.get_json()["job_id"]
-            time.sleep(0.5)
 
-            r2 = client.get(f"/api/jobs/{job_id}")
-            data = r2.get_json()
+            data = _await_job(client, job_id)
             assert data["state"] == "error"
             assert "Download failed" in data["message"]
 
@@ -536,7 +548,9 @@ class TestJobsAndLogs:
             assert "already active" in r2.get_json()["error"]
 
             event.set()
-            time.sleep(0.5)
+            # Wait for it to actually finish: a job still running here holds
+            # the episode lock and makes the next test's request a 409.
+            _await_job(client, r1.get_json()["job_id"])
 
     def test_job_not_found(self, client):
         r = client.get("/api/jobs/nonexistent")
@@ -550,10 +564,8 @@ class TestJobsAndLogs:
         ):
             r = client.post("/api/episodes/ep002/download", json={})
             job_id = r.get_json()["job_id"]
-            time.sleep(0.5)
 
-            r2 = client.get(f"/api/jobs/{job_id}")
-            data = r2.get_json()
+            data = _await_job(client, job_id)
             assert "episode_status" in data
 
     def test_action_log_endpoint(self, client, test_settings):
@@ -601,10 +613,8 @@ class TestJobsAndLogs:
         r = client.post("/api/episodes/ep001/run", json={})
         assert r.status_code == 202
         job_id = r.get_json()["job_id"]
-        time.sleep(0.5)
 
-        r2 = client.get(f"/api/jobs/{job_id}")
-        data = r2.get_json()
+        data = _await_job(client, job_id)
         assert data["state"] == "success"
         assert data["result"]["message"] == "Nothing to do"
 

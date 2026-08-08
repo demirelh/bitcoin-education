@@ -32,6 +32,15 @@ from btcedu.models.media_asset import Base as MediaBase  # noqa: E402
 # Written back to the Pi. Mirrors _RESULT_PATHS in remote_render.
 RESULT_PATHS = ("render", "provenance/render_provenance.json")
 
+# The renderer builds the timed weather video into images/, not into render/.
+# review_gate_3 checks that source asset on the Pi, so it has to travel back
+# with the segments it was rendered into. Mirrors _RESULT_GLOBS.
+RESULT_GLOBS = (
+    "images/*_weather.mp4",
+    "images/*_weather.mp4.provenance.json",
+    "images/*_weather_scenes.json",
+)
+
 # Per-beat intermediates are ~370 MB of scratch data that get concatenated
 # into the chapter segments. The Pi never reads them back, so they stay here.
 RESULT_EXCLUDED = ("render/segments/beats",)
@@ -166,6 +175,9 @@ def _pack_result(episode_dir: Path, out_path: Path) -> None:
             source = episode_dir / rel
             if source.exists():
                 tar.add(source, arcname=rel, filter=_keep)
+        for pattern in RESULT_GLOBS:
+            for source in sorted(episode_dir.glob(pattern)):
+                tar.add(source, arcname=str(source.relative_to(episode_dir)), filter=_keep)
 
 
 def main() -> int:

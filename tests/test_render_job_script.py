@@ -6,6 +6,7 @@ profile asset, or any other drift that shows up in the input hash.
 """
 
 import sys
+import tarfile
 from pathlib import Path
 
 import pytest
@@ -122,3 +123,60 @@ def test_a_pi_on_the_fallback_font_is_not_a_mismatch(monkeypatch):
         "expected_font_file": "DejaVuSans-Bold.ttf",
     }
     render_job._verify_font(Settings(), job)
+
+
+# ---------------------------------------------------------------------------
+# what travels back to the Pi
+# ---------------------------------------------------------------------------
+
+
+def _episode_with_a_weather_render(tmp_path):
+    ep = tmp_path / "ep"
+    (ep / "render" / "segments" / "beats").mkdir(parents=True)
+    (ep / "provenance").mkdir(parents=True)
+    (ep / "images").mkdir(parents=True)
+    (ep / "render" / "draft.mp4").write_bytes(b"draft")
+    (ep / "render" / "segments" / "ch07.mp4").write_bytes(b"segment")
+    (ep / "render" / "segments" / "beats" / "b0.mp4").write_bytes(b"scratch")
+    (ep / "provenance" / "render_provenance.json").write_text("{}", encoding="utf-8")
+    (ep / "images" / "ch07_weather.mp4").write_bytes(b"weather-video")
+    (ep / "images" / "ch07_weather.mp4.provenance.json").write_text("{}", encoding="utf-8")
+    (ep / "images" / "ch07_weather_scenes.json").write_text("{}", encoding="utf-8")
+    (ep / "images" / "ch07_weather.png").write_bytes(b"card")
+    (ep / "images" / "ch01.png").write_bytes(b"story")
+    return ep
+
+
+def _packed_names(tmp_path, episode_dir):
+    out = tmp_path / "result.tar.gz"
+    render_job._pack_result(episode_dir, out)
+    with tarfile.open(out, "r:gz") as tar:
+        return set(tar.getnames())
+
+
+def test_the_weather_video_travels_back(tmp_path):
+    """review_gate_3 checks images/chXX_weather.mp4 on the Pi.
+
+    The renderer writes it outside render/, so it needs its own rule or the
+    gate blocks every episode whose weather chapter became a video.
+    """
+    names = _packed_names(tmp_path, _episode_with_a_weather_render(tmp_path))
+
+    assert "images/ch07_weather.mp4" in names
+    assert "images/ch07_weather.mp4.provenance.json" in names
+    assert "images/ch07_weather_scenes.json" in names
+
+
+def test_images_the_pi_already_has_stay_on_the_runner(tmp_path):
+    """Only render's own output comes back; re-uploading the rest is waste."""
+    names = _packed_names(tmp_path, _episode_with_a_weather_render(tmp_path))
+
+    assert "images/ch01.png" not in names
+    assert "images/ch07_weather.png" not in names
+
+
+def test_beat_scratch_still_stays_behind(tmp_path):
+    names = _packed_names(tmp_path, _episode_with_a_weather_render(tmp_path))
+
+    assert "render/draft.mp4" in names
+    assert not any(name.startswith("render/segments/beats/") for name in names)

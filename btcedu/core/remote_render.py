@@ -50,6 +50,16 @@ _JOB_EXCLUDED = ("render/segments", "render/draft.mp4")
 # What the runner sends back.
 _RESULT_PATHS = ("render", "provenance/render_provenance.json")
 
+# The timed weather video is built into images/ during render, and
+# review_gate_3 validates it there. Without this it stays on the runner and
+# the gate blocks every episode whose weather chapter became a video.
+# Mirrors RESULT_GLOBS in scripts/render_job.py.
+_RESULT_GLOBS = (
+    "images/*_weather.mp4",
+    "images/*_weather.mp4.provenance.json",
+    "images/*_weather_scenes.json",
+)
+
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
@@ -343,6 +353,12 @@ def unpack_result(archive_path: Path, episode_dir: Path) -> None:
                     shutil.rmtree(target)
                 shutil.move(str(source), str(target))
             else:
+                shutil.move(str(source), str(target))
+
+        for pattern in _RESULT_GLOBS:
+            for source in sorted(staging.glob(pattern)):
+                target = episode_dir / source.relative_to(staging)
+                target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(source), str(target))
 
 

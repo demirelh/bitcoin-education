@@ -298,6 +298,58 @@ def test_unpack_result_clears_stale_local_segments(tmp_path, episode_dir):
     assert not stale.exists()
 
 
+def _make_weather_result_archive(tmp_path: Path) -> Path:
+    staging = tmp_path / "weather-staging"
+    (staging / "render").mkdir(parents=True)
+    (staging / "images").mkdir(parents=True)
+    (staging / "render" / "render_manifest.json").write_text("{}", encoding="utf-8")
+    (staging / "images" / "ch07_weather.mp4").write_bytes(b"weather-video")
+    (staging / "images" / "ch07_weather.mp4.provenance.json").write_text(
+        '{"method": "ffmpeg_scene_video"}', encoding="utf-8"
+    )
+    (staging / "images" / "ch07_weather_scenes.json").write_text(
+        '{"scenes": []}', encoding="utf-8"
+    )
+    (staging / "images" / "ch07_weather.png").write_bytes(b"runner-card")
+
+    archive = tmp_path / "weather-result.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(staging / "render", arcname="render")
+        for name in (
+            "ch07_weather.mp4",
+            "ch07_weather.mp4.provenance.json",
+            "ch07_weather_scenes.json",
+            "ch07_weather.png",
+        ):
+            tar.add(staging / "images" / name, arcname=f"images/{name}")
+    return archive
+
+
+def test_unpack_result_brings_back_the_weather_video(tmp_path, episode_dir):
+    """review_gate_3 validates images/chXX_weather.mp4, which render builds.
+
+    It lives outside render/, so without an explicit rule it stays on the
+    runner and the gate blocks the episode as 'source weather visual missing'.
+    """
+    unpack_result(_make_weather_result_archive(tmp_path), episode_dir)
+
+    video = episode_dir / "images" / "ch07_weather.mp4"
+    assert video.read_bytes() == b"weather-video"
+    assert (episode_dir / "images" / "ch07_weather.mp4.provenance.json").exists()
+    assert (episode_dir / "images" / "ch07_weather_scenes.json").exists()
+
+
+def test_unpack_result_leaves_the_other_images_alone(tmp_path, episode_dir):
+    """Only what render creates comes back; the Pi's own images stay put."""
+    card = episode_dir / "images" / "ch07_weather.png"
+    card.parent.mkdir(parents=True, exist_ok=True)
+    card.write_bytes(b"pi-card")
+
+    unpack_result(_make_weather_result_archive(tmp_path), episode_dir)
+
+    assert card.read_bytes() == b"pi-card"
+
+
 def test_safe_extract_refuses_path_traversal(tmp_path):
     """A malicious archive must not be able to write outside the target."""
     evil = tmp_path / "evil.tar"

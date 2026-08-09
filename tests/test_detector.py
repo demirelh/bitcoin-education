@@ -866,3 +866,180 @@ class TestIngestTitleFilter:
         assert result.new == 2
         ids = sorted(e.episode_id for e in db_session.query(Episode).all())
         assert ids == ["ts100s", "ts2000"]
+
+
+class TestFeedReDeliversAnOldBroadcast:
+    """A broadcast already stored must not be bought a second time.
+
+    On 2026-08-08 the feed served the 4 and 5 August editions again under fresh
+    video ids. Nothing stopped them: deduplication only ever compared the feed
+    against the *local recorder*, never against the feed's own history, and the
+    id check cannot help because a re-upload genuinely has a new id. Both ran
+    the full paid pipeline on transcripts that were word-for-word identical to
+    the originals.
+    """
+
+    def _settings(self, profile="tagesschau_tr"):
+        from btcedu.config import Settings
+
+        return Settings(
+            podcast_rss_url="https://example.com/feed.xml",
+            default_content_profile=profile,
+        )
+
+    def _feed(self, entries):
+        items = "".join(
+            f"""
+  <entry>
+    <yt:videoId>{vid}</yt:videoId>
+    <title>{title}</title>
+    <link href="https://www.youtube.com/watch?v={vid}"/>
+    <published>{published}</published>
+  </entry>"""
+            for vid, title, published in entries
+        )
+        return (
+            '<?xml version="1.0"?>\n<feed xmlns="http://www.w3.org/2005/Atom" '
+            'xmlns:yt="http://www.youtube.com/xml/schemas/2015">'
+            f"{items}\n</feed>"
+        )
+
+    def _store(self, db_session, episode_id, title, published_at, source="youtube_rss"):
+        db_session.add(
+            Episode(
+                episode_id=episode_id,
+                source=source,
+                title=title,
+                url=f"https://www.youtube.com/watch?v={episode_id}",
+                published_at=published_at,
+                status=EpisodeStatus.APPROVED,
+                content_profile="tagesschau_tr",
+            )
+        )
+        db_session.commit()
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_reupload_under_a_new_id_is_rejected(self, mock_fetch, db_session):
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        self._store(
+            db_session,
+            "hrzrn0Wutak",
+            "tagesschau 20:00 Uhr, 04.08.2026",
+            datetime(2026, 8, 4, 18, 28, tzinfo=UTC),
+        )
+        # The re-upload: new id, current timestamp, same broadcast in the title.
+        mock_fetch.return_value = self._feed(
+            [("mRlfWLZ-EJs", "tagesschau 20:00 Uhr, 04.08.2026", "2026-08-08T17:43:00+00:00")]
+        )
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = detect_episodes(db_session, self._settings())
+
+        assert result.new == 0
+        assert db_session.query(Episode).count() == 1
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_upload_timestamp_alone_would_not_have_caught_it(self, mock_fetch, db_session):
+        """The published_at of the re-upload is four days off the broadcast."""
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        self._store(
+            db_session,
+            "o4Y4qK2OEk8",
+            "tagesschau 20:00 Uhr, 05.08.2026",
+            datetime(2026, 8, 5, 18, 46, tzinfo=UTC),
+        )
+        mock_fetch.return_value = self._feed(
+            [("l0sb85WhaTk", "tagesschau 20:00 Uhr, 05.08.2026", "2026-08-08T18:54:00+00:00")]
+        )
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = detect_episodes(db_session, self._settings())
+
+        assert result.new == 0
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_todays_broadcast_still_gets_through(self, mock_fetch, db_session):
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        self._store(
+            db_session,
+            "hrzrn0Wutak",
+            "tagesschau 20:00 Uhr, 04.08.2026",
+            datetime(2026, 8, 4, 18, 28, tzinfo=UTC),
+        )
+        mock_fetch.return_value = self._feed(
+            [("newone", "tagesschau 20:00 Uhr, 09.08.2026", "2026-08-09T18:30:00+00:00")]
+        )
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = detect_episodes(db_session, self._settings())
+
+        assert result.new == 1
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_recorder_slug_counts_as_the_same_broadcast(self, mock_fetch, db_session):
+        """The stored copy may carry its date in the slug rather than the title."""
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        self._store(
+            db_session,
+            "tagesschau_2026-08-06_2000",
+            "Tagesschau",
+            datetime(2026, 8, 6, 20, 0, tzinfo=UTC),
+            source="local_recorder",
+        )
+        mock_fetch.return_value = self._feed(
+            [("hlf-1rgnPSw", "tagesschau 20:00 Uhr, 06.08.2026", "2026-08-06T18:31:00+00:00")]
+        )
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = detect_episodes(db_session, self._settings())
+
+        assert result.new == 0
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_one_batch_cannot_carry_the_duplicate_itself(self, mock_fetch, db_session):
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        mock_fetch.return_value = self._feed(
+            [
+                ("first", "tagesschau 20:00 Uhr, 07.08.2026", "2026-08-07T18:30:00+00:00"),
+                ("again", "tagesschau 20:00 Uhr, 07.08.2026", "2026-08-08T18:30:00+00:00"),
+            ]
+        )
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = detect_episodes(db_session, self._settings())
+
+        assert result.new == 1
+        assert [e.episode_id for e in db_session.query(Episode).all()] == ["first"]
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_a_dateless_feed_is_left_alone(self, mock_fetch, db_session):
+        """Two episodes on one day are normal for an ordinary podcast.
+
+        The rule keys on the date in the title precisely so that a feed without
+        such dates keeps every entry — deduplicating those by upload day would
+        silently drop the second episode of any busy day.
+        """
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        mock_fetch.return_value = self._feed(
+            [
+                ("aaa", "Bitcoin Basics Folge 1", "2026-08-07T09:00:00+00:00"),
+                ("bbb", "Bitcoin Basics Folge 2", "2026-08-07T17:00:00+00:00"),
+            ]
+        )
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = detect_episodes(db_session, self._settings("bitcoin_podcast"))
+
+        assert result.new == 2

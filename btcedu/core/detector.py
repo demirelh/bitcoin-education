@@ -212,6 +212,37 @@ def detect_episodes(
         if skipped:
             logger.info("Title filter skipped %d/%d episodes", skipped, before)
 
+    # A broadcast that is already stored must not be ingested again under a new
+    # video id. The feed re-delivers older editions - on 2026-08-08 it served
+    # the 4 and 5 August broadcasts a second time - and the id check further
+    # down cannot notice, because the id really is new. Only the date in the
+    # title identifies the broadcast itself.
+    #
+    # Gated on a configured title filter, which is the operator declaring this
+    # feed to be one recurring broadcast where a single edition per day is the
+    # rule. On an ordinary podcast feed two episodes on one day are normal, so
+    # the date in the title is deliberately the only key here - no published_at
+    # fallback, no dedup at all for feeds whose titles carry no date. Accepted
+    # days are folded back in so one batch cannot carry the duplicate itself.
+    if title_filter is not None:
+        known_days = _titled_broadcast_days(session)
+        kept: list[EpisodeInfo] = []
+        already_known = 0
+        for ep in episodes:
+            day = _broadcast_day_from_title(ep.title or "")
+            if day is not None and day in known_days:
+                already_known += 1
+                continue
+            if day is not None:
+                known_days.add(day)
+            kept.append(ep)
+        episodes = kept
+        if already_known:
+            logger.info(
+                "Skipped %d feed episode(s) whose broadcast day is already stored",
+                already_known,
+            )
+
     # The local recorder supersedes the feed for broadcasts it already captured.
     # The upload of the same broadcast appears one to two hours later; ingesting
     # it as well would run the whole pipeline a second time at full API cost.
@@ -272,6 +303,24 @@ def _feed_broadcast_day(ep_info: EpisodeInfo) -> date | None:
 def _local_episode_days(session: Session) -> set[date]:
     """Broadcast days already ingested from the recorder."""
     return _episode_days_by_source(session, local=True)
+
+
+def _titled_broadcast_days(session: Session) -> set[date]:
+    """Broadcast days already stored, keyed strictly on the slug or title date.
+
+    Deliberately without the ``published_at`` fallback that
+    :func:`_episode_days_by_source` applies. This set is used to reject feed
+    entries outright, so a wrong match costs a broadcast that never runs. An
+    upload date says nothing about which broadcast an entry contains - the feed
+    re-serves old editions with a current timestamp - while a date in the title
+    or in a recorder slug names the broadcast itself.
+    """
+    days: set[date] = set()
+    for episode_id, title in session.query(Episode.episode_id, Episode.title).all():
+        day = _broadcast_day_from_slug(episode_id) or _broadcast_day_from_title(title or "")
+        if day is not None:
+            days.add(day)
+    return days
 
 
 def _episode_days_by_source(session: Session, *, local: bool) -> set[date]:

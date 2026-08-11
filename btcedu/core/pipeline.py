@@ -292,15 +292,20 @@ def resolve_pipeline_plan(
     for stage_name, required_status in stages:
         required_order = _STATUS_ORDER[required_status]
 
-        if current_order > required_order and not force:
+        if current_order > required_order:
+            # Deliberately not overridden by ``force``: the executor never
+            # rewinds an episode either, and a plan that promised otherwise
+            # was read as "everything will be regenerated" while the run in
+            # fact resumed at the current status and rebuilt later stages on
+            # top of stale earlier ones.
             plan.append(StagePlan(stage_name, "skip", "already completed"))
         elif current_order == required_order or force:
             plan.append(
                 StagePlan(
                     stage_name,
                     "run",
-                    "forced"
-                    if force and current_order > required_order
+                    "forced (ahead of status)"
+                    if force and current_order < required_order
                     else f"status={episode.status.value}",
                 )
             )

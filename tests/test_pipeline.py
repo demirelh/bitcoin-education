@@ -9,6 +9,8 @@ import pytest
 
 from btcedu.config import Settings
 from btcedu.core.pipeline import (
+    _STAGES,
+    _STATUS_ORDER,
     PipelineReport,
     StagePlan,
     StageResult,
@@ -887,7 +889,16 @@ class TestResolvePipelinePlan:
         plan = resolve_pipeline_plan(db_session, ep)
         assert all(p.decision == "skip" for p in plan)
 
-    def test_force_overrides_skips(self, db_session):
+    def test_force_does_not_promise_to_redo_completed_stages(self, db_session):
+        """The plan must not claim a rewind the run will not perform.
+
+        ``run_episode_pipeline`` skips every stage the episode is already past,
+        with or without ``--force``. The plan used to report those stages as
+        "run (forced)", which reads as "everything is regenerated" — and on a
+        re-cut source that is exactly the wrong thing to believe, because the
+        run resumes at the current status and builds on the stale earlier
+        artifacts instead.
+        """
         ep = Episode(
             episode_id="ep_force",
             source="youtube_rss",
@@ -901,10 +912,56 @@ class TestResolvePipelinePlan:
         db_session.commit()
 
         plan = resolve_pipeline_plan(db_session, ep, force=True)
-        assert all(p.decision == "run" for p in plan)
+
         assert len(plan) == 20
-        assert plan[0].reason == "forced"
-        assert plan[-1].reason == "forced"
+        assert all(p.decision == "skip" for p in plan)
+        assert all(p.reason == "already completed" for p in plan)
+
+    def test_force_still_runs_the_stages_ahead_of_the_status(self, db_session):
+        """What force is actually for: carrying on past the current stage."""
+        ep = Episode(
+            episode_id="ep_force_ahead",
+            source="youtube_rss",
+            title="Force ahead",
+            url="https://youtube.com/watch?v=ahead",
+            status=EpisodeStatus.ADAPTED,
+            pipeline_version=2,
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
+        )
+        db_session.add(ep)
+        db_session.commit()
+
+        plan = resolve_pipeline_plan(db_session, ep, force=True)
+        by_stage = {p.stage: p for p in plan}
+
+        assert by_stage["download"].decision == "skip"
+        assert by_stage["render"].decision == "run"
+        assert by_stage["render"].reason == "forced (ahead of status)"
+
+    def test_the_plan_matches_what_the_run_will_actually_skip(self, db_session):
+        """Pin the plan to the executor's own rule, so they cannot drift apart."""
+        ep = Episode(
+            episode_id="ep_plan_truth",
+            source="youtube_rss",
+            title="Plan truth",
+            url="https://youtube.com/watch?v=truth",
+            status=EpisodeStatus.ADAPTED,
+            pipeline_version=2,
+            published_at=datetime(2025, 6, 1, tzinfo=UTC),
+        )
+        db_session.add(ep)
+        db_session.commit()
+        current_order = _STATUS_ORDER[ep.status]
+
+        for force in (False, True):
+            plan = resolve_pipeline_plan(db_session, ep, force=force)
+            for entry, (_stage, required_status) in zip(plan, _STAGES, strict=True):
+                # The executor's condition, verbatim.
+                executor_skips = _STATUS_ORDER[required_status] < current_order or (
+                    _STATUS_ORDER[required_status] > current_order and not force
+                )
+                planned_skip = entry.decision != "run"
+                assert planned_skip == executor_skips, (entry.stage, force)
 
     def test_plan_with_error_still_resolves(self, db_session, failed_episode):
         """Pipeline plan ignores error_message — only looks at status."""

@@ -1,8 +1,9 @@
 """ElevenLabs TTS service abstraction."""
 
 import logging
+import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from io import BytesIO
 from typing import Protocol
@@ -27,6 +28,23 @@ class ElevenLabsAPIError(RuntimeError):
 
 # Maximum characters per API request
 MAX_CHARS_PER_REQUEST = 5000
+
+# A spent monthly plan comes back as HTTP 401 — the same status as a bad key —
+# so the body is what tells the two apart. ElevenLabs fills ``code`` and
+# ``status`` with ``quota_exceeded``; the message is matched as well for the
+# endpoints that only phrase it in prose.
+_QUOTA_EXHAUSTED = re.compile(
+    r"quota[_\s-]?exceeded|not enough credits|insufficient credits|"
+    r"credits remaining",
+    re.IGNORECASE,
+)
+
+
+def _is_quota_exhausted(error: ElevenLabsAPIError) -> bool:
+    """Whether the account behind the request has no credits left."""
+    if str(getattr(error, "error_code", "") or "").lower() == "quota_exceeded":
+        return True
+    return bool(_QUOTA_EXHAUSTED.search(str(getattr(error, "detail", "") or "")))
 
 # ElevenLabs API base URL
 API_BASE = "https://api.elevenlabs.io/v1"
@@ -74,11 +92,19 @@ class ElevenLabsService:
         default_voice_id: str = "",
         default_model: str = "eleven_multilingual_v2",
         before_api_call: Callable[[int, int], None] | None = None,
+        fallback_api_keys: Sequence[str] = (),
     ):
         self.api_key = api_key
         self.default_voice_id = default_voice_id
         self.default_model = default_model
         self.before_api_call = before_api_call
+        # Reserve accounts, tried in order and only after the one in use has
+        # reported its quota spent.
+        self.fallback_api_keys = [
+            key.strip()
+            for key in fallback_api_keys
+            if key and key.strip() and key.strip() != api_key
+        ]
 
     def synthesize(self, request: TTSRequest) -> TTSResponse:
         """Synthesize text to speech.
@@ -166,6 +192,31 @@ class ElevenLabsService:
             cost_usd=cost_usd,
         )
 
+    def _switch_to_reserve_account(self, error: ElevenLabsAPIError) -> bool:
+        """Move to the next configured account after a quota rejection.
+
+        Deliberately narrow. Only an exhausted plan justifies spending a
+        reserve; a rejected or revoked key must stay a loud failure, because
+        silently draining the spare account would hide the misconfiguration
+        until there is nothing left to fall back on.
+
+        A rejected request is not billed, so nothing is lost by re-sending the
+        same chunk on the new account.
+        """
+        if not self.fallback_api_keys:
+            return False
+        if not _is_quota_exhausted(error):
+            return False
+
+        self.api_key = self.fallback_api_keys.pop(0)
+        logger.warning(
+            "ElevenLabs quota exhausted (%s); switching to the next configured "
+            "account, %d reserve(s) left after this one",
+            error.detail[:120],
+            len(self.fallback_api_keys),
+        )
+        return True
+
     def _call_with_retry(
         self,
         text: str,
@@ -216,17 +267,32 @@ class ElevenLabsService:
                     error_detail = response.text[:200]
                     error_code = None
                     try:
-                        payload = response.json()
-                        detail = payload.get("detail") if isinstance(payload, dict) else None
+                        body = response.json()
+                        detail = body.get("detail") if isinstance(body, dict) else None
                         if isinstance(detail, dict):
-                            error_code = detail.get("code")
+                            # ElevenLabs reports quota exhaustion in both
+                            # fields; reading only one has already been enough
+                            # to misclassify a spent plan as a bad key.
+                            error_code = detail.get("code") or detail.get("status")
                     except (TypeError, ValueError):
                         pass
-                    raise ElevenLabsAPIError(
+                    api_error = ElevenLabsAPIError(
                         response.status_code,
                         error_detail,
                         error_code,
                     )
+                    if self._switch_to_reserve_account(api_error):
+                        # Same chunk, fresh account. Not counted as a retry:
+                        # the first account will never answer differently.
+                        return self._call_with_retry(
+                            text,
+                            voice_id,
+                            model,
+                            voice_settings,
+                            max_retries=max_retries,
+                            sent_chars=sent_chars,
+                        )
+                    raise api_error
 
                 return response.content
 

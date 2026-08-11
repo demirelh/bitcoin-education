@@ -35,6 +35,14 @@ def settings() -> Settings:
 
 
 @pytest.fixture
+def settings_with_reserve() -> Settings:
+    return Settings(
+        elevenlabs_api_key=FAKE_ELEVEN,
+        elevenlabs_api_key_fallback="el-2222222222222222222222222222",
+    )
+
+
+@pytest.fixture
 def captured(settings):
     """A logger wired exactly like the real one, with its output in hand."""
     stream = io.StringIO()
@@ -127,6 +135,27 @@ class TestWhatCountsAsACredential:
     def test_a_short_value_is_not_struck_from_free_text(self):
         """A four-character key would hit unrelated words in every message."""
         assert "abc" not in secret_values(Settings(anthropic_api_key="abc"))
+
+    def test_each_key_in_a_list_is_collected_on_its_own(self):
+        """The reserve accounts share one field but are used one at a time.
+
+        Struck out only as the combined string, a single reserve key would
+        still reach the log the moment the pipeline switches to it.
+        """
+        first = "el-1111111111111111111111111111"
+        second = "el-2222222222222222222222222222"
+        values = secret_values(
+            Settings(elevenlabs_api_key_fallback=f"{first},{second}")
+        )
+        assert first in values
+        assert second in values
+
+    def test_a_switched_account_does_not_reach_the_log(self, settings_with_reserve):
+        reserve = "el-2222222222222222222222222222"
+        assert reserve not in redact_values(
+            f"xi-api-key: {reserve} rejected",
+            secret_values(settings_with_reserve),
+        )
 
     def test_an_object_that_is_not_settings_yields_nothing(self):
         from unittest.mock import MagicMock

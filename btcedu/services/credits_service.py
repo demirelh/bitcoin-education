@@ -57,11 +57,11 @@ class CreditStatus:
 # ---------------------------------------------------------------------------
 
 
-def _query_elevenlabs(api_key: str) -> CreditStatus:
+def _query_elevenlabs(api_key: str, label: str = "") -> CreditStatus:
     s = CreditStatus(
         provider="elevenlabs",
         kind="live_balance",
-        display_name="ElevenLabs (TTS)",
+        display_name=f"ElevenLabs (TTS){label}",
         dashboard_url="https://elevenlabs.io/app/subscription",
     )
     if not api_key:
@@ -88,6 +88,30 @@ def _query_elevenlabs(api_key: str) -> CreditStatus:
     except Exception as e:  # noqa: BLE001
         s.status, s.error = "unknown", str(e)
     return s
+
+
+def _query_elevenlabs_accounts(settings) -> list[CreditStatus]:
+    """One entry per configured account.
+
+    Reporting only the primary would keep the dashboard red while a paid
+    reserve sits unused — and, worse, hide the moment the reserve itself runs
+    dry, which is the point at which the pipeline actually stops.
+    """
+    keys = getattr(settings, "elevenlabs_api_keys", None)
+    if not isinstance(keys, list) or not keys:
+        return [_query_elevenlabs(getattr(settings, "elevenlabs_api_key", ""))]
+    if len(keys) == 1:
+        return [_query_elevenlabs(keys[0])]
+
+    accounts = []
+    for index, key in enumerate(keys):
+        label = " – Konto 1 (primär)" if index == 0 else f" – Konto {index + 1} (Reserve)"
+        status = _query_elevenlabs(key, label=label)
+        status.provider = "elevenlabs" if index == 0 else f"elevenlabs_{index + 1}"
+        if index > 0:
+            status.note = "Wird erst benutzt, wenn das vorherige Konto aufgebraucht ist."
+        accounts.append(status)
+    return accounts
 
 
 def _query_fal(api_key: str) -> CreditStatus:
@@ -194,7 +218,7 @@ def get_all_credits(session, settings) -> list[CreditStatus]:
     results: list[CreditStatus] = []
 
     # 1. Live balance queries
-    results.append(_query_elevenlabs(getattr(settings, "elevenlabs_api_key", "")))
+    results.extend(_query_elevenlabs_accounts(settings))
     results.append(_query_fal(getattr(settings, "fal_api_key", "")))
 
     # 2. Usage-tracking-only providers

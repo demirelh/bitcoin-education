@@ -36,6 +36,29 @@ class TestSettings:
         settings = Settings(whisper_api_key="", openai_api_key="openai-key")
         assert settings.effective_whisper_api_key == "openai-key"
 
+    def test_elevenlabs_keys_are_ordered_primary_first(self):
+        settings = Settings(
+            elevenlabs_api_key="primary",
+            elevenlabs_api_key_fallback="reserve_a,reserve_b",
+        )
+        assert settings.elevenlabs_api_keys == ["primary", "reserve_a", "reserve_b"]
+
+    def test_elevenlabs_keys_without_a_reserve(self):
+        settings = Settings(elevenlabs_api_key="primary")
+        assert settings.elevenlabs_api_keys == ["primary"]
+
+    def test_elevenlabs_keys_drop_blanks_and_repeats(self):
+        """A repeated key would only buy a second rejection."""
+        settings = Settings(
+            elevenlabs_api_key="primary",
+            elevenlabs_api_key_fallback=" reserve , , primary ,reserve",
+        )
+        assert settings.elevenlabs_api_keys == ["primary", "reserve"]
+
+    def test_elevenlabs_keys_empty_when_nothing_configured(self):
+        settings = Settings(elevenlabs_api_key="", elevenlabs_api_key_fallback="")
+        assert settings.elevenlabs_api_keys == []
+
     def test_rss_url_from_channel_id(self):
         settings = Settings(
             anthropic_api_key="test-key",

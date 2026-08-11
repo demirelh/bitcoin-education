@@ -113,6 +113,14 @@ Failures fall back to a local render. See `docs/remote-render.md`.
   The greeting, sign-off and weather handover come from short fixed profile lists, so
   they stop costing anything once recorded. Takes that failed the noise check are never
   stored. Tests must not write into the real `data/tts_cache` — `conftest.py` redirects it.
+- **A spent ElevenLabs plan is an HTTP 401, same as a bad key.** The body tells
+  them apart (`detail.code` / `detail.status` = `quota_exceeded`). Reserve
+  accounts live in `ELEVENLABS_API_KEY_FALLBACK` (comma-separated) and
+  `ElevenLabsService` moves to the next one only on quota exhaustion — a
+  rejected key stays a loud failure, because silently draining the spare would
+  hide the misconfiguration until nothing is left. The switch is sticky for the
+  rest of the run and the rejected request is not billed, so the chunk is simply
+  re-sent.
 - **YouTube deps are optional**: `pip install -e ".[youtube]"`. `run.sh` auto-installs if `data/client_secret.json` exists.
 - **SQLAlchemy string relationships** (e.g. `"ReviewItemDecision"`) require the target module to be imported at runtime, not just under `TYPE_CHECKING`.
 - **Local recorder deduplication is bidirectional.** The same broadcast reaches

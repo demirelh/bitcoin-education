@@ -54,8 +54,15 @@ def secret_values(settings) -> set[str]:
         if not is_secret_field(name):
             continue
         value = getattr(settings, name, None)
-        if isinstance(value, str) and len(value) >= _MIN_SECRET_LENGTH:
-            values.add(value)
+        if not isinstance(value, str):
+            continue
+        # A field may hold several credentials at once (a list of fallback
+        # keys). Struck out only as one long string, each individual key
+        # would still reach the log the moment it is used on its own.
+        for part in [value, *value.split(",")]:
+            candidate = part.strip()
+            if len(candidate) >= _MIN_SECRET_LENGTH:
+                values.add(candidate)
     return values
 
 

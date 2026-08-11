@@ -66,6 +66,8 @@ Provider choice is profile-owned, not hardcoded. LLM calls go through
 `github_models`, `copilot_cli`). Images may route among Flux, Ideogram,
 DALL-E, Gemini or Pexels; TTS uses ElevenLabs; weather cards are rendered
 deterministically (HTML/SVG + headless Chromium), never by an image model.
+ElevenLabs may hold several accounts (`ELEVENLABS_API_KEY_FALLBACK`); the
+next one is taken up only when the current plan reports its quota spent.
 
 ## Configuration
 

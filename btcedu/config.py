@@ -149,6 +149,10 @@ class Settings(BaseSettings):
 
     # TTS / ElevenLabs (Sprint 8)
     elevenlabs_api_key: str = ""
+    # Reserve accounts, comma-separated. Used only once the key before it
+    # reports its quota as exhausted, so a sold-out plan mid-episode does not
+    # abort the run. Order is the order of use.
+    elevenlabs_api_key_fallback: str = ""
     elevenlabs_voice_id: str = ""
     elevenlabs_model: str = "eleven_multilingual_v2"
     elevenlabs_stability: float = 0.5
@@ -292,6 +296,22 @@ class Settings(BaseSettings):
     @property
     def effective_whisper_api_key(self) -> str:
         return self.whisper_api_key or self.openai_api_key
+
+    @property
+    def elevenlabs_api_keys(self) -> list[str]:
+        """Every ElevenLabs account to use, primary first.
+
+        A monthly quota is bought per account, so a second account is the only
+        way to keep producing once the first is spent. Duplicates and blanks
+        are dropped: retrying the very same exhausted key wastes a call and
+        muddies the log.
+        """
+        ordered: list[str] = []
+        for candidate in [self.elevenlabs_api_key, *self.elevenlabs_api_key_fallback.split(",")]:
+            key = candidate.strip()
+            if key and key not in ordered:
+                ordered.append(key)
+        return ordered
 
 
 def get_settings() -> Settings:

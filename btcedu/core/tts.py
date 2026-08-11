@@ -181,11 +181,17 @@ def generate_tts(
         # Create TTS service (profile model is honoured, not the global default)
         from btcedu.services.elevenlabs_service import ElevenLabsService
 
+        # Reserve accounts, if any are configured. Read defensively: only a
+        # real settings object exposes the resolved list.
+        _configured_keys = getattr(settings, "elevenlabs_api_keys", None)
+        _reserve_keys = list(_configured_keys)[1:] if isinstance(_configured_keys, list) else []
+
         tts_service = ElevenLabsService(
             api_key=settings.elevenlabs_api_key,
             default_voice_id=_voice_id,
             default_model=_model,
             before_api_call=_before_tts_api_call,
+            fallback_api_keys=_reserve_keys,
         )
 
         # Filter chapters to process

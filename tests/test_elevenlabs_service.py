@@ -1,5 +1,6 @@
 """Tests for ElevenLabs TTS service."""
 
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -296,6 +297,156 @@ def test_synthesize_no_voice_id():
 
     with pytest.raises(ValueError, match="No voice_id"):
         service.synthesize(req)
+
+# ---------------------------------------------------------------------------
+# Reserve accounts: a spent monthly plan must not end the broadcast
+# ---------------------------------------------------------------------------
+
+
+def _quota_exhausted_response(field: str = "code"):
+    """The real 401 body ElevenLabs returns when the plan is spent."""
+    detail = {
+        "type": "invalid_request",
+        field: "quota_exceeded",
+        "message": (
+            "This request exceeds your quota of 100360. You have 17 credits "
+            "remaining, while 77 credits are required for this request."
+        ),
+    }
+    response = MagicMock()
+    response.status_code = 401
+    response.text = json.dumps({"detail": detail})
+    response.json.return_value = {"detail": detail}
+    return response
+
+
+def _rejected_key_response():
+    """A revoked or mistyped key — same status, different cause."""
+    detail = {"status": "invalid_api_key", "message": "Invalid API key"}
+    response = MagicMock()
+    response.status_code = 401
+    response.text = json.dumps({"detail": detail})
+    response.json.return_value = {"detail": detail}
+    return response
+
+
+def _ok_response(content: bytes = b"audio"):
+    response = MagicMock()
+    response.status_code = 200
+    response.content = content
+    return response
+
+
+@patch("btcedu.services.elevenlabs_service._measure_duration")
+@patch("btcedu.services.elevenlabs_service.requests.post")
+def test_exhausted_quota_continues_on_the_reserve_account(mock_post, mock_measure):
+    mock_post.side_effect = [_quota_exhausted_response(), _ok_response(b"reserve_audio")]
+    mock_measure.return_value = (5.0, 44100)
+
+    service = ElevenLabsService(
+        api_key="spent", default_voice_id="v1", fallback_api_keys=["reserve"]
+    )
+    result = service.synthesize(TTSRequest(text="Test", voice_id="v1"))
+
+    assert result.audio_bytes == b"reserve_audio"
+    assert mock_post.call_count == 2
+    # The retry must actually carry the second account, not the spent one.
+    assert mock_post.call_args_list[0].kwargs["headers"]["xi-api-key"] == "spent"
+    assert mock_post.call_args_list[1].kwargs["headers"]["xi-api-key"] == "reserve"
+    assert service.api_key == "reserve"
+
+
+@patch("btcedu.services.elevenlabs_service._measure_duration")
+@patch("btcedu.services.elevenlabs_service.requests.post")
+def test_quota_reported_only_in_the_status_field_still_switches(mock_post, mock_measure):
+    """Some endpoints fill ``status`` instead of ``code``."""
+    mock_post.side_effect = [_quota_exhausted_response(field="status"), _ok_response()]
+    mock_measure.return_value = (5.0, 44100)
+
+    service = ElevenLabsService(
+        api_key="spent", default_voice_id="v1", fallback_api_keys=["reserve"]
+    )
+    service.synthesize(TTSRequest(text="Test", voice_id="v1"))
+
+    assert service.api_key == "reserve"
+
+
+@patch("btcedu.services.elevenlabs_service.requests.post")
+def test_a_rejected_key_never_spends_the_reserve(mock_post):
+    """A bad key is a misconfiguration; draining the spare would mask it."""
+    mock_post.return_value = _rejected_key_response()
+
+    service = ElevenLabsService(
+        api_key="broken", default_voice_id="v1", fallback_api_keys=["reserve"]
+    )
+
+    with pytest.raises(ElevenLabsAPIError):
+        service.synthesize(TTSRequest(text="Test", voice_id="v1"))
+
+    assert mock_post.call_count == 1
+    assert service.api_key == "broken"
+    assert service.fallback_api_keys == ["reserve"]
+
+
+@patch("btcedu.services.elevenlabs_service.requests.post")
+def test_quota_without_a_reserve_still_fails(mock_post):
+    mock_post.return_value = _quota_exhausted_response()
+
+    service = ElevenLabsService(api_key="spent", default_voice_id="v1")
+
+    with pytest.raises(ElevenLabsAPIError) as exc_info:
+        service.synthesize(TTSRequest(text="Test", voice_id="v1"))
+
+    assert exc_info.value.error_code == "quota_exceeded"
+    assert mock_post.call_count == 1
+
+
+@patch("btcedu.services.elevenlabs_service.requests.post")
+def test_every_account_exhausted_raises_after_trying_all(mock_post):
+    mock_post.side_effect = [
+        _quota_exhausted_response(),
+        _quota_exhausted_response(),
+        _quota_exhausted_response(),
+    ]
+
+    service = ElevenLabsService(
+        api_key="one", default_voice_id="v1", fallback_api_keys=["two", "three"]
+    )
+
+    with pytest.raises(ElevenLabsAPIError):
+        service.synthesize(TTSRequest(text="Test", voice_id="v1"))
+
+    assert mock_post.call_count == 3
+    assert service.fallback_api_keys == []
+
+
+@patch("btcedu.services.elevenlabs_service._measure_duration")
+@patch("btcedu.services.elevenlabs_service.requests.post")
+def test_the_switch_holds_for_the_rest_of_the_episode(mock_post, mock_measure):
+    """Going back to the spent account for each chunk would waste a call."""
+    mock_post.side_effect = [
+        _quota_exhausted_response(),
+        _ok_response(b"a"),
+        _ok_response(b"b"),
+    ]
+    mock_measure.return_value = (5.0, 44100)
+
+    service = ElevenLabsService(
+        api_key="spent", default_voice_id="v1", fallback_api_keys=["reserve"]
+    )
+    with patch("btcedu.services.elevenlabs_service._concatenate_audio", return_value=b"ab"):
+        service.synthesize(TTSRequest(text="x" * (MAX_CHARS_PER_REQUEST + 10), voice_id="v1"))
+
+    used = [c.kwargs["headers"]["xi-api-key"] for c in mock_post.call_args_list]
+    assert used == ["spent", "reserve", "reserve"]
+
+
+def test_a_blank_or_duplicate_reserve_is_ignored():
+    """Retrying the very same spent key would only waste a call."""
+    service = ElevenLabsService(
+        api_key="one", fallback_api_keys=["", "  ", "one", " two "]
+    )
+    assert service.fallback_api_keys == ["two"]
 
 
 if __name__ == "__main__":

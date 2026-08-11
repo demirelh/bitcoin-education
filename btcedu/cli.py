@@ -582,6 +582,7 @@ def translation_qa(
 def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: str | None) -> None:
     """Run the full pipeline for specific or all pending episodes."""
     from btcedu.core.pipeline import run_episode_pipeline, write_report
+    from btcedu.core.runlock import PipelineBusyError, pipeline_lock
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
@@ -620,22 +621,32 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: 
             return
 
         has_failure = False
-        for ep in episodes:
-            click.echo(f"Processing: {ep.episode_id} ({ep.title})")
-            report = run_episode_pipeline(session, ep, settings, force=force)
-            write_report(report, settings.reports_dir)
+        try:
+            # Two concurrent runs share one SQLite database, and a long stage
+            # holds its write transaction open for minutes; the second run then
+            # dies with "database is locked" mid-stage, after it has already
+            # paid for the API calls of that stage. The batch entrypoints take
+            # this lock for exactly that reason, and a manual run collides with
+            # the autostart timer just as badly.
+            with pipeline_lock(settings):
+                for ep in episodes:
+                    click.echo(f"Processing: {ep.episode_id} ({ep.title})")
+                    report = run_episode_pipeline(session, ep, settings, force=force)
+                    write_report(report, settings.reports_dir)
 
-            for sr in report.stages:
-                if sr.status == "success":
-                    click.echo(f"  {sr.stage}: {sr.detail} ({sr.duration_seconds:.1f}s)")
-                elif sr.status == "failed":
-                    click.echo(f"  {sr.stage}: FAILED - {sr.error}", err=True)
+                    for sr in report.stages:
+                        if sr.status == "success":
+                            click.echo(f"  {sr.stage}: {sr.detail} ({sr.duration_seconds:.1f}s)")
+                        elif sr.status == "failed":
+                            click.echo(f"  {sr.stage}: FAILED - {sr.error}", err=True)
 
-            if report.success:
-                click.echo(f"  -> OK (${report.total_cost_usd:.4f})")
-            else:
-                click.echo(f"  -> FAILED: {report.error}", err=True)
-                has_failure = True
+                    if report.success:
+                        click.echo(f"  -> OK (${report.total_cost_usd:.4f})")
+                    else:
+                        click.echo(f"  -> FAILED: {report.error}", err=True)
+                        has_failure = True
+        except PipelineBusyError as exc:
+            raise click.ClickException(f"Pipeline busy: {exc}") from exc
 
         if has_failure:
             sys.exit(1)
@@ -824,24 +835,33 @@ def retry(ctx: click.Context, episode_ids: tuple[str, ...]) -> None:
     command is offered — this one already covers that need.
     """
     from btcedu.core.pipeline import retry_episode, write_report
+    from btcedu.core.runlock import PipelineBusyError, pipeline_lock
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
     try:
         has_failure = False
-        for eid in episode_ids:
-            try:
-                report = retry_episode(session, eid, settings)
-                write_report(report, settings.reports_dir)
+        try:
+            # Same reasoning as ``run``: a retry is a full pipeline run and
+            # must not overlap with the autostart timer.
+            with pipeline_lock(settings):
+                for eid in episode_ids:
+                    try:
+                        report = retry_episode(session, eid, settings)
+                        write_report(report, settings.reports_dir)
 
-                if report.success:
-                    click.echo(f"[OK] {eid}: retry succeeded (${report.total_cost_usd:.4f})")
-                else:
-                    click.echo(f"[FAIL] {eid}: {report.error}", err=True)
-                    has_failure = True
-            except ValueError as e:
-                click.echo(f"[FAIL] {eid}: {e}", err=True)
-                has_failure = True
+                        if report.success:
+                            click.echo(
+                                f"[OK] {eid}: retry succeeded (${report.total_cost_usd:.4f})"
+                            )
+                        else:
+                            click.echo(f"[FAIL] {eid}: {report.error}", err=True)
+                            has_failure = True
+                    except ValueError as e:
+                        click.echo(f"[FAIL] {eid}: {e}", err=True)
+                        has_failure = True
+        except PipelineBusyError as exc:
+            raise click.ClickException(f"Pipeline busy: {exc}") from exc
 
         if has_failure:
             sys.exit(1)

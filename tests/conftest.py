@@ -29,6 +29,24 @@ def _isolate_tts_cache(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_pipeline_lock(tmp_path_factory, monkeypatch):
+    """Keep the run lock out of the production data directory.
+
+    ``_lock_path`` co-locates the lock with the SQLite database, and a default
+    ``Settings()`` points at the real ``data/btcedu.db``. Without this a CLI
+    test would contend with a pipeline run actually happening on the machine:
+    the test then fails with "Pipeline busy" for reasons that have nothing to
+    do with the code under test — and, worse, a test could block the real run.
+    """
+    lock_dir = tmp_path_factory.mktemp("pipeline-lock")
+    monkeypatch.setattr(
+        "btcedu.core.runlock._lock_path",
+        lambda settings: lock_dir / "pipeline.lock",
+    )
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_profile_registry():
     """Keep the profile registry singleton from leaking between tests.
 

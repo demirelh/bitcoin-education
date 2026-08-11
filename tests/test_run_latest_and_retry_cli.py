@@ -14,6 +14,7 @@ from btcedu.cli import cli
 from btcedu.config import Settings
 from btcedu.core.pipeline import PipelineReport, StageResult
 from btcedu.core.runlock import PipelineBusyError
+from btcedu.models.episode import Episode, EpisodeStatus
 
 
 @patch("btcedu.core.pipeline.run_latest")
@@ -240,3 +241,60 @@ def test_retry_command_help_documents_resume_semantics():
 
     assert result.exit_code == 0
     assert "Retry failed episodes from their last successful stage" in result.output
+
+
+@patch("btcedu.core.runlock.pipeline_lock")
+def test_run_command_pipeline_busy_exits_nonzero(mock_pipeline_lock, db_session, tmp_path):
+    """``run`` must not start while another run holds the lock.
+
+    Two concurrent runs share one SQLite database; the loser dies mid-stage
+    with "database is locked" *after* it has already paid for that stage's
+    API calls. A manual ``run`` collides with the autostart timer exactly as
+    the batch entrypoints do, so it takes the same lock.
+    """
+    mock_pipeline_lock.side_effect = PipelineBusyError("lock held")
+    db_session.add(
+        Episode(
+            episode_id="ep-1",
+            title="Busy Episode",
+            url="https://example.com/ep-1",
+            status=EpisodeStatus.NEW,
+        )
+    )
+    db_session.commit()
+    runner = CliRunner()
+
+    with patch("btcedu.core.pipeline.run_episode_pipeline") as mock_run:
+        result = runner.invoke(
+            cli,
+            ["run", "--episode-id", "ep-1"],
+            obj={
+                "settings": Settings(reports_dir=str(tmp_path / "reports")),
+                "session_factory": lambda: db_session,
+            },
+        )
+
+    assert result.exit_code == 1
+    assert "Pipeline busy" in result.output
+    mock_run.assert_not_called()
+
+
+@patch("btcedu.core.runlock.pipeline_lock")
+def test_retry_command_pipeline_busy_exits_nonzero(mock_pipeline_lock, db_session, tmp_path):
+    """``retry`` resumes the full pipeline and needs the same guard."""
+    mock_pipeline_lock.side_effect = PipelineBusyError("lock held")
+    runner = CliRunner()
+
+    with patch("btcedu.core.pipeline.retry_episode") as mock_retry:
+        result = runner.invoke(
+            cli,
+            ["retry", "--episode-id", "ep-1"],
+            obj={
+                "settings": Settings(reports_dir=str(tmp_path / "reports")),
+                "session_factory": lambda: db_session,
+            },
+        )
+
+    assert result.exit_code == 1
+    assert "Pipeline busy" in result.output
+    mock_retry.assert_not_called()

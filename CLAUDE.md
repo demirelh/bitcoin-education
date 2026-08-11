@@ -113,6 +113,18 @@ Failures fall back to a local render. See `docs/remote-render.md`.
   The greeting, sign-off and weather handover come from short fixed profile lists, so
   they stop costing anything once recorded. Takes that failed the noise check are never
   stored. Tests must not write into the real `data/tts_cache` — `conftest.py` redirects it.
+  `_CACHE_VERSION` in that module is part of the key: bumping it invalidates every
+  stored take, and `prune()` deletes the superseded ones (a cache under its size cap
+  would otherwise keep them for good).
+- **Every take is levelled to −15 LUFS before anything else reads it**
+  (`_normalize_loudness` in `core/tts.py`, two-pass EBU R128 so the gain is linear
+  and the delivery is untouched). ElevenLabs returns the same voice up to 18 dB apart
+  between generations. The ordering matters twice over: the noise check measures
+  absolute levels, so on unlevelled takes it correlates with loudness (r = +0.77) and
+  keeps the *quietest* take rather than the cleanest — which the cache then froze in,
+  permanently, for exactly the recurring lines (greeting, sign-off, weather handover).
+  Levelling must keep the 44.1 kHz rate explicitly (`loudnorm` works at 192 kHz
+  internally) and must run again after the fallback rewrites the best take's bytes.
 - **A spent ElevenLabs plan is an HTTP 401, same as a bad key.** The body tells
   them apart (`detail.code` / `detail.status` = `quota_exceeded`). Reserve
   accounts live in `ELEVENLABS_API_KEY_FALLBACK` (comma-separated) and

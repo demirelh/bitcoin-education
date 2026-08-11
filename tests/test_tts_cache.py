@@ -301,10 +301,16 @@ class TestTheSwitch:
 
 
 class TestPruning:
+    @staticmethod
+    def _meta() -> str:
+        """Metadata as the cache actually writes it — a sidecar without the
+        current version is treated as stale and dropped regardless of size."""
+        return json.dumps({"version": tts_cache._CACHE_VERSION})
+
     def test_nothing_is_dropped_while_it_fits(self, cache_dir):
         cache_dir.mkdir(parents=True)
         (cache_dir / "a.mp3").write_bytes(b"x" * 100)
-        (cache_dir / "a.json").write_text("{}", encoding="utf-8")
+        (cache_dir / "a.json").write_text(self._meta(), encoding="utf-8")
 
         assert tts_cache.prune(cache_dir, 10_000) == 0
         assert (cache_dir / "a.mp3").exists()
@@ -316,7 +322,7 @@ class TestPruning:
         cache_dir.mkdir(parents=True)
         for name in ("old", "new"):
             (cache_dir / f"{name}.mp3").write_bytes(b"x" * 600)
-            (cache_dir / f"{name}.json").write_text("{}", encoding="utf-8")
+            (cache_dir / f"{name}.json").write_text(self._meta(), encoding="utf-8")
         old_time = time.time() - 86400
         os.utime(cache_dir / "old.mp3", (old_time, old_time))
 
@@ -334,6 +340,54 @@ class TestPruning:
 
     def test_a_missing_directory_is_not_an_error(self, cache_dir):
         assert tts_cache.prune(cache_dir, 100) == 0
+
+
+class TestASupersededCacheVersion:
+    """Bumping the version puts old entries out of reach of any lookup, but on
+    a cache that never fills they would sit on disk for good. That matters
+    here: every entry written before levelling holds a take at the wrong
+    level, which is exactly what had to be thrown away."""
+
+    def _entry(self, cache_dir: Path, name: str, version: str | None) -> None:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        (cache_dir / f"{name}.mp3").write_bytes(b"x" * 100)
+        payload = {} if version is None else {"version": version}
+        (cache_dir / f"{name}.json").write_text(json.dumps(payload), encoding="utf-8")
+
+    def test_entries_from_an_older_version_are_dropped(self, cache_dir):
+        self._entry(cache_dir, "old", "1")
+
+        assert tts_cache.prune(cache_dir, 10_000) == 1
+        assert not (cache_dir / "old.mp3").exists()
+        assert not (cache_dir / "old.json").exists()
+
+    def test_entries_from_the_current_version_are_kept(self, cache_dir):
+        self._entry(cache_dir, "current", tts_cache._CACHE_VERSION)
+
+        assert tts_cache.prune(cache_dir, 10_000) == 0
+        assert (cache_dir / "current.mp3").exists()
+
+    def test_an_unversioned_entry_is_dropped(self, cache_dir):
+        self._entry(cache_dir, "nameless", None)
+
+        assert tts_cache.prune(cache_dir, 10_000) == 1
+        assert not (cache_dir / "nameless.mp3").exists()
+
+    def test_they_go_even_when_the_cache_has_no_size_limit(self, cache_dir):
+        """Without a cap there is no eviction to piggyback on, so this is the
+        only thing that ever removes them."""
+        self._entry(cache_dir, "old", "1")
+
+        assert tts_cache.prune(cache_dir, 0) == 1
+        assert not (cache_dir / "old.mp3").exists()
+
+    def test_a_freshly_written_entry_survives_pruning(self, cache_dir, tmp_path):
+        """Guards against the version in ``store`` and the one ``prune`` checks
+        drifting apart — that would silently empty the cache after every run."""
+        _take(_CountingService(), tmp_path / "a.mp3", cache_dir)
+
+        assert tts_cache.prune(cache_dir, 10_000) == 0
+        assert list(cache_dir.glob("*.mp3"))
 
 
 class TestTheStoredEntry:

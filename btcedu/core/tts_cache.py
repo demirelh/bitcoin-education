@@ -36,7 +36,12 @@ logger = logging.getLogger(__name__)
 
 # Bumped when the stored payload or the key's meaning changes, so old entries
 # fall out of reach instead of being misread.
-_CACHE_VERSION = "1"
+#
+# "2": takes are levelled to a fixed loudness before they are stored. Version
+# "1" entries were kept at whatever level the engine happened to produce, and
+# because the recurring lines are precisely the cached ones, the greeting and
+# the sign-off were frozen up to 8 dB below the rest of the bulletin.
+_CACHE_VERSION = "2"
 
 _META_SUFFIX = ".json"
 _AUDIO_SUFFIX = ".mp3"
@@ -175,14 +180,45 @@ def _touch(*paths: Path) -> None:
             pass
 
 
+def _drop_stale_versions(cache_dir: Path) -> int:
+    """Remove entries written under an older cache version.
+
+    Bumping the version already puts them out of reach of any lookup, but
+    without this they would sit on disk until the size cap happened to evict
+    them — which, well under the cap, is never.
+    """
+    removed = 0
+    for meta_path in cache_dir.glob(f"*{_META_SUFFIX}"):
+        try:
+            version = json.loads(meta_path.read_text(encoding="utf-8")).get("version")
+        except (OSError, ValueError):
+            version = None
+        if version == _CACHE_VERSION:
+            continue
+        for path in (meta_path, meta_path.with_suffix(_AUDIO_SUFFIX)):
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        removed += 1
+    if removed:
+        logger.info("Dropped %d TTS cache entries from an older cache version", removed)
+    return removed
+
+
 def prune(cache_dir: Path, max_bytes: int) -> int:
     """Drop the least recently used entries until the cache fits.
 
-    Returns the number of entries removed. ``max_bytes <= 0`` means no limit.
+    Returns the number of entries removed. ``max_bytes <= 0`` means no limit,
+    but entries from a superseded cache version are dropped either way: they
+    can never be read again.
     """
-    if max_bytes <= 0 or not cache_dir.is_dir():
+    if not cache_dir.is_dir():
         return 0
 
+    removed = _drop_stale_versions(cache_dir)
+    if max_bytes <= 0:
+        return removed
     entries = []
     total = 0
     for audio_path in cache_dir.glob(f"*{_AUDIO_SUFFIX}"):
@@ -196,9 +232,8 @@ def prune(cache_dir: Path, max_bytes: int) -> int:
         total += size
 
     if total <= max_bytes:
-        return 0
+        return removed
 
-    removed = 0
     for _atime, size, audio_path, meta_path in sorted(entries):
         if total <= max_bytes:
             break

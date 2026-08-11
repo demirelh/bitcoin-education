@@ -298,7 +298,9 @@ def extract_frames(
         except Exception:
             pass
 
-        download_failed_marker = Path(settings.raw_data_dir) / episode_id / "video_download_failed.json"
+        download_failed_marker = (
+            Path(settings.raw_data_dir) / episode_id / "video_download_failed.json"
+        )
 
         if video_required:
             hint = ""

@@ -12,8 +12,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
 import requests
 
@@ -33,23 +32,23 @@ class CreditStatus:
     display_name: str
 
     # Live-balance shape ($)
-    balance_usd: Optional[float] = None
+    balance_usd: float | None = None
 
     # Live-balance shape (chars, e.g. ElevenLabs)
-    chars_used: Optional[int] = None
-    chars_limit: Optional[int] = None
-    tier: Optional[str] = None
+    chars_used: int | None = None
+    chars_limit: int | None = None
+    tier: str | None = None
 
     # Usage-tracking shape (30-day rolling)
-    spent_30d_usd: Optional[float] = None
-    spent_7d_usd: Optional[float] = None
-    spent_today_usd: Optional[float] = None
+    spent_30d_usd: float | None = None
+    spent_7d_usd: float | None = None
+    spent_today_usd: float | None = None
 
     status: str = "unknown"   # "ok" | "warn" | "critical" | "unknown"
     dashboard_url: str = ""
     note: str = ""
-    error: Optional[str] = None
-    fetched_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    error: str | None = None
+    fetched_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +156,7 @@ def _sum_costs_from_db(session, provider_match: list[str] | None = None) -> dict
     """
     from btcedu.models.episode import PipelineRun
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     since_1d = now - timedelta(days=1)
     since_7d = now - timedelta(days=7)
     since_30d = now - timedelta(days=30)

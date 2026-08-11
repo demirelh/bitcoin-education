@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -193,7 +193,7 @@ def generate_thumbnails(
     # Write manifest
     manifest = {
         "episode_id": episode_id,
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(UTC).isoformat(),
         "provider": provider,
         "total_cost_usd": total_cost,
         "candidates": [

@@ -107,7 +107,9 @@ class IdeogramImageService:
     def _compute_cost(self, model: str) -> float:
         return IDEOGRAM_V2_TURBO_COST if "TURBO" in model else IDEOGRAM_V2_COST
 
-    def _call_with_retry(self, endpoint: str, headers: dict, payload: dict, max_retries: int = 3) -> dict:
+    def _call_with_retry(
+        self, endpoint: str, headers: dict, payload: dict, max_retries: int = 3
+    ) -> dict:
         last_exc = None
         for attempt in range(max_retries):
             try:

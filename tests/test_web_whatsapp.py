@@ -36,7 +36,11 @@ def client(settings):
 
 class TestWhatsAppStatus:
     def test_returns_service_payload(self, client):
-        payload = {"status": "awaiting_qr", "connected": False, "dataUrl": "data:image/png;base64,x"}
+        payload = {
+            "status": "awaiting_qr",
+            "connected": False,
+            "dataUrl": "data:image/png;base64,x",
+        }
         with patch("btcedu.services.notify_service._request_json", return_value=payload):
             response = client.get("/api/whatsapp/status")
 

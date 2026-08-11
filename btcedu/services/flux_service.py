@@ -82,7 +82,10 @@ class FluxImageService:
         )
 
     def edit_image(self, request: ImageEditRequest) -> ImageGenResponse:
-        raise NotImplementedError("Flux via fal.ai does not currently support image editing here; use Gemini or DALL-E 2 edit")
+        raise NotImplementedError(
+            "Flux via fal.ai does not currently support image editing here; "
+            "use Gemini or DALL-E 2 edit"
+        )
 
     def _normalize_model(self, model: str) -> str:
         m = model.lower()
@@ -106,7 +109,9 @@ class FluxImageService:
             return FLUX_SCHNELL_COST
         return FLUX_DEV_COST
 
-    def _call_with_retry(self, endpoint: str, headers: dict, payload: dict, max_retries: int = 3) -> dict:
+    def _call_with_retry(
+        self, endpoint: str, headers: dict, payload: dict, max_retries: int = 3
+    ) -> dict:
         last_exc = None
         for attempt in range(max_retries):
             try:

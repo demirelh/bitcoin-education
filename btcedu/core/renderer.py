@@ -758,6 +758,19 @@ def render_video(
             str((base_dir / entry.segment_path).absolute()) for entry in segment_entries
         ]
 
+        # The concat order below is the timeline the viewer actually sees, and
+        # intro/topic cards/outro shift every chapter later than its own audio
+        # suggests. Record the order here so publish-time chapter marks can use
+        # real positions instead of re-deriving them from the narration.
+        timeline_parts: list[dict] = [
+            {
+                "kind": "chapter",
+                "chapter_id": entry.chapter_id,
+                "duration_seconds": entry.duration_seconds,
+            }
+            for entry in segment_entries
+        ]
+
         if _eff_topic_intro_enabled:
             topic_chapter_ids = {
                 chapter.chapter_id
@@ -768,7 +781,10 @@ def render_video(
             topic_index = 0
             chapter_by_id = {chapter.chapter_id: chapter for chapter in chapters_doc.chapters}
             paths_with_topic_intros: list[str] = []
-            for entry, segment_abs_path in zip(segment_entries, segment_abs_paths, strict=True):
+            timeline_with_topic_intros: list[dict] = []
+            for entry, segment_abs_path, timeline_part in zip(
+                segment_entries, segment_abs_paths, timeline_parts, strict=True
+            ):
                 chapter = chapter_by_id[entry.chapter_id]
                 if chapter.chapter_id in topic_chapter_ids:
                     topic_index += 1
@@ -799,9 +815,18 @@ def render_video(
                         dry_run=settings.dry_run,
                     )
                     paths_with_topic_intros.append(str(topic_path.absolute()))
+                    timeline_with_topic_intros.append(
+                        {
+                            "kind": "topic_intro",
+                            "chapter_id": chapter.chapter_id,
+                            "duration_seconds": _eff_topic_intro_duration,
+                        }
+                    )
                     total_duration += _eff_topic_intro_duration
                 paths_with_topic_intros.append(segment_abs_path)
+                timeline_with_topic_intros.append(timeline_part)
             segment_abs_paths = paths_with_topic_intros
+            timeline_parts = timeline_with_topic_intros
             # A chapter that is no longer a topic must not leave its old card
             # behind, where it would suggest the video still shows it.
             for stale in segments_dir.glob("topic_*.mp4"):
@@ -836,6 +861,14 @@ def render_video(
                 dry_run=settings.dry_run,
             )
             segment_abs_paths.insert(0, str(intro_path.absolute()))
+            timeline_parts.insert(
+                0,
+                {
+                    "kind": "intro",
+                    "chapter_id": "",
+                    "duration_seconds": _eff_intro_duration,
+                },
+            )
             total_duration += _eff_intro_duration
             logger.info("Intro segment created (%.1fs)", _eff_intro_duration)
 
@@ -859,6 +892,13 @@ def render_video(
                 dry_run=settings.dry_run,
             )
             segment_abs_paths.append(str(outro_path.absolute()))
+            timeline_parts.append(
+                {
+                    "kind": "outro",
+                    "chapter_id": "",
+                    "duration_seconds": float(settings.render_outro_duration),
+                }
+            )
             total_duration += settings.render_outro_duration
             logger.info("Outro segment created (%.1fs)", settings.render_outro_duration)
 
@@ -893,6 +933,12 @@ def render_video(
                 logger.warning("Could not remove stale marker %s: %s", stale_marker, e)
 
         # Write render manifest
+        timeline: list[dict] = []
+        _timeline_cursor = 0.0
+        for part in timeline_parts:
+            timeline.append({**part, "start_seconds": round(_timeline_cursor, 3)})
+            _timeline_cursor += float(part["duration_seconds"])
+
         manifest_data = {
             "episode_id": episode_id,
             "schema_version": "1.0",
@@ -903,6 +949,7 @@ def render_video(
             "total_size_bytes": total_size,
             "transition_duration": settings.render_transition_duration,  # Sprint 10
             "segments": [asdict(entry) for entry in segment_entries],
+            "timeline": timeline,
             "output_path": "render/draft.mp4",
             "ffmpeg_version": ffmpeg_version,
             "codec": {

@@ -1312,3 +1312,85 @@ def test_topic_cards_skip_the_opening_and_closing(db_session, settings, tmp_path
         render_video(db_session, "ep001", settings)
 
     assert topic_titles == ["1/1 Main"]
+
+
+def test_manifest_records_the_concat_timeline(db_session, settings, tmp_path):
+    """The manifest must carry where each part really starts in the video.
+
+    Publish-time chapter marks read these offsets; summing chapter audio alone
+    would ignore the intro and the topic cards and drift ever further.
+    """
+    settings.outputs_dir = str(tmp_path / "outputs")
+    settings.dry_run = False
+
+    episode = Episode(
+        episode_id="ep001",
+        title="Test",
+        url="https://example.com",
+        status=EpisodeStatus.TTS_DONE,
+        content_profile="tagesschau_tr",
+        pipeline_version=2,
+    )
+    db_session.add(episode)
+    db_session.commit()
+
+    chapters_path = _create_test_chapters_json("ep001", Path(settings.outputs_dir))
+    doc = json.loads(chapters_path.read_text())
+    doc["chapters"][0]["story_type"] = "opening"
+    doc["chapters"][1]["story_type"] = "politik"
+    chapters_path.write_text(json.dumps(doc))
+    _create_test_image_manifest("ep001", Path(settings.outputs_dir))
+    _create_test_tts_manifest("ep001", Path(settings.outputs_dir))
+
+    with (
+        patch(
+            "btcedu.services.ffmpeg_service.create_segment",
+            side_effect=lambda image_path, audio_path, output_path, duration, **kw: (
+                _mock_segment_result(output_path, duration=duration)
+            ),
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.concatenate_segments",
+            side_effect=lambda segment_paths, output_path, **kw: (
+                _mock_concat_result(output_path, segment_count=len(segment_paths))
+            ),
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.get_ffmpeg_version",
+            return_value="ffmpeg version 6.0-mock",
+        ),
+        patch(
+            "btcedu.services.ffmpeg_service.create_topic_intro_segment",
+            side_effect=lambda output_path, **kw: (
+                Path(output_path).write_bytes(b"x"),
+                _mock_segment_result(output_path, duration=2.4),
+            )[1],
+        ),
+        patch("btcedu.services.ffmpeg_service.create_intro_segment"),
+        patch("btcedu.services.ffmpeg_service.create_outro_segment"),
+    ):
+        result = render_video(db_session, "ep001", settings)
+
+    manifest = json.loads(
+        (Path(settings.outputs_dir) / "ep001" / "render" / "render_manifest.json").read_text()
+    )
+    timeline = manifest["timeline"]
+
+    # Every entry starts exactly where its predecessor ended.
+    cursor = 0.0
+    for entry in timeline:
+        assert entry["start_seconds"] == pytest.approx(cursor, abs=0.01)
+        cursor += entry["duration_seconds"]
+    assert cursor == pytest.approx(manifest["total_duration_seconds"], abs=0.01)
+    assert cursor == pytest.approx(result.total_duration_seconds, abs=0.01)
+
+    kinds = [e["kind"] for e in timeline]
+    assert kinds[0] == "intro"
+    # The card announcing a topic sits immediately before that topic.
+    card_index = kinds.index("topic_intro")
+    assert timeline[card_index]["chapter_id"] == timeline[card_index + 1]["chapter_id"]
+    assert timeline[card_index + 1]["kind"] == "chapter"
+
+    # The opening chapter is pushed back by the intro, never left at zero.
+    first_chapter = next(e for e in timeline if e["kind"] == "chapter")
+    assert first_chapter["start_seconds"] > 0

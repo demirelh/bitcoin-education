@@ -134,6 +134,19 @@ Failures fall back to a local render. See `docs/remote-render.md`.
   rest of the run and the rejected request is not billed, so the chunk is simply
   re-sent.
 - **YouTube deps are optional**: `pip install -e ".[youtube]"`. `run.sh` auto-installs if `data/client_secret.json` exists.
+- **YouTube chapter marks come from the rendered timeline, not from the audio.**
+  Intro, per-topic cards and outro sit between the chapters, so summing TTS
+  durations drifts further with every chapter (17 s by the end of a 9-minute
+  bulletin). `render_manifest.json` carries a `timeline` in concat order with
+  absolute `start_seconds`; the publisher reads it and falls back to the
+  narration estimate only for videos rendered before that field existed. A mark
+  points at the *topic card* announcing its chapter, so a viewer jumping there
+  sees the title. YouTube silently discards **all** marks unless the first is at
+  `0:00`, there are at least three and every section lasts 10 s — `publisher.
+  _conform_chapter_marks` enforces this and emits nothing rather than something
+  YouTube will drop. Because a re-render moves every mark, an *auto-generated*
+  `youtube_metadata.json` is refreshed when the timeline hash changes; metadata
+  a human edited is never overwritten.
 - **SQLAlchemy string relationships** (e.g. `"ReviewItemDecision"`) require the target module to be imported at runtime, not just under `TYPE_CHECKING`.
 - **Local recorder deduplication is bidirectional.** The same broadcast reaches
   the DB by two routes: the local file at ~20:21 and the YouTube upload one to

@@ -388,3 +388,48 @@ def test_legacy_auto_publish_profile_does_not_require_publish_review(db_session,
     db_session.add(episode)
     db_session.commit()
     assert _requires_manual_publish_review(episode, settings) is False
+
+
+def test_yellow_gate_narration_is_covered_by_the_artifact_bound_review(db_session, settings):
+    """A waved-through gate stores no hash; the QA review carries the narration.
+
+    Without this the override that the QA check honours would still be vetoed
+    by the narration check, and no yellow episode could ever be published.
+    """
+    from btcedu.core.publisher import _run_all_safety_checks
+    from btcedu.core.qa_reviewer import gate_review_artifacts
+    from btcedu.core.reviewer import approve_review, create_review_task
+
+    episode = _setup(db_session, settings, decision="yellow")
+    gate_path = Path(settings.outputs_dir) / episode.episode_id / "translation_quality_gate.json"
+    gate = json.loads(gate_path.read_text())
+    gate["narration_sha256"] = None
+    gate_path.write_text(json.dumps(gate), encoding="utf-8")
+
+    artifacts = gate_review_artifacts(settings, episode.episode_id)
+    task = create_review_task(db_session, episode.episode_id, "translation_qa", artifacts)
+    approve_review(db_session, task.id)
+
+    checks = {
+        c.name: c
+        for c in _run_all_safety_checks(db_session, episode, settings, "t", "d", ["tag"])
+    }
+    assert checks["qa_gate"].passed
+    assert checks["narration_current"].passed
+
+
+def test_yellow_gate_without_qa_review_still_blocks_publish(db_session, settings):
+    """No hash and no approved review means the narration is unvouched for."""
+    from btcedu.core.publisher import _run_all_safety_checks
+
+    episode = _setup(db_session, settings, decision="yellow")
+    gate_path = Path(settings.outputs_dir) / episode.episode_id / "translation_quality_gate.json"
+    gate = json.loads(gate_path.read_text())
+    gate["narration_sha256"] = None
+    gate_path.write_text(json.dumps(gate), encoding="utf-8")
+
+    checks = {
+        c.name: c
+        for c in _run_all_safety_checks(db_session, episode, settings, "t", "d", ["tag"])
+    }
+    assert not checks["narration_current"].passed

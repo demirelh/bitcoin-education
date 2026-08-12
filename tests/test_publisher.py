@@ -135,10 +135,30 @@ def _make_chapters_json(tmp_path, episode_id):
                     "estimated_duration_seconds": 45,
                 },
             },
+            # YouTube only renders chapter marks from three onwards, so the
+            # fixture has to carry at least that many to exercise them.
+            {
+                "chapter_id": "ch03",
+                "title": "Cüzdanlar",
+                "order": 3,
+                "narration": {
+                    "text": "Cüzdanlar anahtarlarınızı saklar.",
+                    "estimated_duration_seconds": 60,
+                },
+            },
         ],
     }
     (chapters_dir / "chapters.json").write_text(json.dumps(data), encoding="utf-8")
     return data
+
+
+def _write_render_manifest(tmp_path, episode_id, timeline):
+    """Write a render manifest carrying the concat timeline."""
+    render_dir = tmp_path / "outputs" / episode_id / "render"
+    render_dir.mkdir(parents=True, exist_ok=True)
+    (render_dir / "render_manifest.json").write_text(
+        json.dumps({"episode_id": episode_id, "timeline": timeline}), encoding="utf-8"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +329,109 @@ class TestBuildYouTubeMetadata:
 
         _, description, _ = _build_youtube_metadata(approved_episode, settings)
         assert "0:00" in description
+
+    def test_chapter_marks_use_rendered_timeline(
+        self, db_session, approved_episode, settings, tmp_path
+    ):
+        """Marks must follow the rendered timeline, not the narration lengths."""
+        _make_chapters_json(tmp_path, approved_episode.episode_id)
+        settings.outputs_dir = str(tmp_path / "outputs")
+        _write_render_manifest(
+            tmp_path,
+            approved_episode.episode_id,
+            [
+                {"kind": "intro", "chapter_id": "", "start_seconds": 0.0, "duration_seconds": 5.5},
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch01",
+                    "start_seconds": 5.5,
+                    "duration_seconds": 30.0,
+                },
+                {
+                    "kind": "topic_intro",
+                    "chapter_id": "ch02",
+                    "start_seconds": 35.5,
+                    "duration_seconds": 2.4,
+                },
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch02",
+                    "start_seconds": 37.9,
+                    "duration_seconds": 45.0,
+                },
+                {
+                    "kind": "topic_intro",
+                    "chapter_id": "ch03",
+                    "start_seconds": 82.9,
+                    "duration_seconds": 2.4,
+                },
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch03",
+                    "start_seconds": 85.3,
+                    "duration_seconds": 60.0,
+                },
+            ],
+        )
+
+        _, description, _ = _build_youtube_metadata(approved_episode, settings)
+
+        # First mark is pinned to 0:00; the others carry the intro/card shift.
+        assert "0:00 Giriş" in description
+        # The card announces the chapter, so the mark points at the card.
+        assert "0:35 Blockchain" in description
+        assert "1:22 Cüzdanlar" in description
+        # The narration-only estimate would have produced these instead.
+        assert "0:30 Blockchain" not in description
+        assert "1:15 Cüzdanlar" not in description
+
+    def test_chapter_marks_dropped_when_below_youtube_minimum(
+        self, db_session, approved_episode, settings, tmp_path
+    ):
+        """Fewer than three usable marks means YouTube renders none at all."""
+        _make_chapters_json(tmp_path, approved_episode.episode_id)
+        settings.outputs_dir = str(tmp_path / "outputs")
+        # ch02 and ch03 sit within ten seconds of their predecessor, so only
+        # one mark survives and the whole block has to be suppressed.
+        _write_render_manifest(
+            tmp_path,
+            approved_episode.episode_id,
+            [
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch01",
+                    "start_seconds": 0.0,
+                    "duration_seconds": 4.0,
+                },
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch02",
+                    "start_seconds": 4.0,
+                    "duration_seconds": 4.0,
+                },
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch03",
+                    "start_seconds": 8.0,
+                    "duration_seconds": 40.0,
+                },
+            ],
+        )
+
+        _, description, _ = _build_youtube_metadata(approved_episode, settings)
+        assert "Bölümler" not in description
+
+    def test_chapter_marks_fall_back_without_timeline(
+        self, db_session, approved_episode, settings, tmp_path
+    ):
+        """An older manifest without a timeline still yields usable marks."""
+        _make_chapters_json(tmp_path, approved_episode.episode_id)
+        settings.outputs_dir = str(tmp_path / "outputs")
+
+        _, description, _ = _build_youtube_metadata(approved_episode, settings)
+
+        assert "0:00 Giriş" in description
+        assert "0:30 Blockchain" in description
 
     def test_fallback_to_episode_title(self, db_session, approved_episode, settings, tmp_path):
         # No chapters.json → use episode.title
@@ -583,6 +706,91 @@ class TestGenerateMetadataSuggestion:
         save_metadata_edits(news_episode.episode_id, settings, {"title": "Elle düzenlenmiş başlık"})
         again = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
         assert again["title"] == "Elle düzenlenmiş başlık"
+        assert again["source"] == "edited"
+
+    def test_refreshes_when_video_was_re_rendered(
+        self, db_session, news_episode, settings, tmp_path
+    ):
+        """A re-render moves every mark, so an auto proposal must be redone."""
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import generate_metadata_suggestion
+
+        _write_render_manifest(
+            tmp_path,
+            news_episode.episode_id,
+            [
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch01",
+                    "start_seconds": 0.0,
+                    "duration_seconds": 40.0,
+                },
+            ],
+        )
+        first = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+
+        # Same call, unchanged video: the proposal is reused untouched.
+        assert (
+            generate_metadata_suggestion(db_session, news_episode.episode_id, settings)[
+                "generated_at"
+            ]
+            == first["generated_at"]
+        )
+
+        _write_render_manifest(
+            tmp_path,
+            news_episode.episode_id,
+            [
+                {"kind": "intro", "chapter_id": "", "start_seconds": 0.0, "duration_seconds": 5.5},
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch01",
+                    "start_seconds": 5.5,
+                    "duration_seconds": 40.0,
+                },
+            ],
+        )
+        refreshed = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        assert refreshed["generated_at"] != first["generated_at"]
+        assert refreshed["render_timeline_hash"] != first["render_timeline_hash"]
+
+    def test_re_render_does_not_clobber_reviewer_edits(
+        self, db_session, news_episode, settings, tmp_path
+    ):
+        """Someone's own wording survives a re-render, stale marks or not."""
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+        from btcedu.core.publisher import generate_metadata_suggestion, save_metadata_edits
+
+        _write_render_manifest(
+            tmp_path,
+            news_episode.episode_id,
+            [
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch01",
+                    "start_seconds": 0.0,
+                    "duration_seconds": 40.0,
+                },
+            ],
+        )
+        generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        save_metadata_edits(news_episode.episode_id, settings, {"title": "Elle yazılmış"})
+
+        _write_render_manifest(
+            tmp_path,
+            news_episode.episode_id,
+            [
+                {"kind": "intro", "chapter_id": "", "start_seconds": 0.0, "duration_seconds": 5.5},
+                {
+                    "kind": "chapter",
+                    "chapter_id": "ch01",
+                    "start_seconds": 5.5,
+                    "duration_seconds": 40.0,
+                },
+            ],
+        )
+        again = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
+        assert again["title"] == "Elle yazılmış"
         assert again["source"] == "edited"
 
     def test_force_regenerates(self, db_session, news_episode, settings, tmp_path):

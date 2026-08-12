@@ -339,7 +339,9 @@ def _check_no_critical_findings(settings: Settings, episode: Episode) -> SafetyC
     return SafetyCheck("no_critical_findings", True, "No unresolved critical findings")
 
 
-def _check_narration_current(settings: Settings, episode: Episode) -> SafetyCheck:
+def _check_narration_current(
+    session: Session, settings: Settings, episode: Episode
+) -> SafetyCheck:
     """Check 7: The approved narration hash still matches the current narration."""
     from btcedu.core.qa_reviewer import load_quality_gate, narration_sha256
 
@@ -353,7 +355,29 @@ def _check_narration_current(settings: Settings, episode: Episode) -> SafetyChec
 
     approved = gate.get("narration_sha256")
     if not approved:
-        return SafetyCheck("narration_current", False, "QA gate has no approved narration hash")
+        # Only a GREEN gate records a hash. A gate that a human waved through
+        # never has one, so the approval carrying the narration is then the
+        # artifact-bound QA review — and that binding breaks on a later edit
+        # exactly as the hash comparison would. Without this the override that
+        # _check_qa_gate honours would be vetoed here and no yellow episode
+        # could ever be published.
+        from btcedu.core.qa_reviewer import gate_review_artifacts
+        from btcedu.core.reviewer import has_approved_review_for_artifacts
+
+        artifacts = gate_review_artifacts(settings, episode.episode_id)
+        if has_approved_review_for_artifacts(
+            session, episode.episode_id, "translation_qa", artifacts
+        ):
+            return SafetyCheck(
+                "narration_current",
+                True,
+                "Narration bound to an approved translation_qa review",
+            )
+        return SafetyCheck(
+            "narration_current",
+            False,
+            "QA gate has no approved narration hash and no artifact-bound QA review is approved",
+        )
     current = narration_sha256(settings, episode.episode_id)
     if current != approved:
         return SafetyCheck(
@@ -492,7 +516,7 @@ def _run_all_safety_checks(
         _check_cost_sanity(session, episode, settings),
         _check_qa_gate(session, episode, settings),
         _check_no_critical_findings(settings, episode),
-        _check_narration_current(settings, episode),
+        _check_narration_current(session, settings, episode),
         _check_render_valid(session, episode, settings),
         _check_profile_publish_permitted(episode, settings),
         _check_branding(episode, settings),
@@ -535,6 +559,84 @@ def _load_tts_durations(episode_id: str, settings: Settings) -> dict[str, float]
         return {s["chapter_id"]: float(s.get("duration_seconds", 0)) for s in segments}
     except (json.JSONDecodeError, KeyError, OSError):
         return {}
+
+
+# YouTube only renders chapter marks when the first one sits at 0:00, there are
+# at least three of them and every section runs for at least ten seconds. A
+# single violation makes it silently drop all of them, so the marks are checked
+# against these rules before they reach the description.
+_YT_MIN_CHAPTERS = 3
+_YT_MIN_SECTION_SECONDS = 10.0
+
+
+def _load_render_timeline(episode_id: str, settings: Settings) -> list[dict]:
+    """Load the rendered timeline (concat order with absolute start offsets)."""
+    manifest_path = Path(settings.outputs_dir) / episode_id / "render" / "render_manifest.json"
+    if not manifest_path.exists():
+        return []
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    timeline = data.get("timeline")
+    if not isinstance(timeline, list):
+        return []
+    return [entry for entry in timeline if isinstance(entry, dict)]
+
+
+def _chapter_start_offsets(timeline: list[dict]) -> dict[str, float]:
+    """Map chapter_id to the second at which the viewer reaches that chapter.
+
+    A topic intro card announces the chapter that follows it, so someone
+    jumping to the mark should land on the card rather than after it.
+    """
+    offsets: dict[str, float] = {}
+    for entry in timeline:
+        chapter_id = entry.get("chapter_id") or ""
+        if not chapter_id or entry.get("kind") not in ("chapter", "topic_intro"):
+            continue
+        try:
+            start = float(entry.get("start_seconds", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if chapter_id not in offsets or start < offsets[chapter_id]:
+            offsets[chapter_id] = start
+    return offsets
+
+
+def _timeline_total_seconds(timeline: list[dict]) -> float:
+    if not timeline:
+        return 0.0
+    last = timeline[-1]
+    try:
+        return float(last.get("start_seconds", 0.0)) + float(last.get("duration_seconds", 0.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _conform_chapter_marks(
+    marks: list[tuple[float, str]],
+    total_seconds: float,
+) -> list[tuple[float, str]]:
+    """Drop marks YouTube would reject, returning [] when none can be kept."""
+    if not marks:
+        return []
+
+    # Whatever runs before the first chapter (the intro card) belongs to it.
+    kept: list[tuple[float, str]] = [(0.0, marks[0][1])]
+    for start, title in marks[1:]:
+        # Too close to its predecessor: fold this section into the one before.
+        if start - kept[-1][0] < _YT_MIN_SECTION_SECONDS:
+            continue
+        kept.append((start, title))
+
+    # The last section is bounded by the end of the video, not by a successor.
+    while len(kept) > 1 and total_seconds - kept[-1][0] < _YT_MIN_SECTION_SECONDS:
+        kept.pop()
+
+    if len(kept) < _YT_MIN_CHAPTERS:
+        return []
+    return kept
 
 
 def _suggest_news_title(episode: Episode, chapters_list: list[dict]) -> str:
@@ -592,6 +694,21 @@ def load_persisted_metadata(episode_id: str, settings: Settings) -> dict | None:
     return data
 
 
+def _timeline_fingerprint(timeline: list[dict]) -> str:
+    """Fingerprint the rendered timeline so stale chapter marks are detectable."""
+    if not timeline:
+        return ""
+    payload = json.dumps(
+        [
+            [e.get("kind"), e.get("chapter_id"), e.get("start_seconds")]
+            for e in timeline
+        ],
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
 def generate_metadata_suggestion(
     session: Session,
     episode_id: str,
@@ -610,7 +727,22 @@ def generate_metadata_suggestion(
     if not force:
         existing = load_persisted_metadata(episode_id, settings)
         if existing is not None:
-            return existing
+            # A re-render moves every chapter mark. Refresh the proposal when
+            # it no longer matches the video, but never clobber human edits.
+            current_fingerprint = _timeline_fingerprint(
+                _load_render_timeline(episode_id, settings)
+            )
+            is_stale = (
+                existing.get("source") == "auto"
+                and current_fingerprint != ""
+                and existing.get("render_timeline_hash") != current_fingerprint
+            )
+            if not is_stale:
+                return existing
+            logger.info(
+                "YouTube metadata for %s no longer matches the rendered video, regenerating",
+                episode_id,
+            )
 
     episode = session.query(Episode).filter_by(episode_id=episode_id).first()
     if episode is None:
@@ -637,6 +769,9 @@ def generate_metadata_suggestion(
         "privacy_status": yt_config.get("default_privacy", "unlisted"),
         "default_language": yt_config.get("default_language", "tr"),
         "generated_at": _utcnow().isoformat(),
+        "render_timeline_hash": _timeline_fingerprint(
+            _load_render_timeline(episode_id, settings)
+        ),
         "source": "auto",
     }
 
@@ -730,22 +865,40 @@ def _build_youtube_metadata(
             title = news_title
     title = title[:100]
 
-    # Load TTS durations for accurate timestamps
-    tts_durations = _load_tts_durations(episode.episode_id, settings)
+    # Build chapter timestamps from the rendered timeline. Intro, topic cards
+    # and outro shift every chapter later than its narration alone suggests,
+    # so summing TTS durations would drift further with each chapter.
+    ordered_chapters = sorted(chapters_list, key=lambda c: c.get("order", 0))
+    timeline = _load_render_timeline(episode.episode_id, settings)
+    offsets = _chapter_start_offsets(timeline)
 
-    # Build chapter timestamps
-    timestamp_lines = []
-    cumulative_seconds = 0.0
-    for ch in sorted(chapters_list, key=lambda c: c.get("order", 0)):
-        ch_id = ch.get("chapter_id", "")
-        ch_title = ch.get("title", ch_id)
-        timestamp_lines.append(f"{_format_timestamp(cumulative_seconds)} {ch_title}")
-        # Use TTS actual duration, fall back to estimated from narration
-        duration = tts_durations.get(ch_id, 0.0)
-        if duration == 0.0:
-            narration = ch.get("narration") or {}
-            duration = float(narration.get("estimated_duration_seconds", 60))
-        cumulative_seconds += duration
+    raw_marks: list[tuple[float, str]] = []
+    total_seconds = 0.0
+    if offsets and all(ch.get("chapter_id", "") in offsets for ch in ordered_chapters):
+        total_seconds = _timeline_total_seconds(timeline)
+        raw_marks = [
+            (offsets[ch.get("chapter_id", "")], ch.get("title", ch.get("chapter_id", "")))
+            for ch in ordered_chapters
+        ]
+    else:
+        # Not rendered yet (or an older manifest): fall back to narration
+        # durations. Those ignore the inserted cards, so they are an estimate.
+        tts_durations = _load_tts_durations(episode.episode_id, settings)
+        cumulative_seconds = 0.0
+        for ch in ordered_chapters:
+            ch_id = ch.get("chapter_id", "")
+            raw_marks.append((cumulative_seconds, ch.get("title", ch_id)))
+            duration = tts_durations.get(ch_id, 0.0)
+            if duration == 0.0:
+                narration = ch.get("narration") or {}
+                duration = float(narration.get("estimated_duration_seconds", 60))
+            cumulative_seconds += duration
+        total_seconds = cumulative_seconds
+
+    timestamp_lines = [
+        f"{_format_timestamp(start)} {title}"
+        for start, title in _conform_chapter_marks(raw_marks, total_seconds)
+    ]
 
     # Build description
     # Intro: first chapter narration excerpt (up to 300 chars)

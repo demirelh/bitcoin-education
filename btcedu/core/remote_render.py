@@ -23,6 +23,7 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -42,6 +43,14 @@ VALID_RENDER_MODES = ("github", "local")
 JOB_ARCHIVE_NAME = "render-job.tar.gz"
 RESULT_ARTIFACT_NAME = "render-result"
 RESULT_ARCHIVE_NAME = "render-result.tar.gz"
+
+WORKDIR_PREFIX = "btcedu-remote-render-"
+
+# How long a leftover work directory may survive before the next remote render
+# removes it. Comfortably longer than a render (~25 min) so a directory in use
+# by a concurrent run is never touched, short enough that a RAM-backed /tmp is
+# not held hostage until the system's own sweep (10 days) gets around to it.
+_WORKDIR_MAX_AGE_SECONDS = 6 * 3600
 
 # Episode sub-paths the runner must not receive: they are render *outputs*.
 # Shipping them would waste ~850 MB of upload for no benefit.
@@ -449,6 +458,38 @@ def _finalize(
     )
 
 
+def sweep_stale_workdirs(max_age_seconds: int = _WORKDIR_MAX_AGE_SECONDS) -> int:
+    """Delete work directories that an earlier render left behind.
+
+    The normal path removes its directory in a ``finally``, but that clause
+    cannot run when the process is killed — Ctrl-C on a manual run, a systemd
+    stop, or the OOM killer. What stays behind is the packed job archive, 20-30
+    MB each. On the Pi ``/tmp`` is a RAM-backed tmpfs and the system's own
+    sweep only clears files after ten days, so those leftovers sit in memory
+    for as long as they please; enough of them and the *next* render fails with
+    ENOSPC, which is precisely how this was found.
+
+    Returns the number of directories removed.
+    """
+    removed = 0
+    cutoff = time.time() - max_age_seconds
+    try:
+        candidates = list(Path(tempfile.gettempdir()).glob(f"{WORKDIR_PREFIX}*"))
+    except OSError:  # an unreadable temp dir must not break the render
+        return 0
+
+    for path in candidates:
+        try:
+            if not path.is_dir() or path.stat().st_mtime > cutoff:
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            removed += 1
+            logger.info("Removed stale remote-render work directory %s", path)
+        except OSError:
+            logger.debug("Could not inspect %s", path, exc_info=True)
+    return removed
+
+
 def render_video_remote(
     session: Session,
     episode_id: str,
@@ -536,7 +577,8 @@ def render_video_remote(
     job_id = f"{episode_id}-{uuid.uuid4().hex[:8]}"
     release: dict = {}
     run = None
-    workdir = Path(tempfile.mkdtemp(prefix="btcedu-remote-render-"))
+    sweep_stale_workdirs()
+    workdir = Path(tempfile.mkdtemp(prefix=WORKDIR_PREFIX))
 
     def _emit(payload: dict) -> None:
         try:

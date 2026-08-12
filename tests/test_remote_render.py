@@ -4,7 +4,9 @@ No test may reach the network: the GitHub client is always mocked.
 """
 
 import json
+import os
 import tarfile
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,12 +17,14 @@ from btcedu.core.remote_render import (
     JOB_ARCHIVE_NAME,
     RENDER_MODE_KEY,
     VALID_RENDER_MODES,
+    WORKDIR_PREFIX,
     _safe_extract,
     build_job_package,
     get_render_mode,
     render_settings_snapshot,
     resolve_repo,
     set_render_mode,
+    sweep_stale_workdirs,
     unpack_result,
 )
 from btcedu.models.episode import Episode, EpisodeStatus
@@ -600,3 +604,55 @@ def test_render_mode_endpoint_never_exposes_the_token(web_client):
     """The dashboard sits behind basic auth, but the token stays server-side."""
     body = web_client.get("/api/render-mode").get_json()
     assert "token" not in json.dumps(body).lower()
+
+
+class TestStaleWorkdirSweep:
+    """A killed render cannot run its own cleanup, so the next one does it.
+
+    The work directory holds the packed job (20-30 MB). ``/tmp`` on the Pi is a
+    RAM-backed tmpfs that the system only sweeps after ten days, so leftovers
+    accumulate until a later render dies with ENOSPC.
+    """
+
+    def _workdir(self, tmp_path, name, age_seconds):
+        path = tmp_path / f"{WORKDIR_PREFIX}{name}"
+        path.mkdir()
+        (path / JOB_ARCHIVE_NAME).write_bytes(b"packed job")
+        stamp = time.time() - age_seconds
+        os.utime(path, (stamp, stamp))
+        return path
+
+    def test_old_leftovers_are_removed(self, tmp_path):
+        old = self._workdir(tmp_path, "old", age_seconds=24 * 3600)
+
+        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
+            assert sweep_stale_workdirs() == 1
+
+        assert not old.exists()
+
+    def test_a_running_render_is_left_alone(self, tmp_path):
+        """The cutoff must outlast a render, or one run deletes another's job."""
+        fresh = self._workdir(tmp_path, "fresh", age_seconds=30 * 60)
+
+        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
+            assert sweep_stale_workdirs() == 0
+
+        assert (fresh / JOB_ARCHIVE_NAME).exists()
+
+    def test_unrelated_temp_files_are_never_touched(self, tmp_path):
+        stranger = tmp_path / "someone-elses-data"
+        stranger.mkdir()
+        (stranger / "important").write_text("keep me")
+        loose_file = tmp_path / f"{WORKDIR_PREFIX}not-a-directory"
+        loose_file.write_text("keep me too")
+        os.utime(loose_file, (0, 0))
+
+        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
+            assert sweep_stale_workdirs() == 0
+
+        assert (stranger / "important").exists()
+        assert loose_file.exists()
+
+    def test_an_unreadable_temp_dir_does_not_break_the_render(self, tmp_path):
+        with patch("tempfile.gettempdir", return_value=str(tmp_path / "gone")):
+            assert sweep_stale_workdirs() == 0

@@ -26,6 +26,7 @@ from btcedu.core.remote_render import (
     set_render_mode,
     sweep_stale_workdirs,
     unpack_result,
+    workdir_parent,
 )
 from btcedu.models.episode import Episode, EpisodeStatus
 
@@ -614,45 +615,57 @@ class TestStaleWorkdirSweep:
     accumulate until a later render dies with ENOSPC.
     """
 
-    def _workdir(self, tmp_path, name, age_seconds):
-        path = tmp_path / f"{WORKDIR_PREFIX}{name}"
+    def _settings(self, tmp_path):
+        return Settings(outputs_dir=str(tmp_path / "outputs"))
+
+    def _workdir(self, settings, name, age_seconds):
+        parent = workdir_parent(settings)
+        parent.mkdir(parents=True, exist_ok=True)
+        path = parent / f"{WORKDIR_PREFIX}{name}"
         path.mkdir()
         (path / JOB_ARCHIVE_NAME).write_bytes(b"packed job")
         stamp = time.time() - age_seconds
         os.utime(path, (stamp, stamp))
         return path
 
+    def test_work_directories_live_on_disk_not_in_ram(self, tmp_path):
+        """/tmp is a RAM-backed tmpfs on the Pi and the payload is ~800 MB."""
+        settings = self._settings(tmp_path)
+
+        parent = workdir_parent(settings)
+
+        assert parent == tmp_path / "outputs" / ".render-jobs"
+        assert str(parent).startswith(str(tmp_path))
+
     def test_old_leftovers_are_removed(self, tmp_path):
-        old = self._workdir(tmp_path, "old", age_seconds=24 * 3600)
+        settings = self._settings(tmp_path)
+        old = self._workdir(settings, "old", age_seconds=24 * 3600)
 
-        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
-            assert sweep_stale_workdirs() == 1
-
+        assert sweep_stale_workdirs(settings) == 1
         assert not old.exists()
 
     def test_a_running_render_is_left_alone(self, tmp_path):
         """The cutoff must outlast a render, or one run deletes another's job."""
-        fresh = self._workdir(tmp_path, "fresh", age_seconds=30 * 60)
+        settings = self._settings(tmp_path)
+        fresh = self._workdir(settings, "fresh", age_seconds=30 * 60)
 
-        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
-            assert sweep_stale_workdirs() == 0
-
+        assert sweep_stale_workdirs(settings) == 0
         assert (fresh / JOB_ARCHIVE_NAME).exists()
 
-    def test_unrelated_temp_files_are_never_touched(self, tmp_path):
-        stranger = tmp_path / "someone-elses-data"
+    def test_unrelated_files_are_never_touched(self, tmp_path):
+        settings = self._settings(tmp_path)
+        parent = workdir_parent(settings)
+        parent.mkdir(parents=True, exist_ok=True)
+        stranger = parent / "someone-elses-data"
         stranger.mkdir()
         (stranger / "important").write_text("keep me")
-        loose_file = tmp_path / f"{WORKDIR_PREFIX}not-a-directory"
+        loose_file = parent / f"{WORKDIR_PREFIX}not-a-directory"
         loose_file.write_text("keep me too")
         os.utime(loose_file, (0, 0))
 
-        with patch("tempfile.gettempdir", return_value=str(tmp_path)):
-            assert sweep_stale_workdirs() == 0
-
+        assert sweep_stale_workdirs(settings) == 0
         assert (stranger / "important").exists()
         assert loose_file.exists()
 
-    def test_an_unreadable_temp_dir_does_not_break_the_render(self, tmp_path):
-        with patch("tempfile.gettempdir", return_value=str(tmp_path / "gone")):
-            assert sweep_stale_workdirs() == 0
+    def test_a_missing_directory_does_not_break_the_render(self, tmp_path):
+        assert sweep_stale_workdirs(self._settings(tmp_path)) == 0

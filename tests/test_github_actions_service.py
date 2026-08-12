@@ -5,7 +5,7 @@ Every HTTP call is mocked; these tests never touch the network.
 
 import io
 import zipfile
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -22,6 +22,9 @@ def _response(status=200, payload=None, content=b""):
     response.json.return_value = payload if payload is not None else {}
     response.content = content
     response.text = "error body"
+    response.iter_content.side_effect = lambda chunk_size=1: (
+        content[i : i + chunk_size] for i in range(0, len(content), chunk_size)
+    )
     return response
 
 
@@ -137,6 +140,43 @@ def test_download_artifact_unpacks_and_then_deletes(client, tmp_path):
 
     assert (tmp_path / "out" / "render-result.tar.gz").read_bytes() == b"payload"
     assert request.call_args_list[-1].args[0] == "DELETE"
+    # The downloaded zip is a working file, not an output.
+    assert not (tmp_path / "out" / "render-result.zip").exists()
+
+
+def test_download_artifact_streams_instead_of_buffering_in_memory(client, tmp_path):
+    """A rendered episode is ~800 MB; two heap copies of it fell over on the Pi.
+
+    ``response.content`` materialises the whole body, and the BytesIO wrapper
+    around it made a second copy. Both are gone: the body is written to disk in
+    chunks and zipfile reads it lazily from there.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("render-result.tar.gz", b"payload")
+
+    listing = _response(
+        payload={
+            "artifacts": [
+                {
+                    "id": 77,
+                    "name": "render-result",
+                    "expired": False,
+                    "archive_download_url": "https://example.invalid/dl",
+                }
+            ]
+        }
+    )
+    download = _response(content=buffer.getvalue())
+    type(download).content = PropertyMock(
+        side_effect=AssertionError("the response body must not be materialised in memory")
+    )
+
+    with patch("requests.request", side_effect=[listing, download, _response(status=204)]) as req:
+        client.download_artifact(1, "render-result", tmp_path / "out")
+
+    assert (tmp_path / "out" / "render-result.tar.gz").read_bytes() == b"payload"
+    assert req.call_args_list[1].kwargs["stream"] is True
 
 
 def test_download_artifact_reports_missing_artifact(client, tmp_path):

@@ -8,7 +8,6 @@ polled, and the resulting artifact is downloaded again.
 The token is read from settings and never logged.
 """
 
-import io
 import logging
 import time
 import zipfile
@@ -219,10 +218,22 @@ class GitHubActionsClient:
             "GET",
             match["archive_download_url"],
             timeout=max(self.request_timeout, 1800),
+            stream=True,
         )
         dest_dir.mkdir(parents=True, exist_ok=True)
-        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
-            archive.extractall(dest_dir)
+        # Streamed to disk rather than held in memory: a rendered episode is
+        # ~800 MB, and `response.content` plus the BytesIO copy around it used
+        # to put roughly twice that on the heap of a Raspberry Pi with 7.6 GB
+        # of RAM. zipfile reads the file lazily, so nothing is buffered whole.
+        archive_path = dest_dir / f"{name}.zip"
+        try:
+            with archive_path.open("wb") as handle:
+                for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
+                    handle.write(chunk)
+            with zipfile.ZipFile(archive_path) as archive:
+                archive.extractall(dest_dir)
+        finally:
+            archive_path.unlink(missing_ok=True)
         self.delete_artifact(match["id"])
         return dest_dir
 

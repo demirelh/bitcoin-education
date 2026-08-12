@@ -46,10 +46,19 @@ RESULT_ARCHIVE_NAME = "render-result.tar.gz"
 
 WORKDIR_PREFIX = "btcedu-remote-render-"
 
+# Work directories live beside the episode outputs, not in the system temp
+# directory: on the Pi /tmp is a RAM-backed tmpfs of 3.9 GB, while a rendered
+# episode is ~800 MB and passes through here twice (downloaded archive, then
+# extracted tree). Doing that in memory competed with ffmpeg for the same
+# 7.6 GB and pushed the machine into swap. The outputs directory sits on the
+# real disk, which has room to spare — and being on the same filesystem as the
+# episode, the final handover becomes a rename instead of a copy.
+WORKDIR_PARENT_NAME = ".render-jobs"
+
 # How long a leftover work directory may survive before the next remote render
 # removes it. Comfortably longer than a render (~25 min) so a directory in use
-# by a concurrent run is never touched, short enough that a RAM-backed /tmp is
-# not held hostage until the system's own sweep (10 days) gets around to it.
+# by a concurrent run is never touched, short enough that the disk is not held
+# by the debris of a killed run.
 _WORKDIR_MAX_AGE_SECONDS = 6 * 3600
 
 # Episode sub-paths the runner must not receive: they are render *outputs*.
@@ -345,8 +354,16 @@ def build_job_package(
 
 
 def unpack_result(archive_path: Path, episode_dir: Path) -> None:
-    """Replace the local render outputs with the runner's result."""
-    with tempfile.TemporaryDirectory() as tmp:
+    """Replace the local render outputs with the runner's result.
+
+    Staging happens next to the episode rather than in the system temp
+    directory. Two reasons, both of which bit this machine: /tmp is a RAM-backed
+    tmpfs here and the extracted tree is ~800 MB, and staging on the episode's
+    own filesystem turns every ``shutil.move`` below into a rename instead of a
+    byte-for-byte copy.
+    """
+    episode_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=episode_dir, prefix=".unpack-") as tmp:
         staging = Path(tmp)
         with tarfile.open(archive_path, "r:*") as tar:
             _safe_extract(tar, staging)
@@ -458,24 +475,28 @@ def _finalize(
     )
 
 
-def sweep_stale_workdirs(max_age_seconds: int = _WORKDIR_MAX_AGE_SECONDS) -> int:
+def workdir_parent(settings: Settings) -> Path:
+    """Where remote-render work directories are created."""
+    return Path(settings.outputs_dir) / WORKDIR_PARENT_NAME
+
+
+def sweep_stale_workdirs(
+    settings: Settings, max_age_seconds: int = _WORKDIR_MAX_AGE_SECONDS
+) -> int:
     """Delete work directories that an earlier render left behind.
 
     The normal path removes its directory in a ``finally``, but that clause
     cannot run when the process is killed — Ctrl-C on a manual run, a systemd
-    stop, or the OOM killer. What stays behind is the packed job archive, 20-30
-    MB each. On the Pi ``/tmp`` is a RAM-backed tmpfs and the system's own
-    sweep only clears files after ten days, so those leftovers sit in memory
-    for as long as they please; enough of them and the *next* render fails with
-    ENOSPC, which is precisely how this was found.
+    stop, or the OOM killer. What stays behind is up to ~1.6 GB of archive and
+    extracted video, which nothing else will ever clean up.
 
     Returns the number of directories removed.
     """
     removed = 0
     cutoff = time.time() - max_age_seconds
     try:
-        candidates = list(Path(tempfile.gettempdir()).glob(f"{WORKDIR_PREFIX}*"))
-    except OSError:  # an unreadable temp dir must not break the render
+        candidates = list(workdir_parent(settings).glob(f"{WORKDIR_PREFIX}*"))
+    except OSError:  # an unreadable directory must not break the render
         return 0
 
     for path in candidates:
@@ -577,8 +598,10 @@ def render_video_remote(
     job_id = f"{episode_id}-{uuid.uuid4().hex[:8]}"
     release: dict = {}
     run = None
-    sweep_stale_workdirs()
-    workdir = Path(tempfile.mkdtemp(prefix=WORKDIR_PREFIX))
+    sweep_stale_workdirs(settings)
+    parent = workdir_parent(settings)
+    parent.mkdir(parents=True, exist_ok=True)
+    workdir = Path(tempfile.mkdtemp(prefix=WORKDIR_PREFIX, dir=parent))
 
     def _emit(payload: dict) -> None:
         try:

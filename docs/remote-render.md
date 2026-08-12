@@ -104,6 +104,26 @@ The temporary draft release is deleted in a `finally` block, and the result
 artifact is deleted right after download — a rendered episode is ~480 MB and
 would otherwise fill the account's artifact storage quota.
 
+### Where the work happens, and why not in `/tmp`
+
+Each run gets a work directory under `data/outputs/.render-jobs/`, on the same
+disk as the episode itself. It deliberately does **not** live in the system
+temp directory: on the Raspberry Pi `/tmp` is a RAM-backed tmpfs of 3.9 GB,
+while the returned result is ~800 MB and passes through the work directory
+twice (downloaded archive, then extracted tree). Doing that in memory competed
+with ffmpeg for the same 7.6 GB and pushed the machine into swap. Staging on
+the episode's own filesystem has a second benefit: handing the files over
+becomes a rename rather than a byte-for-byte copy.
+
+For the same reason the artifact is streamed to disk in chunks instead of being
+read through `response.content` — that call alone used to materialise the whole
+body on the heap, and the `BytesIO` around it copied it a second time.
+
+The work directory is removed in a `finally` block, but that cannot run when
+the process is killed (Ctrl-C, a systemd stop, the OOM killer). Every remote
+render therefore first deletes leftover directories older than six hours —
+longer than a render takes, so a concurrent run is never disturbed.
+
 ## Configuration
 
 | Setting | Default | Meaning |

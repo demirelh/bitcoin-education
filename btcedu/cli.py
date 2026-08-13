@@ -1424,7 +1424,37 @@ def render(
                 for eid in episode_ids:
                     try:
                         if mode == "github":
-                            result = render_video_remote(session, eid, settings, force=force)
+                            try:
+                                result = render_video_remote(
+                                    session, eid, settings, force=force
+                                )
+                            except Exception as exc:
+                                # Same reasoning as the automatic run: the Pi can
+                                # still do the work, just slower. Only an explicit
+                                # --where github stays a hard failure, because then
+                                # the runner is what was actually asked for.
+                                if where != "auto" or not getattr(
+                                    settings, "github_render_fallback_local", True
+                                ):
+                                    raise
+                                click.echo(
+                                    f"[WARN] {eid}: remote render failed ({exc}); "
+                                    "rendering locally instead",
+                                    err=True,
+                                )
+                                session.rollback()
+                                # The remote attempt recorded its failure on the
+                                # episode; a successful local render must not
+                                # leave that showing on the dashboard.
+                                episode = (
+                                    session.query(Episode)
+                                    .filter_by(episode_id=eid)
+                                    .one_or_none()
+                                )
+                                if episode is not None:
+                                    episode.error_message = None
+                                    session.commit()
+                                result = render_video(session, eid, settings, force=force)
                         else:
                             result = render_video(session, eid, settings, force=force)
                         if result.skipped:

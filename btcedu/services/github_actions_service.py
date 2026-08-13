@@ -26,7 +26,24 @@ _ACTIVE_STATES = {"queued", "in_progress", "waiting", "requested", "pending"}
 
 
 class GitHubActionsError(RuntimeError):
-    """Any failure while talking to the GitHub Actions API."""
+    """Any failure while talking to the GitHub Actions API.
+
+    ``status_code`` is the HTTP status when the API answered and ``None`` when
+    the request never got an answer at all. Callers need the difference: a 404
+    means the run is gone, a dropped connection means only that we did not
+    hear back this time.
+    """
+
+    def __init__(self, message: str, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+    @property
+    def transient(self) -> bool:
+        """Is retrying the same request worth anything?"""
+        if self.status_code is None:
+            return True  # no answer: transport, DNS, TLS, or a dropped socket
+        return self.status_code in (408, 429) or self.status_code >= 500
 
 
 @dataclass
@@ -81,7 +98,8 @@ class GitHubActionsClient:
         if response.status_code >= 400:
             # Never echo the request headers -- they carry the token.
             raise GitHubActionsError(
-                f"{method} {url} returned {response.status_code}: {response.text[:400]}"
+                f"{method} {url} returned {response.status_code}: {response.text[:400]}",
+                status_code=response.status_code,
             )
         return response
 
@@ -172,10 +190,20 @@ class GitHubActionsClient:
         timeout: int,
         poll_interval: int,
         on_poll=None,
+        unreachable_grace: int = 600,
     ) -> WorkflowRun:
-        """Block until the run finishes or ``timeout`` seconds elapse."""
+        """Block until the run finishes or ``timeout`` seconds elapse.
+
+        A poll that does not come back is not a failed render. The runner keeps
+        working regardless of whether this machine can reach GitHub, and on a
+        home connection a dropped TLS handshake is routine. Giving up on the
+        first one threw away a quarter hour of finished work and left the run
+        going with nobody to collect it, so unreachability is tolerated for
+        ``unreachable_grace`` seconds before it counts as a real failure.
+        """
         deadline = time.monotonic() + timeout
         run = self.get_run(run_id)
+        last_contact = time.monotonic()
         while not run.finished:
             if time.monotonic() > deadline:
                 raise GitHubActionsError(
@@ -184,7 +212,26 @@ class GitHubActionsClient:
             if on_poll is not None:
                 on_poll(run)
             time.sleep(poll_interval)
-            run = self.get_run(run_id)
+            try:
+                run = self.get_run(run_id)
+            except GitHubActionsError as exc:
+                if not exc.transient:
+                    raise
+                unreachable = time.monotonic() - last_contact
+                if unreachable > unreachable_grace:
+                    raise GitHubActionsError(
+                        f"Lost contact with GitHub for {unreachable:.0f}s while waiting for "
+                        f"run {run_id} ({run.html_url}): {exc}"
+                    ) from exc
+                logger.warning(
+                    "Could not reach GitHub while waiting for run %s (%s); "
+                    "retrying for up to %.0fs more",
+                    run_id,
+                    exc,
+                    unreachable_grace - unreachable,
+                )
+                continue
+            last_contact = time.monotonic()
         return run
 
     def cancel_run(self, run_id: int) -> None:

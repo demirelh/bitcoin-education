@@ -192,3 +192,85 @@ def test_delete_release_never_raises(client):
     """Cleanup runs in a finally block; it must not mask the real error."""
     with patch("requests.request", return_value=_response(status=500)):
         client.delete_release(1)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Losing the connection is not losing the render
+# ---------------------------------------------------------------------------
+"""The 2026-08-13 re-render died after 13 minutes on a single dropped TLS
+handshake while polling. The runner carried on to completion; nobody collected
+it. On a home connection that is an ordinary event, so the wait has to survive
+it."""
+
+
+def _dropped():
+    import requests
+
+    return requests.ConnectionError("Remote end closed connection without response")
+
+
+def test_a_dropped_poll_does_not_end_the_wait(client):
+    queued = _response(payload={"id": 5, "status": "in_progress", "html_url": "u"})
+    done = _response(payload={"id": 5, "status": "completed", "conclusion": "success"})
+
+    with patch("requests.request", side_effect=[queued, _dropped(), done]), patch("time.sleep"):
+        run = client.wait_for_run(5, timeout=600, poll_interval=0)
+
+    assert run.succeeded, "a poll that never arrived says nothing about the render"
+
+
+def test_sustained_unreachability_is_still_a_failure(client):
+    """Retrying forever would hide a genuinely broken connection."""
+    queued = _response(payload={"id": 5, "status": "in_progress", "html_url": "u"})
+
+    with (
+        patch("requests.request", side_effect=[queued] + [_dropped()] * 20),
+        patch("time.sleep"),
+        pytest.raises(GitHubActionsError, match="Lost contact"),
+    ):
+        client.wait_for_run(5, timeout=600, poll_interval=0, unreachable_grace=0)
+
+
+def test_a_deleted_run_is_not_retried(client):
+    """A 404 is an answer, and waiting longer will not improve it."""
+    queued = _response(payload={"id": 5, "status": "in_progress", "html_url": "u"})
+    gone = _response(status=404)
+
+    with (
+        patch("requests.request", side_effect=[queued, gone]),
+        patch("time.sleep"),
+        pytest.raises(GitHubActionsError, match="404"),
+    ):
+        client.wait_for_run(5, timeout=600, poll_interval=0)
+
+
+def test_a_server_error_is_worth_retrying(client):
+    queued = _response(payload={"id": 5, "status": "in_progress", "html_url": "u"})
+    outage = _response(status=502)
+    done = _response(payload={"id": 5, "status": "completed", "conclusion": "success"})
+
+    with patch("requests.request", side_effect=[queued, outage, done]), patch("time.sleep"):
+        run = client.wait_for_run(5, timeout=600, poll_interval=0)
+
+    assert run.succeeded
+
+
+def test_the_timeout_still_applies_while_unreachable(client):
+    """Grace must not be a way around the overall deadline."""
+    queued = _response(payload={"id": 5, "status": "in_progress", "html_url": "u"})
+
+    with (
+        patch("requests.request", side_effect=[queued] + [_dropped()] * 20),
+        patch("time.sleep"),
+        patch("time.monotonic", side_effect=[0, 0, 10_000, 20_000, 30_000]),
+        pytest.raises(GitHubActionsError, match="did not finish"),
+    ):
+        client.wait_for_run(5, timeout=1, poll_interval=0)
+
+
+def test_an_error_without_an_answer_is_marked_transient():
+    assert GitHubActionsError("boom").transient is True
+    assert GitHubActionsError("boom", status_code=500).transient is True
+    assert GitHubActionsError("boom", status_code=429).transient is True
+    assert GitHubActionsError("boom", status_code=404).transient is False
+    assert GitHubActionsError("boom", status_code=401).transient is False

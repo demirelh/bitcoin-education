@@ -669,3 +669,103 @@ class TestStaleWorkdirSweep:
 
     def test_a_missing_directory_does_not_break_the_render(self, tmp_path):
         assert sweep_stale_workdirs(self._settings(tmp_path)) == 0
+
+
+# ---------------------------------------------------------------------------
+# `btcedu render` must not lose an episode GitHub could not deliver
+# ---------------------------------------------------------------------------
+class TestTheCommandFallsBackLikeTheAutomaticRun:
+    """The fallback existed only in the scheduled pipeline.
+
+    Invoked by hand the same failure was simply fatal, which is how a dropped
+    connection on 2026-08-13 turned into no video at all. The two paths render
+    the same episode; they should not disagree about what a failure means.
+    """
+
+    def _invoke(self, db_session, args, settings):
+        from click.testing import CliRunner
+
+        from btcedu.cli import cli
+
+        return CliRunner().invoke(
+            cli,
+            args,
+            obj={"settings": settings, "session_factory": lambda: db_session},
+        )
+
+    def test_a_remote_failure_is_rendered_locally(self, db_session, episode):
+        settings = Settings(render_execution_mode="github")
+        local = MagicMock(return_value=MagicMock(skipped=False, segment_count=1))
+
+        with (
+            patch(
+                "btcedu.core.remote_render.render_video_remote",
+                side_effect=RuntimeError("connection dropped"),
+            ),
+            patch("btcedu.core.renderer.render_video", local),
+        ):
+            result = self._invoke(
+                db_session, ["render", "--episode-id", episode.episode_id], settings
+            )
+
+        assert local.called, "the Pi can still do the work, just slower"
+        assert result.exit_code == 0
+
+    def test_an_explicit_github_render_stays_a_hard_failure(self, db_session, episode):
+        """Asking for the runner by name and getting the Pi would be a lie."""
+        settings = Settings(render_execution_mode="github")
+        local = MagicMock()
+
+        with (
+            patch(
+                "btcedu.core.remote_render.render_video_remote",
+                side_effect=RuntimeError("connection dropped"),
+            ),
+            patch("btcedu.core.renderer.render_video", local),
+        ):
+            result = self._invoke(
+                db_session,
+                ["render", "--episode-id", episode.episode_id, "--where", "github"],
+                settings,
+            )
+
+        assert not local.called
+        assert "FAIL" in result.output
+
+    def test_the_fallback_clears_the_failure_from_the_episode(self, db_session, episode):
+        """A rendered episode showing an error message would be read as broken."""
+        settings = Settings(render_execution_mode="github")
+        episode_id = episode.episode_id
+
+        def _fail(session, eid, settings, force=False):
+            ep = session.query(Episode).filter_by(episode_id=eid).one()
+            ep.error_message = "Remote render failed"
+            session.commit()
+            raise RuntimeError("connection dropped")
+
+        with (
+            patch("btcedu.core.remote_render.render_video_remote", side_effect=_fail),
+            patch(
+                "btcedu.core.renderer.render_video",
+                MagicMock(return_value=MagicMock(skipped=False, segment_count=1)),
+            ),
+        ):
+            self._invoke(db_session, ["render", "--episode-id", episode_id], settings)
+
+        stored = db_session.query(Episode).filter_by(episode_id=episode_id).one()
+        assert stored.error_message is None
+
+    def test_the_fallback_can_be_switched_off(self, db_session, episode):
+        settings = Settings(render_execution_mode="github", github_render_fallback_local=False)
+        local = MagicMock()
+
+        with (
+            patch(
+                "btcedu.core.remote_render.render_video_remote",
+                side_effect=RuntimeError("connection dropped"),
+            ),
+            patch("btcedu.core.renderer.render_video", local),
+        ):
+            self._invoke(db_session, ["render", "--episode-id", episode.episode_id], settings)
+
+        assert not local.called

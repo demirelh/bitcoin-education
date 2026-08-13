@@ -535,14 +535,67 @@ class TestLocalRecordingIsSupersededByFeed:
     def test_unrelated_feed_episodes_do_not_block_the_recorder(
         self, db_session, tmp_path, recordings_dir
     ):
-        """A podcast episode with no date in its title must not suppress anything."""
+        """A podcast episode with no date in its title must not suppress anything.
+
+        ``published_at`` is set to the day of the recording on purpose: this is
+        what happened on 2026-08-13. A Bitcoin podcast episode published that
+        afternoon carried no date in its title, the upload timestamp was used as
+        a stand-in for the broadcast day, and the tagesschau recording made that
+        evening was discarded as a duplicate of it. The recording never reached
+        the pipeline and nothing reported an error.
+        """
         db_session.add(
             Episode(
                 episode_id="podcastXYZ",
                 source="youtube_rss",
                 title="Diese 7 Fehler kosten dich deine Bitcoin",
                 url="https://www.youtube.com/watch?v=podcastXYZ",
-                published_at=None,
+                published_at=datetime(2026, 8, 6, 14, 0, tzinfo=UTC),
+                status=EpisodeStatus.NEW,
+            )
+        )
+        db_session.commit()
+        make_recording(recordings_dir, date(2026, 8, 6))
+        settings = local_settings(tmp_path, recordings_dir)
+
+        assert detect_local_recordings(db_session, settings).new == 1
+
+    def test_a_feed_upload_timestamp_never_claims_a_broadcast_day(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        """An upload time says nothing about which broadcast an entry contains.
+
+        The feed re-serves old editions with a current timestamp, so trusting it
+        here costs a recording outright — the broadcast simply never runs. Only
+        a date in the title or in a recorder slug names the broadcast itself.
+        """
+        db_session.add(
+            Episode(
+                episode_id="reupload42",
+                source="youtube_rss",
+                title="tagesschau 20:00 Uhr",  # no date anywhere
+                url="https://www.youtube.com/watch?v=reupload42",
+                published_at=datetime(2026, 8, 6, 21, 0, tzinfo=UTC),
+                status=EpisodeStatus.NEW,
+            )
+        )
+        db_session.commit()
+        make_recording(recordings_dir, date(2026, 8, 6))
+        settings = local_settings(tmp_path, recordings_dir)
+
+        assert detect_local_recordings(db_session, settings).new == 1
+
+    def test_another_programme_on_the_same_day_is_not_a_duplicate(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        """Two shows broadcast on one day are not duplicates of each other."""
+        db_session.add(
+            Episode(
+                episode_id="tagesthemen1",
+                source="youtube_rss",
+                title="tagesthemen 22:15 Uhr, 06.08.2026",
+                url="https://www.youtube.com/watch?v=tagesthemen1",
+                published_at=datetime(2026, 8, 6, 22, 45, tzinfo=UTC),
                 status=EpisodeStatus.NEW,
             )
         )
@@ -601,3 +654,138 @@ class TestExtractAudio:
 
         assert not (tmp_path / "audio.m4a").exists()
         assert not (tmp_path / "audio.m4a.partial").exists()
+
+
+class TestWeatherVerdictFromTheRecorder:
+    """The recorder checks its own cut; this is where a person gets told.
+
+    The forecast is the closing chapter of the finished video. A cut that ate
+    it fails silently: the shortened transcript is perfectly coherent, so every
+    downstream stage and every review gate passes, and the video is simply
+    missing its ending. Nothing but the recorder can tell.
+    """
+
+    def _recording(self, recordings_dir, extra: dict | None):
+        from btcedu.services.local_recorder_service import scan_recordings
+
+        make_recording(
+            recordings_dir,
+            date(2026, 8, 6),
+            metadata={"extra": extra} if extra is not None else {},
+        )
+        return scan_recordings(str(recordings_dir))[0]
+
+    def test_reads_a_confirmed_forecast(self, recordings_dir):
+        rec = self._recording(
+            recordings_dir,
+            {"weather_verified": "true", "weather_evidence": "Wetter @ 932.9s (9 Treffer)"},
+        )
+
+        assert rec.weather.present is True
+        assert rec.weather.truncated is False
+        assert "9 Treffer" in rec.weather.evidence
+
+    def test_reads_a_truncated_forecast(self, recordings_dir):
+        rec = self._recording(
+            recordings_dir,
+            {
+                "weather_verified": "false",
+                "weather_truncated": "true",
+                "weather_evidence": "Schauer @ 1002.0s",
+            },
+        )
+
+        assert rec.weather.present is False
+        assert rec.weather.truncated is True
+
+    def test_an_edition_without_a_forecast_is_not_truncated(self, recordings_dir):
+        rec = self._recording(recordings_dir, {"weather_verified": "false"})
+
+        assert rec.weather.present is False
+        assert rec.weather.truncated is False
+
+    def test_an_older_recorder_says_nothing_rather_than_no(self, recordings_dir):
+        """Metadata written before the check existed must not read as a defect."""
+        rec = self._recording(recordings_dir, None)
+
+        assert rec.weather.present is None
+        assert rec.weather.truncated is False
+
+
+class TestIncompleteRecordingIsReported:
+    TRUNCATED = {
+        "weather_verified": "false",
+        "weather_truncated": "true",
+        "weather_evidence": "Schauer @ 1002.0s … Sonnenschein @ 1032.0s (4 Treffer)",
+    }
+
+    def _detect(self, db_session, tmp_path, recordings_dir, extra):
+        make_recording(recordings_dir, date(2026, 8, 6), metadata={"extra": extra})
+        settings = local_settings(tmp_path, recordings_dir)
+        with patch("btcedu.services.notify_service.send_notification") as notify:
+            notify.return_value = True
+            result = detect_local_recordings(db_session, settings)
+        return result, notify
+
+    def test_a_truncated_forecast_reaches_whatsapp(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        result, notify = self._detect(db_session, tmp_path, recordings_dir, self.TRUNCATED)
+
+        assert result.new == 1, "the recording is still ingested; this reports, it does not block"
+        notify.assert_called_once()
+        message = notify.call_args.args[1]
+        assert "tagesschau_2026-08-06_2000" in message
+        assert "Schauer @ 1002.0s" in message
+
+    def test_a_confirmed_forecast_is_not_worth_a_message(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        _, notify = self._detect(
+            db_session, tmp_path, recordings_dir, {"weather_verified": "true"}
+        )
+
+        notify.assert_not_called()
+
+    def test_an_edition_without_a_forecast_is_not_alarmed_about(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        """2026-08-12 had no forecast at all — the playout dropped it.
+
+        Nothing about the recording can fix that, and alarming about it would
+        train the reader to ignore the message that does matter.
+        """
+        _, notify = self._detect(
+            db_session, tmp_path, recordings_dir, {"weather_verified": "false"}
+        )
+
+        notify.assert_not_called()
+
+    def test_the_message_is_sent_once_not_on_every_timer_run(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        """The timer fires every ten minutes; only the ingest may report."""
+        make_recording(recordings_dir, date(2026, 8, 6), metadata={"extra": self.TRUNCATED})
+        settings = local_settings(tmp_path, recordings_dir)
+
+        with patch("btcedu.services.notify_service.send_notification") as notify:
+            notify.return_value = True
+            detect_local_recordings(db_session, settings)
+            detect_local_recordings(db_session, settings)
+
+        assert notify.call_count == 1
+
+    def test_a_broken_notifier_does_not_cost_the_ingest(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        make_recording(recordings_dir, date(2026, 8, 6), metadata={"extra": self.TRUNCATED})
+        settings = local_settings(tmp_path, recordings_dir)
+
+        with patch(
+            "btcedu.services.notify_service.send_notification",
+            side_effect=RuntimeError("whatsapp service is down"),
+        ):
+            result = detect_local_recordings(db_session, settings)
+
+        assert result.new == 1
+        assert db_session.query(Episode).count() == 1

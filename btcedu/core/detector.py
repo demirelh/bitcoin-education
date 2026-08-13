@@ -247,7 +247,7 @@ def detect_episodes(
     # The upload of the same broadcast appears one to two hours later; ingesting
     # it as well would run the whole pipeline a second time at full API cost.
     if _local_recorder_settings(settings).get("supersedes_feed", True):
-        local_days = _local_episode_days(session)
+        local_days = _local_episode_days(session, title_filter)
         if local_days:
             before = len(episodes)
             episodes = [
@@ -300,9 +300,9 @@ def _feed_broadcast_day(ep_info: EpisodeInfo) -> date | None:
     return ep_info.published_at.date() if ep_info.published_at else None
 
 
-def _local_episode_days(session: Session) -> set[date]:
+def _local_episode_days(session: Session, title_filter: re.Pattern | None = None) -> set[date]:
     """Broadcast days already ingested from the recorder."""
-    return _episode_days_by_source(session, local=True)
+    return _episode_days_by_source(session, local=True, title_filter=title_filter)
 
 
 def _titled_broadcast_days(session: Session) -> set[date]:
@@ -323,7 +323,9 @@ def _titled_broadcast_days(session: Session) -> set[date]:
     return days
 
 
-def _episode_days_by_source(session: Session, *, local: bool) -> set[date]:
+def _episode_days_by_source(
+    session: Session, *, local: bool, title_filter: re.Pattern | None = None
+) -> set[date]:
     """Broadcast days already stored, restricted to (or excluding) the recorder.
 
     Deduplication has to work in *both* directions. Suppressing only the feed is
@@ -331,10 +333,20 @@ def _episode_days_by_source(session: Session, *, local: bool) -> set[date]:
     for every broadcast recorded before the local source existed, and for any
     evening the recorder misses — the local file would arrive afterwards and
     start a second, fully paid run for a broadcast that is already done.
+
+    A day is only claimed by an episode that *names* it, in its slug or title.
+    An upload timestamp says nothing about which broadcast an entry contains,
+    and treating it as if it did loses recordings: on 2026-08-13 an unrelated
+    Bitcoin podcast episode published that afternoon claimed the day, and the
+    tagesschau recording made that evening was discarded as a duplicate of it.
+
+    ``title_filter`` restricts the claim to the same programme for the same
+    reason. Two shows broadcast on one day are not duplicates of each other,
+    however similar their dates look.
     """
     from btcedu.services.local_recorder_service import SOURCE_NAME
 
-    query = session.query(Episode.episode_id, Episode.title, Episode.published_at)
+    query = session.query(Episode.episode_id, Episode.title)
     query = (
         query.filter(Episode.source == SOURCE_NAME)
         if local
@@ -342,10 +354,10 @@ def _episode_days_by_source(session: Session, *, local: bool) -> set[date]:
     )
 
     days: set[date] = set()
-    for episode_id, title, published_at in query.all():
+    for episode_id, title in query.all():
+        if title_filter is not None and not title_filter.search(title or ""):
+            continue
         day = _broadcast_day_from_slug(episode_id) or _broadcast_day_from_title(title or "")
-        if day is None and published_at is not None:
-            day = published_at.date()
         if day is not None:
             days.add(day)
     return days
@@ -360,6 +372,46 @@ def _broadcast_day_from_slug(slug: str) -> date | None:
         return date.fromisoformat(match.group(1))
     except ValueError:
         return None
+
+
+def _report_incomplete_recording(settings: Settings, recording) -> None:
+    """Raise the alarm when the recorder says its cut lost the forecast.
+
+    The recorder checks its own cut against the closing weather forecast and
+    writes the verdict to its metadata, but until it is read here nobody sees
+    it. This failure is silent by nature: a truncated bulletin still yields a
+    coherent transcript, so every downstream stage and every review gate passes
+    and the finished video is simply missing its last chapter.
+
+    Only ``truncated`` is reported. An edition that genuinely had no forecast is
+    not a defect — the 2026-08-12 playout dropped it — and alarming about it
+    would train the reader to ignore the message that matters.
+
+    Never raises: a broken notifier must not cost the ingest.
+    """
+    weather = getattr(recording, "weather", None)
+    if weather is None or not weather.truncated:
+        return
+
+    logger.error(
+        "recording %s is incomplete: the weather forecast continues past the cut (%s)",
+        recording.slug,
+        weather.evidence,
+    )
+    try:
+        from btcedu.services.notify_service import send_notification
+
+        send_notification(
+            settings,
+            "\u26a0\ufe0f Aufnahme unvollständig\n"
+            f"Episode: {recording.slug}\n"
+            "Der Wetterbericht läuft über den Schnitt hinaus weiter — "
+            "die Aufnahme wurde zu früh beendet und das Video würde ohne "
+            "Wetterabschnitt enden.\n"
+            f"{weather.evidence}",
+        )
+    except Exception:  # pragma: no cover - defensive
+        logger.warning("could not send the incomplete-recording notification", exc_info=True)
 
 
 def detect_local_recordings(
@@ -418,7 +470,7 @@ def detect_local_recordings(
     # from before the recorder existed - would be transcribed, translated,
     # voiced and rendered a second time.
     if config.get("supersedes_feed", True):
-        feed_days = _episode_days_by_source(session, local=False)
+        feed_days = _episode_days_by_source(session, local=False, title_filter=title_filter)
         if feed_days:
             before = len(episodes)
             episodes = [
@@ -432,6 +484,7 @@ def detect_local_recordings(
 
     resolved_channel_id = _resolve_channel_id(session, settings, channel_id)
     existing_ids = {row[0] for row in session.query(Episode.episode_id).all()}
+    by_slug = {rec.slug: rec for rec in recordings}
 
     for ep_info in episodes:
         if ep_info.episode_id in existing_ids:
@@ -450,6 +503,9 @@ def detect_local_recordings(
         session.add(episode)
         result.new += 1
         logger.info("Ingested local recording %s (%s)", ep_info.episode_id, ep_info.url)
+        recording = by_slug.get(ep_info.episode_id)
+        if recording is not None:
+            _report_incomplete_recording(settings, recording)
 
     session.commit()
     result.total = session.query(Episode).count()

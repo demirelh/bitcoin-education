@@ -59,6 +59,22 @@ SOURCE_NAME = "local_recorder"
 
 
 @dataclass(frozen=True)
+class WeatherCheck:
+    """The recorder's verdict on whether its cut kept the closing forecast.
+
+    ``present`` is three-valued on purpose. "No forecast" and "could not tell"
+    are different facts: the first may be a lost broadcast, the second is only
+    a missing transcript. ``truncated`` separates the two ways ``present`` can
+    be false — a forecast continuing past the cut means material was lost,
+    while an edition that simply had none is nothing anyone can fix.
+    """
+
+    present: bool | None
+    truncated: bool = False
+    evidence: str = ""
+
+
+@dataclass(frozen=True)
 class LocalRecording:
     """One finished recording found on disk."""
 
@@ -102,6 +118,28 @@ class LocalRecording:
             return int(round(float(value)))  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
+
+    @property
+    def weather(self) -> WeatherCheck:
+        """What the recorder found when it checked its own cut.
+
+        The recorder transcribes the tail around the cut and reports whether the
+        closing forecast is inside the published file. Reading it here is what
+        turns that check into something a person sees: the forecast is a chapter
+        of the finished video, and a cut that ate it produces a video that is
+        wrong in a way no later stage can detect — the transcript is coherent,
+        every gate passes, and the weather is simply gone.
+        """
+        extra = self.metadata.get("extra")
+        if not isinstance(extra, dict):
+            return WeatherCheck(None)
+        state = extra.get("weather_verified")
+        present = {"true": True, "false": False}.get(str(state).lower()) if state else None
+        return WeatherCheck(
+            present=present,
+            truncated=str(extra.get("weather_truncated", "")).lower() == "true",
+            evidence=str(extra.get("weather_evidence", "")),
+        )
 
     def to_episode_info(self) -> EpisodeInfo:
         """Adapt to the shape the detector already consumes.

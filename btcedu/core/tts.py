@@ -1062,6 +1062,31 @@ def _prune_cache(settings: Settings) -> None:
         logger.warning("TTS cache pruning skipped (%s)", exc)
 
 
+def _stutter_model(settings: Settings):
+    """The recogniser used to listen to takes, loaded once per episode.
+
+    Loading costs more than a check does, so the result is memoised per model
+    name. The same guarding as :func:`_cache_dir` applies: a stand-in settings
+    object must not be able to switch the check on with a placeholder value.
+    """
+    enabled = getattr(settings, "tts_stutter_check_enabled", False)
+    if not isinstance(enabled, bool) or not enabled:
+        return None
+    name = getattr(settings, "tts_stutter_model", "")
+    if not isinstance(name, str) or not name.strip():
+        return None
+
+    global _STUTTER_MODELS
+    if name not in _STUTTER_MODELS:
+        from btcedu.core import tts_stutter
+
+        _STUTTER_MODELS[name] = tts_stutter.load_model(name)
+    return _STUTTER_MODELS[name]
+
+
+_STUTTER_MODELS: dict = {}
+
+
 def _synthesize_clean_take(
     tts_service,
     request,
@@ -1071,13 +1096,20 @@ def _synthesize_clean_take(
     noise_floor_max_db: float,
     label: str,
     cache_dir: Path | None = None,
+    stutter_model=None,
 ):
-    """Synthesize *request*, retrying while the take has an audible noise bed.
+    """Synthesize *request*, retrying while the take is unusable.
 
     Generation is stochastic: roughly one take in four comes back with a hiss
-    that no level or duration check notices. Retrying is the only remedy, so the
-    quietest of at most *max_attempts* takes is kept. Every attempt is paid for,
-    which is why the number of attempts is small and configurable.
+    that no level or duration check notices, and about one in twenty stumbles
+    over its opening words. Retrying is the only remedy, so the best of at most
+    *max_attempts* takes is kept. Every attempt is paid for, which is why the
+    number of attempts is small and configurable.
+
+    A stumble outranks a hiss. Hiss is a background the listener stops hearing;
+    a voice saying "İyi Dağ'ım, İyi Akşamlar" at the top of the bulletin is the
+    first thing they hear. So a clean-sounding take that stutters is rejected
+    even though every level in it is right.
 
     With *cache_dir* set, a line already recorded with this voice and these
     parameters is taken from disk instead of bought again. This is the only
@@ -1096,6 +1128,8 @@ def _synthesize_clean_take(
 
     best_response = None
     best_floor: float | None = None
+    last_response = None
+    last_floor: float | None = None
     attempts = 0
 
     def _keep(response, floor: float | None) -> None:
@@ -1116,6 +1150,12 @@ def _synthesize_clean_take(
         # Once every take sits at the same speech level the reading compares.
         _normalize_loudness(target)
         floor = _noise_floor_db(target)
+        last_response, last_floor = response, floor
+
+        # Checked before the noise floor is allowed to accept anything: a
+        # stuttered take must never be returned or stored, however quiet it is.
+        if _take_stutters(target, request, stutter_model, label, attempt, max_attempts):
+            continue
 
         if floor is None:
             _keep(response, None)
@@ -1140,6 +1180,22 @@ def _synthesize_clean_take(
             " — retrying" if attempt < max(1, max_attempts) else "",
         )
 
+    if best_response is None:
+        # Every take stuttered. Publishing a stumble is bad; publishing silence
+        # is worse, and there is nothing left to choose from. The take is kept
+        # but deliberately not cached, so the next episode gets a fresh chance
+        # instead of inheriting this one for good.
+        if last_response is not None:
+            target.write_bytes(last_response.audio_bytes)
+            _normalize_loudness(target)
+            logger.error(
+                "%s: all %d takes stumbled over the opening; keeping the last one "
+                "and not storing it — the audio should be checked by ear",
+                label,
+                attempts,
+            )
+        return last_response, last_floor, attempts
+
     if best_response is not None:
         target.write_bytes(best_response.audio_bytes)
         # Writing the bytes back undoes the levelling done above, so it has to
@@ -1156,6 +1212,39 @@ def _synthesize_clean_take(
         # would freeze the hiss into every future episode, and the retry logic
         # exists precisely to get away from it.
     return best_response, best_floor, attempts
+
+
+def _take_stutters(
+    target: Path, request, model, label: str, attempt: int, max_attempts: int
+) -> bool:
+    """Does this take stumble over its opening words?
+
+    Returns ``False`` when the check cannot run. A missing recogniser must not
+    silently reject every take — that would turn an optional quality check into
+    an outage, and pay for three takes to publish nothing better.
+    """
+    if model is None:
+        return False
+
+    from btcedu.core import tts_stutter
+
+    text = getattr(request, "text", "")
+    if not text:
+        return False
+
+    verdict = tts_stutter.check_opening(target, text, model=model)
+    if not verdict.stuttered:
+        return False
+
+    logger.warning(
+        "%s: take %d stumbles over its opening (%s, heard %r)%s",
+        label,
+        attempt,
+        verdict.reason,
+        verdict.heard[:80],
+        " — retrying" if attempt < max(1, max_attempts) else "",
+    )
+    return True
 
 
 def _generate_multi_voice_audio(
@@ -1236,6 +1325,7 @@ def _generate_multi_voice_audio(
                 ),
                 label=f"Chapter {chapter.chapter_id} part {index:02d} ({role})",
                 cache_dir=_cache_dir(settings),
+                stutter_model=_stutter_model(settings),
             )
             duration = response.duration_seconds
             cost = response.cost_usd * takes
@@ -1392,6 +1482,7 @@ def _generate_single_audio(
         noise_floor_max_db=_NOISE_FLOOR_WARN_DB,
         label=f"Chapter {chapter.chapter_id}",
         cache_dir=_cache_dir(settings),
+        stutter_model=_stutter_model(settings),
     )
 
     size_bytes = mp3_path.stat().st_size

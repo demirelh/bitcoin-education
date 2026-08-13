@@ -171,6 +171,14 @@ class Settings(BaseSettings):
     tts_cache_dir: str = "data/tts_cache"
     tts_cache_max_mb: int = 512  # 0 disables pruning
 
+    # Listening to what a take actually says. The noise check reads levels and
+    # cannot see a voice stumbling over its opening words, which is how "İyi
+    # Dağ'ım, İyi Akşamlar" reached a finished video. Costs roughly half a
+    # minute of CPU per newly generated take; cached takes were checked when
+    # they were made. Empty model disables the check.
+    tts_stutter_check_enabled: bool = True
+    tts_stutter_model: str = "small"
+
     # Anchor / D-ID (talking-head video generation)
     did_api_key: str = ""
     did_source_image_path: str = "data/anchor/default.png"

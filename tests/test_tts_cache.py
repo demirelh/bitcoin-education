@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -508,3 +509,109 @@ class TestASettingsObjectThatIsNotOne:
 
     def test_an_empty_directory_setting_is_refused(self):
         assert _cache_dir(Settings(tts_cache_dir="   ")) is None
+
+
+# ---------------------------------------------------------------------------
+# A stumble must never be stored
+# ---------------------------------------------------------------------------
+class StutterModel:
+    """Stands in for the recogniser, answering one transcript per take."""
+
+    def __init__(self, *transcripts: str) -> None:
+        self.transcripts = list(transcripts)
+        self.calls = 0
+
+    def transcribe(self, path, language="tr"):
+        text = self.transcripts[min(self.calls, len(self.transcripts) - 1)]
+        self.calls += 1
+        return [type("Seg", (), {"text": text})()], object()
+
+
+GREETING = "İyi akşamlar, Almanya Yirmi Dört'e hoş geldiniz."
+STUMBLE = "İyi Dağ'ım, İyi Akşamlar, Almanya 24'e hoş geldiniz."
+CLEAN = "İyi akşamlar, Almanya 24'e hoş geldiniz."
+
+
+def _take_with_model(service, target, cache_dir, model, floor_db=-70.0):
+    import btcedu.core.tts as tts_module
+
+    original = tts_module._noise_floor_db
+    tts_module._noise_floor_db = lambda _path: floor_db
+    try:
+        with patch(
+            "btcedu.core.tts_stutter._transcribe_opening",
+            side_effect=lambda audio, model, language: model.transcribe(audio)[0][0].text,
+        ):
+            return _synthesize_clean_take(
+                service,
+                _request(text=GREETING),
+                target,
+                max_attempts=3,
+                noise_floor_max_db=-60.0,
+                label="test",
+                cache_dir=cache_dir,
+                stutter_model=model,
+            )
+    finally:
+        tts_module._noise_floor_db = original
+
+
+class TestAStumbleIsNeverStored:
+    """The greeting is identical every evening, so a bad take would be forever.
+
+    This is the same trap the loudness bug fell into: a recurring line, a check
+    that could not see the defect, and a cache that froze the result into every
+    future episode.
+    """
+
+    def test_a_stuttered_take_is_synthesized_again(self, tmp_path, cache_dir):
+        service = _CountingService()
+        model = StutterModel(STUMBLE, CLEAN)
+
+        _response_out, _floor, takes = _take_with_model(
+            service, tmp_path / "part.mp3", cache_dir, model
+        )
+
+        assert takes == 2, "the first take stumbled and had to be replaced"
+        assert service.calls == 2
+
+    def test_the_stored_take_is_the_clean_one(self, tmp_path, cache_dir):
+        """A second episode must not inherit the stumble."""
+        service = _CountingService()
+        _take_with_model(service, tmp_path / "part.mp3", cache_dir, StutterModel(STUMBLE, CLEAN))
+
+        again = _CountingService()
+        _take_with_model(again, tmp_path / "second.mp3", cache_dir, StutterModel(CLEAN))
+
+        assert again.calls == 0, "the clean take should have come from the cache"
+
+    def test_nothing_is_stored_when_every_take_stumbles(self, tmp_path, cache_dir):
+        """Three bad takes must not leave a bad take behind for tomorrow."""
+        service = _CountingService()
+
+        response, _floor, takes = _take_with_model(
+            service, tmp_path / "part.mp3", cache_dir, StutterModel(STUMBLE)
+        )
+
+        assert takes == 3
+        assert response is not None, "publishing silence is worse than publishing a stumble"
+        assert not list(cache_dir.glob("*.mp3")) if cache_dir.exists() else True
+
+    def test_a_clean_take_is_not_checked_twice(self, tmp_path, cache_dir):
+        """A cache hit was checked when it was made; checking again costs CPU."""
+        service = _CountingService()
+        _take_with_model(service, tmp_path / "part.mp3", cache_dir, StutterModel(CLEAN))
+
+        model = StutterModel(CLEAN)
+        _take_with_model(_CountingService(), tmp_path / "second.mp3", cache_dir, model)
+
+        assert model.calls == 0
+
+    def test_without_a_model_takes_are_accepted_as_before(self, tmp_path, cache_dir):
+        """A missing recogniser must not reject everything and buy three takes."""
+        service = _CountingService()
+
+        _r, _f, takes = _take(service, tmp_path / "part.mp3", cache_dir)
+
+        assert takes == 1
+        assert service.calls == 1

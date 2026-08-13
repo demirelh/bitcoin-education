@@ -38,6 +38,12 @@ youtube = [
 frames = [
     "opencv-python-headless>=4.8",
 ]
+# Reads back a generated take to catch a stuttered opening. Optional because
+# the check disables itself when the package is absent, but without it the
+# check never runs — install it wherever takes are actually bought.
+speechcheck = [
+    "faster-whisper>=1.0",
+]
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.6.0",

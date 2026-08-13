@@ -139,7 +139,7 @@ install_dependencies() {
     log_info "Installing/updating Python dependencies..."
 
     # Activate virtual environment and install core + web
-    if ! "${VENV_PATH}/bin/pip" install -e ".[web]" --quiet; then
+    if ! "${VENV_PATH}/bin/pip" install -e ".[web,speechcheck]" --quiet; then
         error_exit "Failed to install dependencies."
     fi
 

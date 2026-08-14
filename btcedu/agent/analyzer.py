@@ -119,12 +119,14 @@ def _test_env() -> dict[str, str]:
     import os
 
     env = os.environ.copy()
-    env.update({
-        "ANTHROPIC_API_KEY": env.get("ANTHROPIC_API_KEY", "dummy"),
-        "OPENAI_API_KEY": env.get("OPENAI_API_KEY", "dummy"),
-        "WHISPER_API_KEY": env.get("WHISPER_API_KEY", "dummy"),
-        "DRY_RUN": "true",
-    })
+    env.update(
+        {
+            "ANTHROPIC_API_KEY": env.get("ANTHROPIC_API_KEY", "dummy"),
+            "OPENAI_API_KEY": env.get("OPENAI_API_KEY", "dummy"),
+            "WHISPER_API_KEY": env.get("WHISPER_API_KEY", "dummy"),
+            "DRY_RUN": "true",
+        }
+    )
     return env
 
 
@@ -142,10 +144,14 @@ def _scan_todos(project_root: Path) -> list[dict[str, str]]:
                             # Extract just the comment part
                             if "#" in text:
                                 text = text[text.index("#") + 1 :].strip()
-                            results.append({
-                                "file": str(rel), "line": str(i),
-                                "marker": marker, "text": text[:120],
-                            })
+                            results.append(
+                                {
+                                    "file": str(rel),
+                                    "line": str(i),
+                                    "marker": marker,
+                                    "text": text[:120],
+                                }
+                            )
                             break
             except (OSError, UnicodeDecodeError):
                 continue

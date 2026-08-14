@@ -267,6 +267,7 @@ def _day_context_at(
             resolved = (ref, label, day_date)
     return resolved
 
+
 _DATE_TEXT_RE = re.compile(
     r"\b\d{1,2}\s+"
     r"(?:ocak|şubat|mart|nisan|mayıs|haziran|temmuz|ağustos|eylül|ekim|kasım|aralık)"

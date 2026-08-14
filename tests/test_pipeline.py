@@ -202,9 +202,13 @@ class TestRunEpisodePipeline:
 
         run_episode_pipeline(db_session, new_episode, _make_settings(tmp_path))
 
-        entry = db_session.query(DeadLetterEntry).filter_by(
-            episode_id=new_episode.episode_id,
-        ).one()
+        entry = (
+            db_session.query(DeadLetterEntry)
+            .filter_by(
+                episode_id=new_episode.episode_id,
+            )
+            .one()
+        )
         assert entry.error_category == ErrorCategory.PERMANENT_QUOTA.value
 
     @patch("btcedu.core.pipeline._run_stage")

@@ -506,11 +506,7 @@ def test_transcript_gate_auto_adjudicates_and_continues(db_session, qa_settings)
         result = _run_stage(db_session, episode, qa_settings, "review_gate_transcript_qa")
 
     assert result.status == "success"
-    task = (
-        db_session.query(ReviewTask)
-        .filter_by(episode_id="ep_qa", stage="transcript_qa")
-        .one()
-    )
+    task = db_session.query(ReviewTask).filter_by(episode_id="ep_qa", stage="transcript_qa").one()
     assert task.status == ReviewStatus.APPROVED.value
     assert (
         Path(qa_settings.outputs_dir) / "ep_qa" / "gate_adjudication_transcript_qa.json"

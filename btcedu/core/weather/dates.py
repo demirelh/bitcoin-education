@@ -61,9 +61,7 @@ _CAPTIONS: dict[str, str] = {
 }
 
 _DATE_TEXT_RE = re.compile(
-    r"\b(\d{1,2})\s+("
-    + "|".join(TR_MONTHS)
-    + r")\b",
+    r"\b(\d{1,2})\s+(" + "|".join(TR_MONTHS) + r")\b",
     re.IGNORECASE,
 )
 

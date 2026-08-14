@@ -72,9 +72,7 @@ def _build_edit_prompt(
     visual_description: str = "",
 ) -> str:
     """Render the Gemini frame edit prompt from the Jinja2 template."""
-    template_path = (
-        Path(__file__).parent.parent / "prompts" / "templates" / "gemini_frame_edit.md"
-    )
+    template_path = Path(__file__).parent.parent / "prompts" / "templates" / "gemini_frame_edit.md"
     if template_path.exists():
         import jinja2
 
@@ -83,7 +81,7 @@ def _build_edit_prompt(
         if raw.startswith("---"):
             end = raw.find("---", 3)
             if end != -1:
-                raw = raw[end + 3:].strip()
+                raw = raw[end + 3 :].strip()
         tmpl = jinja2.Template(raw)
         return tmpl.render(
             chapter_title=chapter_title,
@@ -187,9 +185,7 @@ def edit_frames(
 
     from btcedu.models.chapter_schema import ChapterDocument
 
-    chapters_doc = ChapterDocument.model_validate_json(
-        chapters_path.read_text(encoding="utf-8")
-    )
+    chapters_doc = ChapterDocument.model_validate_json(chapters_path.read_text(encoding="utf-8"))
     chapters_by_id = {ch.chapter_id: ch for ch in chapters_doc.chapters}
 
     # --- idempotency check ---
@@ -199,11 +195,7 @@ def edit_frames(
         settings.gemini_image_model,
     )
 
-    if (
-        not force
-        and provenance_path.exists()
-        and not (images_dir / ".stale").exists()
-    ):
+    if not force and provenance_path.exists() and not (images_dir / ".stale").exists():
         prov = json.loads(provenance_path.read_text(encoding="utf-8"))
         if prov.get("content_hash") == content_hash:
             logger.info("Frame edits current for %s (use --force)", episode_id)
@@ -251,9 +243,11 @@ def edit_frames(
         # final video). Chapters that weren't assigned a specific keyframe
         # fall back to the first available styled frame.
         assigned_ids = {a["chapter_id"] for a in chapter_assignments}
-        styled_frames = sorted(
-            (ep_dir / "frames" / "styled").glob("*.png")
-        ) if (ep_dir / "frames" / "styled").exists() else []
+        styled_frames = (
+            sorted((ep_dir / "frames" / "styled").glob("*.png"))
+            if (ep_dir / "frames" / "styled").exists()
+            else []
+        )
         fallback_frame = str(styled_frames[0]) if styled_frames else None
 
         augmented_assignments = list(chapter_assignments)
@@ -309,12 +303,14 @@ def edit_frames(
                 )
                 result.entries.append(entry)
                 result.chapters_skipped += 1
-                image_entries.append({
-                    "chapter_id": cid,
-                    "source_frame": str(frame_path),
-                    "edited_frame": str(output_path),
-                    "method": "dry_run",
-                })
+                image_entries.append(
+                    {
+                        "chapter_id": cid,
+                        "source_frame": str(frame_path),
+                        "edited_frame": str(output_path),
+                        "method": "dry_run",
+                    }
+                )
                 continue
 
             # Call Gemini
@@ -338,15 +334,17 @@ def edit_frames(
                 result.total_cost_usd += edit_resp.cost_usd
                 result.chapters_edited += 1
 
-                image_entries.append({
-                    "chapter_id": cid,
-                    "source_frame": str(frame_path),
-                    "edited_frame": str(output_path),
-                    "method": f"gemini:{settings.gemini_image_model}",
-                    "cost_usd": edit_resp.cost_usd,
-                    "prompt_tokens": edit_resp.prompt_tokens,
-                    "completion_tokens": edit_resp.completion_tokens,
-                })
+                image_entries.append(
+                    {
+                        "chapter_id": cid,
+                        "source_frame": str(frame_path),
+                        "edited_frame": str(output_path),
+                        "method": f"gemini:{settings.gemini_image_model}",
+                        "cost_usd": edit_resp.cost_usd,
+                        "prompt_tokens": edit_resp.prompt_tokens,
+                        "completion_tokens": edit_resp.completion_tokens,
+                    }
+                )
 
             except Exception as e:
                 logger.warning(
@@ -364,13 +362,15 @@ def edit_frames(
                 )
                 result.entries.append(entry)
                 result.chapters_skipped += 1
-                image_entries.append({
-                    "chapter_id": cid,
-                    "source_frame": str(frame_path),
-                    "edited_frame": str(output_path),
-                    "method": "fallback_copy",
-                    "error": str(e),
-                })
+                image_entries.append(
+                    {
+                        "chapter_id": cid,
+                        "source_frame": str(frame_path),
+                        "edited_frame": str(output_path),
+                        "method": "fallback_copy",
+                        "error": str(e),
+                    }
+                )
 
         # --- write images manifest ---
         # Renderer expects an "images" key with {chapter_id, file_path, asset_type}
@@ -379,9 +379,7 @@ def edit_frames(
         images_for_renderer = [
             {
                 "chapter_id": e["chapter_id"],
-                "file_path": str(
-                    Path(e["edited_frame"]).resolve().relative_to(ep_dir.resolve())
-                )
+                "file_path": str(Path(e["edited_frame"]).resolve().relative_to(ep_dir.resolve()))
                 if Path(e["edited_frame"]).resolve().is_relative_to(ep_dir.resolve())
                 else e["edited_frame"],
                 "asset_type": "photo",
@@ -417,9 +415,7 @@ def edit_frames(
             "total_cost_usd": result.total_cost_usd,
             "created_at": _utcnow().isoformat(),
         }
-        provenance_path.write_text(
-            json.dumps(provenance_data, indent=2), encoding="utf-8"
-        )
+        provenance_path.write_text(json.dumps(provenance_data, indent=2), encoding="utf-8")
 
         # --- update pipeline run ---
         pipeline_run.status = RunStatus.SUCCESS

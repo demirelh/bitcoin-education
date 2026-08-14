@@ -216,15 +216,11 @@ class TestEditFrames:
         assert (images_dir / "ch_02_edited.png").exists()
 
     @patch("btcedu.services.gemini_image_service.requests.post")
-    def test_edit_frames_gemini_failure_falls_back(
-        self, mock_post, framed_episode, db_session
-    ):
+    def test_edit_frames_gemini_failure_falls_back(self, mock_post, framed_episode, db_session):
         ep, settings = framed_episode
 
         # Simulate API failure
-        mock_post.return_value = MagicMock(
-            ok=False, status_code=400, text="Bad Request"
-        )
+        mock_post.return_value = MagicMock(ok=False, status_code=400, text="Bad Request")
 
         result = edit_frames(db_session, ep.episode_id, settings, force=False)
 

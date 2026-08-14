@@ -651,12 +651,12 @@ def _external_weather_text(
 
     day_label = (reference.date_text or "").strip()
     readings = ", ".join(f"{f.label_tr} {f.temperature_max_c}" for f in forecasts)
-    intro = str(
-        config.get("weather_external_intro") or DEFAULT_WEATHER_EXTERNAL_INTRO
-    ).format(source=service.source_label)
-    outro = str(
-        config.get("weather_external_outro") or DEFAULT_WEATHER_EXTERNAL_OUTRO
-    ).format(source=service.source_label)
+    intro = str(config.get("weather_external_intro") or DEFAULT_WEATHER_EXTERNAL_INTRO).format(
+        source=service.source_label
+    )
+    outro = str(config.get("weather_external_outro") or DEFAULT_WEATHER_EXTERNAL_OUTRO).format(
+        source=service.source_label
+    )
     headline = (
         f"{day_label} günü beklenen en yüksek sıcaklıklar"
         if day_label
@@ -750,12 +750,8 @@ def _frame_stories(
     openings = [str(v) for v in (config.get("openings") or DEFAULT_OPENINGS)]
     closings = [str(v) for v in (config.get("closings") or DEFAULT_CLOSINGS)]
     handovers = [str(v) for v in (config.get("weather_handovers") or DEFAULT_WEATHER_HANDOVERS)]
-    headline_intros = [
-        str(v) for v in (config.get("headline_intros") or DEFAULT_HEADLINE_INTROS)
-    ]
-    headline_outros = [
-        str(v) for v in (config.get("headline_outros") or DEFAULT_HEADLINE_OUTROS)
-    ]
+    headline_intros = [str(v) for v in (config.get("headline_intros") or DEFAULT_HEADLINE_INTROS)]
+    headline_outros = [str(v) for v in (config.get("headline_outros") or DEFAULT_HEADLINE_OUTROS)]
 
     # Spoken text uses the pronounceable brand and its declined form; the screen
     # keeps the display name.

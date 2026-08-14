@@ -18,9 +18,7 @@ class AgentRun(Base):
     __tablename__ = "agent_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    started_at: Mapped[str] = mapped_column(
-        String(30), default=lambda: _utcnow().isoformat()
-    )
+    started_at: Mapped[str] = mapped_column(String(30), default=lambda: _utcnow().isoformat())
     finished_at: Mapped[str | None] = mapped_column(String(30), nullable=True)
     status: Mapped[str] = mapped_column(String(20), default="running")  # running|success|failed
     findings_count: Mapped[int] = mapped_column(Integer, default=0)
@@ -36,9 +34,7 @@ class AgentAction(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id: Mapped[int] = mapped_column(Integer, index=True)
-    created_at: Mapped[str] = mapped_column(
-        String(30), default=lambda: _utcnow().isoformat()
-    )
+    created_at: Mapped[str] = mapped_column(String(30), default=lambda: _utcnow().isoformat())
     action_type: Mapped[str] = mapped_column(String(20))  # created|skipped|failed
     title: Mapped[str] = mapped_column(String(200))
     body_hash: Mapped[str] = mapped_column(String(64))  # SHA-256 for dedup

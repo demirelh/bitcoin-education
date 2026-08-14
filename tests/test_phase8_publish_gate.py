@@ -411,8 +411,7 @@ def test_yellow_gate_narration_is_covered_by_the_artifact_bound_review(db_sessio
     approve_review(db_session, task.id)
 
     checks = {
-        c.name: c
-        for c in _run_all_safety_checks(db_session, episode, settings, "t", "d", ["tag"])
+        c.name: c for c in _run_all_safety_checks(db_session, episode, settings, "t", "d", ["tag"])
     }
     assert checks["qa_gate"].passed
     assert checks["narration_current"].passed
@@ -429,7 +428,6 @@ def test_yellow_gate_without_qa_review_still_blocks_publish(db_session, settings
     gate_path.write_text(json.dumps(gate), encoding="utf-8")
 
     checks = {
-        c.name: c
-        for c in _run_all_safety_checks(db_session, episode, settings, "t", "d", ["tag"])
+        c.name: c for c in _run_all_safety_checks(db_session, episode, settings, "t", "d", ["tag"])
     }
     assert not checks["narration_current"].passed

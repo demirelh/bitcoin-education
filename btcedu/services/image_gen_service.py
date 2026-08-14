@@ -19,8 +19,8 @@ DALLE3_COST_HD_1024 = 0.080  # $0.080 per image (1024x1024 HD)
 DALLE3_COST_HD_1792 = 0.120  # $0.120 per image (1792x1024 or 1024x1792 HD)
 
 # DALL-E 2 edit pricing (as of 2025)
-DALLE2_EDIT_COST_256 = 0.016   # $0.016 per image (256x256)
-DALLE2_EDIT_COST_512 = 0.018   # $0.018 per image (512x512)
+DALLE2_EDIT_COST_256 = 0.016  # $0.016 per image (256x256)
+DALLE2_EDIT_COST_512 = 0.018  # $0.018 per image (512x512)
 DALLE2_EDIT_COST_1024 = 0.020  # $0.020 per image (1024x1024)
 
 
@@ -159,9 +159,7 @@ class DallE3ImageService:
 
         cost = self._compute_edit_cost(request.size)
 
-        logger.info(
-            f"DALL-E 2 edited image: size={request.size}, cost=${cost:.3f}"
-        )
+        logger.info(f"DALL-E 2 edited image: size={request.size}, cost=${cost:.3f}")
 
         return ImageGenResponse(
             image_url=image_url,

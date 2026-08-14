@@ -2087,9 +2087,9 @@ _GATE_ADJUDICATION_SYSTEM_PROMPT = (
     "invented fact, or a missing key story. Dismiss deterministic false positives, benign "
     "rephrasings, and pure style or fluency nits. Set verdict to 'approve' when the "
     "narration is safe to publish as-is, or 'hold' when a human must intervene. "
-    "Return JSON only: {\"verdict\": \"approve\"|\"hold\", \"reason\": string, "
-    "\"findings\": [{\"finding_id\": string, \"decision\": \"uphold\"|\"dismiss\", "
-    "\"reason\": string}]}."
+    'Return JSON only: {"verdict": "approve"|"hold", "reason": string, '
+    '"findings": [{"finding_id": string, "decision": "uphold"|"dismiss", '
+    '"reason": string}]}.'
 )
 
 

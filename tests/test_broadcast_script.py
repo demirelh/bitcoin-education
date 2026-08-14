@@ -1713,9 +1713,7 @@ class TestWeatherWithoutAForecast:
         from btcedu.core.weather.models import CityForecast
 
         return [
-            CityForecast(
-                city_id=cid, label_tr=label, date_iso=day, temperature_max_c=temp
-            )
+            CityForecast(city_id=cid, label_tr=label, date_iso=day, temperature_max_c=temp)
             for cid, label, temp in [
                 ("hamburg", "Hamburg", 22),
                 ("munich", "Münih", 27),
@@ -1791,9 +1789,8 @@ class TestWeatherWithoutAForecast:
         framed = self._frame(monkeypatch, self.WITHOUT_FORECAST, self._forecasts("2026-08-08"))
         weather = next(st for st in framed if st.is_weather)
         purposes = [s.purpose for s in weather.speaker_sequence]
-        assert (
-            purposes.index(SegmentPurpose.WEATHER_HANDOVER)
-            < purposes.index(SegmentPurpose.WEATHER_EXTERNAL)
+        assert purposes.index(SegmentPurpose.WEATHER_HANDOVER) < purposes.index(
+            SegmentPurpose.WEATHER_EXTERNAL
         )
         assert all(s.role == SpeakerRole.ANCHOR for s in weather.speaker_sequence)
 
@@ -1806,8 +1803,6 @@ class TestWeatherWithoutAForecast:
             rankings=[],
             show_name=BRANDING["show_name"],
         )
-        result = run_script_qa(
-            script, {"s07": self.WITHOUT_FORECAST}, ["s07"], ScriptQAConfig()
-        )
+        result = run_script_qa(script, {"s07": self.WITHOUT_FORECAST}, ["s07"], ScriptQAConfig())
         blocking = [f for f in result.findings if f.severity == "error"]
         assert not [f for f in blocking if "s07" in str(f.location or "")]

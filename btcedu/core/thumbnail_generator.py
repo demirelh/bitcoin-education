@@ -110,15 +110,11 @@ def generate_thumbnails(
     from btcedu.services.image_gen_service import ImageGenRequest
     from btcedu.services.image_provider_factory import get_image_service
 
-    episode = (
-        session.query(Episode).filter(Episode.episode_id == episode_id).first()
-    )
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
-    content_profile = (
-        getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
-    )
+    content_profile = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
 
     outputs_dir = Path(settings.outputs_dir) / episode_id
     thumb_dir = outputs_dir / "thumbnails"
@@ -213,7 +209,9 @@ def generate_thumbnails(
 
     logger.info(
         "Generated %d thumbnail candidates for %s (total cost $%.3f)",
-        len(candidates), episode_id, total_cost,
+        len(candidates),
+        episode_id,
+        total_cost,
     )
 
     return ThumbnailResult(

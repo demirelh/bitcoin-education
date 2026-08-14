@@ -172,9 +172,7 @@ class GeminiImageService:
 
                 if not resp.ok:
                     error_detail = resp.text[:500]
-                    raise RuntimeError(
-                        f"Gemini API error {resp.status_code}: {error_detail}"
-                    )
+                    raise RuntimeError(f"Gemini API error {resp.status_code}: {error_detail}")
 
                 return resp.json()
 
@@ -193,9 +191,7 @@ class GeminiImageService:
                     logger.warning("Gemini connection error, retrying in %ds", wait)
                     time.sleep(wait)
 
-        raise RuntimeError(
-            f"Gemini API failed after {self.max_retries} retries: {last_error}"
-        )
+        raise RuntimeError(f"Gemini API failed after {self.max_retries} retries: {last_error}")
 
     def _extract_image(self, response_data: dict) -> bytes:
         """Extract image bytes from Gemini response."""
@@ -213,9 +209,7 @@ class GeminiImageService:
         # No image returned — Gemini may have refused or returned text only
         text_parts = [p.get("text", "") for p in parts if "text" in p]
         text_summary = " ".join(text_parts)[:300]
-        raise RuntimeError(
-            f"Gemini did not return an image. Response text: {text_summary}"
-        )
+        raise RuntimeError(f"Gemini did not return an image. Response text: {text_summary}")
 
     @staticmethod
     def _detect_mime(path: Path) -> str:

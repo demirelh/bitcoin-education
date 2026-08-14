@@ -98,7 +98,9 @@ def run_once(
         run.status = "success"
         logger.info(
             "✅ Done: %d created, %d skipped, %d failed",
-            result.created, result.skipped, result.failed,
+            result.created,
+            result.skipped,
+            result.failed,
         )
 
     except Exception as e:

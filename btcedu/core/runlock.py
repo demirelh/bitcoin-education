@@ -69,9 +69,7 @@ def pipeline_lock(settings, *, blocking: bool = False) -> Iterator[None]:
         try:
             fcntl.flock(fd, flags)
         except OSError as exc:
-            raise PipelineBusyError(
-                "Another pipeline run is already active (lock held)."
-            ) from exc
+            raise PipelineBusyError("Another pipeline run is already active (lock held).") from exc
         try:
             os.ftruncate(fd, 0)
             os.write(fd, str(os.getpid()).encode())

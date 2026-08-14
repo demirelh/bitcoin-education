@@ -250,9 +250,7 @@ def test_job_package_skips_absolute_asset_paths(
 def test_job_package_carries_the_hash_the_pi_will_check(db_session, episode, episode_dir):
     """The runner compares against this; a mismatch means a wasted render."""
     settings = Settings(outputs_dir=str(episode_dir.parent))
-    with patch(
-        "btcedu.core.renderer._current_render_content_hash", return_value="deadbeef"
-    ):
+    with patch("btcedu.core.renderer._current_render_content_hash", return_value="deadbeef"):
         archive = build_job_package(db_session, episode.episode_id, settings, episode_dir.parent)
     with tarfile.open(archive) as tar:
         job = json.loads(tar.extractfile("job.json").read().decode())
@@ -312,9 +310,7 @@ def _make_weather_result_archive(tmp_path: Path) -> Path:
     (staging / "images" / "ch07_weather.mp4.provenance.json").write_text(
         '{"method": "ffmpeg_scene_video"}', encoding="utf-8"
     )
-    (staging / "images" / "ch07_weather_scenes.json").write_text(
-        '{"scenes": []}', encoding="utf-8"
-    )
+    (staging / "images" / "ch07_weather_scenes.json").write_text('{"scenes": []}', encoding="utf-8")
     (staging / "images" / "ch07_weather.png").write_bytes(b"runner-card")
 
     archive = tmp_path / "weather-result.tar.gz"

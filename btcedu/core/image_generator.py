@@ -805,9 +805,7 @@ def generate_images(
                 if chapter.chapter_id in regenerated:
                     merged.extend(regenerated[chapter.chapter_id])
                 elif chapter.chapter_id in existing_entries:
-                    merged.extend(
-                        ImageEntry(**raw) for raw in existing_entries[chapter.chapter_id]
-                    )
+                    merged.extend(ImageEntry(**raw) for raw in existing_entries[chapter.chapter_id])
             image_entries = merged
 
         # Write manifest
@@ -1166,8 +1164,7 @@ _SHOT_LADDER: tuple[str, ...] = (
     "story, seen from a low angle.",
     "Framing: a top-down shot of documents, papers or equipment relevant to the "
     "story on a surface.",
-    "Framing: a high aerial view of the area, showing the wider infrastructure "
-    "and its context.",
+    "Framing: a high aerial view of the area, showing the wider infrastructure and its context.",
     "Framing: a ground-level shot of the infrastructure itself — roads, rails, "
     "machinery, cables or terminals — without any overview.",
     "Framing: a quiet closing image of the scene in the same location, taken "
@@ -1225,9 +1222,7 @@ def _generate_beat_prompt(
 
     user_message = user_template.replace("{{ chapter_title }}", chapter.title)
     user_message = user_message.replace("{{ visual_type }}", visual.type)
-    description = " ".join(
-        part for part in (visual.description, visual.image_prompt, hint) if part
-    )
+    description = " ".join(part for part in (visual.description, visual.image_prompt, hint) if part)
     user_message = user_message.replace("{{ visual_description }}", description.strip())
     user_message = user_message.replace("{{ narration_context }}", narration_context)
 
@@ -1555,9 +1550,7 @@ def _attach_city_forecasts(weather_data, weather_config: dict | None) -> None:
     from btcedu.services.meteo_service import OpenMeteoService
 
     selected_ids = config.get("cities")
-    cities = tuple(
-        city for city in MAP_CITIES if not selected_ids or city.city_id in selected_ids
-    )
+    cities = tuple(city for city in MAP_CITIES if not selected_ids or city.city_id in selected_ids)
     if not cities:
         return
 

@@ -1252,9 +1252,7 @@ def _run_stage(
             where = "local"
             if mode == "github":
                 try:
-                    result = render_video_remote(
-                        session, episode.episode_id, settings, force=force
-                    )
+                    result = render_video_remote(session, episode.episode_id, settings, force=force)
                     where = "github"
                 except Exception as exc:
                     if not getattr(settings, "github_render_fallback_local", True):
@@ -1333,9 +1331,7 @@ def _run_stage(
                         f"weather video checks blocked publish: "
                         f"{len(_blocking)} critical finding(s)"
                     )
-                    _final_review_error = "[validation] " + "; ".join(
-                        f.message for f in _blocking
-                    )
+                    _final_review_error = "[validation] " + "; ".join(f.message for f in _blocking)
                     logger.warning(
                         "Final review blocked for %s: %s",
                         episode.episode_id,

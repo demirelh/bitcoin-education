@@ -24,9 +24,7 @@ def migrate_database():
     try:
         # Check if channels table exists
         result = session.execute(
-            text(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='channels'"
-            )
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='channels'")
         )
         if not result.fetchone():
             logger.info("Creating channels table...")
@@ -57,9 +55,7 @@ def migrate_database():
 
         if "channel_id" not in columns:
             logger.info("Adding channel_id column to episodes table...")
-            session.execute(
-                text("ALTER TABLE episodes ADD COLUMN channel_id VARCHAR(64)")
-            )
+            session.execute(text("ALTER TABLE episodes ADD COLUMN channel_id VARCHAR(64)"))
             session.execute(text("CREATE INDEX idx_episodes_channel_id ON episodes(channel_id)"))
             session.commit()
             logger.info("✓ Added channel_id column to episodes")

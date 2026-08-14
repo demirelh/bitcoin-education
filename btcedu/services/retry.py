@@ -63,8 +63,7 @@ def retry_on_transient(
                         if jitter:
                             delay += delay * random.uniform(0, 0.25)
                         logger.warning(
-                            "%s: transient error (attempt %d/%d, %s): %s "
-                            "— retrying in %.1fs",
+                            "%s: transient error (attempt %d/%d, %s): %s — retrying in %.1fs",
                             func.__qualname__,
                             attempt + 1,
                             max_retries + 1,

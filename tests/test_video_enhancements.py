@@ -1,7 +1,5 @@
 """Tests for video quality enhancements: Ken Burns, lower thirds, ticker, intro/outro, color."""
 
-
-
 from btcedu.services.ffmpeg_service import (
     KEN_BURNS_PATTERNS,
     OverlaySpec,
@@ -19,6 +17,7 @@ from btcedu.services.ffmpeg_service import (
 # ---------------------------------------------------------------------------
 # Ken Burns Effect
 # ---------------------------------------------------------------------------
+
 
 class TestKenBurns:
     def test_build_kenburns_filter_zoom_in(self):
@@ -111,15 +110,14 @@ class TestKenBurns:
             dry_run=True,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "zoompan=" not in fc
 
 
 # ---------------------------------------------------------------------------
 # Animated Lower Thirds
 # ---------------------------------------------------------------------------
+
 
 class TestAnimatedLowerThirds:
     def test_build_animated_lower_third_basic(self):
@@ -182,9 +180,7 @@ class TestAnimatedLowerThirds:
             start=0.0,
             end=3.0,
         )
-        filters = _build_animated_lower_third(
-            overlay, "/tmp/font.ttf", accent_color="#004B87"
-        )
+        filters = _build_animated_lower_third(overlay, "/tmp/font.ttf", accent_color="#004B87")
         assert any("#004B87" in f for f in filters)
 
     def test_create_segment_animated_lower_thirds_dry_run(self, tmp_path):
@@ -216,9 +212,7 @@ class TestAnimatedLowerThirds:
             lower_third_accent_color="#004B87",
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "drawbox=" in fc
 
     def test_create_segment_static_lower_thirds_when_disabled(self, tmp_path):
@@ -248,9 +242,7 @@ class TestAnimatedLowerThirds:
             animated_lower_thirds=False,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         # Standard drawtext, no drawbox for gradient
         assert "drawtext=" in fc
 
@@ -258,6 +250,7 @@ class TestAnimatedLowerThirds:
 # ---------------------------------------------------------------------------
 # News Ticker
 # ---------------------------------------------------------------------------
+
 
 class TestNewsTicker:
     def test_build_ticker_filters(self):
@@ -292,9 +285,7 @@ class TestNewsTicker:
             ticker_speed=80,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "mod(t*" in fc
 
     def test_no_ticker_when_disabled(self, tmp_path):
@@ -313,15 +304,14 @@ class TestNewsTicker:
             # ticker_text not set (None)
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "mod(t*" not in fc
 
 
 # ---------------------------------------------------------------------------
 # Intro/Outro Segments
 # ---------------------------------------------------------------------------
+
 
 class TestIntroOutro:
     def test_create_intro_segment_dry_run(self, tmp_path):
@@ -367,9 +357,7 @@ class TestIntroOutro:
             dry_run=True,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "Bitcoin Haberleri" in fc
         assert "afade=t=out" in fc
         assert "[a]" in fc
@@ -383,9 +371,7 @@ class TestIntroOutro:
             dry_run=True,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         # Staggered appearance for eyebrow, channel, slogan, title, and date.
         assert "0.3" in fc
         assert "0.5" in fc
@@ -403,9 +389,7 @@ class TestIntroOutro:
             dry_run=True,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "ALMANYA24" in fc
         assert "nabzı burada atıyor" in fc
         assert "GÜNÜN HABERLERİ" in fc
@@ -423,9 +407,7 @@ class TestIntroOutro:
             dry_run=True,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "Berlin" in fc
         assert "02 / 07" in fc
         assert "ALMANYA24" in fc
@@ -452,9 +434,7 @@ class TestIntroOutro:
             dry_run=True,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "Test Source" in fc
 
     def test_outro_contains_closing_text(self, tmp_path):
@@ -464,9 +444,7 @@ class TestIntroOutro:
             dry_run=True,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "sonraki" in fc  # "Bir sonraki bölümde görüşürüz"
 
     def test_intro_with_custom_colors(self, tmp_path):
@@ -482,15 +460,14 @@ class TestIntroOutro:
 
         cmd_str = " ".join(result.ffmpeg_command)
         assert "#112233" in cmd_str
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "#F7931A" in fc
 
 
 # ---------------------------------------------------------------------------
 # Color Correction
 # ---------------------------------------------------------------------------
+
 
 class TestColorCorrection:
     def test_build_color_correction_filter(self):
@@ -519,9 +496,7 @@ class TestColorCorrection:
             color_blue_shift=0.06,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "eq=saturation=0.8" in fc
         assert "colorbalance=" in fc
 
@@ -540,9 +515,7 @@ class TestColorCorrection:
             dry_run=True,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "eq=saturation" not in fc
         assert "colorbalance" not in fc
 
@@ -562,9 +535,7 @@ class TestColorCorrection:
             color_correction=True,
         )
 
-        fc = result.ffmpeg_command[
-            result.ffmpeg_command.index("-filter_complex") + 1
-        ]
+        fc = result.ffmpeg_command[result.ffmpeg_command.index("-filter_complex") + 1]
         assert "eq=saturation" in fc
         assert "colorbalance=" in fc
 
@@ -572,6 +543,7 @@ class TestColorCorrection:
 # ---------------------------------------------------------------------------
 # Combined features
 # ---------------------------------------------------------------------------
+
 
 class TestCombinedFeatures:
     def test_all_enhancements_together(self, tmp_path):
@@ -655,6 +627,7 @@ class TestCombinedFeatures:
 # Config integration
 # ---------------------------------------------------------------------------
 
+
 class TestConfigSettings:
     def test_new_settings_have_defaults(self):
         from btcedu.config import Settings
@@ -675,6 +648,7 @@ class TestConfigSettings:
 # ---------------------------------------------------------------------------
 # Content hash includes enhancements
 # ---------------------------------------------------------------------------
+
 
 class TestContentHash:
     def test_hash_changes_with_enhancements(self):
@@ -715,16 +689,18 @@ class TestContentHash:
         )
         image_manifest = {"images": [{"chapter_id": "ch01", "file_path": "img.png"}]}
         tts_manifest = {
-            "segments": [
-                {"chapter_id": "ch01", "file_path": "audio.mp3", "duration_seconds": 5.0}
-            ]
+            "segments": [{"chapter_id": "ch01", "file_path": "audio.mp3", "duration_seconds": 5.0}]
         }
 
         hash_without = _compute_render_content_hash(
-            chapters_doc, image_manifest, tts_manifest,
+            chapters_doc,
+            image_manifest,
+            tts_manifest,
         )
         hash_with = _compute_render_content_hash(
-            chapters_doc, image_manifest, tts_manifest,
+            chapters_doc,
+            image_manifest,
+            tts_manifest,
             enhancement_settings={"ken_burns": True},
         )
 

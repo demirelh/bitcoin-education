@@ -26,6 +26,7 @@ class ElevenLabsAPIError(RuntimeError):
         code_suffix = f" ({error_code})" if error_code else ""
         super().__init__(f"ElevenLabs API error {status_code}{code_suffix}: {detail}")
 
+
 # Maximum characters per API request
 MAX_CHARS_PER_REQUEST = 5000
 
@@ -45,6 +46,7 @@ def _is_quota_exhausted(error: ElevenLabsAPIError) -> bool:
     if str(getattr(error, "error_code", "") or "").lower() == "quota_exceeded":
         return True
     return bool(_QUOTA_EXHAUSTED.search(str(getattr(error, "detail", "") or "")))
+
 
 # ElevenLabs API base URL
 API_BASE = "https://api.elevenlabs.io/v1"

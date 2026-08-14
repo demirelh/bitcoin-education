@@ -96,9 +96,7 @@ class TestDeadLetterEntry:
         db_session.commit()
 
         pending = (
-            db_session.query(DeadLetterEntry)
-            .filter(DeadLetterEntry.resolved_at.is_(None))
-            .all()
+            db_session.query(DeadLetterEntry).filter(DeadLetterEntry.resolved_at.is_(None)).all()
         )
         assert len(pending) == 2
 
@@ -131,8 +129,6 @@ class TestDeadLetterEntry:
         db_session.commit()
 
         entries = (
-            db_session.query(DeadLetterEntry)
-            .filter(DeadLetterEntry.episode_id == "ep001")
-            .all()
+            db_session.query(DeadLetterEntry).filter(DeadLetterEntry.episode_id == "ep001").all()
         )
         assert len(entries) == 3

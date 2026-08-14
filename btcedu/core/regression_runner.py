@@ -139,8 +139,7 @@ def _regression_stages(settings: Settings, episodes: list[Episode], from_stage: 
     plan = plan[: plan.index("chapterize") + 1]
     if from_stage not in plan:
         raise ValueError(
-            f"Unknown or unsupported start stage {from_stage!r}; choose one of: "
-            + ", ".join(plan)
+            f"Unknown or unsupported start stage {from_stage!r}; choose one of: " + ", ".join(plan)
         )
     return plan[plan.index(from_stage) :]
 

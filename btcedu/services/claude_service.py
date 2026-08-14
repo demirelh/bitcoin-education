@@ -415,16 +415,8 @@ def _parse_copilot_jsonl(stdout: str) -> tuple[str, int, int, list[str]]:
                 text_parts = [content]
         elif etype in {"assistant.turn_complete", "assistant.usage"}:
             usage = data.get("usage") or data
-            input_tokens = (
-                usage.get("inputTokens")
-                or usage.get("input_tokens")
-                or input_tokens
-            )
-            output_tokens = (
-                usage.get("outputTokens")
-                or usage.get("output_tokens")
-                or output_tokens
-            )
+            input_tokens = usage.get("inputTokens") or usage.get("input_tokens") or input_tokens
+            output_tokens = usage.get("outputTokens") or usage.get("output_tokens") or output_tokens
 
     return "".join(text_parts).strip(), input_tokens, output_tokens, event_types
 

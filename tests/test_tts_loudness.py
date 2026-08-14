@@ -25,9 +25,7 @@ from btcedu.core.tts import (
     _parse_loudnorm_json,
 )
 
-needs_ffmpeg = pytest.mark.skipif(
-    shutil.which("ffmpeg") is None, reason="ffmpeg is not installed"
-)
+needs_ffmpeg = pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg is not installed")
 
 
 def _speech_like(path: Path, *, volume: str, seconds: float = 4.0) -> Path:
@@ -39,10 +37,25 @@ def _speech_like(path: Path, *, volume: str, seconds: float = 4.0) -> Path:
     """
     subprocess.run(
         [
-            "ffmpeg", "-hide_banner", "-v", "error", "-y",
-            "-f", "lavfi", "-i", f"sine=frequency=220:duration={seconds}",
-            "-af", f"volume={volume},atempo=1.0",
-            "-ar", "44100", "-ac", "1", "-c:a", "libmp3lame", "-q:a", "2",
+            "ffmpeg",
+            "-hide_banner",
+            "-v",
+            "error",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+            f"sine=frequency=220:duration={seconds}",
+            "-af",
+            f"volume={volume},atempo=1.0",
+            "-ar",
+            "44100",
+            "-ac",
+            "1",
+            "-c:a",
+            "libmp3lame",
+            "-q:a",
+            "2",
             str(path),
         ],
         check=True,
@@ -53,18 +66,31 @@ def _speech_like(path: Path, *, volume: str, seconds: float = 4.0) -> Path:
 
 def _duration(path: Path) -> float:
     result = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True, check=True,
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", str(path)],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return float(result.stdout.strip())
 
 
 def _sample_rate(path: Path) -> int:
     result = subprocess.run(
-        ["ffprobe", "-v", "error", "-select_streams", "a:0",
-         "-show_entries", "stream=sample_rate", "-of", "csv=p=0", str(path)],
-        capture_output=True, text=True, check=True,
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "a:0",
+            "-show_entries",
+            "stream=sample_rate",
+            "-of",
+            "csv=p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
     )
     return int(result.stdout.strip())
 
@@ -148,10 +174,24 @@ class TestNothingIsLostOnFailure:
         """A silent take has no integrated loudness to correct towards; trying
         would multiply the noise instead of the speech."""
         subprocess.run(
-            ["ffmpeg", "-hide_banner", "-v", "error", "-y",
-             "-f", "lavfi", "-i", "anullsrc=r=44100:cl=mono:d=3",
-             "-c:a", "libmp3lame", "-q:a", "2", str(tmp_path / "silence.mp3")],
-            check=True, capture_output=True,
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=44100:cl=mono:d=3",
+                "-c:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                str(tmp_path / "silence.mp3"),
+            ],
+            check=True,
+            capture_output=True,
         )
         path = tmp_path / "silence.mp3"
         before = path.read_bytes()
@@ -244,9 +284,7 @@ class TestLevellingComesBeforeTheNoiseCheck:
 
         assert order == ["level", "noise"]
 
-    def test_a_take_kept_after_failing_the_check_is_still_levelled(
-        self, tmp_path, monkeypatch
-    ):
+    def test_a_take_kept_after_failing_the_check_is_still_levelled(self, tmp_path, monkeypatch):
         """The fallback rewrites the original bytes over the levelled file, so
         without a second pass the one take nobody chose would also be the only
         one left at the wrong level."""

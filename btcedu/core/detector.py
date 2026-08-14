@@ -257,9 +257,7 @@ def detect_episodes(
             ]
             superseded = before - len(episodes)
             if superseded:
-                logger.info(
-                    "Skipped %d feed episode(s) already recorded locally", superseded
-                )
+                logger.info("Skipped %d feed episode(s) already recorded locally", superseded)
 
     result = DetectResult(found=len(episodes))
 
@@ -473,14 +471,10 @@ def detect_local_recordings(
         feed_days = _episode_days_by_source(session, local=False, title_filter=title_filter)
         if feed_days:
             before = len(episodes)
-            episodes = [
-                ep for ep in episodes if _feed_broadcast_day(ep) not in feed_days
-            ]
+            episodes = [ep for ep in episodes if _feed_broadcast_day(ep) not in feed_days]
             skipped = before - len(episodes)
             if skipped:
-                logger.info(
-                    "Skipped %d local recording(s) already ingested from the feed", skipped
-                )
+                logger.info("Skipped %d local recording(s) already ingested from the feed", skipped)
 
     resolved_channel_id = _resolve_channel_id(session, settings, channel_id)
     existing_ids = {row[0] for row in session.query(Episode.episode_id).all()}
@@ -817,9 +811,7 @@ def _profile_requires_video(episode: Episode, settings: Settings) -> bool:
     try:
         from btcedu.profiles import get_registry
 
-        profile = get_registry(settings).get(
-            getattr(episode, "content_profile", "bitcoin_podcast")
-        )
+        profile = get_registry(settings).get(getattr(episode, "content_profile", "bitcoin_podcast"))
         imagegen_cfg = profile.stage_config.get("imagegen", {}) or {}
         return imagegen_cfg.get("provider") == "gemini_frame_edit"
     except Exception:
@@ -849,9 +841,7 @@ def _try_download_video(url: str, output_dir: str, settings: Settings) -> None:
             encoding="utf-8",
         )
     except Exception as exc:
-        logger.warning(
-            "Video download failed for %s: %s (writing failure marker)", url, exc
-        )
+        logger.warning("Video download failed for %s: %s (writing failure marker)", url, exc)
         # Persist a marker so downstream stages can detect the missing video
         # instead of silently producing empty manifests.
         try:

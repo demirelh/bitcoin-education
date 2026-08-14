@@ -55,10 +55,12 @@ class DIDService:
         self.api_key = api_key
         self.output_dir = Path(output_dir)
         self.session = requests.Session()
-        self.session.headers.update({
-            "Authorization": f"Basic {api_key}",
-            "Accept": "application/json",
-        })
+        self.session.headers.update(
+            {
+                "Authorization": f"Basic {api_key}",
+                "Accept": "application/json",
+            }
+        )
 
     def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse:
         """Generate a talking-head video via D-ID Talks API.

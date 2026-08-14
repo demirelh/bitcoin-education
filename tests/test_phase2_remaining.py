@@ -110,9 +110,7 @@ class TestDallE3EditImage:
 
         assert result.image_url == "https://example.com/edited.png"
         call_kwargs = mock_client.images.edit.call_args
-        assert "mask" in call_kwargs.kwargs or (
-            call_kwargs[1] and "mask" in call_kwargs[1]
-        )
+        assert "mask" in call_kwargs.kwargs or (call_kwargs[1] and "mask" in call_kwargs[1])
 
     def test_edit_cost_computation(self):
         service = DallE3ImageService(api_key="test-key")

@@ -251,14 +251,12 @@ def _build_city_map_svg(map_svg: str, city_forecasts: list[CityForecast]) -> str
             temps.append(f'<tspan fill="#fbbf24">{forecast.temperature_max_c}°</tspan>')
         if forecast.temperature_min_c is not None:
             separator = " / " if temps else ""
-            temps.append(
-                f'<tspan fill="#93c5fd">{separator}{forecast.temperature_min_c}°</tspan>'
-            )
+            temps.append(f'<tspan fill="#93c5fd">{separator}{forecast.temperature_min_c}°</tspan>')
         if temps:
             parts.append(
                 f'<text x="{text_x}" y="{round(forecast.map_y + 16, 1)}" '
                 f'text-anchor="{forecast.anchor}" font-size="18" font-weight="700">'
-                f'{"".join(temps)}</text>'
+                f"{''.join(temps)}</text>"
             )
         parts.append("</g>")
     parts.append("</g>")

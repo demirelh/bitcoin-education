@@ -151,7 +151,7 @@ def strip_broadcast_transitions(text: str) -> str:
     m = _WEATHER_OPENER_RE.match(result)
     if m:
         date_part = m.group(1).strip()
-        result = f"{date_part} için hava tahmini şöyle: " + result[m.end():]
+        result = f"{date_part} için hava tahmini şöyle: " + result[m.end() :]
 
     result = _SPORT_TRANSITION_RE.sub("", result)
     result = _PROGRAM_HINT_RE.sub("", result)

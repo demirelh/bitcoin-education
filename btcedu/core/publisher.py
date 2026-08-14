@@ -339,9 +339,7 @@ def _check_no_critical_findings(settings: Settings, episode: Episode) -> SafetyC
     return SafetyCheck("no_critical_findings", True, "No unresolved critical findings")
 
 
-def _check_narration_current(
-    session: Session, settings: Settings, episode: Episode
-) -> SafetyCheck:
+def _check_narration_current(session: Session, settings: Settings, episode: Episode) -> SafetyCheck:
     """Check 7: The approved narration hash still matches the current narration."""
     from btcedu.core.qa_reviewer import load_quality_gate, narration_sha256
 
@@ -699,10 +697,7 @@ def _timeline_fingerprint(timeline: list[dict]) -> str:
     if not timeline:
         return ""
     payload = json.dumps(
-        [
-            [e.get("kind"), e.get("chapter_id"), e.get("start_seconds")]
-            for e in timeline
-        ],
+        [[e.get("kind"), e.get("chapter_id"), e.get("start_seconds")] for e in timeline],
         ensure_ascii=False,
         sort_keys=True,
     )
@@ -729,9 +724,7 @@ def generate_metadata_suggestion(
         if existing is not None:
             # A re-render moves every chapter mark. Refresh the proposal when
             # it no longer matches the video, but never clobber human edits.
-            current_fingerprint = _timeline_fingerprint(
-                _load_render_timeline(episode_id, settings)
-            )
+            current_fingerprint = _timeline_fingerprint(_load_render_timeline(episode_id, settings))
             is_stale = (
                 existing.get("source") == "auto"
                 and current_fingerprint != ""
@@ -769,9 +762,7 @@ def generate_metadata_suggestion(
         "privacy_status": yt_config.get("default_privacy", "unlisted"),
         "default_language": yt_config.get("default_language", "tr"),
         "generated_at": _utcnow().isoformat(),
-        "render_timeline_hash": _timeline_fingerprint(
-            _load_render_timeline(episode_id, settings)
-        ),
+        "render_timeline_hash": _timeline_fingerprint(_load_render_timeline(episode_id, settings)),
         "source": "auto",
     }
 

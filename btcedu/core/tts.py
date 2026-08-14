@@ -911,8 +911,20 @@ def _measure_loudness(path: Path) -> tuple[float, float] | None:
             # Note the log level: ffmpeg prints the ebur128 summary at info,
             # so quietening it the way the rest of this module does would
             # throw away the very numbers being asked for.
-            ["ffmpeg", "-hide_banner", "-nostats", "-v", "info", "-i", str(path),
-             "-af", "ebur128=peak=true", "-f", "null", "-"],
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-nostats",
+                "-v",
+                "info",
+                "-i",
+                str(path),
+                "-af",
+                "ebur128=peak=true",
+                "-f",
+                "null",
+                "-",
+            ],
             capture_output=True,
             text=True,
             timeout=300,
@@ -964,36 +976,64 @@ def _normalize_loudness(
     if abs(target_lufs - integrated) < _MIN_GAIN_DB:
         return None
 
-    common = (
-        f"I={target_lufs}:TP={peak_ceiling_dbfs}:LRA={_LOUDNESS_RANGE_LU}"
-    )
+    common = f"I={target_lufs}:TP={peak_ceiling_dbfs}:LRA={_LOUDNESS_RANGE_LU}"
     # The extension has to stay .mp3: ffmpeg picks the output format from it,
     # and anything else makes the encode fail rather than the level change.
     levelled = path.with_name(path.name + ".levelled.mp3")
     try:
         analysis = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-nostats", "-v", "info", "-i", str(path),
-             "-af", f"loudnorm={common}:print_format=json", "-f", "null", "-"],
-            capture_output=True, text=True, timeout=300,
+            [
+                "ffmpeg",
+                "-hide_banner",
+                "-nostats",
+                "-v",
+                "info",
+                "-i",
+                str(path),
+                "-af",
+                f"loudnorm={common}:print_format=json",
+                "-f",
+                "null",
+                "-",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         stats = _parse_loudnorm_json(analysis.stderr or "")
         if stats is None:
             return None
 
         result = subprocess.run(
-            ["ffmpeg", "-v", "error", "-y", "-i", str(path),
-             "-af",
-             f"loudnorm={common}:linear=true"
-             f":measured_I={stats['input_i']}"
-             f":measured_TP={stats['input_tp']}"
-             f":measured_LRA={stats['input_lra']}"
-             f":measured_thresh={stats['input_thresh']}"
-             f":offset={stats['target_offset']}",
-             # loudnorm works at 192 kHz internally; without this the take
-             # would come back resampled and no longer match its siblings.
-             "-ar", str(_TTS_SAMPLE_RATE), "-ac", "1",
-             "-c:a", "libmp3lame", "-q:a", "2", str(levelled)],
-            capture_output=True, text=True, timeout=300,
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(path),
+                "-af",
+                f"loudnorm={common}:linear=true"
+                f":measured_I={stats['input_i']}"
+                f":measured_TP={stats['input_tp']}"
+                f":measured_LRA={stats['input_lra']}"
+                f":measured_thresh={stats['input_thresh']}"
+                f":offset={stats['target_offset']}",
+                # loudnorm works at 192 kHz internally; without this the take
+                # would come back resampled and no longer match its siblings.
+                "-ar",
+                str(_TTS_SAMPLE_RATE),
+                "-ac",
+                "1",
+                "-c:a",
+                "libmp3lame",
+                "-q:a",
+                "2",
+                str(levelled),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=300,
         )
         if result.returncode != 0 or not levelled.exists() or levelled.stat().st_size == 0:
             logger.debug("Could not level %s: %s", path, (result.stderr or "")[:200])
@@ -1135,9 +1175,7 @@ def _synthesize_clean_take(
     def _keep(response, floor: float | None) -> None:
         if key is None:
             return
-        tts_cache.store(
-            cache_dir, key, target, response, noise_floor_db=floor, text=request.text
-        )
+        tts_cache.store(cache_dir, key, target, response, noise_floor_db=floor, text=request.text)
 
     for attempt in range(1, max(1, max_attempts) + 1):
         attempts = attempt
@@ -1164,15 +1202,12 @@ def _synthesize_clean_take(
             best_response, best_floor = response, floor
         if floor <= noise_floor_max_db:
             if attempt > 1:
-                logger.info(
-                    "%s: take %d is clean (noise floor %.1f dB)", label, attempt, floor
-                )
+                logger.info("%s: take %d is clean (noise floor %.1f dB)", label, attempt, floor)
             _keep(response, floor)
             return response, floor, attempts
 
         logger.warning(
-            "%s: take %d has an audible noise bed (noise floor %.1f dB, "
-            "expected below %.0f dB)%s",
+            "%s: take %d has an audible noise bed (noise floor %.1f dB, expected below %.0f dB)%s",
             label,
             attempt,
             floor,
@@ -1320,9 +1355,7 @@ def _generate_multi_voice_audio(
                 ),
                 part_path,
                 max_attempts=int(voice.get("noise_retries", _NOISE_MAX_TAKES)),
-                noise_floor_max_db=float(
-                    voice.get("noise_floor_max_db", _NOISE_FLOOR_WARN_DB)
-                ),
+                noise_floor_max_db=float(voice.get("noise_floor_max_db", _NOISE_FLOOR_WARN_DB)),
                 label=f"Chapter {chapter.chapter_id} part {index:02d} ({role})",
                 cache_dir=_cache_dir(settings),
                 stutter_model=_stutter_model(settings),

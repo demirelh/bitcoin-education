@@ -144,9 +144,7 @@ class TestWhatCountsAsACredential:
         """
         first = "el-1111111111111111111111111111"
         second = "el-2222222222222222222222222222"
-        values = secret_values(
-            Settings(elevenlabs_api_key_fallback=f"{first},{second}")
-        )
+        values = secret_values(Settings(elevenlabs_api_key_fallback=f"{first},{second}"))
         assert first in values
         assert second in values
 
@@ -280,9 +278,7 @@ class TestInstallation:
 
         install_log_redaction(bare, logger)
 
-        assert not [
-            f for f in logger.handlers[0].filters if isinstance(f, SecretRedactingFilter)
-        ]
+        assert not [f for f in logger.handlers[0].filters if isinstance(f, SecretRedactingFilter)]
 
     def test_a_record_still_passes_through(self, captured):
         """A filter returning False would silently drop log lines."""

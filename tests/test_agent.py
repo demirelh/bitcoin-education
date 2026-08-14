@@ -98,16 +98,22 @@ class TestRunAnalysis:
 
 class TestParseSuggestions:
     def test_valid_json(self):
-        raw = json.dumps([
-            {
-                "title": "Fix lint", "body": "Fix E501 in x.py",
-                "labels": ["bug"], "priority": "high",
-            },
-            {
-                "title": "Refactor", "body": "Split big file",
-                "labels": ["enhancement"], "priority": "low",
-            },
-        ])
+        raw = json.dumps(
+            [
+                {
+                    "title": "Fix lint",
+                    "body": "Fix E501 in x.py",
+                    "labels": ["bug"],
+                    "priority": "high",
+                },
+                {
+                    "title": "Refactor",
+                    "body": "Split big file",
+                    "labels": ["enhancement"],
+                    "priority": "low",
+                },
+            ]
+        )
         result = _parse_suggestions(raw, max_issues=3)
         assert len(result) == 2
         assert result[0].title == "Fix lint"
@@ -118,16 +124,17 @@ class TestParseSuggestions:
         assert result == []
 
     def test_filters_invalid_labels(self):
-        raw = json.dumps([
-            {"title": "X", "body": "Y", "labels": ["bug", "invalid"], "priority": "high"},
-        ])
+        raw = json.dumps(
+            [
+                {"title": "X", "body": "Y", "labels": ["bug", "invalid"], "priority": "high"},
+            ]
+        )
         result = _parse_suggestions(raw, max_issues=3)
         assert result[0].labels == ["bug"]
 
     def test_caps_max_issues(self):
         items = [
-            {"title": f"T{i}", "body": f"B{i}", "labels": [], "priority": "low"}
-            for i in range(10)
+            {"title": f"T{i}", "body": f"B{i}", "labels": [], "priority": "low"} for i in range(10)
         ]
         result = _parse_suggestions(json.dumps(items), max_issues=2)
         assert len(result) == 2
@@ -149,12 +156,17 @@ class TestGenerateSuggestions:
         mock_client = MagicMock()
         mock_anthropic.Anthropic.return_value = mock_client
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text=json.dumps([
-            {"title": "Fix X", "body": "Do Y", "labels": ["bug"], "priority": "high"}
-        ]))]
+        mock_response.content = [
+            MagicMock(
+                text=json.dumps(
+                    [{"title": "Fix X", "body": "Do Y", "labels": ["bug"], "priority": "high"}]
+                )
+            )
+        ]
         mock_client.messages.create.return_value = mock_response
 
         import sys
+
         with patch.dict(sys.modules, {"anthropic": mock_anthropic}):
             settings = Settings(anthropic_api_key="sk-real-key")
             result = generate_suggestions("analysis data", settings)
@@ -207,8 +219,11 @@ class TestExecutor:
 
         # Pre-populate a "created" action with the same hash
         existing = AgentAction(
-            run_id=run.id, action_type="created", title="Fix X",
-            body_hash=body_hash, issue_url="https://github.com/test/1",
+            run_id=run.id,
+            action_type="created",
+            title="Fix X",
+            body_hash=body_hash,
+            issue_url="https://github.com/test/1",
         )
         session.add(existing)
         session.flush()

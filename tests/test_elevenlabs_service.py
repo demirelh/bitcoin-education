@@ -298,6 +298,7 @@ def test_synthesize_no_voice_id():
     with pytest.raises(ValueError, match="No voice_id"):
         service.synthesize(req)
 
+
 # ---------------------------------------------------------------------------
 # Reserve accounts: a spent monthly plan must not end the broadcast
 # ---------------------------------------------------------------------------
@@ -443,9 +444,7 @@ def test_the_switch_holds_for_the_rest_of_the_episode(mock_post, mock_measure):
 
 def test_a_blank_or_duplicate_reserve_is_ignored():
     """Retrying the very same spent key would only waste a call."""
-    service = ElevenLabsService(
-        api_key="one", fallback_api_keys=["", "  ", "one", " two "]
-    )
+    service = ElevenLabsService(api_key="one", fallback_api_keys=["", "  ", "one", " two "])
     assert service.fallback_api_keys == ["two"]
 
 

@@ -150,8 +150,7 @@ def test_restore_from_approved_heals_casing_only_drift():
         {"narration": {"text": "Tahran'da enflasyon yüzde 68 olabilir."}},
     ]
     approved = (
-        "Ekonomik durumun yanı sıra Bir de mali sıkıntı var. "
-        "Tahran'da enflasyon yüzde 68 olabilir."
+        "Ekonomik durumun yanı sıra Bir de mali sıkıntı var. Tahran'da enflasyon yüzde 68 olabilir."
     )
 
     assert restore_narration_from_approved(approved, chapters) is True
@@ -168,10 +167,7 @@ def test_restore_from_approved_heals_omitted_words():
         {"narration": {"text": "Çarşıda hiç hareketlilik yok."}},
         {"narration": {"text": "Uzmanlar enflasyon öngörüyor."}},
     ]
-    approved = (
-        "Çarşıda neredeyse hiç hareketlilik yok. "
-        "Uzmanlar yüzde 68'lik enflasyon öngörüyor."
-    )
+    approved = "Çarşıda neredeyse hiç hareketlilik yok. Uzmanlar yüzde 68'lik enflasyon öngörüyor."
 
     assert restore_narration_from_approved(approved, chapters) is True
     result = check_narration_lock(approved, compose_chapter_narration(chapters))
@@ -210,9 +206,7 @@ def test_restore_from_approved_rejects_when_too_much_omitted():
     approved = "Bir iki üç dört beş altı yedi sekiz."
 
     # Losing more than half the words is not a safe auto-repair.
-    assert (
-        restore_narration_from_approved(approved, chapters, max_omitted_ratio=0.5) is False
-    )
+    assert restore_narration_from_approved(approved, chapters, max_omitted_ratio=0.5) is False
 
 
 # ---------------------------------------------------------------------------

@@ -46,7 +46,9 @@ speechcheck = [
 ]
 dev = [
     "pytest>=8.0.0",
-    "ruff>=0.6.0",
+    # Pinned to a minor series: the formatter is allowed to change its output
+    # between releases, and an unpinned one turns every CI run into a lottery.
+    "ruff>=0.15,<0.16",
     "flask>=3.0.0",
 ]
 

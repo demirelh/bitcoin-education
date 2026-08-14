@@ -260,9 +260,7 @@ class TestDetectLocalRecordings:
         assert episode.url.endswith("tagesschau_2026-08-06_2000.mp4")
         assert episode.status == EpisodeStatus.NEW
 
-    def test_is_idempotent_across_repeated_timer_runs(
-        self, db_session, tmp_path, recordings_dir
-    ):
+    def test_is_idempotent_across_repeated_timer_runs(self, db_session, tmp_path, recordings_dir):
         """The timer fires every ten minutes; only the first run may insert."""
         make_recording(recordings_dir, date(2026, 8, 6))
         settings = local_settings(tmp_path, recordings_dir)
@@ -273,9 +271,7 @@ class TestDetectLocalRecordings:
         assert (first.new, second.new) == (1, 0)
         assert db_session.query(Episode).count() == 1
 
-    def test_ignores_a_recording_still_in_progress(
-        self, db_session, tmp_path, recordings_dir
-    ):
+    def test_ignores_a_recording_still_in_progress(self, db_session, tmp_path, recordings_dir):
         make_recording(recordings_dir, date(2026, 8, 6), done=False)
         settings = local_settings(tmp_path, recordings_dir)
 
@@ -519,9 +515,7 @@ class TestLocalRecordingIsSupersededByFeed:
 
         assert detect_local_recordings(db_session, settings).new == 0
 
-    def test_still_ingests_a_day_youtube_does_not_have(
-        self, db_session, tmp_path, recordings_dir
-    ):
+    def test_still_ingests_a_day_youtube_does_not_have(self, db_session, tmp_path, recordings_dir):
         self._seed_feed_episode(db_session, date(2026, 8, 5))
         make_recording(recordings_dir, date(2026, 8, 6))
         settings = local_settings(tmp_path, recordings_dir)
@@ -619,10 +613,25 @@ class TestExtractAudio:
             pytest.skip("ffmpeg not available")
         subprocess.run(
             [
-                ffmpeg, "-nostdin", "-v", "error", "-y",
-                "-f", "lavfi", "-i", f"color=c=black:s=64x64:d={seconds}",
-                "-f", "lavfi", "-i", f"anullsrc=r=44100:cl=stereo:d={seconds}",
-                "-c:v", "libx264", "-c:a", "aac", "-shortest", str(path),
+                ffmpeg,
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c=black:s=64x64:d={seconds}",
+                "-f",
+                "lavfi",
+                "-i",
+                f"anullsrc=r=44100:cl=stereo:d={seconds}",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-shortest",
+                str(path),
             ],
             check=True,
             capture_output=True,
@@ -727,9 +736,7 @@ class TestIncompleteRecordingIsReported:
             result = detect_local_recordings(db_session, settings)
         return result, notify
 
-    def test_a_truncated_forecast_reaches_whatsapp(
-        self, db_session, tmp_path, recordings_dir
-    ):
+    def test_a_truncated_forecast_reaches_whatsapp(self, db_session, tmp_path, recordings_dir):
         result, notify = self._detect(db_session, tmp_path, recordings_dir, self.TRUNCATED)
 
         assert result.new == 1, "the recording is still ingested; this reports, it does not block"
@@ -741,9 +748,7 @@ class TestIncompleteRecordingIsReported:
     def test_a_confirmed_forecast_is_not_worth_a_message(
         self, db_session, tmp_path, recordings_dir
     ):
-        _, notify = self._detect(
-            db_session, tmp_path, recordings_dir, {"weather_verified": "true"}
-        )
+        _, notify = self._detect(db_session, tmp_path, recordings_dir, {"weather_verified": "true"})
 
         notify.assert_not_called()
 
@@ -775,9 +780,7 @@ class TestIncompleteRecordingIsReported:
 
         assert notify.call_count == 1
 
-    def test_a_broken_notifier_does_not_cost_the_ingest(
-        self, db_session, tmp_path, recordings_dir
-    ):
+    def test_a_broken_notifier_does_not_cost_the_ingest(self, db_session, tmp_path, recordings_dir):
         make_recording(recordings_dir, date(2026, 8, 6), metadata={"extra": self.TRUNCATED})
         settings = local_settings(tmp_path, recordings_dir)
 

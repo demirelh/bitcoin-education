@@ -133,7 +133,7 @@ def _audio(tmp_path: Path) -> Path:
 
 
 def test_a_stuttered_take_is_reported_with_what_was_heard(tmp_path):
-    """"This take stutters" is a claim about a transcript, so it carries it."""
+    """ "This take stutters" is a claim about a transcript, so it carries it."""
     model = FakeModel("İyi Dağ'ım, İyi Akşamlar, Almanya 24'e")
 
     with patch("btcedu.core.tts_stutter._transcribe_opening", return_value=model.text):
@@ -154,7 +154,7 @@ def test_a_clean_take_passes(tmp_path):
 
 
 def test_no_model_means_no_verdict_rather_than_a_pass(tmp_path):
-    """"Not checked" and "checked and fine" must not be the same answer."""
+    """ "Not checked" and "checked and fine" must not be the same answer."""
     verdict = check_opening(_audio(tmp_path), GREETING, model=None)
 
     assert verdict.stuttered is None

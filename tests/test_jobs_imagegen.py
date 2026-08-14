@@ -34,15 +34,11 @@ def test_imagegen_generative_calls_generate_images(manager, job):
     session = _session_returning(ep)
     settings = SimpleNamespace(gemini_image_edit_enabled=True, gemini_api_key="k")
 
-    gen_result = SimpleNamespace(
-        generated_count=5, template_count=0, failed_count=0, cost_usd=0.12
-    )
+    gen_result = SimpleNamespace(generated_count=5, template_count=0, failed_count=0, cost_usd=0.12)
 
     with (
         patch("btcedu.core.pipeline._imagegen_provider", return_value="generative"),
-        patch(
-            "btcedu.core.image_generator.generate_images", return_value=gen_result
-        ) as mock_gen,
+        patch("btcedu.core.image_generator.generate_images", return_value=gen_result) as mock_gen,
         patch("btcedu.core.frame_editor.edit_frames") as mock_edit,
     ):
         manager._do_imagegen(job, session, settings)
@@ -56,17 +52,11 @@ def test_imagegen_gemini_profile_calls_edit_frames(manager, job):
     session = _session_returning(ep)
     settings = SimpleNamespace(gemini_image_edit_enabled=True, gemini_api_key="k")
 
-    edit_result = SimpleNamespace(
-        chapters_edited=3, chapters_skipped=0, total_cost_usd=0.03
-    )
+    edit_result = SimpleNamespace(chapters_edited=3, chapters_skipped=0, total_cost_usd=0.03)
 
     with (
-        patch(
-            "btcedu.core.pipeline._imagegen_provider", return_value="gemini_frame_edit"
-        ),
-        patch(
-            "btcedu.core.frame_editor.edit_frames", return_value=edit_result
-        ) as mock_edit,
+        patch("btcedu.core.pipeline._imagegen_provider", return_value="gemini_frame_edit"),
+        patch("btcedu.core.frame_editor.edit_frames", return_value=edit_result) as mock_edit,
         patch("btcedu.core.image_generator.generate_images") as mock_gen,
     ):
         manager._do_imagegen(job, session, settings)

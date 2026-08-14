@@ -1425,9 +1425,7 @@ def render(
                     try:
                         if mode == "github":
                             try:
-                                result = render_video_remote(
-                                    session, eid, settings, force=force
-                                )
+                                result = render_video_remote(session, eid, settings, force=force)
                             except Exception as exc:
                                 # Same reasoning as the automatic run: the Pi can
                                 # still do the work, just slower. Only an explicit
@@ -1447,9 +1445,7 @@ def render(
                                 # episode; a successful local render must not
                                 # leave that showing on the dashboard.
                                 episode = (
-                                    session.query(Episode)
-                                    .filter_by(episode_id=eid)
-                                    .one_or_none()
+                                    session.query(Episode).filter_by(episode_id=eid).one_or_none()
                                 )
                                 if episode is not None:
                                     episode.error_message = None

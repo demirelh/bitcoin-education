@@ -73,11 +73,7 @@ def test_regression_run_is_stage_major_and_isolated(tmp_path):
                 / episode.episode_id
                 / "translation_quality_gate.json"
             ),
-            str(
-                Path(isolated_settings.outputs_dir)
-                / episode.episode_id
-                / "script.adapted.tr.md"
-            ),
+            str(Path(isolated_settings.outputs_dir) / episode.episode_id / "script.adapted.tr.md"),
         ]
         assert has_approved_review_for_artifacts(
             isolated_session,

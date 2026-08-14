@@ -607,20 +607,20 @@ class TestWeatherRendering:
         path = re.search(r'<path[^>]+d="([^"]+)"', map_svg)
         assert path is not None
         mainland = path.group(1).split(" Z ", 1)[0]
-        points = [
-            (float(x), float(y))
-            for x, y in re.findall(r"(\d+\.\d+),(\d+\.\d+)", mainland)
-        ]
+        points = [(float(x), float(y)) for x, y in re.findall(r"(\d+\.\d+),(\d+\.\d+)", mainland)]
         xs = [point[0] for point in points]
         ys = [point[1] for point in points]
         width = max(xs) - min(xs)
         height = max(ys) - min(ys)
-        area = abs(
-            sum(
-                x1 * y2 - x2 * y1
-                for (x1, y1), (x2, y2) in zip(points, points[1:] + points[:1], strict=True)
+        area = (
+            abs(
+                sum(
+                    x1 * y2 - x2 * y1
+                    for (x1, y1), (x2, y2) in zip(points, points[1:] + points[:1], strict=True)
+                )
             )
-        ) / 2
+            / 2
+        )
 
         assert 0.70 < width / height < 0.80
         assert area / (width * height) < 0.90
@@ -629,9 +629,7 @@ class TestWeatherRendering:
         from pathlib import Path
 
         weather_root = Path(__file__).parents[1] / "btcedu" / "core" / "weather"
-        template = (
-            weather_root / "templates" / "weather_card.html"
-        ).read_text()
+        template = (weather_root / "templates" / "weather_card.html").read_text()
         renderer = (weather_root / "renderer.py").read_text()
 
         assert ".marker-coast { left: 38.1%; top: 15.4%; }" in template
@@ -658,9 +656,7 @@ class TestWeatherRendering:
             / "templates"
             / "weather_card.html"
         ).read_text()
-        markers = re.findall(
-            r"\.marker-([a-z]+) \{ left: ([\d.]+)%; top: ([\d.]+)%; \}", template
-        )
+        markers = re.findall(r"\.marker-([a-z]+) \{ left: ([\d.]+)%; top: ([\d.]+)%; \}", template)
         assert len(markers) >= 10
 
         # SVG viewBox 400x520 rendered into a 760x760 box (xMidYMid meet).

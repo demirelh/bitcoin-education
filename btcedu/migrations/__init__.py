@@ -556,10 +556,7 @@ class CreateDeadLetterQueueMigration(Migration):
         logger.info(f"Running migration: {self.version}")
 
         result = session.execute(
-            text(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name='dead_letter_queue'"
-            )
+            text("SELECT name FROM sqlite_master WHERE type='table' AND name='dead_letter_queue'")
         )
         if not result.fetchone():
             session.execute(
@@ -579,17 +576,9 @@ class CreateDeadLetterQueueMigration(Migration):
                 """)
             )
             session.execute(
-                text(
-                    "CREATE INDEX idx_dlq_episode_id "
-                    "ON dead_letter_queue(episode_id)"
-                )
+                text("CREATE INDEX idx_dlq_episode_id ON dead_letter_queue(episode_id)")
             )
-            session.execute(
-                text(
-                    "CREATE INDEX idx_dlq_resolved "
-                    "ON dead_letter_queue(resolved_at)"
-                )
-            )
+            session.execute(text("CREATE INDEX idx_dlq_resolved ON dead_letter_queue(resolved_at)"))
             session.commit()
             logger.info("Created dead_letter_queue table with indexes")
         else:
@@ -672,12 +661,7 @@ class AddQualityRatingMigration(Migration):
         columns = [row[1] for row in result.fetchall()]
 
         if "quality_rating" not in columns:
-            session.execute(
-                text(
-                    "ALTER TABLE review_decisions "
-                    "ADD COLUMN quality_rating INTEGER"
-                )
-            )
+            session.execute(text("ALTER TABLE review_decisions ADD COLUMN quality_rating INTEGER"))
             session.commit()
             logger.info("Added quality_rating column to review_decisions")
         else:

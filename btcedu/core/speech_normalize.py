@@ -250,26 +250,20 @@ def _sub_dates(text: str) -> str:
         day, month, year = int(match.group(1)), int(match.group(2)), int(match.group(3))
         if not (1 <= day <= 31 and 1 <= month <= 12):
             return match.group(0)
-        return (
-            f"{number_to_turkish_words(day)} {_MONTHS[month]} "
-            f"{number_to_turkish_words(year)}"
-        )
+        return f"{number_to_turkish_words(day)} {_MONTHS[month]} {number_to_turkish_words(year)}"
 
     text = re.sub(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4})(?!\d)", full_date, text)
 
     def day_span(match: re.Match[str]) -> str:
-        """"2-3 Ağustos" is the night from the 2nd to the 3rd, not "2 to 3"."""
+        """ "2-3 Ağustos" is the night from the 2nd to the 3rd, not "2 to 3"."""
         first, second = int(match.group(1)), int(match.group(2))
         if not (1 <= first <= 31 and 1 <= second <= 31):
             return match.group(0)
         return (
-            f"{number_to_turkish_words(first)} {number_to_turkish_words(second)} "
-            f"{match.group(3)}"
+            f"{number_to_turkish_words(first)} {number_to_turkish_words(second)} {match.group(3)}"
         )
 
-    text = re.sub(
-        rf"(?<!\d)(\d{{1,2}})\s*-\s*(\d{{1,2}})\s+({_MONTH_NAMES})\b", day_span, text
-    )
+    text = re.sub(rf"(?<!\d)(\d{{1,2}})\s*-\s*(\d{{1,2}})\s+({_MONTH_NAMES})\b", day_span, text)
 
     def day_month(match: re.Match[str]) -> str:
         day = int(match.group(1))
@@ -392,9 +386,7 @@ def _sub_scaled_decimals(text: str) -> str:
             half = "yarım" if whole == 0 else f"{number_to_turkish_words(whole)} buçuk"
             return f"{half} {scale_word}"
         multiplier = _SCALE_WORDS[scale_word]
-        scaled = (whole * multiplier) + int(
-            round(float(f"0.{fraction}") * multiplier)
-        )
+        scaled = (whole * multiplier) + int(round(float(f"0.{fraction}") * multiplier))
         return number_to_turkish_words(scaled)
 
     return re.sub(

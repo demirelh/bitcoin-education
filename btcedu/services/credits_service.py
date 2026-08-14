@@ -19,9 +19,9 @@ import requests
 logger = logging.getLogger(__name__)
 
 # Thresholds for status colouring
-_THRESHOLD_LOW_USD = 5.0        # < $5 remaining → warn
-_THRESHOLD_CRITICAL_USD = 2.0   # < $2 remaining → alert
-_THRESHOLD_LOW_CHARS = 30_000   # < 30k chars → warn (ElevenLabs)
+_THRESHOLD_LOW_USD = 5.0  # < $5 remaining → warn
+_THRESHOLD_CRITICAL_USD = 2.0  # < $2 remaining → alert
+_THRESHOLD_LOW_CHARS = 30_000  # < 30k chars → warn (ElevenLabs)
 _THRESHOLD_CRITICAL_CHARS = 10_000
 
 
@@ -44,7 +44,7 @@ class CreditStatus:
     spent_7d_usd: float | None = None
     spent_today_usd: float | None = None
 
-    status: str = "unknown"   # "ok" | "warn" | "critical" | "unknown"
+    status: str = "unknown"  # "ok" | "warn" | "critical" | "unknown"
     dashboard_url: str = ""
     note: str = ""
     error: str | None = None
@@ -168,10 +168,7 @@ def _sum_costs_from_db(session, provider_match: list[str] | None = None) -> dict
         )
         rows = q.all()
         if provider_match:
-            rows = [
-                r for r in rows
-                if any(m in (r.stage or "").lower() for m in provider_match)
-            ]
+            rows = [r for r in rows if any(m in (r.stage or "").lower() for m in provider_match)]
         return sum((r.estimated_cost_usd or 0.0) for r in rows)
 
     return {
@@ -238,8 +235,13 @@ def get_all_credits(session, settings) -> list[CreditStatus]:
             display_name="Anthropic Claude (correct/translate/adapt/chapterize/generate)",
             dashboard_url="https://console.anthropic.com/settings/billing",
             stage_match=[
-                "correct", "translate", "adapt", "chapterize",
-                "generate", "refine", "review",
+                "correct",
+                "translate",
+                "adapt",
+                "chapterize",
+                "generate",
+                "refine",
+                "review",
             ],
             note="No public balance API. Shows tracked pipeline spend only.",
         )

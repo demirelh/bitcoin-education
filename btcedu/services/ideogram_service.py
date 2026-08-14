@@ -15,7 +15,7 @@ from btcedu.services.image_gen_service import (
 logger = logging.getLogger(__name__)
 
 # Ideogram pricing (as of 2025)
-IDEOGRAM_V2_COST = 0.08     # $0.08 per image (standard)
+IDEOGRAM_V2_COST = 0.08  # $0.08 per image (standard)
 IDEOGRAM_V2_TURBO_COST = 0.05
 
 
@@ -115,15 +115,17 @@ class IdeogramImageService:
             try:
                 r = requests.post(endpoint, headers=headers, json=payload, timeout=120)
                 if r.status_code == 429:
-                    time.sleep(2 ** attempt * 2)
+                    time.sleep(2**attempt * 2)
                     continue
                 r.raise_for_status()
                 return r.json()
             except Exception as e:
                 last_exc = e
                 if attempt < max_retries - 1:
-                    logger.warning(f"Ideogram call failed (attempt {attempt+1}): {e}, retrying...")
-                    time.sleep(2 ** attempt)
+                    logger.warning(
+                        f"Ideogram call failed (attempt {attempt + 1}): {e}, retrying..."
+                    )
+                    time.sleep(2**attempt)
         raise RuntimeError(f"Ideogram API failed after {max_retries} retries: {last_exc}")
 
     @staticmethod

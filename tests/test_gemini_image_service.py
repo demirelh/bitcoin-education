@@ -85,9 +85,7 @@ class TestGeminiImageService:
         mock_resp.ok = True
         mock_resp.status_code = 200
         mock_resp.json.return_value = {
-            "candidates": [
-                {"content": {"parts": [{"text": "I cannot edit this image."}]}}
-            ],
+            "candidates": [{"content": {"parts": [{"text": "I cannot edit this image."}]}}],
             "usageMetadata": {},
         }
 

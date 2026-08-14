@@ -1029,9 +1029,7 @@ def test_review_gate_2_tagesschau_autoapprove_red_auto_adjudicates(db_session, t
         "explanation": "invented",
         "required_action": "remove",
     }
-    adjudication = _resp(
-        {"verdict": "approve", "reason": "false positive", "findings": []}
-    )
+    adjudication = _resp({"verdict": "approve", "reason": "false positive", "findings": []})
 
     def _side_effect(*args, **kwargs):
         system_prompt = kwargs.get("system_prompt", args[0] if args else "")

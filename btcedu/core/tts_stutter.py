@@ -132,10 +132,19 @@ def _transcribe_opening(audio: Path, *, model, language: str) -> str | None:
         head = Path(tmp) / "head.wav"
         result = subprocess.run(
             [
-                "ffmpeg", "-nostdin", "-v", "error", "-y",
-                "-i", str(audio),
-                "-t", str(_HEAD_SECONDS),
-                "-ar", "16000", "-ac", "1",
+                "ffmpeg",
+                "-nostdin",
+                "-v",
+                "error",
+                "-y",
+                "-i",
+                str(audio),
+                "-t",
+                str(_HEAD_SECONDS),
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
                 str(head),
             ],
             capture_output=True,

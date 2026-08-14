@@ -22,7 +22,7 @@ jobs:
     - name: Install ruff
       run: |
         python -m pip install --upgrade pip
-        pip install ruff
+        pip install "ruff>=0.15,<0.16"  # keep in step with pyproject
 
     - name: Run ruff linter
       run: |

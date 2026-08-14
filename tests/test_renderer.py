@@ -1294,8 +1294,8 @@ def test_topic_cards_skip_the_opening_and_closing(db_session, settings, tmp_path
         ),
         patch(
             "btcedu.services.ffmpeg_service.concatenate_segments",
-            side_effect=lambda segment_paths, output_path, **kw: (
-                _mock_concat_result(output_path, segment_count=len(segment_paths))
+            side_effect=lambda segment_paths, output_path, **kw: _mock_concat_result(
+                output_path, segment_count=len(segment_paths)
             ),
         ),
         patch(
@@ -1351,8 +1351,8 @@ def test_manifest_records_the_concat_timeline(db_session, settings, tmp_path):
         ),
         patch(
             "btcedu.services.ffmpeg_service.concatenate_segments",
-            side_effect=lambda segment_paths, output_path, **kw: (
-                _mock_concat_result(output_path, segment_count=len(segment_paths))
+            side_effect=lambda segment_paths, output_path, **kw: _mock_concat_result(
+                output_path, segment_count=len(segment_paths)
             ),
         ),
         patch(

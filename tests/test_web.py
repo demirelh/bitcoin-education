@@ -473,7 +473,6 @@ class TestPipelineActions:
 # ---------------------------------------------------------------------------
 
 
-
 def _await_job(client, job_id, *, timeout: float = 15.0) -> dict:
     """Wait until a background job leaves the running state.
 

@@ -291,9 +291,7 @@ class TestTheLastTenEpisodes:
                 chapters = json.loads(path.read_text()).get("chapters", [])
             except Exception:  # noqa: BLE001 - a broken fixture is not this test's business
                 continue
-            words = sum(
-                len(((c.get("narration") or {}).get("text", "")).split()) for c in chapters
-            )
+            words = sum(len(((c.get("narration") or {}).get("text", "")).split()) for c in chapters)
             if words > 200:  # skip synthetic fixtures
                 found.append((path.parent.name, chapters))
         return found[:10]

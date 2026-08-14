@@ -15,8 +15,8 @@ from btcedu.services.image_gen_service import (
 logger = logging.getLogger(__name__)
 
 # fal.ai Flux pricing (as of 2025)
-FLUX_DEV_COST = 0.025   # $0.025 per image (1024x1024)
-FLUX_PRO_COST = 0.055   # $0.055 per image (1024x1024)
+FLUX_DEV_COST = 0.025  # $0.025 per image (1024x1024)
+FLUX_PRO_COST = 0.055  # $0.055 per image (1024x1024)
 FLUX_SCHNELL_COST = 0.003  # $0.003 per image (fastest, lower quality)
 
 
@@ -69,9 +69,7 @@ class FluxImageService:
         image_url = response_data["images"][0]["url"]
         cost = self._compute_cost(model_slug)
 
-        logger.info(
-            f"Flux generated: model={model_slug}, size={width}x{height}, cost=${cost:.3f}"
-        )
+        logger.info(f"Flux generated: model={model_slug}, size={width}x{height}, cost=${cost:.3f}")
 
         return ImageGenResponse(
             image_url=image_url,
@@ -117,15 +115,15 @@ class FluxImageService:
             try:
                 r = requests.post(endpoint, headers=headers, json=payload, timeout=180)
                 if r.status_code == 429:
-                    time.sleep(2 ** attempt * 2)
+                    time.sleep(2**attempt * 2)
                     continue
                 r.raise_for_status()
                 return r.json()
             except Exception as e:
                 last_exc = e
                 if attempt < max_retries - 1:
-                    logger.warning(f"Flux call failed (attempt {attempt+1}): {e}, retrying...")
-                    time.sleep(2 ** attempt)
+                    logger.warning(f"Flux call failed (attempt {attempt + 1}): {e}, retrying...")
+                    time.sleep(2**attempt)
         raise RuntimeError(f"Flux API failed after {max_retries} retries: {last_exc}")
 
     @staticmethod

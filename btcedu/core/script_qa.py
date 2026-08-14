@@ -1197,11 +1197,7 @@ def check_story_transitions(script: BroadcastScript, factory: _FindingFactory) -
             if segment.purpose not in _ANCHOR_OPENING_PURPOSES:
                 continue
             match = next(
-                (
-                    hit
-                    for hit in (p.search(segment.text) for p in EMPTY_TRANSITION_PATTERNS)
-                    if hit
-                ),
+                (hit for hit in (p.search(segment.text) for p in EMPTY_TRANSITION_PATTERNS) if hit),
                 None,
             )
             if not match:
@@ -1261,8 +1257,7 @@ def check_anchor_closure(script: BroadcastScript, factory: _FindingFactory) -> l
                 story_id=story.story_id,
                 target_excerpt=last.text[:300],
                 explanation=(
-                    "Haber muhabirle bitiyor; ana sunucu haberi devralıp "
-                    "değerlendirmiyor."
+                    "Haber muhabirle bitiyor; ana sunucu haberi devralıp değerlendirmiyor."
                 ),
                 required_action=(
                     "Muhabirin ardından ana sunucudan iki-üç cümlelik somut bir "

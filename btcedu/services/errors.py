@@ -26,9 +26,7 @@ class ErrorCategory(str, Enum):
 
 
 # Patterns for classifying errors by exception message
-_RATE_LIMIT_PATTERNS = re.compile(
-    r"rate.?limit|429|too.?many.?requests", re.IGNORECASE
-)
+_RATE_LIMIT_PATTERNS = re.compile(r"rate.?limit|429|too.?many.?requests", re.IGNORECASE)
 _QUOTA_PATTERNS = re.compile(
     r"quota[_\s-]?exceeded|insufficient.*credits|not enough.*credits",
     re.IGNORECASE,
@@ -56,9 +54,7 @@ _CONTENT_PATTERNS = re.compile(
 _NOT_FOUND_PATTERNS = re.compile(
     r"\b404\b|not.?found|no.?such.?file|does.?not.?exist|missing", re.IGNORECASE
 )
-_COST_PATTERNS = re.compile(
-    r"cost.?limit|budget.?exceeded|max.*cost", re.IGNORECASE
-)
+_COST_PATTERNS = re.compile(r"cost.?limit|budget.?exceeded|max.*cost", re.IGNORECASE)
 
 # Map well-known exception types to categories
 _EXCEPTION_TYPE_MAP: dict[str, ErrorCategory] = {
@@ -80,15 +76,9 @@ ERROR_SUGGESTIONS: dict[ErrorCategory, str] = {
     ErrorCategory.TRANSIENT_RATE_LIMIT: (
         "API rate limit reached. Pipeline will auto-retry. Check API quota."
     ),
-    ErrorCategory.TRANSIENT_NETWORK: (
-        "Network error. Check internet connection on Raspberry Pi."
-    ),
-    ErrorCategory.TRANSIENT_SERVER: (
-        "External API server error. Usually resolves on its own."
-    ),
-    ErrorCategory.PERMANENT_AUTH: (
-        "Invalid API key. Check .env for correct API keys."
-    ),
+    ErrorCategory.TRANSIENT_NETWORK: ("Network error. Check internet connection on Raspberry Pi."),
+    ErrorCategory.TRANSIENT_SERVER: ("External API server error. Usually resolves on its own."),
+    ErrorCategory.PERMANENT_AUTH: ("Invalid API key. Check .env for correct API keys."),
     ErrorCategory.PERMANENT_CONTENT: (
         "Content rejected by API safety filter. Review/edit the prompt."
     ),
@@ -104,11 +94,13 @@ ERROR_SUGGESTIONS: dict[ErrorCategory, str] = {
     ErrorCategory.UNKNOWN: "Check logs for details.",
 }
 
-_TRANSIENT_CATEGORIES = frozenset({
-    ErrorCategory.TRANSIENT_RATE_LIMIT,
-    ErrorCategory.TRANSIENT_NETWORK,
-    ErrorCategory.TRANSIENT_SERVER,
-})
+_TRANSIENT_CATEGORIES = frozenset(
+    {
+        ErrorCategory.TRANSIENT_RATE_LIMIT,
+        ErrorCategory.TRANSIENT_NETWORK,
+        ErrorCategory.TRANSIENT_SERVER,
+    }
+)
 
 
 def classify_error(exc: Exception) -> ErrorCategory:
@@ -170,8 +162,6 @@ class PipelineError(Exception):
     ):
         self.category = category
         self.original = original
-        self.suggestion = suggestion or ERROR_SUGGESTIONS.get(
-            category, "Check logs for details."
-        )
+        self.suggestion = suggestion or ERROR_SUGGESTIONS.get(category, "Check logs for details.")
         full_msg = f"[{category.value}] {message} — {self.suggestion}"
         super().__init__(full_msg)

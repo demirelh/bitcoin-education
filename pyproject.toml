@@ -28,6 +28,10 @@ dependencies = [
     # only happened to be present on the Pi, so a fresh install built to the
     # documented instructions had no weather card fallback at all.
     "pillow>=10.0.0",
+    # pydub imports the stdlib `audioop`, which 3.13 removed. Without the
+    # backport pydub falls through to `pyaudioop` and dies on import, so
+    # transcription chunking fails on exactly the Python this runs on.
+    "audioop-lts>=0.2; python_version >= '3.13'",
 ]
 
 [project.optional-dependencies]

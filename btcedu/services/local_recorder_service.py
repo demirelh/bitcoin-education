@@ -135,10 +135,15 @@ class LocalRecording:
             return WeatherCheck(None)
         state = extra.get("weather_verified")
         present = {"true": True, "false": False}.get(str(state).lower()) if state else None
+        # A truncated cut has no evidence *before* it — that is what truncated
+        # means — so the recorder names what it found after it instead. Reading
+        # only ``weather_evidence`` left the alarm without the one detail that
+        # makes it actionable: where the lost forecast starts in the capture.
+        evidence = str(extra.get("weather_evidence") or extra.get("weather_after_cut") or "")
         return WeatherCheck(
             present=present,
             truncated=str(extra.get("weather_truncated", "")).lower() == "true",
-            evidence=str(extra.get("weather_evidence", "")),
+            evidence=evidence,
         )
 
     def to_episode_info(self) -> EpisodeInfo:
@@ -247,6 +252,7 @@ def extract_audio(
     *,
     audio_format: str = "m4a",
     timeout: int = 1800,
+    force: bool = False,
 ) -> Path:
     """Extract the audio track of a recording into *destination*.
 
@@ -255,13 +261,19 @@ def extract_audio(
     generational quality loss before transcription. Any other target format
     falls back to re-encoding.
 
+    ``force`` re-extracts over an existing file. The reuse shortcut is keyed on
+    the file merely existing, so without it a corrected recording is invisible:
+    the recording is replaced on disk, the pipeline is asked to run again, and
+    it transcribes the audio of the old cut regardless. Re-extraction costs a
+    few seconds of stream copy, which is the cheapest stage there is.
+
     Returns the path to the extracted audio.
     """
     source_path = Path(video)
     target = Path(destination)
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    if target.exists() and target.stat().st_size > 0:
+    if target.exists() and target.stat().st_size > 0 and not force:
         logger.info("audio already extracted: %s", target)
         return target
 

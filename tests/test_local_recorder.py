@@ -459,6 +459,64 @@ class TestDownloadUsesTheLocalFile:
         assert episode.status == EpisodeStatus.DOWNLOADED
         assert episode.audio_path is not None
 
+    def test_force_picks_up_a_corrected_recording(self, db_session, tmp_path, recordings_dir):
+        """A recording republished with a better cut must reach the pipeline.
+
+        This is the recovery path for a bad cut: the recorder's file is replaced
+        and the episode is re-run. Both artefacts of the first ingest are stale
+        and neither announces it — the audio is reused because the file merely
+        exists, and the hard link still points at the *old* inode, which the
+        link itself keeps alive after the replacement. Without ``force`` the
+        re-run would faithfully reproduce the broken video.
+        """
+        video = make_recording(recordings_dir, date(2026, 8, 6), video_bytes=b"\0" * 128)
+        settings = local_settings(tmp_path, recordings_dir)
+        self._seed(db_session, video)
+
+        def fake_extract(src, dest, **kw):
+            Path(dest).write_bytes(Path(src).read_bytes())
+            return Path(dest)
+
+        with patch(
+            "btcedu.services.local_recorder_service.extract_audio", side_effect=fake_extract
+        ):
+            download_episode(db_session, "tagesschau_2026-08-06_2000", settings)
+
+            # The recorder re-cuts the broadcast: a new file, a new inode.
+            video.unlink()
+            video.write_bytes(b"\1" * 256)
+
+            download_episode(
+                db_session, "tagesschau_2026-08-06_2000", settings, force=True
+            )
+
+        out_dir = Path(settings.raw_data_dir) / "tagesschau_2026-08-06_2000"
+        assert (out_dir / "video.mp4").read_bytes() == b"\1" * 256
+        assert (out_dir / f"audio.{settings.audio_format}").read_bytes() == b"\1" * 256
+
+    def test_without_force_the_existing_ingest_is_kept(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        """The unforced path stays cheap: no re-extraction, no re-linking."""
+        video = make_recording(recordings_dir, date(2026, 8, 6), video_bytes=b"\0" * 128)
+        settings = local_settings(tmp_path, recordings_dir)
+        self._seed(db_session, video)
+
+        def fake_extract(src, dest, **kw):
+            Path(dest).write_bytes(Path(src).read_bytes())
+            return Path(dest)
+
+        with patch(
+            "btcedu.services.local_recorder_service.extract_audio", side_effect=fake_extract
+        ):
+            download_episode(db_session, "tagesschau_2026-08-06_2000", settings)
+            video.unlink()
+            video.write_bytes(b"\1" * 256)
+            download_episode(db_session, "tagesschau_2026-08-06_2000", settings)
+
+        out_dir = Path(settings.raw_data_dir) / "tagesschau_2026-08-06_2000"
+        assert (out_dir / "video.mp4").read_bytes() == b"\0" * 128
+
 
 class TestLocalRecordingIsSupersededByFeed:
     """The reverse direction: YouTube first, recorder second.
@@ -654,6 +712,17 @@ class TestExtractAudio:
 
         assert out.read_bytes() == b"already here"
 
+    def test_force_re_extracts_over_an_existing_file(self, tmp_path):
+        """A corrected recording has to overwrite the audio of the old cut."""
+        video = self._silent_video(tmp_path / "in.mp4")
+        target = tmp_path / "audio.m4a"
+        target.write_bytes(b"audio of the truncated cut")
+
+        out = extract_audio(video, target, force=True)
+
+        assert out.read_bytes() != b"audio of the truncated cut"
+        assert out.stat().st_size > 0
+
     def test_leaves_no_partial_file_behind_on_failure(self, tmp_path):
         broken = tmp_path / "broken.mp4"
         broken.write_bytes(b"not a video")
@@ -695,17 +764,25 @@ class TestWeatherVerdictFromTheRecorder:
         assert "9 Treffer" in rec.weather.evidence
 
     def test_reads_a_truncated_forecast(self, recordings_dir):
+        """The evidence of a truncated cut is what follows it, not what precedes it.
+
+        The recorder writes ``weather_after_cut`` in that case and leaves
+        ``weather_evidence`` unset — there is nothing before the cut to quote.
+        Reading only the latter produced an alarm with an empty last line, which
+        is exactly the alarm nobody can act on.
+        """
         rec = self._recording(
             recordings_dir,
             {
                 "weather_verified": "false",
                 "weather_truncated": "true",
-                "weather_evidence": "Schauer @ 1002.0s",
+                "weather_after_cut": "Wettervorhersage @ 1037.7s … Gewittern @ 1078.7s (7 Treffer)",
             },
         )
 
         assert rec.weather.present is False
         assert rec.weather.truncated is True
+        assert "1037.7s" in rec.weather.evidence
 
     def test_an_edition_without_a_forecast_is_not_truncated(self, recordings_dir):
         rec = self._recording(recordings_dir, {"weather_verified": "false"})
@@ -725,7 +802,7 @@ class TestIncompleteRecordingIsReported:
     TRUNCATED = {
         "weather_verified": "false",
         "weather_truncated": "true",
-        "weather_evidence": "Schauer @ 1002.0s … Sonnenschein @ 1032.0s (4 Treffer)",
+        "weather_after_cut": "Schauer @ 1002.0s … Sonnenschein @ 1032.0s (4 Treffer)",
     }
 
     def _detect(self, db_session, tmp_path, recordings_dir, extra):

@@ -715,7 +715,7 @@ def download_episode(
         # The file is already on disk. Running yt-dlp against a filesystem path
         # would fail, and re-downloading the broadcast from YouTube would throw
         # away the very time this source exists to save.
-        audio_path = _ingest_local_recording(episode, output_dir, settings)
+        audio_path = _ingest_local_recording(episode, output_dir, settings, force=force)
     else:
         audio_path = download_audio(
             url=episode.url,
@@ -741,7 +741,9 @@ def download_episode(
     return audio_path
 
 
-def _ingest_local_recording(episode: Episode, output_dir: str, settings: Settings) -> str:
+def _ingest_local_recording(
+    episode: Episode, output_dir: str, settings: Settings, *, force: bool = False
+) -> str:
     """Prepare a locally recorded broadcast for the pipeline.
 
     Extracts the audio track and makes the video available under the name the
@@ -752,6 +754,12 @@ def _ingest_local_recording(episode: Episode, output_dir: str, settings: Setting
     and the recorder's copy is retained anyway, so copying would double the
     storage for no benefit. A hard link also cannot go stale the way a symlink
     would if the pipeline later moved the file.
+
+    ``force`` re-does both. It has to: a recording that was published with a bad
+    cut is corrected by writing a *new* file in its place, and the existing hard
+    link still points at the old inode — the bytes of the bad cut, kept alive by
+    that very link. Reusing either one would re-run the whole pipeline against
+    the material the re-run exists to replace.
     """
     import json
     from datetime import UTC, datetime
@@ -777,9 +785,12 @@ def _ingest_local_recording(episode: Episode, output_dir: str, settings: Setting
         source_video,
         out_path / f"audio.{settings.audio_format}",
         audio_format=settings.audio_format,
+        force=force,
     )
 
     video_path = out_path / "video.mp4"
+    if force:
+        video_path.unlink(missing_ok=True)
     if not video_path.exists():
         try:
             video_path.hardlink_to(source_video)

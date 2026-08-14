@@ -29,6 +29,24 @@ def _isolate_tts_cache(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _dry_run_is_decided_by_the_test(monkeypatch):
+    """Never let the surrounding machine decide whether a stage does its work.
+
+    ``.env`` is already ignored above, but environment variables still reach
+    ``Settings``. CI exported ``DRY_RUN=true`` as a safety net against real API
+    calls, which meant six stage tests quietly asserted against placeholder
+    paths instead of the logic they were written for — and passed on the Pi,
+    where the variable is off, so nobody saw it. Providers are mocked
+    everywhere regardless, so the net was protecting nothing.
+
+    A test that wants dry-run behaviour passes ``dry_run=True`` to ``Settings``
+    explicitly, which still wins.
+    """
+    monkeypatch.setenv("DRY_RUN", "false")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _isolate_pipeline_lock(tmp_path_factory, monkeypatch):
     """Keep the run lock out of the production data directory.
 

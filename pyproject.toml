@@ -23,6 +23,11 @@ dependencies = [
     "requests>=2.31.0",
     "json-repair>=0.30.0",
     "jinja2>=3.1.0",
+    # Used by the weather renderer's last-resort fallback, the image
+    # generator, stock images and the final review. It was never declared and
+    # only happened to be present on the Pi, so a fresh install built to the
+    # documented instructions had no weather card fallback at all.
+    "pillow>=10.0.0",
 ]
 
 [project.optional-dependencies]

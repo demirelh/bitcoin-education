@@ -51,6 +51,15 @@ jobs:
         python-version: ${{ matrix.python-version }}
         cache: 'pip'
 
+    # The pipeline shells out to both of these, and the weather renderer
+    # falls back to Pillow only when Chromium is missing -- without them the
+    # suite tests the failure paths and nothing else.
+    - name: Install ffmpeg and chromium
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y --no-install-recommends ffmpeg chromium-browser || \
+          sudo apt-get install -y --no-install-recommends ffmpeg chromium
+
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip

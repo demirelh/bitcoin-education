@@ -486,17 +486,13 @@ class TestDownloadUsesTheLocalFile:
             video.unlink()
             video.write_bytes(b"\1" * 256)
 
-            download_episode(
-                db_session, "tagesschau_2026-08-06_2000", settings, force=True
-            )
+            download_episode(db_session, "tagesschau_2026-08-06_2000", settings, force=True)
 
         out_dir = Path(settings.raw_data_dir) / "tagesschau_2026-08-06_2000"
         assert (out_dir / "video.mp4").read_bytes() == b"\1" * 256
         assert (out_dir / f"audio.{settings.audio_format}").read_bytes() == b"\1" * 256
 
-    def test_without_force_the_existing_ingest_is_kept(
-        self, db_session, tmp_path, recordings_dir
-    ):
+    def test_without_force_the_existing_ingest_is_kept(self, db_session, tmp_path, recordings_dir):
         """The unforced path stays cheap: no re-extraction, no re-linking."""
         video = make_recording(recordings_dir, date(2026, 8, 6), video_bytes=b"\0" * 128)
         settings = local_settings(tmp_path, recordings_dir)

@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
+from btcedu.core import loudness
 from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
@@ -22,6 +23,36 @@ logger = logging.getLogger(__name__)
 
 def _utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def _levelled_sting(raw: bytes | None, destination: Path, label: str) -> Path | None:
+    """Write a sting asset into the render inputs, levelled like the speech.
+
+    The narration is levelled to -15 LUFS take by take; nothing did the same
+    for the stings. The intro asset ships at -13.2 LUFS with a true peak of
+    +0.56 dBTP — above full scale — and reached the encoder with only a trim
+    and two fades on it, so it was both louder than the narration it
+    introduces and clipped. That is what "the intro sounds shrill" was.
+
+    Levelling here rather than in the asset keeps the fix with the pipeline:
+    the next sting somebody drops in is treated the same way, and the copy in
+    ``inputs/`` is what the remote renderer ships, so both paths agree.
+
+    A failure leaves the snapshot at its original level — a sting at the wrong
+    loudness is worse than no video, so this never raises.
+    """
+    if raw is None:
+        return None
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(raw)
+    try:
+        change = loudness.normalize_loudness(destination, channels=2)
+    except Exception as exc:  # noqa: BLE001 - a sting must never fail a render
+        logger.warning("Could not level the %s sting (%s); using it as delivered", label, exc)
+        return destination
+    if change is not None:
+        logger.info("Levelled the %s sting by %+.1f dB", label, change)
+    return destination
 
 
 def _write_render_progress(render_dir: Path, payload: dict) -> None:
@@ -252,6 +283,11 @@ def render_video(
             "lower_thirds_animated": _eff_lower_thirds,
             "ticker": _eff_ticker,
             "intro": _eff_intro_enabled,
+            # Part of the fingerprint so that changing the target rebuilds the
+            # segments: the asset hashes below are taken from the file as
+            # delivered and say nothing about the level it is played at.
+            "sting_loudness_lufs": loudness.TARGET_LUFS,
+            "sting_peak_ceiling_dbfs": loudness.PEAK_CEILING_DBFS,
             "intro_audio": _eff_intro_audio,
             "intro_audio_sha256": (
                 hashlib.sha256(_intro_audio_bytes).hexdigest()
@@ -384,18 +420,15 @@ def render_video(
         if not settings_unchanged:
             logger.info("Render settings changed — every chapter segment is rebuilt")
 
-        _intro_audio_snapshot: Path | None = None
-        if _intro_audio_bytes is not None:
-            inputs_dir = render_dir / "inputs"
-            inputs_dir.mkdir(parents=True, exist_ok=True)
-            _intro_audio_snapshot = inputs_dir / "intro.mp3"
-            _intro_audio_snapshot.write_bytes(_intro_audio_bytes)
-        _topic_intro_audio_snapshot: Path | None = None
-        if _topic_intro_audio_bytes is not None:
-            inputs_dir = render_dir / "inputs"
-            inputs_dir.mkdir(parents=True, exist_ok=True)
-            _topic_intro_audio_snapshot = inputs_dir / "topic_intro.mp3"
-            _topic_intro_audio_snapshot.write_bytes(_topic_intro_audio_bytes)
+        _intro_audio_snapshot = _levelled_sting(
+            _intro_audio_bytes, render_dir / "inputs" / "intro.mp3", "intro"
+        )
+        _topic_intro_audio_snapshot = _levelled_sting(
+            _topic_intro_audio_bytes, render_dir / "inputs" / "topic_intro.mp3", "topic intro"
+        )
+        _outro_audio_snapshot = _levelled_sting(
+            _outro_audio_bytes, render_dir / "inputs" / "outro.mp3", "outro"
+        )
 
         # Render each chapter segment
         segment_entries: list[RenderSegmentEntry] = []
@@ -879,7 +912,7 @@ def render_video(
             create_outro_segment(
                 output_path=str(outro_path),
                 source_text=_eff_outro_text or settings.render_outro_text,
-                audio_path=_eff_outro_audio or None,
+                audio_path=str(_outro_audio_snapshot) if _outro_audio_snapshot else None,
                 duration=settings.render_outro_duration,
                 resolution=settings.render_resolution,
                 fps=settings.render_fps,
@@ -1266,6 +1299,8 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
                 _rc("ticker_enabled", getattr(settings, "render_ticker_enabled", False))
             ),
             "intro": bool(_rc("intro_enabled", getattr(settings, "render_intro_enabled", False))),
+            "sting_loudness_lufs": loudness.TARGET_LUFS,
+            "sting_peak_ceiling_dbfs": loudness.PEAK_CEILING_DBFS,
             "intro_audio": intro_audio,
             "intro_audio_sha256": (
                 hashlib.sha256(Path(intro_audio).read_bytes()).hexdigest()

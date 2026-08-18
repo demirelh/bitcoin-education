@@ -167,7 +167,7 @@ def test_resolve_tts_config_uses_profile_model_and_voice(tmp_path):
     cfg = _resolve_tts_config(episode, settings)
     assert cfg["model"] == "eleven_turbo_v2_5"  # profile model, not the global default
     assert cfg["voice_id"] == "Q2IX97JeHBY3vNGzgM5s"
-    assert cfg["speed"] == 1.08
+    assert cfg["speed"] == 1.0
     assert isinstance(cfg["pronunciation_lexicon"], dict)
 
 

@@ -297,8 +297,19 @@ class TestTheSwitch:
     def test_the_setting_turns_it_off(self):
         assert _cache_dir(Settings(tts_cache_enabled=False)) is None
 
+    def test_reuse_is_off_unless_it_is_asked_for(self):
+        """The default is no reuse.
+
+        A stored take is never re-examined, so a delivery nobody liked comes
+        back every third or fourth evening for as long as the line stays the
+        same. That outlasted three rounds of fixes to the way takes are made,
+        because the lines in question were no longer being made.
+        """
+        assert _cache_dir(Settings()) is None
+
     def test_the_setting_points_at_the_configured_directory(self):
-        assert _cache_dir(Settings(tts_cache_dir="/tmp/somewhere")) == Path("/tmp/somewhere")
+        settings = Settings(tts_cache_enabled=True, tts_cache_dir="/tmp/somewhere")
+        assert _cache_dir(settings) == Path("/tmp/somewhere")
 
 
 class TestPruning:

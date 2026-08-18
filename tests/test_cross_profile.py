@@ -249,10 +249,14 @@ def test_tts_profile_config_values():
 
     assert tts_cfg.get("voice_id")  # explicit news voice (Irem)
     assert "stability" in tts_cfg
-    # Moderate stability keeps it coherent but not monotone.
-    assert 0.3 <= tts_cfg["stability"] <= 0.6
+    # High stability keeps the emphasis even from one take to the next. At 0.45
+    # the variants ElevenLabs produced stressed different words, which is how
+    # some evenings came out sounding wrong while others were fine.
+    assert 0.5 <= tts_cfg["stability"] <= 0.8
     assert tts_cfg.get("style", 0.0) > 0.0  # some expressiveness
-    assert tts_cfg.get("speed", 1.0) > 1.0  # slightly faster than default
+    # Not faster than normal. An anchor lands the sentence and leaves a beat;
+    # at speed 1.08 the sentences ran into each other and sounded rushed.
+    assert tts_cfg.get("speed", 1.0) <= 1.0
 
 
 def test_bitcoin_profile_has_tts_voice():

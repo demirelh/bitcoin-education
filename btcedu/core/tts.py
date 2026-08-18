@@ -819,6 +819,40 @@ _NOISE_MAX_TAKES = 3
 _NOISE_FLOOR_WINDOW_SAMPLES = 4410  # 100 ms at 44.1 kHz
 
 
+def _media_duration_seconds(path: Path) -> float | None:
+    """How long an audio file plays, or ``None`` when it cannot be read.
+
+    Like the noise measurement, this must never fail a run: an unreadable file
+    is a problem for the checks that follow, not a reason to raise here.
+    """
+    import subprocess
+
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "default=noprint_wrappers=1:nokey=1",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:  # noqa: BLE001
+        logger.debug("Could not measure the duration of %s: %s", path, exc)
+        return None
+
+    try:
+        return float((result.stdout or "").strip())
+    except ValueError:
+        return None
+
+
 def _noise_floor_db(path: Path) -> float | None:
     """Noise floor of an audio file: the 1st percentile of its 100 ms RMS levels.
 
@@ -920,7 +954,7 @@ def _cache_dir(settings: Settings) -> Path | None:
     otherwise be turned into a path and quietly fill a directory named after
     it. Anything that is not a real switch and a real path means no cache.
     """
-    enabled = getattr(settings, "tts_cache_enabled", True)
+    enabled = getattr(settings, "tts_cache_enabled", False)
     if not isinstance(enabled, bool) or not enabled:
         return None
     directory = getattr(settings, "tts_cache_dir", None)
@@ -1028,10 +1062,16 @@ def _synthesize_clean_take(
         # Once every take sits at the same speech level the reading compares.
         _normalize_loudness(target)
         floor = _noise_floor_db(target)
+        # Kept as the emergency fallback below, and set before the rejections
+        # so that fallback is never empty: returning nothing here would leave
+        # the caller without audio at all.
         last_response, last_floor = response, floor
 
-        # Checked before the noise floor is allowed to accept anything: a
-        # stuttered take must never be returned or stored, however quiet it is.
+        # Both rejections come before the noise floor is allowed to accept
+        # anything: a take that did not read the line must never be returned as
+        # a considered choice or stored, however quiet it is.
+        if _take_runs_off(target, request, label, attempt, max_attempts):
+            continue
         if _take_stutters(target, request, stutter_model, label, attempt, max_attempts):
             continue
 
@@ -1056,15 +1096,17 @@ def _synthesize_clean_take(
         )
 
     if best_response is None:
-        # Every take stuttered. Publishing a stumble is bad; publishing silence
-        # is worse, and there is nothing left to choose from. The take is kept
-        # but deliberately not cached, so the next episode gets a fresh chance
-        # instead of inheriting this one for good.
+        # Not one take read the line as asked — every attempt either stumbled
+        # over its opening or ran off from the text entirely. Publishing a
+        # stumble is bad; publishing nothing at all is worse, and there is
+        # nothing left to choose from. The take is kept but deliberately not
+        # stored, so the next episode gets a fresh chance instead of
+        # inheriting this one for good.
         if last_response is not None:
             target.write_bytes(last_response.audio_bytes)
             _normalize_loudness(target)
             logger.error(
-                "%s: all %d takes stumbled over the opening; keeping the last one "
+                "%s: none of the %d takes read the line correctly; keeping the last one "
                 "and not storing it — the audio should be checked by ear",
                 label,
                 attempts,
@@ -1087,6 +1129,69 @@ def _synthesize_clean_take(
         # would freeze the hiss into every future episode, and the retry logic
         # exists precisely to get away from it.
     return best_response, best_floor, attempts
+
+
+_DURATION_MIN_RATIO = 0.5
+_DURATION_MAX_RATIO = 2.0
+# Measured on Turkish bulletin takes: 8.0 s of speech for 37 syllables across
+# 118 characters, i.e. roughly 13 characters a second. The bounds around it are
+# wide on purpose — this is here to catch a take that ran away, not to police
+# delivery.
+_CHARS_PER_SECOND = 13.0
+
+
+def _expected_duration_seconds(text: str) -> float | None:
+    """Roughly how long *text* should take to say, or ``None`` if unusable.
+
+    Short lines are not worth judging: a two-word handover has so little text
+    that the character estimate is mostly noise, and a wrong verdict there
+    costs a paid retry for nothing.
+    """
+    stripped = (text or "").strip()
+    if len(stripped) < 40:
+        return None
+    return len(stripped) / _CHARS_PER_SECOND
+
+
+def _take_runs_off(target: Path, request, label: str, attempt: int, max_attempts: int) -> bool:
+    """Is this take wildly longer or shorter than the text it was given?
+
+    ElevenLabs occasionally returns something that has nothing to do with the
+    request: a 9-second greeting came back as 77 seconds of unbroken tone with
+    no recognisable speech in it at all. Neither existing check reliably sees
+    that. The noise floor happened to catch this one, but only because the
+    noise was loud; a take that runs away into repetition sits at a perfectly
+    respectable level. The stutter check reads the opening only, so anything
+    that derails after the first sentence is invisible to it.
+
+    Duration needs no recogniser, no model download and no API call, and the
+    failure it catches is not subtle — it is off by a factor, not a fraction.
+    Returns ``False`` whenever the check cannot run, so an unreadable file
+    stays the noise check's problem rather than becoming a rejection here.
+    """
+    expected = _expected_duration_seconds(getattr(request, "text", ""))
+    if expected is None:
+        return False
+
+    actual = _media_duration_seconds(target)
+    if actual is None or actual <= 0:
+        return False
+
+    ratio = actual / expected
+    if _DURATION_MIN_RATIO <= ratio <= _DURATION_MAX_RATIO:
+        return False
+
+    logger.warning(
+        "%s: take %d runs %.1fx the expected length (%.1fs of audio for text that should "
+        "take about %.1fs) — the voice did not read the line it was given%s",
+        label,
+        attempt,
+        ratio,
+        actual,
+        expected,
+        " — retrying" if attempt < max(1, max_attempts) else "",
+    )
+    return True
 
 
 def _take_stutters(

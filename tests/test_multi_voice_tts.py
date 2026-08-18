@@ -472,3 +472,213 @@ def test_an_unmeasurable_take_is_accepted(tmp_path):
     assert takes == 1
     assert len(calls) == 1
     assert floor is None
+
+
+class _Line:
+    """A request stand-in that carries the text the voice was given."""
+
+    def __init__(self, text: str):
+        self.text = text
+
+
+GREETING = (
+    "İyi akşamlar, ALMANYA24'e hoş geldiniz. "
+    "Almanya'nın ve dünyanın gündemindeki gelişmelerle karşınızdayız."
+)
+
+
+class TestExpectedDuration:
+    def test_a_short_line_is_not_judged(self):
+        """Two words carry too little text for the estimate to mean anything,
+        and a wrong verdict costs a paid retry."""
+        from btcedu.core.tts import _expected_duration_seconds
+
+        assert _expected_duration_seconds("Hava durumu.") is None
+        assert _expected_duration_seconds("") is None
+        assert _expected_duration_seconds(None) is None
+
+    def test_a_full_sentence_is_estimated_from_its_length(self):
+        from btcedu.core.tts import _expected_duration_seconds
+
+        estimate = _expected_duration_seconds(GREETING)
+        assert estimate is not None
+        # The take measured off the real greeting runs about 8.4 seconds.
+        assert 6.0 < estimate < 11.0
+
+
+class TestATakeThatRunsOff:
+    """ElevenLabs returned 77 seconds of unbroken tone for a 9-second greeting,
+    with no recognisable speech in it. The noise floor caught that one only
+    because the noise happened to be loud, and the stutter check reads the
+    opening alone, so anything derailing later is invisible to it."""
+
+    def test_a_take_nine_times_too_long_is_rejected(self, tmp_path):
+        from unittest.mock import patch
+
+        from btcedu.core.tts import _take_runs_off
+
+        target = tmp_path / "part.mp3"
+        with patch("btcedu.core.tts._media_duration_seconds", return_value=77.0):
+            assert _take_runs_off(target, _Line(GREETING), "ch01", 1, 3) is True
+
+    def test_a_take_that_stops_almost_immediately_is_rejected(self, tmp_path):
+        from unittest.mock import patch
+
+        from btcedu.core.tts import _take_runs_off
+
+        target = tmp_path / "part.mp3"
+        with patch("btcedu.core.tts._media_duration_seconds", return_value=1.2):
+            assert _take_runs_off(target, _Line(GREETING), "ch01", 1, 3) is True
+
+    def test_a_take_of_the_right_length_is_kept(self, tmp_path):
+        from unittest.mock import patch
+
+        from btcedu.core.tts import _take_runs_off
+
+        target = tmp_path / "part.mp3"
+        with patch("btcedu.core.tts._media_duration_seconds", return_value=8.4):
+            assert _take_runs_off(target, _Line(GREETING), "ch01", 1, 3) is False
+
+    def test_a_slow_reading_is_still_acceptable(self, tmp_path):
+        """The bounds are wide on purpose: this catches a take that ran away,
+        it does not police delivery."""
+        from unittest.mock import patch
+
+        from btcedu.core.tts import _take_runs_off
+
+        target = tmp_path / "part.mp3"
+        with patch("btcedu.core.tts._media_duration_seconds", return_value=15.0):
+            assert _take_runs_off(target, _Line(GREETING), "ch01", 1, 3) is False
+
+    def test_an_unreadable_file_is_not_a_rejection(self, tmp_path):
+        """A measurement that cannot be taken stays the noise check's problem;
+        it must never become a rejection on its own."""
+        from unittest.mock import patch
+
+        from btcedu.core.tts import _take_runs_off
+
+        target = tmp_path / "part.mp3"
+        with patch("btcedu.core.tts._media_duration_seconds", return_value=None):
+            assert _take_runs_off(target, _Line(GREETING), "ch01", 1, 3) is False
+        with patch("btcedu.core.tts._media_duration_seconds", return_value=0.0):
+            assert _take_runs_off(target, _Line(GREETING), "ch01", 1, 3) is False
+
+
+class TestRunawayTakesInTheRetryLoop:
+    @staticmethod
+    def _service():
+        service = type("S", (), {})()
+        service.synthesize = lambda request: _take(b"take")
+        return service
+
+    def test_a_runaway_take_is_synthesized_again(self, tmp_path):
+        from unittest.mock import patch
+
+        from btcedu.core.tts import _synthesize_clean_take
+
+        durations = iter([77.0, 8.4])
+        target = tmp_path / "part.mp3"
+
+        with (
+            patch(
+                "btcedu.core.tts._media_duration_seconds",
+                side_effect=lambda _p: next(durations),
+            ),
+            patch("btcedu.core.tts._noise_floor_db", return_value=-80.0),
+        ):
+            response, floor, takes = _synthesize_clean_take(
+                self._service(),
+                _Line(GREETING),
+                target,
+                max_attempts=3,
+                noise_floor_max_db=-55.0,
+                label="ch01",
+            )
+
+        assert takes == 2
+        assert floor == -80.0
+        assert response is not None
+
+    def test_a_runaway_take_is_never_the_one_kept(self, tmp_path):
+        """A quiet 77-second tone would otherwise win the noise comparison
+        outright and be chosen as the cleanest of the three."""
+        from unittest.mock import patch
+
+        from btcedu.core.tts import _synthesize_clean_take
+
+        # The runaway take is by far the quietest, so on noise alone it wins.
+        durations = iter([77.0, 8.4, 8.4])
+        floors = iter([-90.0, -40.0, -38.0])
+        target = tmp_path / "part.mp3"
+
+        with (
+            patch(
+                "btcedu.core.tts._media_duration_seconds",
+                side_effect=lambda _p: next(durations),
+            ),
+            patch("btcedu.core.tts._noise_floor_db", side_effect=lambda _p: next(floors)),
+        ):
+            _, floor, takes = _synthesize_clean_take(
+                self._service(),
+                _Line(GREETING),
+                target,
+                max_attempts=3,
+                noise_floor_max_db=-55.0,
+                label="ch01",
+            )
+
+        assert takes == 3
+        assert floor == -40.0  # the cleanest of the takes that read the line
+
+    def test_audio_still_comes_back_when_every_take_runs_off(self, tmp_path):
+        """Publishing a bad take is bad; handing the caller nothing at all is
+        worse, because there is then no audio for the chapter."""
+        from unittest.mock import patch
+
+        from btcedu.core.tts import _synthesize_clean_take
+
+        target = tmp_path / "part.mp3"
+
+        with (
+            patch("btcedu.core.tts._media_duration_seconds", return_value=77.0),
+            patch("btcedu.core.tts._noise_floor_db", return_value=-80.0),
+        ):
+            response, _floor, takes = _synthesize_clean_take(
+                self._service(),
+                _Line(GREETING),
+                target,
+                max_attempts=3,
+                noise_floor_max_db=-55.0,
+                label="ch01",
+            )
+
+        assert takes == 3
+        assert response is not None
+
+    def test_a_runaway_take_is_never_stored_for_reuse(self, tmp_path):
+        """Storing one would hand the same broken recording to every later
+        episode that says the same line."""
+        from unittest.mock import patch
+
+        from btcedu.core.tts import _synthesize_clean_take
+        from btcedu.services.elevenlabs_service import TTSRequest
+
+        cache_dir = tmp_path / "cache"
+        target = tmp_path / "part.mp3"
+
+        with (
+            patch("btcedu.core.tts._media_duration_seconds", return_value=77.0),
+            patch("btcedu.core.tts._noise_floor_db", return_value=-80.0),
+        ):
+            _synthesize_clean_take(
+                self._service(),
+                TTSRequest(text=GREETING, voice_id=ANCHOR_VOICE),
+                target,
+                max_attempts=2,
+                noise_floor_max_db=-55.0,
+                label="ch01",
+                cache_dir=cache_dir,
+            )
+
+        stored = list(cache_dir.glob("*.mp3")) if cache_dir.exists() else []
+        assert stored == []

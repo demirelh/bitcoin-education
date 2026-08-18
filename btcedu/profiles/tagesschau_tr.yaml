@@ -167,23 +167,31 @@ stage_config:
     voices:
       anchor_female:
         # Main anchor: Nazlı Yeni (Istanbul accent, professional).
+        # Delivery is deliberately unhurried. At speed 1.05 the greeting ran at
+        # 4.6 syllables a second with 0.34 s between sentences, which reads as
+        # rushed rather than authoritative — a news anchor lands the sentence
+        # and then leaves a beat. Slowing the voice stretches its own pauses
+        # too, so the beat comes back without touching the approved text.
         display_name: "Nazlı Yeni"
         voice_id: "o9DOmAyPjfFu8AfoFAnM"
-        stability: 0.5
+        # Higher stability and lower style keep the emphasis even. The variants
+        # ElevenLabs produces at style 0.3 differ from each other in where they
+        # put the stress, which is what made some evenings sound wrong.
+        stability: 0.65
         similarity_boost: 0.75
-        style: 0.3
-        speed: 1.05
+        style: 0.2
+        speed: 0.98
       reporter_male:
         display_name: "Cavit"
-        voice_id: "Q2IX97JeHBY3vNGzgM5s"
-        stability: 0.45
+        stability: 0.6
         similarity_boost: 0.75
-        style: 0.35
-        speed: 1.08
-    stability: 0.45
+        style: 0.25
+        speed: 1.0
+        voice_id: "Q2IX97JeHBY3vNGzgM5s"
+    stability: 0.6
     similarity_boost: 0.75
-    style: 0.35
-    speed: 1.08
+    style: 0.25
+    speed: 1.0
     model: eleven_turbo_v2_5
     # Deterministic display→spoken substitutions applied ONLY to the synthesized
     # audio; the locked/approved narration text is never modified. Add German

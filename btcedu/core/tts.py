@@ -1133,11 +1133,11 @@ def _synthesize_clean_take(
 
 _DURATION_MIN_RATIO = 0.5
 _DURATION_MAX_RATIO = 2.0
-# Measured on Turkish bulletin takes: 8.0 s of speech for 37 syllables across
-# 118 characters, i.e. roughly 13 characters a second. The bounds around it are
-# wide on purpose — this is here to catch a take that ran away, not to police
-# delivery.
-_CHARS_PER_SECOND = 13.0
+# Measured across thirteen rendered chapters of the Turkish bulletin: the
+# delivery sits between 13.0 and 16.0 characters a second, averaging 15.2. The
+# bounds around it are wide on purpose — this is here to catch a take that ran
+# away, not to police delivery, which is the profile's business.
+_CHARS_PER_SECOND = 15.0
 
 
 def _expected_duration_seconds(text: str) -> float | None:

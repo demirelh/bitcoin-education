@@ -192,7 +192,12 @@ stage_config:
     similarity_boost: 0.75
     style: 0.25
     speed: 1.0
-    model: eleven_turbo_v2_5
+    # eleven_turbo_v2_5 is unreliable on Turkish: on the fixed opening line it
+    # garbled "günün öne çıkan" into "gününün ..." (and worse) in 3 of 6 takes,
+    # and swallowed sentence openings. The same text on eleven_multilingual_v2
+    # came back correct in 4 of 4 takes. Turbo is cheaper and faster, but a
+    # mispronounced greeting is in every single bulletin.
+    model: eleven_multilingual_v2
     # Deterministic display→spoken substitutions applied ONLY to the synthesized
     # audio; the locked/approved narration text is never modified. Add German
     # names/tickers a Turkish voice mispronounces, e.g.:

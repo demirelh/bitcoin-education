@@ -1197,7 +1197,11 @@ def _take_runs_off(target: Path, request, label: str, attempt: int, max_attempts
 def _take_stutters(
     target: Path, request, model, label: str, attempt: int, max_attempts: int
 ) -> bool:
-    """Does this take stumble over its opening words?
+    """Does this take stumble over its script?
+
+    Short takes are judged in full and long ones at the opening; that decision
+    belongs to the checker, which is the only place that knows how long the
+    audio runs.
 
     Returns ``False`` when the check cannot run. A missing recogniser must not
     silently reject every take — that would turn an optional quality check into
@@ -1212,12 +1216,12 @@ def _take_stutters(
     if not text:
         return False
 
-    verdict = tts_stutter.check_opening(target, text, model=model)
+    verdict = tts_stutter.check_take(target, text, model=model)
     if not verdict.stuttered:
         return False
 
     logger.warning(
-        "%s: take %d stumbles over its opening (%s, heard %r)%s",
+        "%s: take %d does not read the line as written (%s, heard %r)%s",
         label,
         attempt,
         verdict.reason,

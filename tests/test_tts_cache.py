@@ -550,8 +550,8 @@ def _take_with_model(service, target, cache_dir, model, floor_db=-70.0):
     tts_module._noise_floor_db = lambda _path: floor_db
     try:
         with patch(
-            "btcedu.core.tts_stutter._transcribe_opening",
-            side_effect=lambda audio, model, language: model.transcribe(audio)[0][0].text,
+            "btcedu.core.tts_stutter._transcribe",
+            side_effect=lambda audio, model, language, seconds: model.transcribe(audio)[0][0].text,
         ):
             return _synthesize_clean_take(
                 service,

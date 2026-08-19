@@ -29,6 +29,21 @@ def _isolate_tts_cache(tmp_path_factory, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_recogniser_in_tests(monkeypatch):
+    """Keep the stutter check from loading a real Whisper model.
+
+    Left on, tests synthesising fake audio load `small` and transcribe silence,
+    which the recogniser answers with its stock hallucination ("Altyazı M.K.").
+    That is not a verdict about anything the test wrote, but it is a rejection,
+    so the take is retried three times and the assertions count six requests
+    where they expect two — after several seconds of model loading per test.
+    A test that means to exercise the check passes its own model in.
+    """
+    monkeypatch.setenv("TTS_STUTTER_CHECK_ENABLED", "false")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _dry_run_is_decided_by_the_test(monkeypatch):
     """Never let the surrounding machine decide whether a stage does its work.
 

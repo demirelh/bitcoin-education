@@ -41,7 +41,7 @@ def test_profile_tts_values_override_global_settings():
     resolved = _resolve_tts_config(episode, settings)
 
     assert resolved["voice_id"] == "Q2IX97JeHBY3vNGzgM5s"
-    assert resolved["model"] == "eleven_turbo_v2_5"
+    assert resolved["model"] == "eleven_multilingual_v2"
     reset_registry()
 
 
@@ -209,7 +209,7 @@ def test_tagesschau_profile_operational_contract():
     assert config["adapt"]["mode"] == "conditional"
     assert config["imagegen"]["provider"] == "generative"
     assert config["tts"]["voice_id"]
-    assert config["tts"]["model"] == "eleven_turbo_v2_5"
+    assert config["tts"]["model"] == "eleven_multilingual_v2"
     assert profile.auto_publish is False
     episode = Episode(
         episode_id="ep-tagesschau-config",

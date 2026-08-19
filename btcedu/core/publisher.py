@@ -1089,6 +1089,11 @@ def publish_video(
             pass
 
     draft_path = Path(settings.outputs_dir) / episode_id / "render" / "draft.mp4"
+    # Written by the render stage against the finished timeline. The burned-in
+    # lines and this track come from the same cues, so switching the track off
+    # in YouTube leaves the viewer with exactly the same text on the picture.
+    subtitle_candidate = Path(settings.outputs_dir) / episode_id / "render" / "subtitles.tr.srt"
+    subtitle_path = subtitle_candidate if subtitle_candidate.exists() else None
 
     # Build upload request
     from btcedu.services.youtube_service import (
@@ -1111,6 +1116,7 @@ def publish_video(
         ),
         privacy_status=effective_privacy,
         thumbnail_path=thumbnail_path,
+        subtitle_path=subtitle_path,
     )
 
     is_dry_run = getattr(settings, "dry_run", False)

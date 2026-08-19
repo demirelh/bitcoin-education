@@ -19,7 +19,7 @@ from btcedu.core.tts import (
     _speaker_segments,
 )
 from btcedu.models.chapter_schema import Chapter, Narration, Transitions, Visual
-from btcedu.services.elevenlabs_service import TTSResponse
+from btcedu.services.elevenlabs_service import TTSResponse, WordTiming
 
 ANCHOR_VOICE = "voice-anchor-female"
 REPORTER_VOICE = "voice-reporter-male"
@@ -685,3 +685,63 @@ class TestRunawayTakesInTheRetryLoop:
 
         stored = list(cache_dir.glob("*.mp3")) if cache_dir.exists() else []
         assert stored == []
+
+
+class _TimedTTSService(FakeTTSService):
+    """Like the fake above, but returns word timings for chosen parts."""
+
+    def __init__(self, tmp_path: Path, timings_per_call: list):
+        super().__init__(tmp_path)
+        self._timings = list(timings_per_call)
+
+    def synthesize(self, request):
+        response = super().synthesize(request)
+        response.word_timings = self._timings.pop(0) if self._timings else None
+        return response
+
+
+class TestChapterWordTimings:
+    def test_the_second_part_is_shifted_past_the_first_and_its_pause(
+        self, tmp_path, role_voices, fallback
+    ):
+        """Word timings arrive relative to their own part. Without the shift
+        every subtitle after the first speaker would sit on the intro."""
+        service = _TimedTTSService(
+            tmp_path,
+            [
+                [WordTiming("bir", 0.0, 0.5)],
+                [WordTiming("iki", 0.0, 0.5)],
+            ],
+        )
+        entry = _generate_multi_voice_audio(
+            _chapter(SEGMENTS),
+            SEGMENTS,
+            service,
+            tmp_path,
+            Settings(dry_run=False),
+            role_voices=role_voices,
+            fallback=fallback,
+            lexicon={},
+            text_hash="sha256:x",
+        )
+        timings = entry.metadata["word_timings"]
+        assert [(t["w"], t["s"]) for t in timings] == [("bir", 0.0), ("iki", 1.85)]
+
+    def test_one_part_without_timings_discards_the_whole_chapter(
+        self, tmp_path, role_voices, fallback
+    ):
+        """A gap of unknown length would shift everything after it, so the
+        chapter falls back to an even spread instead of drifting."""
+        service = _TimedTTSService(tmp_path, [[WordTiming("bir", 0.0, 0.5)], None])
+        entry = _generate_multi_voice_audio(
+            _chapter(SEGMENTS),
+            SEGMENTS,
+            service,
+            tmp_path,
+            Settings(dry_run=False),
+            role_voices=role_voices,
+            fallback=fallback,
+            lexicon={},
+            text_hash="sha256:x",
+        )
+        assert entry.metadata.get("word_timings") is None

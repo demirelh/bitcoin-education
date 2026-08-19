@@ -83,6 +83,22 @@ def _paths(cache_dir: Path, key: str) -> tuple[Path, Path]:
     return cache_dir / f"{key}{_AUDIO_SUFFIX}", cache_dir / f"{key}{_META_SUFFIX}"
 
 
+def _timings_from_meta(raw: object) -> list | None:
+    """Rebuild word timings from a sidecar, or ``None`` if it has none.
+
+    Entries written before timings existed simply lack the field; they stay
+    usable and their chapter falls back to an even spread.
+    """
+    from btcedu.services.elevenlabs_service import WordTiming
+
+    if not isinstance(raw, list) or not raw:
+        return None
+    try:
+        return [WordTiming(str(item["w"]), float(item["s"]), float(item["e"])) for item in raw]
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def lookup(cache_dir: Path, key: str, target: Path) -> CacheHit | None:
     """Copy a stored take to *target* and rebuild its response.
 
@@ -118,6 +134,7 @@ def lookup(cache_dir: Path, key: str, target: Path) -> CacheHit | None:
             # make the episode look more expensive than it was and would
             # count against the cost guard for money nobody spent.
             cost_usd=0.0,
+            word_timings=_timings_from_meta(meta.get("word_timings")),
         )
     except (KeyError, TypeError, ValueError, OSError) as exc:
         logger.warning("TTS cache metadata %s unreadable (%s); synthesizing instead", key, exc)
@@ -158,6 +175,15 @@ def store(
                     "voice_id": response.voice_id,
                     "character_count": response.character_count,
                     "noise_floor_db": noise_floor_db,
+                    # Kept with the take: without them a reused line would be
+                    # the one part of the broadcast that cannot be subtitled
+                    # accurately, and re-recording it just for its timings
+                    # would defeat the cache.
+                    "word_timings": [
+                        {"w": item.word, "s": round(item.start, 3), "e": round(item.end, 3)}
+                        for item in (response.word_timings or [])
+                    ]
+                    or None,
                     # For a human reading the directory. Never parsed back.
                     "text_preview": text[:120],
                     "text_length": len(text),

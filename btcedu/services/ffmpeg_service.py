@@ -222,6 +222,22 @@ def _build_drawtext_filter(overlay: OverlaySpec, font_path: str) -> str:
     return "drawtext=" + ":".join(option_parts)
 
 
+def _escape_subtitle_path(path: str) -> str:
+    """Escape a path for use inside an ffmpeg filter argument.
+
+    Two levels of quoting apply: the filtergraph's own, and the one the filter
+    performs on its option value. Getting this wrong turns a colon in a path
+    into an option separator and the render fails with a message that names
+    neither the file nor the reason.
+    """
+    return path.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'")
+
+
+def _build_subtitles_filter(subtitle_path: str) -> str:
+    """Burn an ASS file into the picture via libass."""
+    return f"ass=filename='{_escape_subtitle_path(subtitle_path)}'"
+
+
 def _build_kenburns_filter(
     pattern: str,
     duration: float,
@@ -811,6 +827,7 @@ def create_segment(
     color_saturation: float = 0.85,
     color_brightness: float = 0.02,
     color_blue_shift: float = 0.05,
+    subtitle_path: str | None = None,
 ) -> SegmentResult:
     """Create a video segment from image + audio + overlays.
 
@@ -941,6 +958,13 @@ def create_segment(
     else:
         filter_parts.append("[scaled]copy[pre_fade]")
 
+    # Subtitles sit under the fade on purpose: at a chapter boundary the line
+    # has to go with the picture, not hang over the cut.
+    fade_input = "pre_fade"
+    if subtitle_path:
+        filter_parts.append(f"[pre_fade]{_build_subtitles_filter(subtitle_path)}[subbed]")
+        fade_input = "subbed"
+
     # Add fade filters (Sprint 10)
     if fade_in_duration > 0 or fade_out_duration > 0:
         fade_filters = []
@@ -950,10 +974,10 @@ def create_segment(
             fade_out_start = max(0, duration - fade_out_duration)
             fade_filters.append(f"fade=t=out:st={fade_out_start}:d={fade_out_duration}")
         fade_chain = ",".join(fade_filters)
-        filter_parts.append(f"[pre_fade]{fade_chain}[v]")
+        filter_parts.append(f"[{fade_input}]{fade_chain}[v]")
     else:
         # No fades: rename final label
-        filter_parts.append("[pre_fade]copy[v]")
+        filter_parts.append(f"[{fade_input}]copy[v]")
 
     filter_complex = ";".join(filter_parts)
 
@@ -1202,6 +1226,7 @@ def create_video_segment(
     color_saturation: float = 0.85,
     color_brightness: float = 0.02,
     color_blue_shift: float = 0.05,
+    subtitle_path: str | None = None,
 ) -> SegmentResult:
     """Create a video segment from a video clip + TTS audio + overlays.
 
@@ -1281,6 +1306,13 @@ def create_video_segment(
     else:
         filter_parts.append("[scaled]copy[pre_fade]")
 
+    # Subtitles sit under the fade on purpose: at a chapter boundary the line
+    # has to go with the picture, not hang over the cut.
+    fade_input = "pre_fade"
+    if subtitle_path:
+        filter_parts.append(f"[pre_fade]{_build_subtitles_filter(subtitle_path)}[subbed]")
+        fade_input = "subbed"
+
     if fade_in_duration > 0 or fade_out_duration > 0:
         fade_filters = []
         if fade_in_duration > 0:
@@ -1289,9 +1321,9 @@ def create_video_segment(
             fade_out_start = max(0, duration - fade_out_duration)
             fade_filters.append(f"fade=t=out:st={fade_out_start}:d={fade_out_duration}")
         fade_chain = ",".join(fade_filters)
-        filter_parts.append(f"[pre_fade]{fade_chain}[v]")
+        filter_parts.append(f"[{fade_input}]{fade_chain}[v]")
     else:
-        filter_parts.append("[pre_fade]copy[v]")
+        filter_parts.append(f"[{fade_input}]copy[v]")
 
     filter_complex = ";".join(filter_parts)
 

@@ -1,5 +1,6 @@
 """ElevenLabs TTS service abstraction."""
 
+import base64
 import logging
 import re
 import time
@@ -67,6 +68,15 @@ class TTSRequest:
 
 
 @dataclass
+class WordTiming:
+    """When a single spoken word starts and ends inside the take."""
+
+    word: str
+    start: float
+    end: float
+
+
+@dataclass
 class TTSResponse:
     """Response from text-to-speech synthesis."""
 
@@ -77,6 +87,11 @@ class TTSResponse:
     voice_id: str
     character_count: int
     cost_usd: float
+    # Filled from the API's own character alignment. ``None`` means the take
+    # was produced without it — subtitles then fall back to spreading the text
+    # across the measured duration, which is why nothing downstream may
+    # require this.
+    word_timings: list[WordTiming] | None = None
 
 
 class TTSService(Protocol):
@@ -95,11 +110,16 @@ class ElevenLabsService:
         default_model: str = "eleven_multilingual_v2",
         before_api_call: Callable[[int, int], None] | None = None,
         fallback_api_keys: Sequence[str] = (),
+        request_timestamps: bool = True,
     ):
         self.api_key = api_key
         self.default_voice_id = default_voice_id
         self.default_model = default_model
         self.before_api_call = before_api_call
+        # Ask for the character alignment alongside the audio. It costs no
+        # extra credits and is the only exact source of subtitle timing we
+        # have, but it must never be a precondition for getting audio.
+        self.request_timestamps = request_timestamps
         # Reserve accounts, tried in order and only after the one in use has
         # reported its quota spent.
         self.fallback_api_keys = [
@@ -143,11 +163,12 @@ class ElevenLabsService:
 
         # Synthesize each chunk
         audio_parts = []
+        word_timings: list[WordTiming] | None = []
         sent_chars = 0
         for i, chunk in enumerate(chunks):
             logger.info("Synthesizing chunk %d/%d (%d chars)", i + 1, len(chunks), len(chunk))
             try:
-                audio_data = self._call_with_retry(
+                audio_data, chunk_words = self._call_with_retry(
                     chunk,
                     voice_id,
                     model,
@@ -161,6 +182,18 @@ class ElevenLabsService:
                 except (TypeError, ValueError):
                     exc.cost_usd = incurred
                 raise
+            if word_timings is not None:
+                if chunk_words is None:
+                    # One chunk without timings makes the whole take's timeline
+                    # unusable: everything after it would be shifted by an
+                    # unknown amount. Better no timings than wrong ones.
+                    word_timings = None
+                else:
+                    offset = sum(_measure_duration(part)[0] for part in audio_parts)
+                    word_timings.extend(
+                        WordTiming(item.word, item.start + offset, item.end + offset)
+                        for item in chunk_words
+                    )
             audio_parts.append(audio_data)
             sent_chars += len(chunk)
 
@@ -192,7 +225,31 @@ class ElevenLabsService:
             voice_id=voice_id,
             character_count=char_count,
             cost_usd=cost_usd,
+            word_timings=word_timings or None,
         )
+
+    def _disable_timestamps(self, error: ElevenLabsAPIError) -> bool:
+        """Give up on the timestamped endpoint after it refuses the request.
+
+        Only for refusals of the endpoint itself, never for a rate limit or a
+        spent quota — those say nothing about whether alignment is available
+        and would throw the timings away for the rest of the run over a
+        temporary condition.
+        """
+        if not self.request_timestamps:
+            return False
+        if error.status_code not in {400, 403, 404, 405, 422}:
+            return False
+        if _is_quota_exhausted(error):
+            return False
+        self.request_timestamps = False
+        logger.warning(
+            "ElevenLabs refused the timestamped endpoint (%d: %s); continuing without "
+            "word timings — subtitles will be spread across the measured duration instead",
+            error.status_code,
+            error.detail[:120],
+        )
+        return True
 
     def _switch_to_reserve_account(self, error: ElevenLabsAPIError) -> bool:
         """Move to the next configured account after a quota rejection.
@@ -227,13 +284,16 @@ class ElevenLabsService:
         voice_settings: dict,
         max_retries: int = 3,
         sent_chars: int = 0,
-    ) -> bytes:
+    ) -> tuple[bytes, list[WordTiming] | None]:
         """Call ElevenLabs API with exponential backoff on rate limits."""
+        timestamps = self.request_timestamps
         url = f"{API_BASE}/text-to-speech/{voice_id}"
+        if timestamps:
+            url += "/with-timestamps"
         headers = {
             "xi-api-key": self.api_key,
             "Content-Type": "application/json",
-            "Accept": "audio/mpeg",
+            "Accept": "application/json" if timestamps else "audio/mpeg",
         }
         payload = {
             "text": text,
@@ -283,6 +343,18 @@ class ElevenLabsService:
                         error_detail,
                         error_code,
                     )
+                    if timestamps and self._disable_timestamps(api_error):
+                        # The account or model does not serve the timestamped
+                        # endpoint. Subtitles are worth a lot less than the
+                        # broadcast, so the same chunk is fetched plainly.
+                        return self._call_with_retry(
+                            text,
+                            voice_id,
+                            model,
+                            voice_settings,
+                            max_retries=max_retries,
+                            sent_chars=sent_chars,
+                        )
                     if self._switch_to_reserve_account(api_error):
                         # Same chunk, fresh account. Not counted as a retry:
                         # the first account will never answer differently.
@@ -296,7 +368,7 @@ class ElevenLabsService:
                         )
                     raise api_error
 
-                return response.content
+                return _decode_audio_response(response)
 
             except requests.RequestException as e:
                 if attempt < max_retries - 1:
@@ -377,3 +449,68 @@ def _measure_duration(audio_bytes: bytes) -> tuple[float, int]:
 def _compute_cost(char_count: int) -> float:
     """Compute cost based on character count (ElevenLabs Starter pricing)."""
     return char_count / 1000 * ELEVENLABS_COST_PER_1K_CHARS
+
+
+def _words_from_alignment(alignment: object) -> list[WordTiming] | None:
+    """Turn the API's per-character alignment into per-word timings.
+
+    Characters are what the API reports and words are what a subtitle line is
+    made of, so the collapse happens here rather than being repeated by every
+    caller. A word runs from the start of its first character to the end of its
+    last; whitespace only separates.
+
+    Anything malformed yields ``None`` rather than an exception: a broadcast
+    must not fail over its subtitles.
+    """
+    if not isinstance(alignment, dict):
+        return None
+    characters = alignment.get("characters")
+    starts = alignment.get("character_start_times_seconds")
+    ends = alignment.get("character_end_times_seconds")
+    if not isinstance(characters, list) or not isinstance(starts, list):
+        return None
+    if not isinstance(ends, list) or not (len(characters) == len(starts) == len(ends)):
+        return None
+
+    words: list[WordTiming] = []
+    letters: list[str] = []
+    start: float | None = None
+    end: float | None = None
+    for character, char_start, char_end in zip(characters, starts, ends, strict=True):
+        if not isinstance(character, str):
+            return None
+        if character.isspace():
+            if letters and start is not None and end is not None:
+                words.append(WordTiming("".join(letters), start, end))
+            letters, start, end = [], None, None
+            continue
+        try:
+            char_start = float(char_start)
+            char_end = float(char_end)
+        except (TypeError, ValueError):
+            return None
+        letters.append(character)
+        start = char_start if start is None else start
+        end = char_end if end is None else max(end, char_end)
+    if letters and start is not None and end is not None:
+        words.append(WordTiming("".join(letters), start, end))
+    return words or None
+
+
+def _decode_audio_response(response) -> tuple[bytes, list[WordTiming] | None]:
+    """Read audio, and the alignment if the endpoint returned one.
+
+    The timestamped endpoint answers with JSON carrying base64 audio; the plain
+    one answers with the MP3 itself. Deciding by what actually came back rather
+    than by what was asked for means a body in the unexpected shape still
+    yields audio.
+    """
+    try:
+        body = response.json()
+    except (AttributeError, TypeError, ValueError):
+        body = None
+    if not isinstance(body, dict) or "audio_base64" not in body:
+        return response.content, None
+    audio = base64.b64decode(body["audio_base64"])
+    alignment = body.get("alignment") or body.get("normalized_alignment")
+    return audio, _words_from_alignment(alignment)

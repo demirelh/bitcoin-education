@@ -216,6 +216,11 @@ class Settings(BaseSettings):
     render_ticker_height: int = 50  # ticker bar height px
     render_ticker_fontsize: int = 28
 
+    # Burned-in subtitles. On by default: a large part of the audience meets
+    # the video muted in a feed, where the picture and the subtitle are all
+    # there is. The profile may switch them off or restyle them.
+    render_subtitles_enabled: bool = True
+
     render_intro_enabled: bool = False
     render_intro_duration: float = 4.0
     render_intro_bg_color: str = "#004B87"

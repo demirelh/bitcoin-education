@@ -14,6 +14,8 @@ from btcedu.services.elevenlabs_service import (
     TTSResponse,
     _chunk_text,
     _compute_cost,
+    _decode_audio_response,
+    _words_from_alignment,
 )
 
 # ---------------------------------------------------------------------------
@@ -56,7 +58,7 @@ def test_later_chunk_failure_reports_already_incurred_cost():
     chunks = _chunk_text(text, MAX_CHARS_PER_REQUEST)
     assert len(chunks) > 1
     service._call_with_retry = MagicMock(
-        side_effect=[b"first chunk audio", RuntimeError("second chunk failed")]
+        side_effect=[(b"first chunk audio", None), RuntimeError("second chunk failed")]
     )
 
     with pytest.raises(RuntimeError) as exc_info:
@@ -446,6 +448,146 @@ def test_a_blank_or_duplicate_reserve_is_ignored():
     """Retrying the very same spent key would only waste a call."""
     service = ElevenLabsService(api_key="one", fallback_api_keys=["", "  ", "one", " two "])
     assert service.fallback_api_keys == ["two"]
+
+
+# ---------------------------------------------------------------------------
+# Word timings for subtitles
+# ---------------------------------------------------------------------------
+
+
+def _alignment(characters, starts, ends):
+    return {
+        "characters": characters,
+        "character_start_times_seconds": starts,
+        "character_end_times_seconds": ends,
+    }
+
+
+def test_words_from_alignment_collapses_characters_into_words():
+    words = _words_from_alignment(
+        _alignment(
+            list("ab cd"),
+            [0.0, 0.1, 0.2, 0.3, 0.4],
+            [0.1, 0.2, 0.3, 0.4, 0.5],
+        )
+    )
+    assert [(w.word, w.start, w.end) for w in words] == [
+        ("ab", 0.0, 0.2),
+        ("cd", 0.3, 0.5),
+    ]
+
+
+def test_words_from_alignment_rejects_mismatched_lengths():
+    assert _words_from_alignment(_alignment(list("ab"), [0.0], [0.1, 0.2])) is None
+
+
+def test_words_from_alignment_rejects_non_numeric_times():
+    assert _words_from_alignment(_alignment(list("ab"), [0.0, "x"], [0.1, 0.2])) is None
+
+
+def test_words_from_alignment_rejects_a_non_dict():
+    assert _words_from_alignment(["a"]) is None
+
+
+def test_words_from_alignment_of_whitespace_only_is_none():
+    assert _words_from_alignment(_alignment([" "], [0.0], [0.1])) is None
+
+
+def test_decode_audio_response_reads_base64_json():
+    import base64
+
+    response = MagicMock()
+    response.json.return_value = {
+        "audio_base64": base64.b64encode(b"audio").decode(),
+        "alignment": _alignment(list("ab"), [0.0, 0.1], [0.1, 0.2]),
+    }
+    audio, timings = _decode_audio_response(response)
+    assert audio == b"audio"
+    assert [w.word for w in timings] == ["ab"]
+
+
+def test_decode_audio_response_falls_back_to_raw_bytes():
+    """A plain MP3 body has no JSON at all - the audio must still come out."""
+    response = MagicMock()
+    response.json.side_effect = ValueError("not json")
+    response.content = b"mp3-bytes"
+    assert _decode_audio_response(response) == (b"mp3-bytes", None)
+
+
+def test_decode_audio_response_ignores_json_without_audio():
+    response = MagicMock()
+    response.json.return_value = {"detail": "something else"}
+    response.content = b"mp3-bytes"
+    assert _decode_audio_response(response) == (b"mp3-bytes", None)
+
+
+def test_disable_timestamps_only_for_endpoint_refusals():
+    service = ElevenLabsService(api_key="k", default_voice_id="v")
+    assert service._disable_timestamps(ElevenLabsAPIError(422, "nope")) is True
+    assert service.request_timestamps is False
+
+
+def test_disable_timestamps_not_for_quota_or_rate_limit():
+    """A spent plan or a rate limit must stay a loud failure, not silently
+    cost us the subtitles for every future run."""
+    service = ElevenLabsService(api_key="k", default_voice_id="v")
+    assert service._disable_timestamps(ElevenLabsAPIError(401, "quota", "quota_exceeded")) is False
+    assert service._disable_timestamps(ElevenLabsAPIError(429, "slow down")) is False
+    assert service.request_timestamps is True
+
+
+def test_synthesize_offsets_timings_of_the_second_chunk():
+    """Chunk two is spoken after chunk one, so its times must move by the
+    measured length of chunk one - otherwise every subtitle after the first
+    5000 characters sits on top of the beginning."""
+    from btcedu.services.elevenlabs_service import WordTiming
+
+    service = ElevenLabsService(api_key="k", default_voice_id="v")
+    chunks = [
+        (b"one", [WordTiming("bir", 0.0, 1.0)]),
+        (b"two", [WordTiming("iki", 0.0, 1.0)]),
+    ]
+    with (
+        patch.object(service, "_call_with_retry", side_effect=chunks),
+        patch(
+            "btcedu.services.elevenlabs_service._chunk_text",
+            return_value=["a", "b"],
+        ),
+        patch("btcedu.services.elevenlabs_service._concatenate_audio", return_value=b"onetwo"),
+        patch(
+            "btcedu.services.elevenlabs_service._measure_duration",
+            return_value=(4.0, 44100),
+        ),
+    ):
+        long_text = "x" * (MAX_CHARS_PER_REQUEST + 1)
+        result = service.synthesize(TTSRequest(text=long_text, voice_id="v"))
+
+    assert [(w.word, w.start) for w in result.word_timings] == [("bir", 0.0), ("iki", 4.0)]
+
+
+def test_synthesize_drops_all_timings_when_one_chunk_has_none():
+    """Half a subtitle track is worse than none: the missing stretch would
+    silently shift everything after it."""
+    from btcedu.services.elevenlabs_service import WordTiming
+
+    service = ElevenLabsService(api_key="k", default_voice_id="v")
+    chunks = [(b"one", [WordTiming("bir", 0.0, 1.0)]), (b"two", None)]
+    with (
+        patch.object(service, "_call_with_retry", side_effect=chunks),
+        patch(
+            "btcedu.services.elevenlabs_service._chunk_text",
+            return_value=["a", "b"],
+        ),
+        patch("btcedu.services.elevenlabs_service._concatenate_audio", return_value=b"onetwo"),
+        patch(
+            "btcedu.services.elevenlabs_service._measure_duration",
+            return_value=(4.0, 44100),
+        ),
+    ):
+        long_text = "x" * (MAX_CHARS_PER_REQUEST + 1)
+        result = service.synthesize(TTSRequest(text=long_text, voice_id="v"))
+
+    assert result.word_timings is None
 
 
 if __name__ == "__main__":

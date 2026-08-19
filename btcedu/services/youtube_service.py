@@ -35,6 +35,7 @@ class YouTubeUploadRequest:
     default_language: str = "tr"
     privacy_status: str = "unlisted"
     thumbnail_path: Path | None = None
+    subtitle_path: Path | None = None
 
 
 @dataclass
@@ -256,11 +257,56 @@ class YouTubeDataAPIService:
         if req.thumbnail_path and req.thumbnail_path.exists():
             self._upload_thumbnail(youtube, video_id, req.thumbnail_path)
 
+        if req.subtitle_path and req.subtitle_path.exists():
+            self._upload_captions(
+                youtube, video_id, req.subtitle_path, language=req.default_language
+            )
+
         return YouTubeUploadResponse(
             video_id=video_id,
             video_url=f"https://youtu.be/{video_id}",
             status="uploaded",
         )
+
+    def _upload_captions(
+        self,
+        youtube,
+        video_id: str,
+        subtitle_path: Path,
+        language: str = "tr",
+        name: str = "",
+    ) -> bool:
+        """Attach a caption track to an uploaded video.
+
+        Deliberately non-fatal, like the thumbnail: the video is already
+        published at this point, and a missing caption track is a thing to fix
+        afterwards, not a reason to fail a publish that otherwise succeeded.
+
+        Needs the ``youtube.force-ssl`` scope — ``youtube.upload`` alone is not
+        enough, so credentials issued before that scope was added will be
+        rejected here and have to be re-authorised once.
+        """
+        try:
+            from googleapiclient.http import MediaFileUpload
+
+            media = MediaFileUpload(str(subtitle_path), mimetype="application/octet-stream")
+            youtube.captions().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "videoId": video_id,
+                        "language": language,
+                        "name": name,
+                        "isDraft": False,
+                    }
+                },
+                media_body=media,
+            ).execute()
+            logger.info("Caption track uploaded for video %s (%s)", video_id, language)
+            return True
+        except Exception as exc:
+            logger.warning("Caption upload failed (non-critical): %s", exc)
+            return False
 
     def _execute_upload(
         self,
@@ -349,6 +395,10 @@ class YouTubeDataAPIService:
 YOUTUBE_SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",
+    # Required by captions.insert. Adding a scope invalidates existing
+    # credentials, so `btcedu publish --authenticate` has to be run once more
+    # after this; until then captions simply fail and the upload does not.
+    "https://www.googleapis.com/auth/youtube.force-ssl",
 ]
 
 

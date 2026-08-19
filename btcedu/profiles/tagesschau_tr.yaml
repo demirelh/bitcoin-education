@@ -221,6 +221,15 @@ stage_config:
     # shows anyway. (RENDER_KEN_BURNS_ENABLED in .env stays on for other
     # profiles.)
     ken_burns_enabled: false
+    # Burned in, not optional: a large part of the audience watches muted on a
+    # phone, and a YouTube caption track alone leaves them nothing. The same
+    # cues also go up as a track, so anyone who wants a translation gets one.
+    subtitles_enabled: true
+    subtitles_style:
+      # Above both the ticker (50 px) and the lower third, whose subtext line
+      # ends about 180 px up — a box that overlaps either would hide the
+      # element that was there first.
+      margin_v: 210
     intro_enabled: true
     intro_audio: "data/assets/tagesschau_tr/intro.mp3"
     intro_duration: 5.5

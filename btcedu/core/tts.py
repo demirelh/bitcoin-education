@@ -1231,6 +1231,22 @@ def _take_stutters(
     return True
 
 
+def _word_timings_metadata(response, offset: float = 0.0) -> list[dict] | None:
+    """Word timings of a take as plain JSON, shifted by *offset*.
+
+    Kept short (``w``/``s``/``e``) because a nine-minute bulletin carries some
+    fourteen hundred of these and they live in a manifest that is read on every
+    render.
+    """
+    timings = getattr(response, "word_timings", None)
+    if not timings:
+        return None
+    return [
+        {"w": item.word, "s": round(item.start + offset, 3), "e": round(item.end + offset, 3)}
+        for item in timings
+    ]
+
+
 def _generate_multi_voice_audio(
     chapter,
     segments: list[dict],
@@ -1273,6 +1289,10 @@ def _generate_multi_voice_audio(
     total_cost = 0.0
     total_duration = 0.0
     used_fallback: set[str] = set()
+    # Timings arrive relative to each part; the subtitle track needs them
+    # relative to the chapter, so every part is shifted by what plays before
+    # it — the parts already spoken plus the pause between each of them.
+    word_timings: list[dict] | None = []
 
     for index, segment in enumerate(segments):
         role = segment["role"]
@@ -1289,6 +1309,7 @@ def _generate_multi_voice_audio(
             model = voice.get("model")
             noise_floor = None
             takes = 1
+            part_words = None
         else:
             response, noise_floor, takes = _synthesize_clean_take(
                 tts_service,
@@ -1312,6 +1333,15 @@ def _generate_multi_voice_audio(
             duration = response.duration_seconds
             cost = response.cost_usd * takes
             model = response.model
+            part_words = _word_timings_metadata(
+                response, offset=total_duration + pause_seconds * index
+            )
+
+        if word_timings is not None:
+            # A part without timings would leave a silent hole of unknown
+            # length in the chapter's track, so the chapter falls back to an
+            # even spread as a whole rather than being subtitled in pieces.
+            word_timings = None if part_words is None else word_timings + part_words
 
         part_paths.append(part_path)
         part_meta.append(
@@ -1372,6 +1402,7 @@ def _generate_multi_voice_audio(
             "dry_run": settings.dry_run,
             "speaker_parts": part_meta,
             "pause_seconds": pause_seconds,
+            "word_timings": word_timings or None,
         },
     )
 
@@ -1495,6 +1526,7 @@ def _generate_single_audio(
             "lexicon_applied": lexicon_applied,
             "noise_floor_db": None if noise_floor is None else round(noise_floor, 1),
             "takes": takes,
+            "word_timings": _word_timings_metadata(response),
         },
     )
 

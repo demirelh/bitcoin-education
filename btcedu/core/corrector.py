@@ -42,6 +42,13 @@ logger = logging.getLogger(__name__)
 SEGMENT_CHAR_LIMIT = 15_000
 STRUCTURED_CORRECTION_FILENAME = "transcript.corrected.structured.de.json"
 
+# How often a batch the model keeps mishandling may be halved before its
+# segments are kept unchanged. Each level doubles the number of paid calls in
+# the worst case, so this trades a bounded amount of money against the chance
+# that a smaller batch succeeds: three levels turns one batch into at most
+# eight, which was enough for every failure observed so far.
+_MAX_CORRECTION_SPLIT_DEPTH = 3
+
 # Tokens the ASR corrector must NEVER alter: numbers/dates and sport-tournament
 # names. The corrector fixes spelling/punctuation only; it is not a fact-checker.
 # Guards against LLM over-correction (e.g. "Fußball-WM" -> "Fußball-EM",
@@ -324,8 +331,7 @@ def correct_transcript(
         corrected_segments: list[CorrectedTranscriptSegment] = []
 
         for index, payload in enumerate(payloads):
-            payload_json = json.dumps(payload, ensure_ascii=False, indent=2)
-            user_message = user_template.replace("{{ transcript_payload }}", payload_json)
+            user_message = _render_user_message(user_template, payload)
 
             dry_run_path = (
                 Path(settings.outputs_dir) / episode_id / f"dry_run_correct_{index}.json"
@@ -345,7 +351,7 @@ def correct_transcript(
             else:
                 model_response, responses = _call_structured_correction(
                     system_prompt,
-                    user_message,
+                    user_template,
                     payload,
                     settings,
                     episode_id,
@@ -630,59 +636,154 @@ def _build_correction_payloads(
     return payloads
 
 
+def _render_user_message(user_template: str, payload: dict) -> str:
+    return user_template.replace(
+        "{{ transcript_payload }}", json.dumps(payload, ensure_ascii=False, indent=2)
+    )
+
+
+def _sub_payload(payload: dict, segments: list[dict]) -> dict:
+    return {**payload, "segments": segments}
+
+
+def _passthrough_response(payload: dict, reason: str) -> _ModelCorrectionResponse:
+    """The input, handed back unchanged, for segments the model would not do.
+
+    Correction is a repair stage: every segment already carries usable text
+    from the transcript. When the model cannot be made to answer properly for a
+    segment, keeping that text is the conservative outcome — the sentence stays
+    exactly as it was heard. Failing the whole stage instead throws away the
+    other three hundred segments it did correct, and stops the bulletin over a
+    malformed wrapper.
+
+    Marked ``uncertain`` rather than ``unresolved`` on purpose. Both are honest
+    about the model not having judged the text, but ``unresolved`` is read by
+    transcript QA as a defect worth escalating, and there is no evidence of a
+    defect here — only of an answer that never arrived.
+    """
+    return _ModelCorrectionResponse(
+        segments=[
+            _ModelCorrectionSegment(
+                segment_id=item["segment_id"],
+                corrected_text=item["primary_text"],
+                status="uncertain",
+                severity="none",
+                reason=reason,
+            )
+            for item in payload["segments"]
+        ]
+    )
+
+
 def _call_structured_correction(
     system_prompt: str,
-    user_message: str,
+    user_template: str,
     payload: dict,
     settings: Settings,
     episode_id: str,
     *,
     budget_check: Callable[[float], None],
     response_sink: list[ClaudeResponse],
+    depth: int = 0,
 ) -> tuple[_ModelCorrectionResponse, list[ClaudeResponse]]:
-    responses: list[ClaudeResponse] = []
-    budget_check(0.0)
-    response = call_claude(
-        system_prompt=system_prompt,
-        user_message=user_message,
-        settings=settings,
-        json_mode=True,
-    )
-    responses.append(response)
-    response_sink.append(response)
-    budget_check(sum(item.cost_usd for item in responses))
-    try:
-        parsed = _parse_correction_response(response.text)
-        _validate_response_segments(parsed, payload)
-        return parsed, responses
-    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
-        logger.warning("Invalid structured correction for %s: %s", episode_id, exc)
+    """Correct one batch of segments, splitting it if the model cannot cope.
 
-    retry_prompt = (
-        "Your previous response was invalid. Return the correction for the SAME input "
-        "as one strictly valid JSON object with a 'segments' array. Do not add, remove, "
-        "merge, or reorder segment IDs. Do not reconstruct missing facts. Output JSON "
-        "only.\n\nInput:\n" + user_message
-    )
-    budget_check(sum(item.cost_usd for item in responses))
-    retry = call_claude(
-        system_prompt=system_prompt,
-        user_message=retry_prompt,
-        settings=settings,
-        json_mode=True,
-    )
-    responses.append(retry)
-    response_sink.append(retry)
-    budget_check(sum(item.cost_usd for item in responses))
-    try:
-        parsed = _parse_correction_response(retry.text)
-        _validate_response_segments(parsed, payload)
-    except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+    Two attempts are made at the batch as a whole. If both come back malformed,
+    the batch is halved and each half asked for separately: a model that loses
+    track of eighty segments usually manages forty, and the failure observed on
+    2026-08-19 was exactly that shape — a single segment returned in place of
+    eighty-one. Splitting is bounded, because each level doubles the number of
+    paid calls; below the bound the segments are kept as they came in.
+    """
+    responses: list[ClaudeResponse] = []
+    complaint = ""
+    empty_attempts = 0
+
+    for attempt in (1, 2):
+        if attempt == 1:
+            message = _render_user_message(user_template, payload)
+        else:
+            message = (
+                "Your previous response was invalid: "
+                f"{complaint}\n\n"
+                "Return the correction for the SAME input as one strictly valid JSON object "
+                "with a 'segments' array containing exactly one entry per input segment, in "
+                "the same order. Do not add, remove, merge, or reorder segment IDs. Do not "
+                "reconstruct missing facts. Output JSON only.\n\nInput:\n"
+                + _render_user_message(user_template, payload)
+            )
+
+        budget_check(sum(item.cost_usd for item in responses))
+        response = call_claude(
+            system_prompt=system_prompt,
+            user_message=message,
+            settings=settings,
+            json_mode=True,
+        )
+        responses.append(response)
+        response_sink.append(response)
+        budget_check(sum(item.cost_usd for item in responses))
+        try:
+            parsed = _parse_correction_response(response.text)
+            _validate_response_segments(parsed, payload)
+            return parsed, responses
+        except (json.JSONDecodeError, ValidationError, ValueError) as exc:
+            complaint = str(exc)
+            if isinstance(exc, _EmptyCorrectionResponse):
+                empty_attempts += 1
+            logger.warning(
+                "Invalid structured correction for %s (%d segments, attempt %d): %s",
+                episode_id,
+                len(payload["segments"]),
+                attempt,
+                complaint,
+            )
+
+    if empty_attempts == 2:
         raise PipelineError(
-            f"Correction model returned an invalid response after retry: {exc}",
-            ErrorCategory.TRANSIENT_SERVER,
-        ) from exc
-    return parsed, responses
+            f"Correction model returned an invalid response after retry: {complaint}",
+            category=ErrorCategory.TRANSIENT_SERVER,
+        )
+
+    segments = payload["segments"]
+    if len(segments) > 1 and depth < _MAX_CORRECTION_SPLIT_DEPTH:
+        middle = len(segments) // 2
+        logger.warning(
+            "Splitting correction batch for %s into %d + %d segments after two invalid responses",
+            episode_id,
+            middle,
+            len(segments) - middle,
+        )
+        merged: list[_ModelCorrectionSegment] = []
+        for half in (segments[:middle], segments[middle:]):
+            part, part_responses = _call_structured_correction(
+                system_prompt,
+                user_template,
+                _sub_payload(payload, half),
+                settings,
+                episode_id,
+                budget_check=budget_check,
+                response_sink=response_sink,
+                depth=depth + 1,
+            )
+            merged.extend(part.segments)
+            responses.extend(part_responses)
+        return _ModelCorrectionResponse(segments=merged), responses
+
+    logger.error(
+        "Correction model would not answer properly for %d segment(s) of %s (%s); "
+        "keeping the transcript text unchanged for them",
+        len(segments),
+        episode_id,
+        complaint,
+    )
+    return (
+        _passthrough_response(
+            payload,
+            "Modellantwort war wiederholt ungültig; Transkripttext unverändert übernommen.",
+        ),
+        responses,
+    )
 
 
 def _ensure_cost_budget(
@@ -707,6 +808,54 @@ def _ensure_cost_budget(
         )
 
 
+def _unwrap_segments(data: object) -> object:
+    """Coerce the shapes a model reaches for into ``{"segments": [...]}``.
+
+    The schema asks for an object with a ``segments`` array, and the model
+    usually obliges. When it does not, it is almost always the wrapper that is
+    wrong rather than the content: a bare array, a different key, or — as on
+    2026-08-19, which cost an episode — a single segment object with no wrapper
+    at all.
+
+    Reshaping that is safe because nothing here trusts it. Whatever comes out
+    still has to pass ``_validate_response_segments``, which demands exactly
+    the input segment IDs and nothing else, so a reshape that guessed wrong is
+    rejected a moment later. What this avoids is discarding a complete,
+    correct answer over its punctuation.
+    """
+    if isinstance(data, list):
+        return {"segments": data}
+    if not isinstance(data, dict):
+        return data
+    if "segments" in data:
+        return data
+    # A lone segment, unwrapped.
+    if "segment_id" in data and "corrected_text" in data:
+        return {"segments": [data]}
+    # The array under a name of the model's own choosing. Only accepted when
+    # there is exactly one candidate, so nothing has to be guessed.
+    candidates = [
+        value
+        for key, value in data.items()
+        if isinstance(value, list)
+        and value
+        and all(isinstance(item, dict) and "segment_id" in item for item in value)
+    ]
+    if len(candidates) == 1:
+        return {"segments": candidates[0]}
+    return data
+
+
+class _EmptyCorrectionResponse(ValueError):
+    """The model returned nothing at all.
+
+    Kept apart from a merely malformed answer: halving the batch is a cure for
+    a model losing track of its own output, but an empty body means the call
+    itself did not deliver, and retrying it in eight pieces only buys eight
+    empty bodies. This one stays a loud, retryable failure.
+    """
+
+
 def _parse_correction_response(text: str) -> _ModelCorrectionResponse:
     cleaned = text.strip()
     if cleaned.startswith("```json"):
@@ -721,17 +870,48 @@ def _parse_correction_response(text: str) -> _ModelCorrectionResponse:
         if first >= 0 and last > first:
             cleaned = cleaned[first : last + 1]
     if not cleaned:
-        raise ValueError("Correction model returned an empty response")
+        raise _EmptyCorrectionResponse("Correction model returned an empty response")
     data = json.loads(cleaned)
-    return _ModelCorrectionResponse.model_validate(data)
+    return _ModelCorrectionResponse.model_validate(_unwrap_segments(data))
+
+
+def _describe_segment_mismatch(expected: list[str], actual: list[str]) -> str:
+    """Why a response was refused, in terms the model can act on.
+
+    The retry used to be told only that its answer was "invalid", which leaves
+    it guessing between a hundred possibilities. Naming the missing IDs turns
+    the second attempt into a correction rather than a re-roll.
+    """
+    missing = [item for item in expected if item not in set(actual)]
+    unknown = [item for item in actual if item not in set(expected)]
+    parts = [f"expected {len(expected)} segments, received {len(actual)}"]
+    if missing:
+        parts.append(f"missing: {', '.join(missing[:10])}{' …' if len(missing) > 10 else ''}")
+    if unknown:
+        listed = ", ".join(unknown[:10])
+        parts.append(f"not in the input: {listed}{' …' if len(unknown) > 10 else ''}")
+    if not missing and not unknown:
+        parts.append("same IDs but in a different order")
+    return "; ".join(parts)
 
 
 def _validate_response_segments(response: _ModelCorrectionResponse, payload: dict) -> None:
+    """Refuse a response that does not cover exactly the segments asked about.
+
+    Order is not part of the contract even though the prompt asks for it:
+    ``_finalize_correction_segments`` matches by ID, so a reordered response
+    produces byte-identical output. Rejecting it would buy a second paid call
+    for nothing. A repeated ID is refused, because then the mapping is
+    genuinely ambiguous.
+    """
     expected = [item["segment_id"] for item in payload["segments"]]
     actual = [item.segment_id for item in response.segments]
-    if actual != expected:
+    if len(set(actual)) != len(actual):
+        raise ValueError("Correction response repeats a segment ID")
+    if sorted(actual) != sorted(expected):
         raise ValueError(
-            f"Correction response segment IDs must exactly match input: {expected!r} != {actual!r}"
+            f"Correction response segment IDs must exactly match input "
+            f"({_describe_segment_mismatch(expected, actual)})"
         )
 
 

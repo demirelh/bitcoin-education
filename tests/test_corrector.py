@@ -8,7 +8,9 @@ import pytest
 from click.testing import CliRunner
 
 from btcedu.core.corrector import (
+    _MAX_CORRECTION_SPLIT_DEPTH,
     CorrectionResult,
+    _call_structured_correction,
     _contains_unexpected_turkish,
     _finalize_correction_segments,
     _is_correction_current,
@@ -18,6 +20,8 @@ from btcedu.core.corrector import (
     _revert_protected_token_changes,
     _segment_transcript,
     _split_prompt,
+    _unwrap_segments,
+    _validate_response_segments,
     compute_correction_diff,
     correct_transcript,
 )
@@ -873,3 +877,184 @@ def test_compute_correction_diff_has_item_id():
     for c in changes:
         assert "item_id" in c
         assert c["item_id"].startswith("corr-")
+
+
+# ---------------------------------------------------------------------------
+# Malformed correction responses (2026-08-19: one segment returned for 81)
+# ---------------------------------------------------------------------------
+
+
+def _payload(*ids: str) -> dict:
+    return {
+        "episode_id": "ep_test",
+        "segments": [
+            {
+                "segment_id": segment_id,
+                "primary_text": f"Text {segment_id}.",
+                "start_seconds": 0.0,
+                "end_seconds": 1.0,
+            }
+            for segment_id in ids
+        ],
+    }
+
+
+def _model_answer(*ids: str) -> str:
+    return json.dumps(
+        {
+            "segments": [
+                {
+                    "segment_id": segment_id,
+                    "corrected_text": f"Text {segment_id}.",
+                    "status": "verified",
+                    "severity": "none",
+                }
+                for segment_id in ids
+            ]
+        }
+    )
+
+
+class TestUnwrapSegments:
+    def test_wrapped_response_is_untouched(self):
+        data = {"segments": [{"segment_id": "seg-0001", "corrected_text": "a"}]}
+        assert _unwrap_segments(data) is data
+
+    def test_bare_array_is_wrapped(self):
+        data = [{"segment_id": "seg-0001", "corrected_text": "a"}]
+        assert _unwrap_segments(data) == {"segments": data}
+
+    def test_single_segment_object_is_wrapped(self):
+        """The exact shape that broke tagesschau_2026-08-19_2000."""
+        data = {
+            "segment_id": "seg-0152",
+            "corrected_text": "Text.",
+            "status": "verified",
+            "severity": "none",
+            "verification_ids": [],
+        }
+        assert _unwrap_segments(data) == {"segments": [data]}
+
+    def test_single_alternative_key_is_accepted(self):
+        data = {"corrections": [{"segment_id": "seg-0001", "corrected_text": "a"}]}
+        assert _unwrap_segments(data) == {"segments": data["corrections"]}
+
+    def test_ambiguous_keys_are_left_alone(self):
+        data = {
+            "corrections": [{"segment_id": "seg-0001", "corrected_text": "a"}],
+            "others": [{"segment_id": "seg-0002", "corrected_text": "b"}],
+        }
+        assert _unwrap_segments(data) is data
+
+
+class TestValidateResponseSegments:
+    def test_reordered_response_is_accepted(self):
+        """Order costs nothing: _finalize_correction_segments matches by ID."""
+        payload = _payload("seg-0001", "seg-0002")
+        response = _ModelCorrectionResponse.model_validate(
+            json.loads(_model_answer("seg-0002", "seg-0001"))
+        )
+        _validate_response_segments(response, payload)
+
+    def test_duplicate_id_is_refused(self):
+        payload = _payload("seg-0001", "seg-0002")
+        response = _ModelCorrectionResponse.model_validate(
+            json.loads(_model_answer("seg-0001", "seg-0001"))
+        )
+        with pytest.raises(ValueError, match="repeats a segment ID"):
+            _validate_response_segments(response, payload)
+
+    def test_missing_segment_is_named(self):
+        payload = _payload("seg-0001", "seg-0002")
+        response = _ModelCorrectionResponse.model_validate(json.loads(_model_answer("seg-0001")))
+        with pytest.raises(ValueError, match="seg-0002"):
+            _validate_response_segments(response, payload)
+
+
+class TestStructuredCorrectionRecovery:
+    def _call(self, mock_settings, answers, depth=0):
+        mock_settings.dry_run = False
+        sink: list = []
+        with patch("btcedu.core.corrector.call_claude", side_effect=answers) as call:
+            result, responses = _call_structured_correction(
+                "system",
+                "{{ transcript_payload }}",
+                _payload("seg-0001", "seg-0002"),
+                mock_settings,
+                "ep_test",
+                budget_check=lambda _cost: None,
+                response_sink=sink,
+                depth=depth,
+            )
+        return result, responses, call, sink
+
+    def _response(self, text):
+        return ClaudeResponse(text, 1, 1, 0.001, "test-model")
+
+    def test_split_recovers_after_two_malformed_answers(self):
+        from btcedu.config import Settings
+
+        settings = Settings(dry_run=False, anthropic_api_key="test-key")
+        answers = [
+            self._response(_model_answer("seg-0001")),  # attempt 1: incomplete
+            self._response(_model_answer("seg-0001")),  # attempt 2: still incomplete
+            self._response(_model_answer("seg-0001")),  # first half alone
+            self._response(_model_answer("seg-0002")),  # second half alone
+        ]
+        result, responses, call, sink = self._call(settings, answers)
+        assert [item.segment_id for item in result.segments] == ["seg-0001", "seg-0002"]
+        assert call.call_count == 4
+        assert len(responses) == 4
+        assert len(sink) == 4
+
+    def test_passthrough_keeps_the_transcript_when_splitting_is_exhausted(self):
+        from btcedu.config import Settings
+
+        settings = Settings(dry_run=False, anthropic_api_key="test-key")
+        answers = [self._response(_model_answer("seg-9999")) for _ in range(2)]
+        result, _responses, _call, _sink = self._call(
+            settings, answers, depth=_MAX_CORRECTION_SPLIT_DEPTH
+        )
+        assert [item.segment_id for item in result.segments] == ["seg-0001", "seg-0002"]
+        assert [item.corrected_text for item in result.segments] == [
+            "Text seg-0001.",
+            "Text seg-0002.",
+        ]
+        # No flags, so transcript QA raises no finding over an answer that
+        # never arrived.
+        assert all(item.status == "uncertain" and not item.flags for item in result.segments)
+
+    def test_empty_answers_stay_a_loud_failure(self):
+        """Halving cures a confused model, not a call that returns nothing."""
+        from btcedu.config import Settings
+
+        settings = Settings(dry_run=False, anthropic_api_key="test-key")
+        answers = [self._response("") for _ in range(2)]
+        with pytest.raises(PipelineError) as excinfo:
+            self._call(settings, answers)
+        assert excinfo.value.category == ErrorCategory.TRANSIENT_SERVER
+
+    def test_budget_is_checked_before_every_paid_call(self):
+        from btcedu.config import Settings
+
+        settings = Settings(dry_run=False, anthropic_api_key="test-key")
+        settings.dry_run = False
+        seen: list[float] = []
+        answers = [
+            self._response(_model_answer("seg-0001")),
+            self._response(_model_answer("seg-0001")),
+            self._response(_model_answer("seg-0001")),
+            self._response(_model_answer("seg-0002")),
+        ]
+        with patch("btcedu.core.corrector.call_claude", side_effect=answers):
+            _call_structured_correction(
+                "system",
+                "{{ transcript_payload }}",
+                _payload("seg-0001", "seg-0002"),
+                settings,
+                "ep_test",
+                budget_check=seen.append,
+                response_sink=[],
+                depth=0,
+            )
+        assert len(seen) >= 8

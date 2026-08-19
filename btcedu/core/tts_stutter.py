@@ -126,6 +126,20 @@ def _stems(words: list[str]) -> list[str]:
     return [w[:_STEM_LENGTH] for w in words if len(w) >= _MIN_WORD_LENGTH]
 
 
+def _max_in_window(words: list[str], word: str, size: int) -> int:
+    """The most times *word* appears in any *size* consecutive *words*.
+
+    A script may well say the same word twice, pages apart; what excuses a
+    take is the script saying it twice as closely as the take did.
+    """
+    best = 0
+    for i in range(max(1, len(words))):
+        count = words[i : i + size].count(word)
+        if count > best:
+            best = count
+    return best
+
+
 def find_repetition(expected: str, heard: str, *, whole: bool = False) -> str:
     """The word the take repeats but the script does not, if there is one.
 
@@ -153,20 +167,39 @@ def find_repetition(expected: str, heard: str, *, whole: bool = False) -> str:
         heard_words = heard_words[:_WINDOW_WORDS]
         expected_words = expected_words[: _WINDOW_WORDS * 2]
 
+    if whole:
+        # Across a whole take the test is deliberately stricter than at the
+        # opening: the same word twice within three, not merely the same
+        # five-letter stem within six. Stems conflate distinct words — "yerine"
+        # and "yerinde" share one — and over twenty words that collision is
+        # near certain, which is how a correct take came to be rejected for
+        # "repeating 'yerin'" on 2026-08-19. A voice that stumbles says the
+        # same word again, and says it right away.
+        for i in range(len(heard_words)):
+            window = heard_words[i : i + 3]
+            for word, count in Counter(w for w in window if len(w) >= _MIN_WORD_LENGTH).items():
+                if count > 1 and _max_in_window(expected_words, word, 3) < count:
+                    return word
+        return ""
+
     expected_counts = Counter(_stems(expected_words))
-    windows = (
-        [heard_words[i : i + _WINDOW_WORDS] for i in range(max(1, len(heard_words)))]
-        if whole
-        else [heard_words]
-    )
-    for window in windows:
-        for stem, count in Counter(_stems(window)).items():
-            if count > 1 and expected_counts[stem] < count:
-                return stem
+    for stem, count in Counter(_stems(heard_words)).items():
+        if count > 1 and expected_counts[stem] < count:
+            return stem
 
     # The same repetition, hidden inside words the recogniser ran together.
     # Only long stems take part: a short one ("ren", "bir") turns up inside
     # unrelated words often enough to reject good takes.
+    #
+    # Confined to the opening on purpose. Counting a stem across a whole take
+    # rejected a correct one on 2026-08-19 ("repeated 'yerin'" on a line that
+    # read fine): over twenty words there is always some stem the recogniser
+    # produced once more than the script did, and the longer the text the more
+    # certain that is. Within six words it is evidence; across a paragraph it
+    # is noise. A stumble later in a take is caught by the doubled-syllable and
+    # similarity checks instead.
+    if whole:
+        return ""
     heard_joined = " ".join(heard_words)
     expected_joined = " ".join(expected_words)
     for word in expected_words:

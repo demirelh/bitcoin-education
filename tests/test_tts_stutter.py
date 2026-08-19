@@ -351,3 +351,19 @@ def test_an_unmeasurable_duration_falls_back_to_the_opening(tmp_path):
         check_take(_audio(tmp_path), OPENING, model=FakeModel(""))
 
     assert seen["seconds"] == 4.0
+
+
+def test_a_stem_counted_across_a_whole_take_is_not_evidence():
+    """A correct take was rejected for "repeating" a stem it never repeated.
+
+    The counting that convicted it looked for the stem *inside* other words and
+    totalled both texts end to end. Over twenty words that total is always
+    reachable — Turkish suffixes see to it — and here it is: "yerin" sits
+    inside "yerinde" as well as "yerine", so the script's one occurrence was
+    outnumbered by a take that read the line correctly. Within six words the
+    same reasoning is sound, which is why it survives for the opening check.
+    """
+    expected = OPENING + " Karar yerine getirildi. İnceleme sürüyor."
+    heard = OPENING_HEARD_CLEAN + " Karar yerine getirildi. Yerinde inceleme sürüyor."
+
+    assert not find_repetition(expected, heard, whole=True)

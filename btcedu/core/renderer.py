@@ -302,10 +302,6 @@ def render_video(
             "intro_episode_title": _eff_intro_episode_title,
             "intro_duration": _eff_intro_duration,
             "topic_intro_enabled": _eff_topic_intro_enabled,
-            # A changed subtitle style leaves picture and audio untouched, so
-            # without this the segments would keep the previous look.
-            "subtitles": _eff_subtitles,
-            "subtitle_style": asdict(_subtitle_style) if _eff_subtitles else None,
             "topic_intro_duration": _eff_topic_intro_duration,
             "topic_intro_label": _eff_topic_intro_label,
             "topic_intro_show_counter": _eff_topic_intro_show_counter,
@@ -428,7 +424,6 @@ def render_video(
         if not settings_unchanged:
             logger.info("Render settings changed — every chapter segment is rebuilt")
 
-        subtitle_dir = render_dir / "subtitles"
         subtitle_cues = _chapter_subtitle_cues(chapters_doc, tts_manifest) if _eff_subtitles else {}
 
         _intro_audio_snapshot = _levelled_sting(
@@ -616,16 +611,10 @@ def render_video(
             # re-rendered, otherwise the final video keeps the previous content.
             # The same holds for the render settings — a changed ffmpeg filter
             # leaves every input untouched, so `settings_unchanged` carries it.
-            chapter_subtitle_path = _write_ass(
-                subtitle_dir / f"{chapter.chapter_id}.ass",
-                subtitle_cues.get(chapter.chapter_id, []),
-                _subtitle_style,
-            )
-
             if segment_path.exists() and segment_path.stat().st_size > 0 and settings_unchanged:
                 seg_mtime = segment_path.stat().st_mtime
                 input_mtimes = []
-                for _inp in (media_path, audio_path, chapter_subtitle_path):
+                for _inp in (media_path, audio_path):
                     try:
                         if _inp and Path(_inp).exists():
                             input_mtimes.append(Path(_inp).stat().st_mtime)
@@ -714,9 +703,6 @@ def render_video(
                     settings=settings,
                     font=_eff_font or settings.render_font,
                     enhancement_kwargs=_enhancement_kwargs,
-                    cues=subtitle_cues.get(chapter.chapter_id, []),
-                    subtitle_style=_subtitle_style,
-                    subtitle_dir=subtitle_dir,
                 )
             elif asset_type == "video":
                 segment_result = create_video_segment(
@@ -735,7 +721,6 @@ def render_video(
                     fade_out_duration=fade_out_dur,
                     timeout_seconds=settings.render_timeout_segment,
                     dry_run=settings.dry_run,
-                    subtitle_path=chapter_subtitle_path,
                     **enh_kwargs,
                 )
             else:
@@ -755,7 +740,6 @@ def render_video(
                     fade_out_duration=fade_out_dur,
                     timeout_seconds=settings.render_timeout_segment,
                     dry_run=settings.dry_run,
-                    subtitle_path=chapter_subtitle_path,
                     **enh_kwargs,
                 )
 
@@ -994,8 +978,10 @@ def render_video(
             timeline.append({**part, "start_seconds": round(_timeline_cursor, 3)})
             _timeline_cursor += float(part["duration_seconds"])
 
-        subtitle_track = _write_episode_srt(
-            render_dir, timeline, subtitle_cues if _eff_subtitles else {}
+        episode_cues = _episode_cues(timeline, subtitle_cues if _eff_subtitles else {})
+        subtitle_track = _write_episode_srt(render_dir, episode_cues)
+        subtitled_video = _write_subtitled_video(
+            render_dir, draft_path, episode_cues, _subtitle_style, settings
         )
 
         manifest_data = {
@@ -1010,6 +996,7 @@ def render_video(
             "segments": [asdict(entry) for entry in segment_entries],
             "timeline": timeline,
             "subtitle_track": subtitle_track,
+            "subtitled_video": subtitled_video,
             "output_path": "render/draft.mp4",
             "ffmpeg_version": ffmpeg_version,
             "codec": {
@@ -1308,9 +1295,6 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
         return default
 
     _enh_hash_data: dict = {}
-    _subtitles_on = bool(
-        _rc("subtitles_enabled", getattr(settings, "render_subtitles_enabled", True))
-    )
     try:
         intro_audio = str(_rc("intro_audio", "") or "")
         topic_intro_audio = str(_rc("topic_intro_audio", intro_audio) or "")
@@ -1341,12 +1325,6 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
             "intro_episode_title": str(_rc("intro_episode_title", "") or ""),
             "intro_duration": float(_rc("intro_duration", settings.render_intro_duration)),
             "topic_intro_enabled": bool(_rc("topic_intro_enabled", False)),
-            "subtitles": _subtitles_on,
-            "subtitle_style": (
-                asdict(_resolve_subtitle_style(_rc("subtitles_style", None), settings))
-                if _subtitles_on
-                else None
-            ),
             "topic_intro_duration": float(_rc("topic_intro_duration", 2.4)),
             "topic_intro_label": str(_rc("topic_intro_label", "GÜNDEM") or "GÜNDEM"),
             "topic_intro_show_counter": bool(_rc("topic_intro_show_counter", True)),
@@ -1659,9 +1637,6 @@ def _render_beat_chapter(
     settings: Settings,
     font: str,
     enhancement_kwargs,
-    cues: list | None = None,
-    subtitle_style=None,
-    subtitle_dir=None,
 ):
     """Render one chapter as a sequence of shots, one per presenter block.
 
@@ -1702,15 +1677,6 @@ def _render_beat_chapter(
         # Each shot is its own encode, so it carries only the lines spoken
         # while it is on screen, re-timed to its own start. A cue crossing the
         # cut is trimmed rather than repeated in full on both sides.
-        shot_subtitle = None
-        if cues and subtitle_dir is not None:
-            from btcedu.core import subtitles as _subtitles
-
-            shot_subtitle = _write_ass(
-                Path(subtitle_dir) / f"{chapter.chapter_id}_beat{index:02d}.ass",
-                _subtitles.window(cues, shot_start, shot_start + shot_duration),
-                subtitle_style,
-            )
         create_segment(
             image_path=beat_image_paths[index],
             audio_path=str(silent_audio),
@@ -1726,7 +1692,6 @@ def _render_beat_chapter(
             fade_in_duration=fade_in_duration if index == 0 else 0.0,
             fade_out_duration=fade_out_duration if index == len(beats) - 1 else 0.0,
             timeout_seconds=settings.render_timeout_segment,
-            subtitle_path=shot_subtitle,
             **enhancement_kwargs("photo", chapter.order - 1 + index),
         )
         shot_paths.append(str(shot_path))
@@ -1849,20 +1814,21 @@ def _find_image_rel_path(chapter_id: str, image_manifest: dict) -> str:
     return f"images/{chapter_id}_missing.png"
 
 
-def _write_episode_srt(render_dir: Path, timeline: list[dict], cues_by_chapter: dict) -> str | None:
-    """Write the whole broadcast as one SRT, positioned on the final timeline.
+def _episode_cues(timeline: list[dict], cues_by_chapter: dict) -> list:
+    """Chapter cues moved onto the finished timeline.
 
-    The burned-in lines are timed against each chapter's own audio, but a
-    caption track has to be timed against the finished video, where intro,
-    topic cards and outro have pushed every chapter later. That offset is
-    exactly what the timeline records for the chapter marks, so the same source
-    serves both and the two can never disagree.
+    Cues are timed against each chapter's own audio, but everything that reads
+    the finished video needs them timed against it, where intro, topic cards
+    and outro have pushed every chapter later. That offset is exactly what the
+    timeline records for the chapter marks, so the same source serves the
+    caption track, the burned-in copy and the marks, and the three can never
+    disagree.
     """
     from btcedu.core import subtitles
 
     if not cues_by_chapter:
-        return None
-    collected = []
+        return []
+    collected: list = []
     for part in timeline:
         if part.get("kind") != "chapter":
             continue
@@ -1870,13 +1836,63 @@ def _write_episode_srt(render_dir: Path, timeline: list[dict], cues_by_chapter: 
         if not cues:
             continue
         collected.extend(subtitles.shift(cues, float(part.get("start_seconds") or 0.0)))
-    if not collected:
-        return None
     collected.sort(key=lambda cue: cue.start)
+    return collected
+
+
+def _write_episode_srt(render_dir: Path, cues: list) -> str | None:
+    """The caption track, which is what YouTube takes alongside the video."""
+    from btcedu.core import subtitles
+
+    if not cues:
+        return None
     path = render_dir / "subtitles.tr.srt"
-    path.write_text(subtitles.to_srt(collected), encoding="utf-8")
-    logger.info("Wrote %d subtitle cues to %s", len(collected), path.name)
+    path.write_text(subtitles.to_srt(cues), encoding="utf-8")
+    logger.info("Wrote %d subtitle cues to %s", len(cues), path.name)
     return "render/subtitles.tr.srt"
+
+
+def _write_subtitled_video(
+    render_dir: Path,
+    draft_path: Path,
+    cues: list,
+    style,
+    settings: Settings,
+) -> str | None:
+    """Write the second copy of the broadcast, subtitles in the picture.
+
+    Two versions rather than one: the plain video is what gets published and
+    what a caption track can be switched off on, and the burned-in one is for
+    everywhere that ignores caption tracks. Burning per segment would have made
+    the published video pay for the other one, so this is a single pass over
+    the finished file with the audio copied through untouched.
+
+    Never fatal. A failure here costs the second version, and the broadcast is
+    already complete without it.
+    """
+    from btcedu.core import subtitles
+    from btcedu.services.ffmpeg_service import burn_in_subtitles
+
+    if not cues:
+        return None
+    ass_path = render_dir / "subtitles.tr.ass"
+    ass_path.write_text(subtitles.to_ass(cues, style), encoding="utf-8")
+    output_path = render_dir / "draft_subtitled.mp4"
+    try:
+        size = burn_in_subtitles(
+            str(draft_path),
+            str(ass_path),
+            str(output_path),
+            crf=settings.render_crf,
+            preset=settings.render_preset,
+            timeout_seconds=settings.render_timeout_concat * 3,
+            dry_run=settings.dry_run,
+        )
+    except (RuntimeError, OSError, FileNotFoundError) as exc:
+        logger.warning("Could not write the subtitled version: %s", exc)
+        return None
+    logger.info("Wrote subtitled version (%.1f MB) to %s", size / 1e6, output_path.name)
+    return "render/draft_subtitled.mp4"
 
 
 def _resolve_subtitle_style(raw: object, settings: Settings):
@@ -1929,21 +1945,6 @@ def _chapter_subtitle_cues(chapters_doc, tts_manifest: dict) -> dict[str, list]:
         if chapter_cues:
             cues[chapter.chapter_id] = chapter_cues
     return cues
-
-
-def _write_ass(path: Path, cues: list, style) -> str | None:
-    """Write an ASS file, or return ``None`` when there is nothing to show."""
-    from btcedu.core import subtitles
-
-    if not cues:
-        return None
-    path.parent.mkdir(parents=True, exist_ok=True)
-    content = subtitles.to_ass(cues, style)
-    # Rewriting an identical file would bump its mtime and make every segment
-    # look stale, so a re-run would re-encode the whole broadcast for nothing.
-    if not path.exists() or path.read_text(encoding="utf-8") != content:
-        path.write_text(content, encoding="utf-8")
-    return str(path)
 
 
 def _find_audio_rel_path(chapter_id: str, tts_manifest: dict) -> str:

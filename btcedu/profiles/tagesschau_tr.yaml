@@ -221,9 +221,10 @@ stage_config:
     # shows anyway. (RENDER_KEN_BURNS_ENABLED in .env stays on for other
     # profiles.)
     ken_burns_enabled: false
-    # Burned in, not optional: a large part of the audience watches muted on a
-    # phone, and a YouTube caption track alone leaves them nothing. The same
-    # cues also go up as a track, so anyone who wants a translation gets one.
+    # Produces the caption track and a second video file with the lines burned
+    # into the picture. The plain video keeps precedence — it is what gets
+    # published, and a track can be switched off where a burned-in line cannot.
+    # The burned-in copy is for everywhere that ignores caption tracks.
     subtitles_enabled: true
     subtitles_style:
       # Above both the ticker (50 px) and the lower third, whose subtext line

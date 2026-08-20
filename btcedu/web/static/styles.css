@@ -2303,6 +2303,17 @@ body {
     color: var(--accent, #4ea1ff);
 }
 
+.video-versions {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+.video-versions .btn.active {
+    background: var(--accent, #4ea1ff);
+    color: #fff;
+    border-color: var(--accent, #4ea1ff);
+}
+
 /* ── SSE live indicator (Phase 3d) ─────────────────────── */
 .sse-indicator {
     position: fixed;

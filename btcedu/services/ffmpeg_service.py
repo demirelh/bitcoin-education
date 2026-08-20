@@ -827,7 +827,6 @@ def create_segment(
     color_saturation: float = 0.85,
     color_brightness: float = 0.02,
     color_blue_shift: float = 0.05,
-    subtitle_path: str | None = None,
 ) -> SegmentResult:
     """Create a video segment from image + audio + overlays.
 
@@ -958,12 +957,7 @@ def create_segment(
     else:
         filter_parts.append("[scaled]copy[pre_fade]")
 
-    # Subtitles sit under the fade on purpose: at a chapter boundary the line
-    # has to go with the picture, not hang over the cut.
     fade_input = "pre_fade"
-    if subtitle_path:
-        filter_parts.append(f"[pre_fade]{_build_subtitles_filter(subtitle_path)}[subbed]")
-        fade_input = "subbed"
 
     # Add fade filters (Sprint 10)
     if fade_in_duration > 0 or fade_out_duration > 0:
@@ -1226,7 +1220,6 @@ def create_video_segment(
     color_saturation: float = 0.85,
     color_brightness: float = 0.02,
     color_blue_shift: float = 0.05,
-    subtitle_path: str | None = None,
 ) -> SegmentResult:
     """Create a video segment from a video clip + TTS audio + overlays.
 
@@ -1306,12 +1299,7 @@ def create_video_segment(
     else:
         filter_parts.append("[scaled]copy[pre_fade]")
 
-    # Subtitles sit under the fade on purpose: at a chapter boundary the line
-    # has to go with the picture, not hang over the cut.
     fade_input = "pre_fade"
-    if subtitle_path:
-        filter_parts.append(f"[pre_fade]{_build_subtitles_filter(subtitle_path)}[subbed]")
-        fade_input = "subbed"
 
     if fade_in_duration > 0 or fade_out_duration > 0:
         fade_filters = []
@@ -1657,6 +1645,63 @@ def concatenate_segments(
         returncode=returncode,
         stderr=stderr,
     )
+
+
+def burn_in_subtitles(
+    video_path: str,
+    subtitle_path: str,
+    output_path: str,
+    *,
+    crf: int = 23,
+    preset: str = "medium",
+    timeout_seconds: int = 1800,
+    dry_run: bool = False,
+) -> int:
+    """Write a second copy of *video_path* with the subtitles in the picture.
+
+    One pass over the finished video rather than a filter in every segment:
+    the version without subtitles is the one that gets published, so it must
+    not pay for the one that does. The audio is copied untouched — it has
+    already been levelled and re-encoding it here would only lose quality.
+
+    Returns the size of the written file in bytes.
+    """
+    if not Path(video_path).exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+    if not Path(subtitle_path).exists():
+        raise FileNotFoundError(f"Subtitle file not found: {subtitle_path}")
+
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        video_path,
+        "-vf",
+        _build_subtitles_filter(subtitle_path),
+        "-c:v",
+        "libx264",
+        "-crf",
+        str(crf),
+        "-preset",
+        preset,
+        "-pix_fmt",
+        "yuv420p",
+        "-c:a",
+        "copy",
+        "-movflags",
+        "+faststart",
+        output_path,
+    ]
+
+    if dry_run:
+        logger.info("Dry-run: would burn %s into %s", subtitle_path, video_path)
+        Path(output_path).touch()
+        return 0
+
+    returncode, stderr = _run_ffmpeg(cmd, timeout_seconds)
+    if returncode != 0:
+        raise RuntimeError(f"ffmpeg subtitle burn-in failed (exit code {returncode}): {stderr}")
+    return Path(output_path).stat().st_size if Path(output_path).exists() else 0
 
 
 def probe_media(file_path: str) -> MediaInfo:

@@ -586,30 +586,62 @@
         const video = document.createElement("video");
         video.controls = true;
         video.preload = "none";
-        const source = document.createElement("source");
-        source.src = "api/episodes/" + ep.episode_id + "/render/draft.mp4?v=" + (ep.updated_at || Date.now());
-        source.type = "video/mp4";
-        video.appendChild(source);
         previewDiv.appendChild(video);
 
-        // Direct, shareable link to the rendered file. Built from the page
-        // origin so it also works when the dashboard is reached through the
-        // reverse proxy rather than on localhost.
-        const shareUrl = new URL(
-          "api/episodes/" + encodeURIComponent(ep.episode_id) + "/render/draft.mp4",
-          window.location.href
-        ).href;
+        // Two versions come out of the render: the plain one, which is what
+        // gets published, and a copy with the subtitles burned in. The plain
+        // one is shown first; the burned-in one only appears once it exists,
+        // because an older episode was rendered before it did.
+        const versions = [{ key: "draft.mp4", label: "Ohne Untertitel" }];
+        if (ep.files && ep.files.video_subtitled) {
+          versions.push({ key: "draft_subtitled.mp4", label: "Mit Untertitel" });
+        }
+
         const shareRow = document.createElement("div");
         shareRow.className = "video-share";
         const link = document.createElement("a");
-        link.href = shareUrl;
         link.target = "_blank";
         link.rel = "noopener";
-        link.textContent = shareUrl;
         const copy = document.createElement("button");
         copy.className = "btn btn-sm";
         copy.type = "button";
         copy.textContent = "Kopieren";
+        shareRow.appendChild(link);
+        shareRow.appendChild(copy);
+
+        // Direct, shareable link to the rendered file. Built from the page
+        // origin so it also works when the dashboard is reached through the
+        // reverse proxy rather than on localhost.
+        let shareUrl = "";
+        const showVersion = (key) => {
+          const base = "api/episodes/" + encodeURIComponent(ep.episode_id) + "/render/" + key;
+          video.src = base + "?v=" + encodeURIComponent(ep.updated_at || Date.now());
+          shareUrl = new URL(base, window.location.href).href;
+          link.href = shareUrl;
+          link.textContent = shareUrl;
+        };
+
+        if (versions.length > 1) {
+          const switcher = document.createElement("div");
+          switcher.className = "video-versions";
+          const buttons = versions.map((version) => {
+            const btn = document.createElement("button");
+            btn.className = "btn btn-sm";
+            btn.type = "button";
+            btn.textContent = version.label;
+            btn.onclick = () => {
+              showVersion(version.key);
+              buttons.forEach((other) => other.classList.toggle("active", other === btn));
+            };
+            switcher.appendChild(btn);
+            return btn;
+          });
+          buttons[0].classList.add("active");
+          previewDiv.insertBefore(switcher, video);
+        }
+
+        showVersion(versions[0].key);
+
         copy.onclick = () => {
           const done = () => {
             copy.textContent = "Kopiert";
@@ -621,8 +653,6 @@
             window.prompt("Link", shareUrl);
           }
         };
-        shareRow.appendChild(link);
-        shareRow.appendChild(copy);
         previewDiv.appendChild(shareRow);
         header.appendChild(previewDiv);
       }
@@ -1378,6 +1408,11 @@
       const totalSize = ((data.total_size_bytes || 0) / 1024 / 1024).toFixed(1);
       const segments = data.segments || [];
       const videoUrl = `api/episodes/${selected.episode_id}/render/draft.mp4?v=${encodeURIComponent(data.generated_at || Date.now())}`;
+      // Only offered when the render actually produced it — an episode
+      // rendered before the second version existed has none.
+      const subtitledUrl = data.subtitled_video
+        ? `api/episodes/${selected.episode_id}/render/draft_subtitled.mp4?v=${encodeURIComponent(data.generated_at || Date.now())}`
+        : "";
 
       let chapterRows = segments.map(s => {
         const dur = (s.duration_seconds || 0).toFixed(1);
@@ -1402,6 +1437,7 @@
               Your browser does not support video playback.
             </video>
           </div>
+          ${subtitledUrl ? `<div class="video-share"><a href="${subtitledUrl}" target="_blank" rel="noopener">Fassung mit eingebranntem Untertitel öffnen</a></div>` : ''}
           <div class="video-chapters">
             <strong>Chapter Timeline:</strong>
             ${chapterRows}

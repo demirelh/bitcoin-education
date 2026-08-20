@@ -5,13 +5,17 @@ is that the cues reach the picture and the caption track intact.
 """
 
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from btcedu.config import Settings
 from btcedu.core.renderer import (
     _chapter_subtitle_cues,
+    _episode_cues,
     _resolve_subtitle_style,
     _write_episode_srt,
+    _write_subtitled_video,
 )
+from btcedu.core.subtitles import Cue, SubtitleStyle
 from btcedu.models.chapter_schema import Chapter, Narration, Transitions, Visual
 from btcedu.services.ffmpeg_service import _build_subtitles_filter, _escape_subtitle_path
 
@@ -78,26 +82,35 @@ class TestChapterCuesFromManifest:
         assert _chapter_subtitle_cues(doc, self._manifest()) == {}
 
 
-class TestEpisodeSrt:
-    def test_cues_are_moved_onto_the_finished_timeline(self, tmp_path):
-        """Intro and topic cards push every chapter later; a caption track
-        timed against the chapter audio alone would run early by the length of
-        everything in front of it."""
-        cues = _chapter_subtitle_cues(
+class TestEpisodeCues:
+    def _cues(self):
+        return _chapter_subtitle_cues(
             SimpleNamespace(chapters=[_chapter("ch01", "Merhaba dünya.")]),
             {"segments": [{"chapter_id": "ch01", "duration_seconds": 4.0, "metadata": {}}]},
         )
+
+    def test_cues_are_moved_onto_the_finished_timeline(self, tmp_path):
+        """Intro and topic cards push every chapter later; cues timed against
+        the chapter audio alone would run early by the length of everything in
+        front of them."""
         timeline = [
             {"kind": "intro", "start_seconds": 0.0},
             {"kind": "chapter", "chapter_id": "ch01", "start_seconds": 12.5},
         ]
-        rel = _write_episode_srt(tmp_path, timeline, cues)
+        cues = _episode_cues(timeline, self._cues())
+        assert cues[0].start == 12.5
+
+        rel = _write_episode_srt(tmp_path, cues)
         assert rel == "render/subtitles.tr.srt"
-        text = (tmp_path / "subtitles.tr.srt").read_text(encoding="utf-8")
-        assert "00:00:12,500 -->" in text
+        assert "00:00:12,500 -->" in (tmp_path / "subtitles.tr.srt").read_text(encoding="utf-8")
+
+    def test_a_timeline_part_that_is_not_a_chapter_contributes_nothing(self):
+        timeline = [{"kind": "topic_card", "start_seconds": 0.0}]
+        assert _episode_cues(timeline, self._cues()) == []
 
     def test_no_cues_writes_no_file(self, tmp_path):
-        assert _write_episode_srt(tmp_path, [], {}) is None
+        assert _episode_cues([], {}) == []
+        assert _write_episode_srt(tmp_path, []) is None
         assert not (tmp_path / "subtitles.tr.srt").exists()
 
 
@@ -117,56 +130,49 @@ class TestSubtitleStyle:
 
 
 class TestBurnIn:
-    def _inputs(self, tmp_path):
-        image = tmp_path / "pic.png"
-        audio = tmp_path / "voice.mp3"
-        subs = tmp_path / "ch01.ass"
-        for path, payload in ((image, b"img"), (audio, b"aud"), (subs, b"ass")):
-            path.write_bytes(payload)
-        return image, audio, subs
+    """The second version is written in one pass over the finished video, so
+    the published one never pays for it."""
 
-    def _filter_complex(self, mock_ffmpeg):
+    def _draft(self, tmp_path):
+        render_dir = tmp_path / "render"
+        render_dir.mkdir()
+        draft = render_dir / "draft.mp4"
+        draft.write_bytes(b"video")
+        return render_dir, draft
+
+    def _cues(self):
+        return [Cue(1.0, 3.0, ["Merhaba dünya."])]
+
+    def test_a_second_file_is_written_with_the_audio_copied(self, tmp_path):
+        render_dir, draft = self._draft(tmp_path)
+        with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
+            mock_ffmpeg.return_value = (0, "success")
+            (render_dir / "draft_subtitled.mp4").write_bytes(b"subbed")
+            rel = _write_subtitled_video(
+                render_dir, draft, self._cues(), SubtitleStyle(), Settings(dry_run=False)
+            )
+        assert rel == "render/draft_subtitled.mp4"
+        assert (render_dir / "subtitles.tr.ass").exists()
         cmd = mock_ffmpeg.call_args[0][0]
-        return cmd[cmd.index("-filter_complex") + 1]
+        assert cmd[cmd.index("-vf") + 1].startswith("ass=filename=")
+        assert cmd[cmd.index("-c:a") + 1] == "copy"
+        assert str(draft) in cmd
 
-    def test_create_segment_burns_the_ass_in_before_the_fade(self, tmp_path):
-        """Subtitles have to fade out with the picture; drawn after the fade
-        they would sit at full brightness over a black frame."""
-        from unittest.mock import patch
-
-        from btcedu.services.ffmpeg_service import create_segment
-
-        image, audio, subs = self._inputs(tmp_path)
+    def test_a_failed_burn_in_does_not_lose_the_broadcast(self, tmp_path):
+        """The plain video is already finished; the extra copy is not worth
+        failing the stage over."""
+        render_dir, draft = self._draft(tmp_path)
         with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
-            mock_ffmpeg.return_value = (0, "success")
-            create_segment(
-                image_path=str(image),
-                audio_path=str(audio),
-                output_path=str(tmp_path / "out.mp4"),
-                duration=5.0,
-                overlays=[],
-                fade_out_duration=0.5,
-                subtitle_path=str(subs),
-                dry_run=False,
+            mock_ffmpeg.return_value = (1, "libass missing")
+            rel = _write_subtitled_video(
+                render_dir, draft, self._cues(), SubtitleStyle(), Settings(dry_run=False)
             )
-        graph = self._filter_complex(mock_ffmpeg)
-        assert f"ass=filename='{subs}'" in graph
-        assert graph.index("ass=filename") < graph.index("fade=t=out")
+        assert rel is None
 
-    def test_no_subtitle_path_leaves_the_graph_untouched(self, tmp_path):
-        from unittest.mock import patch
-
-        from btcedu.services.ffmpeg_service import create_segment
-
-        image, audio, _ = self._inputs(tmp_path)
+    def test_without_cues_no_second_video_is_written(self, tmp_path):
+        render_dir, draft = self._draft(tmp_path)
         with patch("btcedu.services.ffmpeg_service._run_ffmpeg") as mock_ffmpeg:
-            mock_ffmpeg.return_value = (0, "success")
-            create_segment(
-                image_path=str(image),
-                audio_path=str(audio),
-                output_path=str(tmp_path / "out.mp4"),
-                duration=5.0,
-                overlays=[],
-                dry_run=False,
-            )
-        assert "ass=filename" not in self._filter_complex(mock_ffmpeg)
+            assert _write_subtitled_video(
+                render_dir, draft, [], SubtitleStyle(), Settings(dry_run=False)
+            ) is None
+        assert not mock_ffmpeg.called

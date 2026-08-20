@@ -683,6 +683,7 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
     tts_dir = out / "tts"
     tts_present = tts_dir.exists() and any(tts_dir.glob("ch*.mp3"))
     render_draft = (out / "render" / "draft.mp4").exists()
+    render_subtitled = (out / "render" / "draft_subtitled.mp4").exists()
 
     return {
         "audio": any(raw.glob("audio.*")) if raw.exists() else False,
@@ -698,6 +699,7 @@ def _file_presence(episode_id: str, settings) -> dict[str, bool]:
         "images": images_manifest,
         "tts": tts_present,
         "video": render_draft,
+        "video_subtitled": render_subtitled,
     }
 
 
@@ -3367,17 +3369,23 @@ def get_render_progress(episode_id: str):
 
 
 @api_bp.route("/episodes/<episode_id>/render/draft.mp4")
+@api_bp.route("/episodes/<episode_id>/render/draft_subtitled.mp4")
 def get_render_video(episode_id: str):
-    """Serve draft video MP4 file with byte-range support for HTML5 scrubbing."""
+    """Serve a draft video with byte-range support for HTML5 scrubbing.
+
+    Two versions exist: the plain one that gets published, and the copy with
+    the subtitles burned in. The URL decides which, so a shared link keeps
+    pointing at the version it was made for.
+    """
     from flask import send_file
 
     episode_id = secure_filename(episode_id)
     if not episode_id:
         return jsonify({"error": "Invalid episode ID"}), 400
     settings = _get_settings()
-    video_path = _validate_episode_path(
-        episode_id, Path(settings.outputs_dir), "render", "draft.mp4"
-    )
+    subtitled = request.path.endswith("draft_subtitled.mp4")
+    filename = "draft_subtitled.mp4" if subtitled else "draft.mp4"
+    video_path = _validate_episode_path(episode_id, Path(settings.outputs_dir), "render", filename)
 
     if not video_path:
         return jsonify({"error": "Episode not found"}), 404

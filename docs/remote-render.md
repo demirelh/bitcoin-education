@@ -60,8 +60,8 @@ throwaway SQLite database with a single episode row and calls
 
 ### What is *not* transferred
 
-- `render/segments/` and `render/draft.mp4` on the way out (they are outputs;
-  ~850 MB of pointless upload)
+- `render/segments/`, `render/draft.mp4` and `render/draft_subtitled.mp4` on
+  the way out (they are outputs; ~850 MB of pointless upload)
 - `render/segments/beats/` on the way back (~370 MB of scratch data the Pi
   never reads)
 - Any credential. `render_settings_snapshot()` is a `render_*` prefix

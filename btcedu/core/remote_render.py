@@ -63,7 +63,7 @@ _WORKDIR_MAX_AGE_SECONDS = 6 * 3600
 
 # Episode sub-paths the runner must not receive: they are render *outputs*.
 # Shipping them would waste ~850 MB of upload for no benefit.
-_JOB_EXCLUDED = ("render/segments", "render/draft.mp4")
+_JOB_EXCLUDED = ("render/segments", "render/draft.mp4", "render/draft_subtitled.mp4")
 
 # What the runner sends back.
 _RESULT_PATHS = ("render", "provenance/render_provenance.json")

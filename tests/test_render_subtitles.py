@@ -81,6 +81,20 @@ class TestChapterCuesFromManifest:
         doc = SimpleNamespace(chapters=[_chapter("ch99", "Merhaba.")])
         assert _chapter_subtitle_cues(doc, self._manifest()) == {}
 
+    def _images(self, category):
+        return {"images": [{"chapter_id": "ch01", "metadata": {"category": category}}]}
+
+    def test_a_weather_chapter_puts_its_lines_at_the_top(self):
+        """The card's city temperatures sit where the box would otherwise be."""
+        doc = SimpleNamespace(chapters=[_chapter("ch01", "Merhaba dünya.")])
+        cues = _chapter_subtitle_cues(doc, self._manifest(), self._images("weather"))
+        assert all(cue.at_top for cue in cues["ch01"])
+
+    def test_an_ordinary_chapter_keeps_its_lines_at_the_bottom(self):
+        doc = SimpleNamespace(chapters=[_chapter("ch01", "Merhaba dünya.")])
+        cues = _chapter_subtitle_cues(doc, self._manifest(), self._images("news"))
+        assert not any(cue.at_top for cue in cues["ch01"])
+
 
 class TestEpisodeCues:
     def _cues(self):

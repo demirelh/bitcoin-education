@@ -58,6 +58,10 @@ class Cue:
     start: float
     end: float
     lines: list[str] = field(default_factory=list)
+    # A weather card carries its numbers in the lower half of the frame, so a
+    # box at the bottom would hide the very data the chapter is about. Those
+    # chapters put the line at the top instead.
+    at_top: bool = False
 
     @property
     def text(self) -> str:
@@ -183,7 +187,7 @@ def _wrap(words: list[str]) -> list[str]:
     return [" ".join(words[:best_index]), " ".join(words[best_index:])]
 
 
-def build_cues(words: list[TimedWord]) -> list[Cue]:
+def build_cues(words: list[TimedWord], *, at_top: bool = False) -> list[Cue]:
     """Group timed words into readable cues.
 
     Sentences are never mixed: a cue that ends mid-sentence and resumes under
@@ -201,6 +205,7 @@ def build_cues(words: list[TimedWord]) -> list[Cue]:
                 start=pending[0].start,
                 end=pending[-1].end,
                 lines=_wrap([item.word for item in pending]),
+                at_top=at_top,
             )
         )
         pending.clear()
@@ -244,6 +249,8 @@ def chapter_cues(
     narration: str,
     word_timings: list[dict] | None,
     duration: float,
+    *,
+    at_top: bool = False,
 ) -> list[Cue]:
     """Cues for one chapter, timed relative to the start of its audio."""
     spoken = [
@@ -255,11 +262,13 @@ def chapter_cues(
         words = align_written_to_spoken(narration, spoken)
     else:
         words = spread_words(narration, duration)
-    return build_cues(words)
+    return build_cues(words, at_top=at_top)
 
 
 def shift(cues: list[Cue], offset: float) -> list[Cue]:
-    return [Cue(cue.start + offset, cue.end + offset, list(cue.lines)) for cue in cues]
+    return [
+        Cue(cue.start + offset, cue.end + offset, list(cue.lines), cue.at_top) for cue in cues
+    ]
 
 
 def window(cues: list[Cue], start: float, end: float) -> list[Cue]:
@@ -274,7 +283,12 @@ def window(cues: list[Cue], start: float, end: float) -> list[Cue]:
         if cue.end <= start or cue.start >= end:
             continue
         result.append(
-            Cue(max(cue.start, start) - start, min(cue.end, end) - start, list(cue.lines))
+            Cue(
+                max(cue.start, start) - start,
+                min(cue.end, end) - start,
+                list(cue.lines),
+                cue.at_top,
+            )
         )
     return result
 
@@ -361,6 +375,7 @@ def to_ass(cues: list[Cue], style: SubtitleStyle | None = None) -> str:
     )
     lines = [
         f"Dialogue: 0,{_ass_timestamp(cue.start)},{_ass_timestamp(cue.end)},Default,,0,0,0,,"
+        + ("{\\an8}" if cue.at_top else "")
         + "\\N".join(line.replace("\n", " ") for line in cue.lines)
         for cue in cues
     ]

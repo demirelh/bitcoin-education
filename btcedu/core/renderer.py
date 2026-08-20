@@ -424,7 +424,11 @@ def render_video(
         if not settings_unchanged:
             logger.info("Render settings changed — every chapter segment is rebuilt")
 
-        subtitle_cues = _chapter_subtitle_cues(chapters_doc, tts_manifest) if _eff_subtitles else {}
+        subtitle_cues = (
+            _chapter_subtitle_cues(chapters_doc, tts_manifest, image_manifest)
+            if _eff_subtitles
+            else {}
+        )
 
         _intro_audio_snapshot = _levelled_sting(
             _intro_audio_bytes, render_dir / "inputs" / "intro.mp3", "intro"
@@ -1912,7 +1916,23 @@ def _resolve_subtitle_style(raw: object, settings: Settings):
     return style
 
 
-def _chapter_subtitle_cues(chapters_doc, tts_manifest: dict) -> dict[str, list]:
+def _weather_chapter_ids(image_manifest: dict) -> set[str]:
+    """Chapters whose picture is a rendered weather card.
+
+    Their numbers sit in the lower half of the frame, exactly where a subtitle
+    box would land, so those cues go to the top instead. The image manifest is
+    the same marker the final review uses, set when the card was rendered.
+    """
+    return {
+        entry.get("chapter_id")
+        for entry in (image_manifest or {}).get("images", [])
+        if (entry.get("metadata") or {}).get("category") == "weather"
+    }
+
+
+def _chapter_subtitle_cues(
+    chapters_doc, tts_manifest: dict, image_manifest: dict | None = None
+) -> dict[str, list]:
     """Cues per chapter, timed against that chapter's own audio.
 
     The narration is the written text the viewer should read; the timings come
@@ -1923,6 +1943,7 @@ def _chapter_subtitle_cues(chapters_doc, tts_manifest: dict) -> dict[str, list]:
     from btcedu.core import subtitles
 
     by_id = {seg["chapter_id"]: seg for seg in tts_manifest.get("segments", [])}
+    weather_ids = _weather_chapter_ids(image_manifest or {})
     cues: dict[str, list] = {}
     for chapter in chapters_doc.chapters:
         entry = by_id.get(chapter.chapter_id)
@@ -1936,6 +1957,7 @@ def _chapter_subtitle_cues(chapters_doc, tts_manifest: dict) -> dict[str, list]:
             narration,
             timings,
             float(entry.get("duration_seconds") or 0.0),
+            at_top=chapter.chapter_id in weather_ids,
         )
         if not timings:
             logger.info(

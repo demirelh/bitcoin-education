@@ -197,6 +197,19 @@ class TestSerialisation:
         assert ",210,1" in text
         assert "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,bir\\Niki" in text
 
+    def test_a_top_cue_overrides_the_alignment_inline(self):
+        """Weather cards carry their numbers low in the frame."""
+        text = to_ass([Cue(0.0, 1.0, ["bir"], at_top=True)])
+        assert ",,{\\an8}bir" in text
+
+    def test_a_normal_cue_carries_no_override(self):
+        assert "an8" not in to_ass([Cue(0.0, 1.0, ["bir"])])
+
+    def test_shift_and_window_keep_the_position(self):
+        cue = Cue(1.0, 5.0, ["bir"], at_top=True)
+        assert shift([cue], 2.0)[0].at_top is True
+        assert window([cue], 2.0, 4.0)[0].at_top is True
+
     def test_ass_without_cues_still_has_a_usable_header(self):
         text = to_ass([])
         assert "[Events]" in text

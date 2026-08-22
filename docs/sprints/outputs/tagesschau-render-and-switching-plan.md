@@ -186,7 +186,8 @@ def _build_youtube_metadata(episode, chapters_doc, tts_manifest, settings):
 
     category_id = yt_config.get("category_id", settings.youtube_category_id)
     language = yt_config.get("default_language", settings.youtube_default_language)
-    privacy = yt_config.get("default_privacy", settings.youtube_default_privacy)
+    target = resolve_youtube_target(settings, yt_config)
+    privacy = target.default_privacy
     profile_tags = yt_config.get("tags", [])
 
     # Use profile tags or fall back to base tags

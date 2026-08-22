@@ -108,7 +108,9 @@ Falls du Videos automatisch auf YouTube hochladen willst:
 
 ```bash
 # Die heruntergeladene JSON-Datei hierhin kopieren:
-cp ~/Downloads/client_secret_xxxxx.json data/client_secret.json
+mkdir -p data/youtube/test
+cp ~/Downloads/client_secret_xxxxx.json data/youtube/test/client_secret.json
+chmod 600 data/youtube/test/client_secret.json
 ```
 
 ### 4c) YouTube Python Packages installieren
@@ -120,17 +122,27 @@ pip install -e ".[youtube]"
 ### 4d) OAuth Token erstellen (interaktiv)
 
 ```bash
-btcedu youtube-auth
+btcedu youtube-auth --target test
 ```
 → Öffnet Browser, du meldest dich mit deinem YouTube-Kanal an.
-→ Erstellt `data/.youtube_credentials.json` automatisch.
+→ Erstellt `data/youtube/test/credentials.json` automatisch mit Modus `0600`.
+
+Für das private ALMANYA24-Testsetup nutze die getrennte Anleitung:
+`docs/runbooks/youtube-test-environment.md`. Dort werden separate Google Cloud
+Projekt-, Client- und Credential-Pfade sowie der private Test-Target beschrieben.
 
 ### 4e) `.env` Einstellungen (Defaults sind meistens ok)
 
 ```env
-YOUTUBE_CLIENT_SECRETS_PATH=data/client_secret.json
-YOUTUBE_CREDENTIALS_PATH=data/.youtube_credentials.json
-YOUTUBE_DEFAULT_PRIVACY=unlisted
+YOUTUBE_DEFAULT_TARGET=test
+YOUTUBE_TEST_CLIENT_SECRETS_PATH=data/youtube/test/client_secret.json
+YOUTUBE_TEST_CREDENTIALS_PATH=data/youtube/test/credentials.json
+YOUTUBE_TEST_CHANNEL_ID=UC...
+YOUTUBE_TEST_DEFAULT_PRIVACY=private
+YOUTUBE_PRODUCTION_CLIENT_SECRETS_PATH=data/youtube/production/client_secret.json
+YOUTUBE_PRODUCTION_CREDENTIALS_PATH=data/youtube/production/credentials.json
+YOUTUBE_PRODUCTION_CHANNEL_ID=UC...
+YOUTUBE_PRODUCTION_DEFAULT_PRIVACY=unlisted
 YOUTUBE_DEFAULT_LANGUAGE=tr
 YOUTUBE_CATEGORY_ID=27
 ```
@@ -190,7 +202,8 @@ PODCAST_YOUTUBE_CHANNEL_ID=UC...      # Quell-Channel
 # ── Optional (Defaults ok) ──────────────────────────
 # IMAGE_GEN_QUALITY=standard          # oder "hd" (teurer)
 # RENDER_FONT=NotoSans-Bold
-# YOUTUBE_DEFAULT_PRIVACY=unlisted
+# YOUTUBE_TEST_DEFAULT_PRIVACY=private
+# YOUTUBE_PRODUCTION_DEFAULT_PRIVACY=unlisted
 # MAX_EPISODE_COST_USD=10.0           # Kostenlimit pro Episode
 # DRY_RUN=false                       # true = keine API-Calls
 ```
@@ -225,6 +238,7 @@ PODCAST_YOUTUBE_CHANNEL_ID=UC...      # Quell-Channel
 3. `PIPELINE_VERSION=2` setzen
 4. Font installieren: `sudo apt install fonts-noto-core`
 5. Datenbank: `btcedu init-db && btcedu migrate`
-6. (Optional) YouTube: `pip install -e ".[youtube]"` + `btcedu youtube-auth`
+6. (Optional) YouTube: `pip install -e ".[youtube]"` +
+   `btcedu youtube-auth --target test`
 7. Mit einer Testepisode oder `DRY_RUN=true` prüfen
 8. Vor echtem Publish finale manuelle Freigabe im Dashboard erteilen

@@ -60,8 +60,10 @@ def settings(tmp_path):
         raw_data_dir=str(tmp_path / "raw"),
         dry_run=True,
         max_episode_cost_usd=10.0,
-        youtube_default_privacy="unlisted",
-        youtube_credentials_path=str(tmp_path / ".yt.json"),
+        youtube_test_credentials_path=str(tmp_path / "test-yt.json"),
+        youtube_test_channel_id="UC_TEST",
+        youtube_production_credentials_path=str(tmp_path / "prod-yt.json"),
+        youtube_production_channel_id="UC_PRODUCTION",
     )
     # Force-load real profiles now so the singleton is never left empty for
     # later tests (the profile registry is a process-wide singleton).
@@ -350,6 +352,37 @@ def test_final_publish_approval_invalidated_by_privacy_override(db_session, sett
 
     with pytest.raises(ValueError, match="manual_publish_approval"):
         publish_video(db_session, episode.episode_id, settings, privacy="public")
+
+
+def test_target_change_supersedes_stale_pending_publish_review(db_session, settings):
+    episode = _setup(db_session, settings)
+    test_review = request_publish_review(
+        db_session,
+        episode.episode_id,
+        settings,
+        target="test",
+    )
+
+    production_review = request_publish_review(
+        db_session,
+        episode.episode_id,
+        settings,
+        target="production",
+    )
+
+    db_session.refresh(test_review)
+    assert test_review.status == ReviewStatus.SUPERSEDED.value
+    assert production_review.id != test_review.id
+    request = json.loads(
+        (
+            Path(settings.outputs_dir)
+            / episode.episode_id
+            / "render"
+            / "publish_request.json"
+        ).read_text()
+    )
+    assert request["publish_target"] == "production"
+    assert request["channel_id"] == "UC_PRODUCTION"
 
 
 def test_unknown_profile_fails_publish_closed(db_session, settings):

@@ -4,9 +4,21 @@
 
 btcedu generiert türkische YouTube-Videos aus deutschen Bitcoin-Podcasts. Aktuell: Standbilder + Voice-Over (ElevenLabs TTS). Das `TALKING_HEAD` Visual-Type existiert bereits im Schema (`chapter_schema.py:14`), wird aber nur als grauer Platzhalter gerendert (`image_generator.py:286`). Ziel: Realistischer KI-Nachrichtensprecher mit Lippensynchronisation.
 
+Kanonischer Brand-/Rights-Stand: `docs/implementation/almanya24-brand-rights.md`.
+Diese Notiz behandelt nur den synthetischen Branch. Wenn ein unterschriebener
+Real-Presenter-Block vorhanden ist, endet die Entscheidung dort; D-ID ist dann
+nicht mehr die relevante Wahl.
+
 ---
 
-## 1. Empfohlener Ansatz: D-ID API
+## 1. Entscheidungsrahmen: realer vs. synthetischer Presenter
+
+| Bedingung | Branch | Hinweis |
+|-----------|--------|---------|
+| Signed rights / release / logo pack vorhanden | Licensed real presenter | Nur mit operator-seitig bestätigten Rechten |
+| Etwas fehlt | Synthetic presenter | Keine Rechte fabrizieren; nur der synthetische Branch bleibt offen |
+
+### 1.1 Anbieter für den synthetischen Branch
 
 | Kriterium | D-ID | HeyGen | Open-Source (SadTalker/MuseTalk) |
 |-----------|------|--------|----------------------------------|
@@ -17,7 +29,10 @@ btcedu generiert türkische YouTube-Videos aus deutschen Bitcoin-Podcasts. Aktue
 | Konsistenz | Gleiches Foto = gleicher Anchor | Ähnlich | Modellabhängig |
 | Limit | 5 min pro Video | 30 min pro Video | Keins |
 
-**Empfehlung: D-ID** — Bester Kompromiss aus Kosten, Qualität und Einfachheit. REST-API (Foto + Audio → MP4) passt perfekt zum bestehenden Stage-Pattern. Kein GPU nötig.
+**Empfehlung für den synthetischen Branch: D-ID** — Bester Kompromiss aus
+Kosten, Qualität und Einfachheit. REST-API (Foto + Audio → MP4) passt perfekt
+zum bestehenden Stage-Pattern. Kein GPU nötig. Diese Empfehlung ist **nur** für
+den synthetischen Branch relevant.
 
 **5-Minuten-Limit-Mitigation:** D-ID erlaubt max. 5 min pro API-Call. Da Kapitel typisch 30–90 Sekunden sind, ist das kein Problem bei per-Kapitel-Generierung. Für Sonderfälle mit längeren Segmenten (>5 min) implementiert die `DIDService` automatisches Audio-Chunking: Audio an Satzgrenzen splitten, pro Chunk einen D-ID-Call, resultierende Videos per ffmpeg `concat` zusammenfügen (analoges Pattern wie ElevenLabs Text-Chunking in `elevenlabs_service.py`).
 

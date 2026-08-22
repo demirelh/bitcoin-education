@@ -23,15 +23,17 @@ Implements the plan in `news_script_quality_plan.md`.
 
 ## New profile keys
 
-`branding.display_name`, `branding.spoken_name`, `stage_config.script.editorial`
+`branding.display_name`, `branding.spoken_name`, `branding.slogan`,
+`stage_config.script.editorial`
 (`minimum_duration_seconds`, `preferred_duration_seconds`,
 `soft_maximum_duration_seconds`, `hard_maximum_duration_seconds`,
 `allow_longer_if_editorially_justified`).
 
 Every key has a default that reproduces today's behaviour: without
-`spoken_name` the display name is spoken, and without the `editorial` block the
-historic hard duration limits stay in force. `pipeline_version=1` and
-`bitcoin_podcast` are untouched.
+`spoken_name` the display name is spoken, without `slogan` the outro card falls
+back to the display name, and without the `editorial` block the historic hard
+duration limits stay in force. `pipeline_version=1` and `bitcoin_podcast` are
+untouched.
 
 ## New QA findings
 

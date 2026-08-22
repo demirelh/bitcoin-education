@@ -1,5 +1,6 @@
 import logging
 import warnings
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings
@@ -32,6 +33,20 @@ class Settings(BaseSettings):
                     "Both ANTHROPIC_API_KEY and CLAUDE_API_KEY set; using ANTHROPIC_API_KEY."
                 )
             self.claude_api_key = ""  # clear after migration
+        return self
+
+    @model_validator(mode="after")
+    def _migrate_legacy_youtube_target(self) -> "Settings":
+        """Keep an existing single-target production setup operational."""
+        configured = self.model_fields_set
+        legacy_fields = {
+            "youtube_client_secrets_path": "youtube_production_client_secrets_path",
+            "youtube_credentials_path": "youtube_production_credentials_path",
+            "youtube_default_privacy": "youtube_production_default_privacy",
+        }
+        for legacy_name, production_name in legacy_fields.items():
+            if legacy_name in configured and production_name not in configured:
+                setattr(self, production_name, getattr(self, legacy_name))
         return self
 
     # Database
@@ -171,12 +186,23 @@ class Settings(BaseSettings):
     tts_stutter_check_enabled: bool = True
     tts_stutter_model: str = "small"
 
-    # Anchor / D-ID (talking-head video generation)
+    # Anchor / talking-avatar video generation
     did_api_key: str = ""
     did_source_image_path: str = "data/anchor/default.png"
     did_source_image_url: str = ""
+    did_cost_per_second_usd: float = 0.015
+    heygen_api_key: str = ""
+    heygen_avatar_id: str = ""
+    heygen_engine: str = "avatar_iv"
+    heygen_avatar_type: str = "digital_twin"
+    # The adapter also supports WebM alpha; keep MP4 until the renderer can
+    # composite transparent presenters over a studio scene.
+    heygen_output_format: str = "mp4"
+    heygen_resolution: str = "1080p"
+    heygen_aspect_ratio: str = "auto"
     anchor_provider: str = "d-id"
     anchor_enabled: bool = False
+    anchor_max_cost_usd: float = 15.0
     anchor_max_chunk_seconds: int = 270
 
     # Render / ffmpeg (Sprint 9-10)
@@ -235,10 +261,23 @@ class Settings(BaseSettings):
     github_render_poll_interval: int = 20  # seconds between run status polls
     github_render_fallback_local: bool = True  # render locally if the offload fails
 
-    # YouTube Publishing (Sprint 11)
+    # YouTube Publishing
+    youtube_default_target: Literal["test", "production"] = "test"
+    youtube_test_client_secrets_path: str = "data/youtube/test/client_secret.json"
+    youtube_test_credentials_path: str = "data/youtube/test/credentials.json"
+    youtube_test_channel_id: str = ""
+    youtube_test_default_privacy: Literal["private", "unlisted", "public"] = "private"
+    youtube_production_client_secrets_path: str = "data/youtube/production/client_secret.json"
+    youtube_production_credentials_path: str = "data/youtube/production/credentials.json"
+    youtube_production_channel_id: str = ""
+    youtube_production_default_privacy: Literal["private", "unlisted", "public"] = "unlisted"
+
+    # Deprecated single-target settings remain accepted so an existing .env
+    # does not stop the application from starting. Publishing never falls back
+    # to them: each target must have its own explicit path above.
     youtube_client_secrets_path: str = "data/client_secret.json"
     youtube_credentials_path: str = "data/.youtube_credentials.json"
-    youtube_default_privacy: str = "unlisted"  # "unlisted", "private", or "public"
+    youtube_default_privacy: str = "unlisted"
     youtube_upload_chunk_size_mb: int = 10
     youtube_category_id: str = "27"  # Education
     youtube_default_language: str = "tr"

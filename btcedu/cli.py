@@ -2542,7 +2542,13 @@ def llm_report(ctx: click.Context, json_only: bool, output: str | None) -> None:
     "--privacy",
     type=click.Choice(["unlisted", "private", "public"]),
     default=None,
-    help="Override privacy setting (default: youtube_default_privacy from config).",
+    help="Override the selected target's privacy default.",
+)
+@click.option(
+    "--target",
+    type=click.Choice(["test", "production"]),
+    default=None,
+    help="Override the profile's YouTube publish target.",
 )
 @click.pass_context
 def publish(
@@ -2551,6 +2557,7 @@ def publish(
     force: bool,
     dry_run: bool,
     privacy: str | None,
+    target: str | None,
 ) -> None:
     """Publish approved episode video to YouTube (v2 pipeline, Sprint 11)."""
     from btcedu.core.publisher import publish_video
@@ -2560,64 +2567,153 @@ def publish(
         settings.dry_run = True
 
     session = ctx.obj["session_factory"]()
+    had_failure = False
     try:
         for eid in episode_ids:
             try:
-                result = publish_video(session, eid, settings, force=force, privacy=privacy)
+                result = publish_video(
+                    session,
+                    eid,
+                    settings,
+                    force=force,
+                    privacy=privacy,
+                    target=target,
+                )
+                target_label = result.publish_target or target or "configured"
                 if result.skipped:
-                    click.echo(f"[SKIP] {eid} -> already published at {result.youtube_url}")
+                    click.echo(
+                        f"[SKIP] {eid} -> {target_label} already uploaded at "
+                        f"{result.youtube_url}"
+                    )
                 elif result.dry_run:
                     click.echo(
-                        f"[DRY-RUN] {eid} -> would publish (video_id={result.youtube_video_id})"
+                        f"[DRY-RUN] {eid} -> would publish to {target_label} "
+                        f"(video_id={result.youtube_video_id})"
                     )
                 else:
-                    click.echo(f"[OK] {eid} -> {result.youtube_url}")
+                    click.echo(f"[OK] {eid} -> {target_label}: {result.youtube_url}")
             except Exception as e:
+                had_failure = True
                 click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+    if had_failure:
+        ctx.exit(1)
+
+
+@cli.command(name="publish-review")
+@click.option("--episode-id", required=True, help="Episode to prepare for final publish approval.")
+@click.option(
+    "--target",
+    type=click.Choice(["test", "production"]),
+    default=None,
+    help="Override the profile's YouTube publish target.",
+)
+@click.option(
+    "--privacy",
+    type=click.Choice(["unlisted", "private", "public"]),
+    default=None,
+    help="Override the selected target's privacy default.",
+)
+@click.pass_context
+def publish_review(
+    ctx: click.Context,
+    episode_id: str,
+    target: str | None,
+    privacy: str | None,
+) -> None:
+    """Create an artifact-bound final review for one YouTube target."""
+    from btcedu.core.publisher import request_publish_review
+
+    session = ctx.obj["session_factory"]()
+    try:
+        task = request_publish_review(
+            session,
+            episode_id,
+            ctx.obj["settings"],
+            target=target,
+            privacy=privacy,
+        )
+        click.echo(f"[OK] Publish review {task.id} ready for {episode_id}")
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
     finally:
         session.close()
 
 
 @cli.command(name="youtube-auth")
+@click.option(
+    "--target",
+    type=click.Choice(["test", "production"]),
+    default=None,
+    help="OAuth target (default: YOUTUBE_DEFAULT_TARGET).",
+)
 @click.pass_context
-def youtube_auth(ctx: click.Context) -> None:
+def youtube_auth(ctx: click.Context, target: str | None) -> None:
     """Run OAuth2 authentication flow for YouTube Data API.
 
     Opens a browser window to authorize the app. Saves credentials to
-    the path specified by youtube_credentials_path in config.
+    the target-specific configured credentials path.
     """
-    from btcedu.services.youtube_service import authenticate
+    from btcedu.services.youtube_service import authenticate, resolve_youtube_target
 
     settings = ctx.obj["settings"]
-    client_secrets = getattr(settings, "youtube_client_secrets_path", "data/client_secret.json")
-    credentials_out = getattr(
-        settings, "youtube_credentials_path", "data/.youtube_credentials.json"
-    )
+    target_config = resolve_youtube_target(settings, target_override=target)
 
-    click.echo(f"Starting OAuth2 flow using: {client_secrets}")
-    click.echo("A browser window will open to authorize this app...")
+    click.echo(f"YouTube target    : {target_config.name}")
+    click.echo(f"Client secrets    : {target_config.client_secrets_path}")
+    click.echo(f"Credentials output: {target_config.credentials_path}")
+    click.echo("A browser window will open to authorize this target...")
     try:
-        authenticate(client_secrets_path=client_secrets, credentials_path=credentials_out)
-        click.echo(f"[OK] Credentials saved to: {credentials_out}")
+        channel = authenticate(
+            client_secrets_path=target_config.client_secrets_path,
+            credentials_path=target_config.credentials_path,
+            expected_channel_id=target_config.expected_channel_id,
+            target_name=target_config.name,
+        )
+        click.echo(
+            f"[OK] Authenticated {channel.get('channel_name')} "
+            f"({channel.get('channel_id')})"
+        )
+        click.echo(f"[OK] Credentials saved to: {target_config.credentials_path}")
+        if not target_config.expected_channel_id:
+            click.echo(
+                f"[ACTION] Set YOUTUBE_{target_config.name.upper()}_CHANNEL_ID="
+                f"{channel.get('channel_id')} before uploading."
+            )
     except Exception as e:
-        click.echo(f"[FAIL] Authentication failed: {e}", err=True)
+        raise click.ClickException(f"Authentication failed: {e}") from e
 
 
 @cli.command(name="youtube-status")
+@click.option(
+    "--target",
+    type=click.Choice(["test", "production"]),
+    default=None,
+    help="Target to inspect (default: YOUTUBE_DEFAULT_TARGET).",
+)
 @click.pass_context
-def youtube_status(ctx: click.Context) -> None:
-    """Check YouTube API credential status and quota."""
-    from btcedu.services.youtube_service import check_token_status
-
-    settings = ctx.obj["settings"]
-    credentials_path = getattr(
-        settings, "youtube_credentials_path", "data/.youtube_credentials.json"
+def youtube_status(ctx: click.Context, target: str | None) -> None:
+    """Check target-specific YouTube credential configuration."""
+    from btcedu.services.youtube_service import (
+        YOUTUBE_CAPTIONS_INSERT_QUOTA_UNITS,
+        YOUTUBE_CHANNELS_LIST_QUOTA_UNITS,
+        YOUTUBE_THUMBNAILS_SET_QUOTA_UNITS,
+        YOUTUBE_VIDEOS_INSERT_DAILY_LIMIT,
+        check_token_status,
+        resolve_youtube_target,
     )
 
+    settings = ctx.obj["settings"]
+    target_config = resolve_youtube_target(settings, target_override=target)
+
     try:
-        status = check_token_status(credentials_path=credentials_path)
+        status = check_token_status(credentials_path=target_config.credentials_path)
         has_creds = "error" not in status or "No credentials" not in status.get("error", "")
-        click.echo(f"Credentials file : {credentials_path}")
+        click.echo(f"Target           : {target_config.name}")
+        click.echo(f"Expected channel : {target_config.expected_channel_id or '(not configured)'}")
+        click.echo(f"Default privacy  : {target_config.default_privacy}")
+        click.echo(f"Credentials file : {target_config.credentials_path}")
         click.echo(f"Credentials exist: {has_creds}")
         if has_creds:
             click.echo(f"Token valid      : {status.get('valid', False)}")
@@ -2626,8 +2722,15 @@ def youtube_status(ctx: click.Context) -> None:
             click.echo(f"Can refresh      : {status.get('can_refresh', False)}")
         if "error" in status:
             click.echo(f"Error            : {status['error']}")
+        click.echo(
+            f"Quota model      : videos.insert 1 call ({YOUTUBE_VIDEOS_INSERT_DAILY_LIMIT}/day "
+            "bucket); general units "
+            f"channel={YOUTUBE_CHANNELS_LIST_QUOTA_UNITS}, "
+            f"thumbnail={YOUTUBE_THUMBNAILS_SET_QUOTA_UNITS}, "
+            f"captions={YOUTUBE_CAPTIONS_INSERT_QUOTA_UNITS}"
+        )
     except Exception as e:
-        click.echo(f"[FAIL] Could not check status: {e}", err=True)
+        raise click.ClickException(f"Could not check status: {e}") from e
 
 
 @cli.command(name="thumbnail")

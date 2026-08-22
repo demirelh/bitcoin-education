@@ -92,7 +92,7 @@
 | 5.4 | Tags include relevant keywords | **PASS** | Base: Bitcoin, Kripto, Blockchain, Türkçe, Eğitim, Cryptocurrency + chapter titles |
 | 5.5 | Category set to 27 (Education) | **PASS** | From config default |
 | 5.6 | Language set to Turkish (tr) | **PASS** | From config default |
-| 5.7 | Privacy: `unlisted` by default, configurable | **PASS** | `youtube_default_privacy` in config, `--privacy` CLI flag |
+| 5.7 | Privacy is target-specific | **PASS** | Test defaults private; production defaults unlisted; `--privacy` can override |
 | 5.8 | Metadata snapshot stored in PublishJob | **PASS** | JSON-serialized |
 | 5.9 | Turkish characters handled correctly | **PASS** | `ensure_ascii=False` in JSON serialization |
 
@@ -102,7 +102,7 @@
 |---|------|--------|-------|
 | 6.1 | `btcedu youtube-auth` exists | **PASS** | [cli.py](btcedu/cli.py#L1232-L1249) |
 | 6.2 | Opens browser for consent | **PASS** | `InstalledAppFlow.from_client_secrets_file()` + `run_local_server()` |
-| 6.3 | Credentials stored at configured path | **PASS** | `youtube_credentials_path` setting |
+| 6.3 | Credentials stored at configured path | **PASS** | Separate target-specific settings |
 | 6.4 | Credentials in .gitignore | **PASS** | `data/` directory is gitignored |
 | 6.5 | Client secrets in .gitignore | **PASS** | Also in `data/` |
 | 6.6 | Token refresh works | **PASS** | Auto-refresh in `_load_credentials()` |

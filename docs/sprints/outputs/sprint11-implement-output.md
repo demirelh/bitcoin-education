@@ -68,7 +68,8 @@ YouTube Data API v3 wrapper:
 - **OAuth2 helpers**:
   - `authenticate()` — Interactive flow via `InstalledAppFlow`, saves credentials
   - `check_token_status()` — Returns dict with `valid`, `expired`, `expiry`, `can_refresh`
-- Constants: `YOUTUBE_UPLOAD_QUOTA_UNITS = 1600`, max title/description/tag limits
+- Historical implementation used a single upload quota constant. Current
+  granular accounting is documented in `docs/runbooks/youtube-test-environment.md`.
 
 ### 4. `tests/test_publisher.py` (445 lines)
 
@@ -97,10 +98,12 @@ YouTube Data API v3 wrapper:
 
 ### 6. `btcedu/config.py` (+8 lines)
 
-Added 6 YouTube configuration fields to `Settings`:
-- `youtube_client_secrets_path` (default: `"data/client_secret.json"`)
-- `youtube_credentials_path` (default: `"data/.youtube_credentials.json"`)
-- `youtube_default_privacy` (default: `"unlisted"`)
+The original single-target fields were superseded by explicit test and
+production paths, channel IDs and privacy defaults:
+- `youtube_{test,production}_client_secrets_path`
+- `youtube_{test,production}_credentials_path`
+- `youtube_{test,production}_channel_id`
+- `youtube_{test,production}_default_privacy`
 - `youtube_upload_chunk_size_mb` (default: `10`)
 - `youtube_category_id` (default: `"27"` — Education)
 - `youtube_default_language` (default: `"tr"`)

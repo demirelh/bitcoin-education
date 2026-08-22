@@ -48,9 +48,14 @@ stage_config:
     font: "Inter-Black"
     music_bed: "data/assets/music/electronic_bed.mp3"
 youtube:
+  publish_target: production
+  targets:
+    test:
+      default_privacy: private
+    production:
+      default_privacy: unlisted
   category_id: "27"
   default_language: tr
-  default_privacy: unlisted
   tags: [bitcoin, kripto, blockchain, türkçe, eğitim, cryptocurrency]
 review_gates:
   review_gate_1:

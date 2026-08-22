@@ -35,7 +35,29 @@ class AnchorEntry:
     duration_seconds: float
     size_bytes: int
     cost_usd: float
-    did_talk_id: str
+    provider: str
+    provider_job_id: str
+    output_format: str
+    mime_type: str
+    did_talk_id: str | None = None
+
+
+@dataclass(frozen=True)
+class AnchorConfig:
+    """Resolved provider configuration for one episode."""
+
+    provider: str
+    engine: str
+    source_image: str
+    source_image_url: str
+    avatar_id: str
+    avatar_type: str
+    expression: str
+    output_format: str
+    resolution: str
+    aspect_ratio: str
+    cost_per_second_usd: float
+    max_cost_usd: float
 
 
 @dataclass
@@ -130,8 +152,18 @@ def generate_anchors(
             skipped=True,
         )
 
+    anchor_config = _resolve_anchor_config(episode, settings)
+
+    # Load TTS manifest before the idempotency check: changing the narration
+    # audio must invalidate an otherwise-identical avatar render.
+    tts_manifest_path = outputs_dir / "tts" / "manifest.json"
+    if not tts_manifest_path.exists():
+        raise FileNotFoundError(f"TTS manifest not found: {tts_manifest_path}")
+    tts_manifest = json.loads(tts_manifest_path.read_text(encoding="utf-8"))
+    tts_segments = {s["chapter_id"]: s for s in tts_manifest.get("segments", [])}
+
     # Idempotency check
-    content_hash = _compute_anchor_hash(chapters_doc, settings)
+    content_hash = _compute_anchor_hash(chapters_doc, anchor_config, tts_segments)
     if not force and _is_anchor_current(manifest_path, provenance_path, content_hash):
         logger.info("Anchor videos current for %s (use --force to regenerate)", episode_id)
         if episode.status == EpisodeStatus.TTS_DONE:
@@ -156,41 +188,7 @@ def generate_anchors(
     session.commit()
 
     try:
-        # Load profile for anchor config
-        source_image = settings.did_source_image_path
-        source_image_url = settings.did_source_image_url
-        expression = "serious"
-        try:
-            from btcedu.profiles import get_registry as _get_profile_registry
-
-            _profile_name = (
-                getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
-            )
-            _profile = _get_profile_registry(settings).get(_profile_name)
-            if _profile:
-                _anchor_cfg = _profile.stage_config.get("anchor", {})
-                source_image = _anchor_cfg.get("source_image", source_image)
-                source_image_url = _anchor_cfg.get("source_image_url", source_image_url)
-                expression = _anchor_cfg.get("expression", expression)
-        except Exception:
-            pass
-
-        # Load TTS manifest to find audio files
-        tts_manifest_path = outputs_dir / "tts" / "manifest.json"
-        if not tts_manifest_path.exists():
-            raise FileNotFoundError(f"TTS manifest not found: {tts_manifest_path}")
-        tts_manifest = json.loads(tts_manifest_path.read_text(encoding="utf-8"))
-        tts_segments = {s["chapter_id"]: s for s in tts_manifest.get("segments", [])}
-
-        # Create anchor service
-        if settings.dry_run:
-            from btcedu.services.anchor_service import DryRunAnchorService
-
-            anchor_service = DryRunAnchorService(output_dir=str(anchor_dir))
-        else:
-            from btcedu.services.anchor_service import DIDService
-
-            anchor_service = DIDService(api_key=settings.did_api_key, output_dir=str(anchor_dir))
+        anchor_service = _create_anchor_service(anchor_config, settings, anchor_dir)
 
         anchor_dir.mkdir(parents=True, exist_ok=True)
 
@@ -198,18 +196,9 @@ def generate_anchors(
         anchor_entries: list[AnchorEntry] = []
         total_cost = 0.0
         total_duration = 0.0
+        stage_budget = min(anchor_config.max_cost_usd, settings.max_episode_cost_usd)
 
         for chapter in talking_head_chapters:
-            # Cost guard
-            episode_total_cost = _get_episode_total_cost(session, episode_id)
-            if episode_total_cost + total_cost >= settings.max_episode_cost_usd:
-                raise PipelineError(
-                    f"Episode cost limit reached before anchor generation: "
-                    f"${episode_total_cost + total_cost:.4f} >= "
-                    f"${settings.max_episode_cost_usd:.4f}",
-                    ErrorCategory.PERMANENT_COST_LIMIT,
-                )
-
             tts_segment = tts_segments.get(chapter.chapter_id)
             if not tts_segment:
                 logger.warning("No TTS segment for chapter %s, skipping anchor", chapter.chapter_id)
@@ -220,31 +209,67 @@ def generate_anchors(
                 logger.warning("TTS audio not found: %s, skipping", audio_path)
                 continue
 
+            expected_duration = _positive_duration(
+                tts_segment.get("duration_seconds"),
+                f"TTS segment {chapter.chapter_id}",
+            )
+            estimated_cost = anchor_service.estimate_cost(expected_duration)
+            _ensure_anchor_budget(
+                session,
+                episode_id,
+                settings,
+                stage_budget=stage_budget,
+                spent_usd=total_cost,
+                next_cost_usd=estimated_cost,
+                provider=anchor_config.provider,
+            )
+
             from btcedu.services.anchor_service import AnchorRequest
 
             request = AnchorRequest(
-                source_image_path=source_image,
-                source_image_url=source_image_url,
+                source_image_path=anchor_config.source_image,
+                source_image_url=anchor_config.source_image_url,
                 audio_path=audio_path,
                 chapter_id=chapter.chapter_id,
-                expression=expression,
+                expression=anchor_config.expression,
+                expected_duration_seconds=expected_duration,
             )
 
             response = anchor_service.generate_anchor_video(request)
+            total_cost += response.cost_usd
+            total_duration += response.duration_seconds
+            _ensure_anchor_budget(
+                session,
+                episode_id,
+                settings,
+                stage_budget=stage_budget,
+                spent_usd=total_cost,
+                next_cost_usd=0.0,
+                provider=anchor_config.provider,
+            )
+            response_path = Path(response.video_path)
+            try:
+                relative_video_path = response_path.relative_to(outputs_dir)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Anchor provider wrote outside the episode output directory: {response_path}"
+                ) from exc
 
             entry = AnchorEntry(
                 chapter_id=chapter.chapter_id,
                 chapter_title=chapter.title,
                 audio_path=tts_segment["file_path"],
-                video_path=f"anchor/{chapter.chapter_id}.mp4",
+                video_path=str(relative_video_path),
                 duration_seconds=response.duration_seconds,
                 size_bytes=response.size_bytes,
                 cost_usd=response.cost_usd,
-                did_talk_id=response.did_talk_id,
+                provider=response.provider,
+                provider_job_id=response.provider_job_id,
+                output_format=response.output_format,
+                mime_type=response.mime_type,
+                did_talk_id=response.did_talk_id or None,
             )
             anchor_entries.append(entry)
-            total_cost += response.cost_usd
-            total_duration += response.duration_seconds
 
             # Create MediaAsset record
             asset = MediaAsset(
@@ -252,12 +277,21 @@ def generate_anchors(
                 asset_type=MediaAssetType.VIDEO,
                 chapter_id=chapter.chapter_id,
                 file_path=entry.video_path,
-                mime_type="video/mp4",
+                mime_type=entry.mime_type,
                 size_bytes=entry.size_bytes,
                 duration_seconds=response.duration_seconds,
                 meta={
-                    "did_talk_id": response.did_talk_id,
-                    "source": "d-id",
+                    "provider": response.provider,
+                    "provider_job_id": response.provider_job_id,
+                    "engine": anchor_config.engine,
+                    **(
+                        {
+                            "did_talk_id": response.did_talk_id,
+                            "source": "d-id",
+                        }
+                        if response.provider == "d-id"
+                        else {}
+                    ),
                 },
             )
             session.add(asset)
@@ -266,8 +300,13 @@ def generate_anchors(
         manifest_data = {
             "episode_id": episode_id,
             "schema_version": "1.0",
-            "anchor_provider": settings.anchor_provider,
-            "source_image": source_image,
+            "anchor_provider": anchor_config.provider,
+            "engine": anchor_config.engine,
+            "output_format": anchor_config.output_format,
+            "cost_per_second_usd": anchor_config.cost_per_second_usd,
+            "max_cost_usd": stage_budget,
+            "source_image": anchor_config.source_image,
+            "avatar_id": anchor_config.avatar_id,
             "generated_at": _utcnow().isoformat(),
             "total_duration_seconds": total_duration,
             "total_cost_usd": total_cost,
@@ -283,13 +322,15 @@ def generate_anchors(
             "stage": "anchorgen",
             "episode_id": episode_id,
             "timestamp": _utcnow().isoformat(),
-            "model": f"d-id ({settings.anchor_provider})",
+            "model": f"{anchor_config.provider} ({anchor_config.engine})",
             "input_files": [str(chapters_path), str(tts_manifest_path)],
             "input_content_hash": content_hash,
             "output_files": [str(manifest_path)]
-            + [str(anchor_dir / f"{e.chapter_id}.mp4") for e in anchor_entries],
+            + [str(outputs_dir / e.video_path) for e in anchor_entries],
             "segment_count": len(anchor_entries),
             "total_duration_seconds": total_duration,
+            "cost_per_second_usd": anchor_config.cost_per_second_usd,
+            "max_cost_usd": stage_budget,
             "cost_usd": total_cost,
         }
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
@@ -303,7 +344,7 @@ def generate_anchors(
             artifact_type="anchor_video",
             file_path="anchor/manifest.json",
             prompt_hash=content_hash,
-            model="d-id",
+            model=anchor_config.provider,
             created_at=_utcnow(),
         )
         session.add(artifact)
@@ -365,18 +406,224 @@ def _load_chapters(chapters_path: Path) -> ChapterDocument:
         raise ValueError(f"Invalid chapters.json at {chapters_path}: {e}") from e
 
 
-def _compute_anchor_hash(chapters_doc: ChapterDocument, settings: Settings) -> str:
-    """Compute content hash for idempotency."""
-    relevant = [
-        {
-            "chapter_id": ch.chapter_id,
-            "visual_type": ch.visual.type.value,
-        }
-        for ch in chapters_doc.chapters
-        if ch.visual.type == VisualType.TALKING_HEAD
-    ]
-    content = json.dumps(relevant, sort_keys=True) + settings.did_source_image_path
+def _resolve_anchor_config(episode: Episode, settings: Settings) -> AnchorConfig:
+    """Merge profile-owned avatar choices over backward-compatible settings."""
+    profile_config: dict = {}
+    try:
+        from btcedu.profiles import get_registry as _get_profile_registry
+
+        profile_name = (
+            getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+        )
+        profile = _get_profile_registry(settings).get(profile_name)
+        profile_config = (profile.stage_config.get("anchor", {}) if profile else {}) or {}
+    except Exception as exc:  # noqa: BLE001 - missing profile keeps global defaults
+        logger.debug("Could not resolve anchor profile config; using settings: %s", exc)
+
+    if not isinstance(profile_config, dict):
+        raise ValueError("Profile stage_config.anchor must be a mapping")
+
+    provider = str(profile_config.get("provider") or settings.anchor_provider).strip().lower()
+    provider = {"did": "d-id", "d_id": "d-id"}.get(provider, provider)
+    max_cost_usd = float(
+        profile_config.get("max_cost_usd", settings.anchor_max_cost_usd)
+    )
+    if max_cost_usd < 0:
+        raise ValueError("Anchor max_cost_usd must be non-negative")
+
+    if provider == "d-id":
+        engine = str(profile_config.get("engine") or "talks").strip().lower()
+        if engine != "talks":
+            raise ValueError(f"Unsupported D-ID anchor engine: {engine!r}")
+        output_format = str(profile_config.get("output_format") or "mp4").strip().lower()
+        if output_format != "mp4":
+            raise ValueError("D-ID anchor output_format must be 'mp4'")
+        cost_per_second = float(
+            profile_config.get("cost_per_second_usd", settings.did_cost_per_second_usd)
+        )
+        if cost_per_second < 0:
+            raise ValueError("D-ID cost_per_second_usd must be non-negative")
+        return AnchorConfig(
+            provider=provider,
+            engine=engine,
+            source_image=str(
+                profile_config.get("source_image") or settings.did_source_image_path
+            ),
+            source_image_url=str(
+                profile_config.get("source_image_url") or settings.did_source_image_url
+            ),
+            avatar_id="",
+            avatar_type="photo_avatar",
+            expression=str(profile_config.get("expression") or "serious"),
+            output_format=output_format,
+            resolution="",
+            aspect_ratio="",
+            cost_per_second_usd=cost_per_second,
+            max_cost_usd=max_cost_usd,
+        )
+
+    if provider == "heygen":
+        from btcedu.services.anchor_service import heygen_cost_per_second
+
+        engine = str(profile_config.get("engine") or settings.heygen_engine).strip().lower()
+        if engine not in {"avatar_iii", "avatar_iv", "avatar_v"}:
+            raise ValueError(f"Unsupported HeyGen engine: {engine!r}")
+        avatar_type = str(
+            profile_config.get("avatar_type") or settings.heygen_avatar_type
+        ).strip().lower()
+        published_cost = heygen_cost_per_second(engine, avatar_type)
+        configured_cost = profile_config.get("cost_per_second_usd")
+        cost_per_second = (
+            float(configured_cost)
+            if configured_cost is not None
+            else published_cost
+        )
+        if cost_per_second < 0:
+            raise ValueError("HeyGen cost_per_second_usd must be non-negative")
+        output_format = str(
+            profile_config.get("output_format") or settings.heygen_output_format
+        ).strip().lower()
+        if output_format not in {"mp4", "webm"}:
+            raise ValueError("HeyGen output_format must be 'mp4' or 'webm'")
+        resolution = str(
+            profile_config.get("resolution") or settings.heygen_resolution
+        ).strip().lower()
+        if resolution not in {"720p", "1080p", "4k"}:
+            raise ValueError(f"Unsupported HeyGen resolution: {resolution!r}")
+        aspect_ratio = str(
+            profile_config.get("aspect_ratio") or settings.heygen_aspect_ratio
+        ).strip().lower()
+        if aspect_ratio not in {"16:9", "9:16", "4:5", "5:4", "1:1", "auto"}:
+            raise ValueError(f"Unsupported HeyGen aspect_ratio: {aspect_ratio!r}")
+        return AnchorConfig(
+            provider=provider,
+            engine=engine,
+            source_image="",
+            source_image_url="",
+            avatar_id=str(profile_config.get("avatar_id") or settings.heygen_avatar_id),
+            avatar_type=avatar_type,
+            expression="",
+            output_format=output_format,
+            resolution=resolution,
+            aspect_ratio=aspect_ratio,
+            cost_per_second_usd=cost_per_second,
+            max_cost_usd=max_cost_usd,
+        )
+
+    raise ValueError(f"Unsupported anchor provider: {provider!r}")
+
+
+def _create_anchor_service(config: AnchorConfig, settings: Settings, anchor_dir: Path):
+    """Instantiate the configured provider without leaking provider logic upward."""
+    if settings.dry_run:
+        from btcedu.services.anchor_service import DryRunAnchorService
+
+        return DryRunAnchorService(
+            output_dir=str(anchor_dir),
+            provider=config.provider,
+            engine=config.engine,
+            output_format=config.output_format,
+        )
+
+    if config.provider == "d-id":
+        from btcedu.services.anchor_service import DIDService
+
+        return DIDService(
+            api_key=settings.did_api_key,
+            output_dir=str(anchor_dir),
+            cost_per_second_usd=config.cost_per_second_usd,
+        )
+
+    if config.provider == "heygen":
+        from btcedu.services.anchor_service import HeyGenService
+
+        return HeyGenService(
+            api_key=settings.heygen_api_key,
+            output_dir=str(anchor_dir),
+            avatar_id=config.avatar_id,
+            engine=config.engine,
+            avatar_type=config.avatar_type,
+            output_format=config.output_format,
+            resolution=config.resolution,
+            aspect_ratio=config.aspect_ratio,
+            cost_per_second_usd=config.cost_per_second_usd,
+        )
+
+    raise ValueError(f"Unsupported anchor provider: {config.provider!r}")
+
+
+def _compute_anchor_hash(
+    chapters_doc: ChapterDocument,
+    config: AnchorConfig,
+    tts_segments: dict[str, dict],
+) -> str:
+    """Compute a provider- and audio-aware content hash for idempotency."""
+    relevant = {
+        "provider": config.provider,
+        "engine": config.engine,
+        "source_image": config.source_image,
+        "source_image_url": config.source_image_url,
+        "avatar_id": config.avatar_id,
+        "avatar_type": config.avatar_type,
+        "expression": config.expression,
+        "output_format": config.output_format,
+        "resolution": config.resolution,
+        "aspect_ratio": config.aspect_ratio,
+        "chapters": [
+            {
+                "chapter_id": chapter.chapter_id,
+                "visual_type": chapter.visual.type.value,
+                "audio_path": (tts_segments.get(chapter.chapter_id) or {}).get("file_path"),
+                "audio_hash": (tts_segments.get(chapter.chapter_id) or {}).get("text_hash"),
+                "duration_seconds": (tts_segments.get(chapter.chapter_id) or {}).get(
+                    "duration_seconds"
+                ),
+            }
+            for chapter in chapters_doc.chapters
+            if chapter.visual.type == VisualType.TALKING_HEAD
+        ],
+    }
+    content = json.dumps(relevant, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+def _positive_duration(value, context: str) -> float:
+    try:
+        duration = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{context} has invalid duration_seconds") from exc
+    if duration <= 0:
+        raise ValueError(f"{context} has non-positive duration_seconds")
+    return duration
+
+
+def _ensure_anchor_budget(
+    session: Session,
+    episode_id: str,
+    settings: Settings,
+    *,
+    stage_budget: float,
+    spent_usd: float,
+    next_cost_usd: float,
+    provider: str,
+) -> None:
+    """Reject a paid provider call before it can exceed either budget."""
+    projected_stage = spent_usd + next_cost_usd
+    if projected_stage > stage_budget:
+        raise PipelineError(
+            f"Anchor stage budget exceeded before {provider} API call: "
+            f"${projected_stage:.4f} > ${stage_budget:.4f}",
+            ErrorCategory.PERMANENT_COST_LIMIT,
+        )
+
+    episode_total_cost = _get_episode_total_cost(session, episode_id)
+    projected_episode = episode_total_cost + projected_stage
+    if projected_episode > settings.max_episode_cost_usd:
+        raise PipelineError(
+            f"Episode cost limit exceeded before {provider} API call: "
+            f"${projected_episode:.4f} > ${settings.max_episode_cost_usd:.4f}",
+            ErrorCategory.PERMANENT_COST_LIMIT,
+        )
 
 
 def _is_anchor_current(manifest_path: Path, provenance_path: Path, content_hash: str) -> bool:

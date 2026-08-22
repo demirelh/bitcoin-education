@@ -217,6 +217,23 @@ stage_config:
     # keep their digits, which read better on screen than in the ear.
     # Set to false to hand the digits to ElevenLabs unchanged.
     speech_normalization: true
+  anchor:
+    # ALMANYA24 uses the pre-generated ElevenLabs track; HeyGen only animates
+    # and lip-syncs the configured presenter look. The feature flag remains
+    # ANCHOR_ENABLED=false by default, so this routing is opt-in at deployment.
+    provider: heygen
+    engine: avatar_iv
+    avatar_type: digital_twin
+    # The HeyGen adapter can request alpha-capable WebM, but the current
+    # renderer treats anchor clips as opaque full-frame video and would discard
+    # that alpha instead of compositing the presenter over a studio.
+    output_format: mp4
+    resolution: 1080p
+    aspect_ratio: auto
+    # Published self-serve Avatar IV Digital Twin rate. Keeping it explicit in
+    # the profile makes pre-call budget estimates auditable if pricing changes.
+    cost_per_second_usd: 0.0667
+    max_cost_usd: 6.0
   render:
     accent_color: "#004B87"
     ticker_enabled: true
@@ -293,10 +310,17 @@ stage_config:
       block_on_unsupported_claim: true
       block_on_blank_visual: true
 youtube:
+  publish_target: test
+  targets:
+    test:
+      default_privacy: private
+    production:
+      default_privacy: unlisted
   category_id: "25"
   default_language: tr
-  default_privacy: unlisted
-  source_attribution: false
+  # Attribution belongs in the YouTube description/provenance, never in the
+  # rendered picture; branding.visible_source_attribution controls the latter.
+  source_attribution: true
   tags: [haberler, almanya, türkçe, almanya24]
 review_gates: {}
 prompt_namespace: tagesschau_tr

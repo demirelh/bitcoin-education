@@ -45,6 +45,7 @@ class PublishResult:
     youtube_video_id: str | None = None
     youtube_url: str | None = None
     publish_job_id: int | None = None
+    publish_target: str | None = None
     safety_checks: dict[str, str] = field(default_factory=dict)  # name → message
     skipped: bool = False
     dry_run: bool = False
@@ -53,6 +54,10 @@ class PublishResult:
 
 class PublishCoordinationError(RuntimeError):
     """Upload finished locally, but cross-node reconciliation did not."""
+
+
+class PublishReconciliationRequired(RuntimeError):
+    """A prior upload may exist remotely and must be reconciled before retry."""
 
 
 # ---------------------------------------------------------------------------
@@ -232,21 +237,22 @@ def _write_publish_request_artifact(
     episode: Episode,
     settings: Settings,
     privacy_status: str | None = None,
+    publish_target: str | None = None,
 ) -> Path:
     """Persist the effective upload settings that a final approval authorizes."""
     from btcedu.profiles import get_registry
+    from btcedu.services.youtube_service import resolve_youtube_target
 
     name = getattr(episode, "content_profile", None) or "bitcoin_podcast"
     profile = get_registry(settings).get(name)
     youtube = profile.youtube or {}
+    target = resolve_youtube_target(settings, youtube, publish_target)
     payload = {
         "episode_id": episode.episode_id,
         "content_profile": name,
-        "privacy_status": (
-            privacy_status
-            or youtube.get("default_privacy")
-            or getattr(settings, "youtube_default_privacy", "unlisted")
-        ),
+        "publish_target": target.name,
+        "channel_id": target.expected_channel_id,
+        "privacy_status": privacy_status or target.default_privacy,
         "category_id": youtube.get("category_id", "25"),
         "default_language": youtube.get("default_language", "tr"),
     }
@@ -745,35 +751,16 @@ def generate_metadata_suggestion(
     """Generate and persist proposed YouTube metadata for pre-publish review.
 
     Writes ``render/youtube_metadata.json`` with title, description, tags and
-    publish settings (category/privacy/language) taken from the profile. If a
-    file already exists it is returned unchanged unless ``force`` is set, so
-    reviewer edits are never overwritten.
+    publish settings (category/privacy/language) taken from the profile.
+    Auto-generated files may be refreshed when ``force`` is set. A file marked
+    ``source=edited`` is always returned unchanged, so reviewer wording cannot
+    be overwritten by a rerender or maintenance command.
 
     Returns the metadata dict.
     """
-    if not force:
-        existing = load_persisted_metadata(episode_id, settings)
-        if existing is not None:
-            # A re-render moves every chapter mark. Refresh the proposal when
-            # it no longer matches the video, but never clobber human edits.
-            current_fingerprint = _timeline_fingerprint(_load_render_timeline(episode_id, settings))
-            is_stale = (
-                existing.get("source") == "auto"
-                and current_fingerprint != ""
-                and existing.get("render_timeline_hash") != current_fingerprint
-            )
-            if not is_stale:
-                return existing
-            logger.info(
-                "YouTube metadata for %s no longer matches the rendered video, regenerating",
-                episode_id,
-            )
-
     episode = session.query(Episode).filter_by(episode_id=episode_id).first()
     if episode is None:
         raise ValueError(f"Episode not found: {episode_id}")
-
-    title, description, tags = _build_youtube_metadata(episode, settings, session=session)
 
     # Pull publish defaults from the profile's youtube config.
     yt_config: dict = {}
@@ -786,12 +773,42 @@ def generate_metadata_suggestion(
     except Exception:
         yt_config = {}
 
+    from btcedu.services.youtube_service import resolve_youtube_target
+
+    target = resolve_youtube_target(settings, yt_config)
+    existing = load_persisted_metadata(episode_id, settings)
+    if existing is not None:
+        if existing.get("source") == "edited":
+            return existing
+        if not force:
+            # A re-render moves every chapter mark. Target changes also need a
+            # fresh proposal so the review shows where the upload will go.
+            current_fingerprint = _timeline_fingerprint(_load_render_timeline(episode_id, settings))
+            is_stale = (
+                current_fingerprint != ""
+                and existing.get("render_timeline_hash") != current_fingerprint
+            ) or (
+                existing.get("publish_target") != target.name
+                or existing.get("channel_id") != target.expected_channel_id
+                or existing.get("privacy_status") != target.default_privacy
+            )
+            if not is_stale:
+                return existing
+            logger.info(
+                "YouTube metadata for %s no longer matches the render/target, regenerating",
+                episode_id,
+            )
+
+    title, description, tags = _build_youtube_metadata(episode, settings, session=session)
+
     data = {
         "title": title,
         "description": description,
         "tags": tags,
         "category_id": str(yt_config.get("category_id", "22")),
-        "privacy_status": yt_config.get("default_privacy", "unlisted"),
+        "publish_target": target.name,
+        "channel_id": target.expected_channel_id,
+        "privacy_status": target.default_privacy,
         "default_language": yt_config.get("default_language", "tr"),
         "generated_at": _utcnow().isoformat(),
         "render_timeline_hash": _timeline_fingerprint(_load_render_timeline(episode_id, settings)),
@@ -969,17 +986,16 @@ def _build_youtube_metadata(
     else:
         hashtags_str = "#Bitcoin #Kripto #Türkçe #Eğitim #Blockchain"
 
-    # Source attribution is profile-owned. Independent productions may keep
-    # provenance internally without exposing the source brand in metadata.
+    # Description attribution is independent of visible branding. The news
+    # profile keeps the source off-screen while crediting it in metadata.
     if _profile_domain == "news" and _yt_config.get("source_attribution", True):
         attribution = (
             "Kaynak: ARD tagesschau — Türkçe çeviri btcedu tarafından hazırlanmıştır.\n"
-            "Source: ARD tagesschau — Turkish translation by btcedu.\n\n"
+            "Source: ARD tagesschau — Turkish translation by btcedu."
         )
         if description_parts:
-            description_parts.insert(0, attribution)
-        else:
-            description_parts.append(attribution)
+            description_parts.append("")
+        description_parts.append(attribution)
 
     description_parts.append(hashtags_str)
     description = "\n".join(description_parts)
@@ -1014,12 +1030,13 @@ def publish_video(
     settings: Settings,
     force: bool = False,
     privacy: str | None = None,
+    target: str | None = None,
 ) -> PublishResult:
     """Publish approved video to YouTube.
 
     Processing flow:
     1. Validate episode (v2, APPROVED)
-    2. Idempotency: skip if already published (unless force)
+    2. Idempotency: skip if this target already has a completed upload
     3. Build metadata (title, description, tags)
     4. Run 4 pre-publish safety checks
     5. Create PublishJob (pending)
@@ -1033,7 +1050,8 @@ def publish_video(
         settings: Application settings.
         force: Skip idempotency check (re-publishes).
         privacy: Override privacy setting ("unlisted", "private", "public").
-            Defaults to settings.youtube_default_privacy.
+            Defaults to the selected target configuration.
+        target: Override the profile's ``test`` or ``production`` target.
 
     Returns:
         PublishResult with video_id, url, and safety check results.
@@ -1052,45 +1070,79 @@ def publish_video(
             "Publish is only supported for v2 pipeline."
         )
 
-    # Idempotency: already published
-    if episode.youtube_video_id and not force:
-        logger.info(
-            "Episode %s already published as %s (skipping)",
-            episode_id,
-            episode.youtube_video_id,
-        )
-        return PublishResult(
-            episode_id=episode_id,
-            youtube_video_id=episode.youtube_video_id,
-            youtube_url=f"https://youtu.be/{episode.youtube_video_id}",
-            skipped=True,
+    # Load profile for YouTube metadata overrides
+    from btcedu.profiles import get_registry as _get_pub_profile_registry
+    from btcedu.services.youtube_service import resolve_youtube_target
+
+    _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+    _pub_profile = _get_pub_profile_registry(settings).get(_profile_name)
+    _yt_config = _pub_profile.youtube if _pub_profile else {}
+    target_config = resolve_youtube_target(settings, _yt_config, target)
+
+    completed_job = _get_completed_publish_job(session, episode_id, target_config.name)
+    indeterminate_job = _get_indeterminate_publish_job(
+        session,
+        episode_id,
+        target_config.name,
+    )
+    if indeterminate_job is not None and (
+        completed_job is None or indeterminate_job.id > completed_job.id
+    ):
+        raise PublishReconciliationRequired(
+            f"PublishJob #{indeterminate_job.id} for YouTube target "
+            f"'{target_config.name}' is still uploading and its remote outcome is "
+            "unknown. Verify the channel and reconcile that attempt before retrying."
         )
 
-    # Allow APPROVED (or PUBLISHED with force) to proceed
+    if not force:
+        if completed_job is not None:
+            if target_config.name == "production":
+                _reconcile_episode_from_publish_job(session, episode, completed_job)
+            logger.info(
+                "Episode %s already uploaded to YouTube %s as %s (skipping)",
+                episode_id,
+                target_config.name,
+                completed_job.youtube_video_id,
+            )
+            return PublishResult(
+                episode_id=episode_id,
+                youtube_video_id=completed_job.youtube_video_id,
+                youtube_url=completed_job.youtube_url,
+                publish_job_id=completed_job.id,
+                publish_target=target_config.name,
+                skipped=True,
+            )
+
+        # Jobs created before target separation represented production uploads.
+        if target_config.name == "production" and episode.youtube_video_id:
+            logger.info(
+                "Episode %s already published as %s (skipping)",
+                episode_id,
+                episode.youtube_video_id,
+            )
+            return PublishResult(
+                episode_id=episode_id,
+                youtube_video_id=episode.youtube_video_id,
+                youtube_url=f"https://youtu.be/{episode.youtube_video_id}",
+                publish_target=target_config.name,
+                skipped=True,
+            )
+
+    # A real test upload deliberately leaves the episode APPROVED so the same
+    # artifact can later be sent to production without mutating pipeline state.
     if episode.status != EpisodeStatus.APPROVED and not force:
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'approved'. Use --force to override."
         )
 
-    # Load profile for YouTube metadata overrides
-    _yt_config: dict = {}
-    try:
-        from btcedu.profiles import get_registry as _get_pub_profile_registry
-
-        _profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
-        _pub_profile = _get_pub_profile_registry(settings).get(_profile_name)
-        _yt_config = _pub_profile.youtube if _pub_profile else {}
-    except Exception:
-        pass
-
-    # Effective privacy setting (profile override > explicit arg > settings)
-    effective_privacy = (
-        privacy
-        or _yt_config.get("default_privacy")
-        or getattr(settings, "youtube_default_privacy", "unlisted")
+    effective_privacy = privacy or target_config.default_privacy
+    _write_publish_request_artifact(
+        episode,
+        settings,
+        effective_privacy,
+        publish_target=target_config.name,
     )
-    _write_publish_request_artifact(episode, settings, effective_privacy)
 
     # Build metadata (pass session for profile-aware tags/category).
     # Prefer the metadata reviewed at Gate 3 so what was approved is published.
@@ -1115,20 +1167,12 @@ def publish_video(
 
     is_dry_run = getattr(settings, "dry_run", False)
     publish_guard = None
-    if not is_dry_run:
+    if not is_dry_run and target_config.name == "production":
         from btcedu.failover.coordination import acquire_publish_lease_guard
 
         publish_guard = acquire_publish_lease_guard(session, episode, settings)
 
     try:
-        # Create PublishJob (pending)
-        publish_job = PublishJob(
-            episode_id=episode_id,
-            status=PublishJobStatus.PENDING.value,
-        )
-        session.add(publish_job)
-        session.commit()
-
         # Find thumbnail (first chapter image)
         thumbnail_path: Path | None = None
         images_dir = Path(settings.outputs_dir) / episode_id / "images"
@@ -1159,7 +1203,10 @@ def publish_video(
         from btcedu.services.youtube_service import (
             DryRunYouTubeService,
             YouTubeDataAPIService,
+            YouTubeQuotaUsage,
+            YouTubeUploadIndeterminateError,
             YouTubeUploadRequest,
+            estimate_upload_quota,
         )
 
         upload_req = YouTubeUploadRequest(
@@ -1182,23 +1229,15 @@ def publish_video(
         if is_dry_run:
             youtube_svc = DryRunYouTubeService()
         else:
-            credentials_path = getattr(
-                settings,
-                "youtube_credentials_path",
-                "data/.youtube_credentials.json",
-            )
             youtube_svc = YouTubeDataAPIService(
-                credentials_path=credentials_path,
+                credentials_path=target_config.credentials_path,
                 chunk_size_bytes=(
                     getattr(settings, "youtube_upload_chunk_size_mb", 10) * 1024 * 1024
                 ),
+                expected_channel_id=target_config.expected_channel_id,
+                target_name=target_config.name,
             )
 
-        # Update PublishJob to uploading
-        publish_job.status = PublishJobStatus.UPLOADING.value
-        session.commit()
-
-        # Metadata snapshot
         metadata_snapshot = {
             "title": title,
             "description": description,
@@ -1206,7 +1245,27 @@ def publish_video(
             "category_id": upload_req.category_id,
             "default_language": upload_req.default_language,
             "privacy_status": effective_privacy,
+            "publish_target": target_config.name,
+            "channel_id": target_config.expected_channel_id,
+            "quota_estimate": estimate_upload_quota(upload_req).as_dict(),
+            "attempt_state": "prepared",
         }
+
+        # Persist target and attempt identity before any remote call. A process
+        # death after this point leaves enough state to block an unsafe retry.
+        publish_job = PublishJob(
+            episode_id=episode_id,
+            status=PublishJobStatus.PENDING.value,
+            metadata_snapshot=json.dumps(metadata_snapshot),
+        )
+        session.add(publish_job)
+        session.commit()
+
+        metadata_snapshot["attempt_state"] = "uploading"
+        metadata_snapshot["upload_started_at"] = _utcnow().isoformat()
+        publish_job.status = PublishJobStatus.UPLOADING.value
+        publish_job.metadata_snapshot = json.dumps(metadata_snapshot)
+        session.commit()
 
         if publish_guard is not None:
             try:
@@ -1224,11 +1283,54 @@ def publish_video(
             pct = int(uploaded / total * 100) if total else 100
             logger.info("YouTube upload: %d%% (%d / %d bytes)", pct, uploaded, total)
 
+        def _accepted_cb(video_id: str) -> None:
+            """Persist acceptance before optional thumbnail/caption follow-up."""
+            accepted_at = _utcnow()
+            metadata_snapshot["attempt_state"] = "accepted"
+            metadata_snapshot["accepted_at"] = accepted_at.isoformat()
+            publish_job.status = PublishJobStatus.PUBLISHED.value
+            publish_job.youtube_video_id = video_id
+            publish_job.youtube_url = f"https://youtu.be/{video_id}"
+            publish_job.published_at = accepted_at
+            publish_job.error_message = None
+            publish_job.metadata_snapshot = json.dumps(metadata_snapshot)
+            try:
+                session.commit()
+            except Exception as exc:
+                session.rollback()
+                raise PublishReconciliationRequired(
+                    f"YouTube accepted video {video_id}, but PublishJob "
+                    f"#{publish_job.id} could not persist it: {exc}"
+                ) from exc
+
         try:
             if publish_guard is not None:
                 publish_guard.ensure_active()
-            response = youtube_svc.upload_video(upload_req, progress_callback=_progress_cb)
+            response = youtube_svc.upload_video(
+                upload_req,
+                progress_callback=_progress_cb,
+                accepted_callback=_accepted_cb,
+            )
+        except PublishReconciliationRequired:
+            raise
+        except YouTubeUploadIndeterminateError as exc:
+            metadata_snapshot["attempt_state"] = "reconciliation_required"
+            publish_job.status = PublishJobStatus.UPLOADING.value
+            publish_job.error_message = str(exc)
+            publish_job.metadata_snapshot = json.dumps(metadata_snapshot)
+            session.commit()
+            raise PublishReconciliationRequired(
+                f"PublishJob #{publish_job.id} for YouTube target "
+                f"'{target_config.name}' has an indeterminate remote outcome: {exc}"
+            ) from exc
         except Exception as exc:
+            if publish_job.youtube_video_id:
+                metadata_snapshot["attempt_state"] = "accepted_followup_failed"
+                publish_job.status = PublishJobStatus.PUBLISHED.value
+                publish_job.error_message = str(exc)
+                publish_job.metadata_snapshot = json.dumps(metadata_snapshot)
+                session.commit()
+                raise
             failure_suffix = ""
             if publish_guard is not None:
                 try:
@@ -1253,8 +1355,12 @@ def publish_video(
             raise
 
         now = _utcnow()
+        quota_usage = getattr(response, "quota_usage", None)
+        if isinstance(quota_usage, YouTubeQuotaUsage):
+            metadata_snapshot["quota_usage"] = quota_usage.as_dict()
 
         # Update PublishJob with success
+        metadata_snapshot["attempt_state"] = "published"
         publish_job.status = PublishJobStatus.PUBLISHED.value
         publish_job.youtube_video_id = response.video_id
         publish_job.youtube_url = response.video_url
@@ -1264,7 +1370,7 @@ def publish_video(
         session.commit()
 
         # Update Episode
-        if not is_dry_run:
+        if not is_dry_run and target_config.name == "production":
             episode.youtube_video_id = response.video_id
             episode.published_at_youtube = now
             episode.status = EpisodeStatus.PUBLISHED
@@ -1305,6 +1411,8 @@ def publish_video(
             video_id=response.video_id,
             video_url=response.video_url,
             privacy=effective_privacy,
+            publish_target=target_config.name,
+            channel_id=target_config.expected_channel_id,
             safety_checks=checks,
             metadata_snapshot=metadata_snapshot,
             dry_run=is_dry_run,
@@ -1324,6 +1432,7 @@ def publish_video(
             youtube_video_id=response.video_id,
             youtube_url=response.video_url,
             publish_job_id=publish_job.id,
+            publish_target=target_config.name,
             safety_checks=check_results,
             dry_run=is_dry_run,
         )
@@ -1338,6 +1447,8 @@ def _write_provenance(
     video_id: str,
     video_url: str,
     privacy: str,
+    publish_target: str,
+    channel_id: str,
     safety_checks: list[SafetyCheck],
     metadata_snapshot: dict,
     dry_run: bool,
@@ -1347,12 +1458,13 @@ def _write_provenance(
     """Write provenance JSON for the publish operation."""
     prov_dir = Path(settings.outputs_dir) / episode_id / "provenance"
     prov_dir.mkdir(parents=True, exist_ok=True)
-    prov_path = prov_dir / "publish.json"
     prov_data = {
         "episode_id": episode_id,
         "published_at": _utcnow().isoformat(),
         "youtube_video_id": video_id,
         "youtube_url": video_url,
+        "publish_target": publish_target,
+        "channel_id": channel_id,
         "privacy_status": privacy,
         "dry_run": dry_run,
         "lease_token": lease_token,
@@ -1360,8 +1472,12 @@ def _write_provenance(
         "safety_checks": {c.name: [c.passed, c.message] for c in safety_checks},
         "metadata_snapshot": metadata_snapshot,
     }
-    prov_path.write_text(json.dumps(prov_data, ensure_ascii=False, indent=2), encoding="utf-8")
-    logger.info("Provenance written: %s", prov_path)
+    for prov_path in (prov_dir / f"publish_{publish_target}.json", prov_dir / "publish.json"):
+        prov_path.write_text(
+            json.dumps(prov_data, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        logger.info("Provenance written: %s", prov_path)
 
 
 # ---------------------------------------------------------------------------
@@ -1379,7 +1495,88 @@ def get_latest_publish_job(session: Session, episode_id: str) -> PublishJob | No
     )
 
 
-def request_publish_review(session: Session, episode_id: str, settings: Settings) -> ReviewTask:
+def _publish_job_target(job: PublishJob) -> str:
+    """Read a target from the snapshot; legacy completed jobs are production."""
+    try:
+        snapshot = json.loads(job.metadata_snapshot or "{}")
+    except (json.JSONDecodeError, TypeError):
+        snapshot = {}
+    return snapshot.get("publish_target") or "production"
+
+
+def _get_completed_publish_job(
+    session: Session,
+    episode_id: str,
+    publish_target: str,
+) -> PublishJob | None:
+    """Return a durable successful upload for one target, excluding dry-runs."""
+    jobs = (
+        session.query(PublishJob)
+        .filter(
+            PublishJob.episode_id == episode_id,
+            PublishJob.status == PublishJobStatus.PUBLISHED.value,
+            PublishJob.youtube_video_id.is_not(None),
+        )
+        .order_by(PublishJob.created_at.desc(), PublishJob.id.desc())
+        .all()
+    )
+    return next(
+        (
+            job
+            for job in jobs
+            if job.youtube_video_id != "DRY_RUN" and _publish_job_target(job) == publish_target
+        ),
+        None,
+    )
+
+
+def _get_indeterminate_publish_job(
+    session: Session,
+    episode_id: str,
+    publish_target: str,
+) -> PublishJob | None:
+    """Return the newest attempt that entered upload without a durable video ID."""
+    jobs = (
+        session.query(PublishJob)
+        .filter(
+            PublishJob.episode_id == episode_id,
+            PublishJob.status == PublishJobStatus.UPLOADING.value,
+            PublishJob.youtube_video_id.is_(None),
+        )
+        .order_by(PublishJob.created_at.desc(), PublishJob.id.desc())
+        .all()
+    )
+    return next(
+        (job for job in jobs if _publish_job_target(job) == publish_target),
+        None,
+    )
+
+
+def _reconcile_episode_from_publish_job(
+    session: Session,
+    episode: Episode,
+    job: PublishJob,
+) -> None:
+    """Repair a crash window after the job commit but before the episode commit."""
+    if (
+        episode.youtube_video_id == job.youtube_video_id
+        and episode.status == EpisodeStatus.PUBLISHED
+    ):
+        return
+    episode.youtube_video_id = job.youtube_video_id
+    episode.published_at_youtube = job.published_at or _utcnow()
+    episode.status = EpisodeStatus.PUBLISHED
+    episode.error_message = None
+    session.commit()
+
+
+def request_publish_review(
+    session: Session,
+    episode_id: str,
+    settings: Settings,
+    target: str | None = None,
+    privacy: str | None = None,
+) -> ReviewTask:
     """Create (or return the pending) artifact-bound final-publish ReviewTask.
 
     Binds the approval to the current final render + QA gate + narration source so
@@ -1393,9 +1590,14 @@ def request_publish_review(session: Session, episode_id: str, settings: Settings
     episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
     if episode is None:
         raise ValueError(f"Episode {episode_id} not found")
-    _write_publish_request_artifact(episode, settings)
+    _write_publish_request_artifact(
+        episode,
+        settings,
+        privacy_status=privacy,
+        publish_target=target,
+    )
 
-    existing = (
+    actionable = (
         session.query(ReviewTask)
         .filter(
             ReviewTask.episode_id == episode_id,
@@ -1403,10 +1605,15 @@ def request_publish_review(session: Session, episode_id: str, settings: Settings
             ReviewTask.status.in_([ReviewStatus.PENDING.value, ReviewStatus.IN_REVIEW.value]),
         )
         .order_by(ReviewTask.created_at.desc())
-        .first()
+        .all()
     )
-    if existing is not None:
-        return existing
 
     artifact_paths = _publish_artifact_paths(episode_id, settings)
+    from btcedu.core.reviewer import review_task_matches_artifacts, supersede_pending_reviews
+
+    for existing in actionable:
+        if review_task_matches_artifacts(existing, artifact_paths):
+            return existing
+    if actionable:
+        supersede_pending_reviews(session, episode_id, "publish")
     return create_review_task(session, episode_id, stage="publish", artifact_paths=artifact_paths)

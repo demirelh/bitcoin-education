@@ -1,13 +1,26 @@
 """Tests for Sprint 11: YouTube service (DryRun + mocked API)."""
 
 import json
+import os
+import stat
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+import pytest
+
+from btcedu.config import Settings
 from btcedu.services.youtube_service import (
     DryRunYouTubeService,
+    YouTubeAuthError,
+    YouTubeDataAPIService,
     YouTubeUploadRequest,
     YouTubeUploadResponse,
+    _ensure_private_credentials_file,
+    _is_quota_error,
+    _write_private_credentials_file,
     check_token_status,
+    estimate_upload_quota,
+    resolve_youtube_target,
 )
 
 # ---------------------------------------------------------------------------
@@ -114,6 +127,61 @@ class TestCheckTokenStatus:
         # Should not raise; valid will be False
         assert status.get("valid") is False
 
+    def test_status_repairs_credentials_mode(self, tmp_path):
+        creds_path = tmp_path / "credentials.json"
+        creds_path.write_text("{}")
+        creds_path.chmod(0o644)
+
+        check_token_status(credentials_path=str(creds_path))
+
+        assert stat.S_IMODE(creds_path.stat().st_mode) == 0o600
+
+
+class TestCredentialFilePermissions:
+    def test_secure_writer_creates_mode_0600(self, tmp_path):
+        path = tmp_path / "youtube" / "credentials.json"
+
+        _write_private_credentials_file(path, '{"token": "secret"}')
+
+        assert path.read_text() == '{"token": "secret"}'
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    def test_secure_writer_maintains_mode_0600_on_replace(self, tmp_path):
+        path = tmp_path / "credentials.json"
+        path.write_text("old")
+        path.chmod(0o644)
+
+        _write_private_credentials_file(path, "new")
+
+        assert path.read_text() == "new"
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+    def test_secure_writer_preserves_original_on_replace_failure(self, tmp_path):
+        path = tmp_path / "credentials.json"
+        path.write_text("old")
+        path.chmod(0o600)
+
+        with (
+            patch(
+                "btcedu.services.youtube_service.os.replace",
+                side_effect=OSError("disk failure"),
+            ),
+            pytest.raises(YouTubeAuthError, match="securely write"),
+        ):
+            _write_private_credentials_file(path, "new")
+
+        assert path.read_text() == "old"
+        assert not list(tmp_path.glob(".credentials.json.*.tmp"))
+
+    def test_secure_reader_rejects_symlink(self, tmp_path):
+        real_path = tmp_path / "real.json"
+        link_path = tmp_path / "credentials.json"
+        real_path.write_text("{}")
+        os.symlink(real_path, link_path)
+
+        with pytest.raises(YouTubeAuthError, match="securely open"):
+            _ensure_private_credentials_file(link_path)
+
 
 # ---------------------------------------------------------------------------
 # YouTubeUploadRequest validation
@@ -131,3 +199,107 @@ class TestYouTubeUploadRequest:
             tags=["t"],
         )
         assert req.privacy_status == "unlisted"
+
+
+class TestYouTubeTargets:
+    def test_test_target_uses_private_separate_credentials(self, tmp_path):
+        settings = Settings(
+            youtube_test_client_secrets_path=str(tmp_path / "test-client.json"),
+            youtube_test_credentials_path=str(tmp_path / "test-token.json"),
+            youtube_test_channel_id="UC_TEST",
+        )
+
+        target = resolve_youtube_target(settings, {"publish_target": "test"})
+
+        assert target.name == "test"
+        assert target.default_privacy == "private"
+        assert target.credentials_path.endswith("test-token.json")
+        assert target.expected_channel_id == "UC_TEST"
+
+    def test_production_target_is_independent(self, tmp_path):
+        settings = Settings(
+            youtube_production_client_secrets_path=str(tmp_path / "prod-client.json"),
+            youtube_production_credentials_path=str(tmp_path / "prod-token.json"),
+            youtube_production_channel_id="UC_PROD",
+        )
+
+        target = resolve_youtube_target(settings, target_override="production")
+
+        assert target.name == "production"
+        assert target.default_privacy == "unlisted"
+        assert target.credentials_path.endswith("prod-token.json")
+        assert target.expected_channel_id == "UC_PROD"
+
+    def test_rejects_unknown_target(self):
+        with pytest.raises(ValueError, match="Unsupported YouTube target"):
+            resolve_youtube_target(Settings(), target_override="staging")
+
+
+class TestQuotaAccounting:
+    def test_estimate_uses_current_separate_upload_bucket(self, tmp_path):
+        req = _make_upload_request(tmp_path)
+        req.thumbnail_path = tmp_path / "thumb.png"
+        req.thumbnail_path.write_bytes(b"png")
+        req.subtitle_path = tmp_path / "captions.srt"
+        req.subtitle_path.write_text("1\n00:00:00,000 --> 00:00:01,000\nMerhaba")
+
+        quota = estimate_upload_quota(req)
+
+        assert quota.upload_calls == 1
+        assert quota.general_units == 451
+        assert quota.breakdown == {
+            "channels.list": 1,
+            "videos.insert": 1,
+            "thumbnails.set": 50,
+            "captions.insert": 400,
+        }
+
+    def test_only_authoritative_403_reasons_count_as_quota(self):
+        quota_error = MagicMock(
+            content=json.dumps(
+                {"error": {"errors": [{"reason": "quotaExceeded"}]}}
+            ).encode()
+        )
+        forbidden = MagicMock(
+            content=json.dumps(
+                {"error": {"errors": [{"reason": "forbidden"}]}}
+            ).encode()
+        )
+
+        assert _is_quota_error(quota_error) is True
+        assert _is_quota_error(forbidden) is False
+
+
+class TestChannelVerification:
+    def test_rejects_missing_expected_channel(self):
+        service = YouTubeDataAPIService("credentials.json", target_name="test")
+
+        with pytest.raises(YouTubeAuthError, match="YOUTUBE_TEST_CHANNEL_ID"):
+            service._verify_channel(MagicMock())
+
+    def test_rejects_wrong_authenticated_channel(self):
+        youtube = MagicMock()
+        youtube.channels.return_value.list.return_value.execute.return_value = {
+            "items": [{"id": "UC_WRONG"}]
+        }
+        service = YouTubeDataAPIService(
+            "credentials.json",
+            expected_channel_id="UC_EXPECTED",
+            target_name="production",
+        )
+
+        with pytest.raises(YouTubeAuthError, match="channel mismatch"):
+            service._verify_channel(youtube)
+
+    def test_accepts_configured_channel(self):
+        youtube = MagicMock()
+        youtube.channels.return_value.list.return_value.execute.return_value = {
+            "items": [{"id": "UC_EXPECTED"}]
+        }
+        service = YouTubeDataAPIService(
+            "credentials.json",
+            expected_channel_id="UC_EXPECTED",
+            target_name="production",
+        )
+
+        assert service._verify_channel(youtube) == "UC_EXPECTED"

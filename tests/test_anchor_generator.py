@@ -2,17 +2,28 @@
 
 import json
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from btcedu.config import Settings
-from btcedu.core.anchor_generator import generate_anchors
+from btcedu.core.anchor_generator import _resolve_anchor_config, generate_anchors
 from btcedu.db import Base
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun
 from btcedu.models.media_asset import Base as MediaBase
+from btcedu.profiles import reset_registry
+from btcedu.services.anchor_service import AnchorResponse
+from btcedu.services.errors import ErrorCategory, PipelineError
+
+
+@pytest.fixture(autouse=True)
+def clean_profile_registry():
+    reset_registry()
+    yield
+    reset_registry()
 
 
 @pytest.fixture
@@ -182,6 +193,29 @@ class TestGenerateAnchorsDisabled:
         assert result.skipped is True
 
 
+class TestAnchorSettings:
+    def test_defaults_preserve_did_and_disabled_behavior(self):
+        settings = Settings()
+        assert settings.anchor_enabled is False
+        assert settings.anchor_provider == "d-id"
+        assert settings.did_cost_per_second_usd == 0.015
+        assert settings.anchor_max_cost_usd == 15.0
+        assert settings.heygen_engine == "avatar_iv"
+        assert settings.heygen_output_format == "mp4"
+
+    def test_heygen_settings_retain_optional_service_webm(self):
+        settings = Settings(
+            heygen_api_key="heygen-test-key",
+            heygen_avatar_id="avatar_123",
+            heygen_engine="avatar_v",
+            heygen_output_format="webm",
+        )
+        assert settings.heygen_api_key == "heygen-test-key"
+        assert settings.heygen_avatar_id == "avatar_123"
+        assert settings.heygen_engine == "avatar_v"
+        assert settings.heygen_output_format == "webm"
+
+
 class TestGenerateAnchorsNoTalkingHead:
     """Tests when no TALKING_HEAD chapters exist."""
 
@@ -216,6 +250,9 @@ class TestGenerateAnchorsNormal:
         manifest = json.loads(result.manifest_path.read_text())
         assert len(manifest["segments"]) == 1
         assert manifest["segments"][0]["chapter_id"] == "ch_01"
+        assert manifest["anchor_provider"] == "d-id"
+        assert manifest["engine"] == "talks"
+        assert manifest["segments"][0]["did_talk_id"] == "dry-run"
 
         # Check episode status
         session.refresh(episode)
@@ -341,10 +378,113 @@ class TestGenerateAnchorsErrors:
         # But DryRun has cost 0, so it won't trigger. Test with a lower limit.
         settings.max_episode_cost_usd = 14.0
 
-        from btcedu.services.errors import ErrorCategory, PipelineError
-
         with pytest.raises(PipelineError) as exc_info:
             generate_anchors(session, "ep_test_001", settings)
         assert exc_info.value.category == ErrorCategory.PERMANENT_COST_LIMIT
         session.refresh(episode)
         assert episode.status == EpisodeStatus.COST_LIMIT
+
+    def test_stage_budget_blocks_before_provider_call(self, session, episode, settings):
+        outputs_dir = Path(settings.outputs_dir)
+        _create_chapters_json(outputs_dir, "ep_test_001", talking_head=True)
+        _create_tts_manifest(outputs_dir, "ep_test_001")
+        settings.dry_run = False
+        settings.anchor_max_cost_usd = 0.01
+
+        service = MagicMock()
+        service.estimate_cost.return_value = 0.02
+
+        with (
+            patch(
+                "btcedu.core.anchor_generator._create_anchor_service",
+                return_value=service,
+            ),
+            pytest.raises(PipelineError) as exc_info,
+        ):
+            generate_anchors(session, "ep_test_001", settings)
+
+        assert exc_info.value.category == ErrorCategory.PERMANENT_COST_LIMIT
+        service.generate_anchor_video.assert_not_called()
+
+
+class TestHeyGenProfileIntegration:
+    def test_tagesschau_profile_owns_provider_and_engine(self, episode, settings):
+        episode.content_profile = "tagesschau_tr"
+        config = _resolve_anchor_config(episode, settings)
+
+        assert config.provider == "heygen"
+        assert config.engine == "avatar_iv"
+        assert config.avatar_type == "digital_twin"
+        assert config.output_format == "mp4"
+        assert config.cost_per_second_usd == 0.0667
+        assert config.max_cost_usd == 6.0
+
+    def test_dry_run_uses_renderer_safe_mp4_profile(
+        self,
+        session,
+        episode,
+        settings,
+    ):
+        episode.content_profile = "tagesschau_tr"
+        session.commit()
+        outputs_dir = Path(settings.outputs_dir)
+        _create_chapters_json(outputs_dir, "ep_test_001", talking_head=True)
+        _create_tts_manifest(outputs_dir, "ep_test_001")
+
+        result = generate_anchors(session, "ep_test_001", settings)
+
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+        segment = manifest["segments"][0]
+        assert manifest["anchor_provider"] == "heygen"
+        assert manifest["engine"] == "avatar_iv"
+        assert manifest["output_format"] == "mp4"
+        assert manifest["cost_per_second_usd"] == 0.0667
+        assert manifest["max_cost_usd"] == 6.0
+        assert segment["provider"] == "heygen"
+        assert segment["provider_job_id"] == "dry-run"
+        assert segment["did_talk_id"] is None
+        assert segment["video_path"] == "anchor/ch_01.mp4"
+        assert segment["mime_type"] == "video/mp4"
+        assert (outputs_dir / "ep_test_001" / segment["video_path"]).exists()
+
+    def test_provider_response_cost_and_identity_are_persisted(
+        self,
+        session,
+        episode,
+        settings,
+    ):
+        episode.content_profile = "tagesschau_tr"
+        session.commit()
+        outputs_dir = Path(settings.outputs_dir)
+        _create_chapters_json(outputs_dir, "ep_test_001", talking_head=True)
+        _create_tts_manifest(outputs_dir, "ep_test_001")
+        settings.dry_run = False
+        output_path = outputs_dir / "ep_test_001" / "anchor" / "ch_01.mp4"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"mp4")
+
+        service = MagicMock()
+        service.estimate_cost.return_value = 0.2001
+        service.generate_anchor_video.return_value = AnchorResponse(
+            video_path=str(output_path),
+            chapter_id="ch_01",
+            duration_seconds=3.0,
+            size_bytes=4,
+            cost_usd=0.2001,
+            provider="heygen",
+            provider_job_id="video_123",
+            output_format="mp4",
+            mime_type="video/mp4",
+        )
+
+        with patch(
+            "btcedu.core.anchor_generator._create_anchor_service",
+            return_value=service,
+        ):
+            result = generate_anchors(session, "ep_test_001", settings)
+
+        assert result.cost_usd == 0.2001
+        manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+        assert manifest["segments"][0]["provider_job_id"] == "video_123"
+        run = session.query(PipelineRun).filter_by(stage="anchorgen").one()
+        assert run.estimated_cost_usd == pytest.approx(0.2001)

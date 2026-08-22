@@ -38,8 +38,10 @@ Each v2 stage module follows the same pattern:
   750-character provider chunks, −15 LUFS normalization before quality checks,
   adaptive per-voice retry ceilings and a profile-owned hard stage budget
 - `publisher.py` — upload safety checks, timeline-based chapters and
-  failover-safe publish coordination. Persist a successful YouTube ID locally
-  before fallible central reconciliation so a retry cannot duplicate an upload.
+  test/production target separation. Successful PublishJobs are idempotent per
+  target; test uploads stay private/independent, while production persists the
+  YouTube ID before fallible central reconciliation. An `UPLOADING` job without
+  an ID is reconciliation-required and blocks automatic retry.
 - `../failover/coordination.py` — canonical broadcast IDs, heartbeat checks and
   renewable pipeline/publish `LeaseGuard`s
 

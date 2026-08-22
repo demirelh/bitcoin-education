@@ -23,6 +23,9 @@ Each service uses a Protocol for swappable implementations:
   `EpisodeInfo`
 - `github_actions_service.py` — GitHub Actions workflow dispatch/artifact client
   used by remote rendering
+- `anchor_service.py` — provider-neutral D-ID/HeyGen talking-avatar adapters.
+  HeyGen can request alpha-capable WebM, but active profiles remain on opaque
+  MP4 until the renderer gains alpha-aware studio compositing.
 - `image_provider_factory.py` plus `flux_service.py` / `ideogram_service.py` —
   profile-owned generative image routing
 - `image_gen_service.py` — DALL-E 3 via openai SDK
@@ -31,7 +34,11 @@ Each service uses a Protocol for swappable implementations:
 - `notify_service.py` — WhatsApp push for pipeline failures via the local whatsapp-service REST API. Never raises, skipped when disabled or in dry-run.
 - `errors.py` — `ErrorCategory` (incl. `PERMANENT_QUOTA` for exhausted provider credits), `is_transient()`, `ERROR_SUGGESTIONS`
 - `ffmpeg_service.py` — ffmpeg subprocess wrapper: `normalize_video_clip()`, `create_video_segment()`, `concat_segments()`, `probe_media()`, `generate_test_video()`, `generate_silent_audio()`
-- `youtube_service.py` — YouTube Data API upload + OAuth. `authenticate()`, `check_token_status()` -> `{valid, expired, expiry, can_refresh, error}`
+- `youtube_service.py` — target-separated YouTube Data API upload + OAuth.
+  Test/production credentials and expected channel IDs are resolved explicitly;
+  uploads verify `channels.list(mine=true)` before `videos.insert`. Current
+  granular quota estimates are recorded by bucket. OAuth tokens are atomically
+  written, and both token/client files are maintained at mode 0600.
 - `feed_service.py` — RSS/YouTube feed parsing -> `list[EpisodeInfo]`
 - `download_service.py` — yt-dlp audio download
 - `transcription_service.py` — OpenAI Whisper API, auto-chunks large audio files

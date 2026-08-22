@@ -213,12 +213,22 @@ class TestProfileRegistry:
         # each passage of the Turkish transcript to the voice that speaks it.
         assert voices["anchor_female"]["display_name"] == "Nazlı Yeni"
         assert voices["reporter_male"]["display_name"] == "Cavit"
+        anchor = news.stage_config["anchor"]
+        assert anchor["provider"] == "heygen"
+        assert anchor["engine"] == "avatar_iv"
+        assert anchor["avatar_type"] == "digital_twin"
+        assert anchor["output_format"] == "mp4"
+        assert anchor["cost_per_second_usd"] == 0.0667
+        assert anchor["max_cost_usd"] == 6.0
         render = news.stage_config["render"]
         assert render["intro_show_name"] == "ALMANYA24"
         assert render["intro_slogan"] == "Almanya'nın nabzı burada atıyor."
         assert render["intro_episode_title"] == "Almanya Gündemi"
         assert render["topic_intro_enabled"] is True
         assert render["topic_intro_duration"] == 2.4
+        assert news.youtube["publish_target"] == "test"
+        assert news.youtube["targets"]["test"]["default_privacy"] == "private"
+        assert bp.youtube["publish_target"] == "production"
 
 
 # -----------------------------------------------------------------------

@@ -107,6 +107,39 @@ class TestSettings:
         assert settings.failover_pipeline_lease_ttl_seconds == 540
         assert settings.failover_publish_lease_ttl_seconds == 900
 
+    def test_youtube_targets_are_separate_and_safe_by_default(self):
+        settings = Settings()
+        assert settings.youtube_default_target == "test"
+        assert settings.youtube_test_default_privacy == "private"
+        assert settings.youtube_production_default_privacy == "unlisted"
+        assert (
+            settings.youtube_test_credentials_path
+            != settings.youtube_production_credentials_path
+        )
+
+    def test_legacy_youtube_paths_migrate_to_production_target(self):
+        settings = Settings(
+            youtube_client_secrets_path="legacy/client.json",
+            youtube_credentials_path="legacy/token.json",
+            youtube_default_privacy="private",
+        )
+
+        assert settings.youtube_production_client_secrets_path == "legacy/client.json"
+        assert settings.youtube_production_credentials_path == "legacy/token.json"
+        assert settings.youtube_production_default_privacy == "private"
+        assert settings.youtube_test_credentials_path == "data/youtube/test/credentials.json"
+
+    def test_explicit_production_youtube_paths_override_legacy_paths(self):
+        settings = Settings(
+            youtube_client_secrets_path="legacy/client.json",
+            youtube_credentials_path="legacy/token.json",
+            youtube_production_client_secrets_path="production/client.json",
+            youtube_production_credentials_path="production/token.json",
+        )
+
+        assert settings.youtube_production_client_secrets_path == "production/client.json"
+        assert settings.youtube_production_credentials_path == "production/token.json"
+
     def test_anthropic_api_key_loads(self):
         settings = Settings(anthropic_api_key="sk-ant-test")
         assert settings.anthropic_api_key == "sk-ant-test"

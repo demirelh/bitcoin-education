@@ -47,7 +47,8 @@ Sprint 11 implements the **PUBLISH** stage — uploading the approved video to Y
 - **§8** (Idempotency) — PUBLISH stage: already done = youtube_video_id is set. Invalidated by manual decision only.
 - **§3.7** (Failure Handling) — retry with exponential backoff for API failures.
 - **§7.2** (Episode Model Extension) — `youtube_video_id`, `published_at_youtube` fields.
-- **§11** (Decision Matrix) — YouTube API quotas: 10,000 units/day, upload = 1600 units.
+- **§11** (Decision Matrix) — Historical estimate only. Current quota routing is
+  documented in `docs/runbooks/youtube-test-environment.md`.
 
 ---
 

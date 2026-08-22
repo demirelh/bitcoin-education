@@ -424,8 +424,8 @@ Auto-generated, structured as:
 - `"tr"` (Turkish) — hardcoded.
 
 ### Privacy
-- Default: `"unlisted"` (safe default per sprint plan).
-- Configurable via `--privacy` CLI flag and `youtube_default_privacy` config setting.
+- Current defaults are target-specific: test is `"private"` and production is
+  `"unlisted"`. `--privacy` remains an explicit override.
 
 ### Thumbnail
 - Use first chapter image (`data/outputs/{ep_id}/images/{first_chapter_id}.png`) if it exists.
@@ -438,10 +438,14 @@ Auto-generated, structured as:
 Add the following fields to `Settings`:
 
 ```python
-# YouTube Publishing (Sprint 11)
-youtube_client_secrets_path: str = "data/client_secret.json"
-youtube_credentials_path: str = "data/.youtube_credentials.json"
-youtube_default_privacy: str = "unlisted"  # "unlisted" | "private" | "public"
+# Current target-separated YouTube publishing
+youtube_default_target: Literal["test", "production"] = "test"
+youtube_test_client_secrets_path: str = "data/youtube/test/client_secret.json"
+youtube_test_credentials_path: str = "data/youtube/test/credentials.json"
+youtube_test_default_privacy: str = "private"
+youtube_production_client_secrets_path: str = "data/youtube/production/client_secret.json"
+youtube_production_credentials_path: str = "data/youtube/production/credentials.json"
+youtube_production_default_privacy: str = "unlisted"
 youtube_upload_chunk_size_mb: int = 10
 youtube_category_id: str = "27"  # Education
 youtube_default_language: str = "tr"
@@ -644,8 +648,11 @@ Written to: `data/outputs/{ep_id}/provenance/publish.json`
 
 1. **OAuth credentials**: Stored in `data/` directory which is in `.gitignore`. Never logged or committed.
 2. **Client secrets**: `client_secret.json` must be manually placed in `data/` directory. Not generated or downloaded by the code.
-3. **API quotas**: YouTube Data API default quota is 10,000 units/day. Video upload costs 1,600 units. Handle `HttpError(403)` with `quotaExceeded` reason gracefully — log, set PublishJob to `failed`, keep episode at APPROVED.
-4. **Privacy default**: `"unlisted"` — safe default. Must explicitly use `--privacy public` to make video publicly visible.
+3. **API quotas**: `videos.insert` now costs one call in its separate default
+   100-calls/day bucket. Channel verification, thumbnail and caption calls cost
+   1, 50 and 400 general units. Only authoritative quota reasons classify a
+   403 as quota exhaustion.
+4. **Privacy default**: test is `"private"`; production is `"unlisted"`.
 5. **All 4 safety checks are non-negotiable**: No `--skip-checks` flag. Even `--force` runs all checks.
 
 ---

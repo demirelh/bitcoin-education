@@ -1632,7 +1632,10 @@ CREATE TABLE review_decisions (...);
 1. **Turkish voice quality**: ElevenLabs has acceptable Turkish voices. If not, can swap to Google Cloud TTS or Azure.
 2. **Image style consistency**: A well-crafted style prefix in image prompts will produce consistent visual branding. May need fine-tuning.
 3. **Raspberry Pi render capacity**: ffmpeg on RPi can render a 15-min video in <30 minutes. If too slow, can offload to cloud or optimize settings.
-4. **YouTube API quotas**: Default quota (10,000 units/day) is sufficient for 1 video/day. Upload = 1600 units.
+4. **YouTube API quotas**: Since June 2026, `videos.insert` uses its own default
+   100-calls/day bucket at one call per upload. Channel verification, thumbnail
+   and caption calls use 1, 50 and 400 general units respectively. See
+   `docs/runbooks/youtube-test-environment.md`.
 5. **Single content owner**: One person reviews. If team review is needed later, add user/role model.
 6. **Claude Sonnet is sufficient**: All LLM stages use Claude Sonnet 4. If quality needs Opus for adaptation, can configure per-stage.
 7. **Legacy pipeline coexistence**: v1 episodes (CHUNKED/GENERATED/REFINED) remain valid and viewable. No migration of old episodes to v2 pipeline.

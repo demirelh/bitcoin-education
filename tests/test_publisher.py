@@ -12,11 +12,13 @@ from sqlalchemy.orm import sessionmaker
 from btcedu.config import Settings
 from btcedu.core.publisher import (
     PublishCoordinationError,
+    PublishReconciliationRequired,
     _build_youtube_metadata,
     _check_approval_gate,
     _check_artifact_integrity,
     _check_cost_sanity,
     _check_metadata_completeness,
+    _conform_chapter_marks,
     _format_timestamp,
     get_latest_publish_job,
     publish_video,
@@ -64,9 +66,12 @@ def settings(tmp_path):
         raw_data_dir=str(tmp_path / "raw"),
         dry_run=False,
         max_episode_cost_usd=10.0,
-        youtube_default_privacy="unlisted",
-        youtube_credentials_path=str(tmp_path / ".youtube_creds.json"),
-        youtube_client_secrets_path=str(tmp_path / "client_secret.json"),
+        youtube_test_credentials_path=str(tmp_path / "test-creds.json"),
+        youtube_test_client_secrets_path=str(tmp_path / "test-client.json"),
+        youtube_test_channel_id="UC_TEST",
+        youtube_production_credentials_path=str(tmp_path / "prod-creds.json"),
+        youtube_production_client_secrets_path=str(tmp_path / "prod-client.json"),
+        youtube_production_channel_id="UC_PRODUCTION",
     )
 
 
@@ -185,6 +190,22 @@ class TestFormatTimestamp:
 
     def test_negative_clamped_to_zero(self):
         assert _format_timestamp(-10) == "0:00"
+
+
+class TestConformChapterMarks:
+    def test_accepts_exact_minimum_boundaries(self):
+        marks = [(5.5, "Bir"), (10.0, "İki"), (20.0, "Üç")]
+
+        assert _conform_chapter_marks(marks, total_seconds=30.0) == [
+            (0.0, "Bir"),
+            (10.0, "İki"),
+            (20.0, "Üç"),
+        ]
+
+    def test_removes_short_final_section_then_suppresses_invalid_set(self):
+        marks = [(0.0, "Bir"), (20.0, "İki"), (40.0, "Üç")]
+
+        assert _conform_chapter_marks(marks, total_seconds=49.9) == []
 
 
 # ---------------------------------------------------------------------------
@@ -486,6 +507,131 @@ class TestPublishVideo:
         assert result.skipped is True
         assert result.youtube_video_id == "EXISTING_VIDEO_ID"
 
+    def test_restart_recovers_completed_production_job_without_duplicate(
+        self, db_session, settings, approved_episode
+    ):
+        job = PublishJob(
+            episode_id=approved_episode.episode_id,
+            status=PublishJobStatus.PUBLISHED.value,
+            youtube_video_id="YT_RECOVERED",
+            youtube_url="https://youtu.be/YT_RECOVERED",
+            metadata_snapshot=json.dumps({"publish_target": "production"}),
+        )
+        db_session.add(job)
+        db_session.commit()
+
+        with patch("btcedu.services.youtube_service.YouTubeDataAPIService") as service:
+            result = publish_video(db_session, approved_episode.episode_id, settings)
+
+        assert result.skipped is True
+        assert result.publish_target == "production"
+        service.return_value.upload_video.assert_not_called()
+        db_session.refresh(approved_episode)
+        assert approved_episode.status == EpisodeStatus.PUBLISHED
+        assert approved_episode.youtube_video_id == "YT_RECOVERED"
+
+    def test_restart_skips_completed_test_job_without_marking_episode_published(
+        self, db_session, settings, approved_episode
+    ):
+        job = PublishJob(
+            episode_id=approved_episode.episode_id,
+            status=PublishJobStatus.PUBLISHED.value,
+            youtube_video_id="YT_TEST",
+            youtube_url="https://youtu.be/YT_TEST",
+            metadata_snapshot=json.dumps({"publish_target": "test"}),
+        )
+        db_session.add(job)
+        db_session.commit()
+
+        with patch("btcedu.services.youtube_service.YouTubeDataAPIService") as service:
+            result = publish_video(
+                db_session,
+                approved_episode.episode_id,
+                settings,
+                target="test",
+            )
+
+        assert result.skipped is True
+        service.return_value.upload_video.assert_not_called()
+        db_session.refresh(approved_episode)
+        assert approved_episode.status == EpisodeStatus.APPROVED
+        assert approved_episode.youtube_video_id is None
+
+    def test_crash_during_upload_blocks_retry_until_reconciled(
+        self, db_session, approved_episode, approved_review_task, settings, tmp_path
+    ):
+        settings.outputs_dir = str(tmp_path / "outputs")
+        _make_chapters_json(tmp_path, approved_episode.episode_id)
+        guard = MagicMock()
+        guard.ensure_active.return_value = None
+        guard.lease_token = "lease-crash"
+        guard.fencing_token = 11
+
+        with (
+            patch(
+                "btcedu.failover.coordination.acquire_publish_lease_guard",
+                return_value=guard,
+            ),
+            patch("btcedu.services.youtube_service.YouTubeDataAPIService") as service,
+        ):
+            service.return_value.upload_video.side_effect = KeyboardInterrupt()
+            with pytest.raises(KeyboardInterrupt):
+                publish_video(db_session, approved_episode.episode_id, settings)
+
+        job = get_latest_publish_job(db_session, approved_episode.episode_id)
+        assert job is not None
+        assert job.status == PublishJobStatus.UPLOADING.value
+        snapshot = json.loads(job.metadata_snapshot)
+        assert snapshot["publish_target"] == "production"
+        assert snapshot["attempt_state"] == "uploading"
+
+        with patch("btcedu.services.youtube_service.YouTubeDataAPIService") as retry_service:
+            with pytest.raises(PublishReconciliationRequired, match="remote outcome is unknown"):
+                publish_video(
+                    db_session,
+                    approved_episode.episode_id,
+                    settings,
+                    force=True,
+                )
+
+        retry_service.return_value.upload_video.assert_not_called()
+
+    def test_real_test_upload_stays_separate_from_production_state(
+        self, db_session, approved_episode, approved_review_task, settings, tmp_path
+    ):
+        from btcedu.services.youtube_service import YouTubeUploadResponse
+
+        settings.outputs_dir = str(tmp_path / "outputs")
+        _make_chapters_json(tmp_path, approved_episode.episode_id)
+
+        with (
+            patch("btcedu.failover.coordination.acquire_publish_lease_guard") as lease,
+            patch("btcedu.services.youtube_service.YouTubeDataAPIService") as service,
+        ):
+            service.return_value.upload_video.return_value = YouTubeUploadResponse(
+                video_id="YT_TEST_UPLOAD",
+                video_url="https://youtu.be/YT_TEST_UPLOAD",
+                privacy_status="private",
+                channel_id="UC_TEST",
+            )
+            result = publish_video(
+                db_session,
+                approved_episode.episode_id,
+                settings,
+                target="test",
+            )
+
+        lease.assert_not_called()
+        assert result.publish_target == "test"
+        db_session.refresh(approved_episode)
+        assert approved_episode.status == EpisodeStatus.APPROVED
+        assert approved_episode.youtube_video_id is None
+        job = get_latest_publish_job(db_session, approved_episode.episode_id)
+        assert job is not None
+        snapshot = json.loads(job.metadata_snapshot)
+        assert snapshot["publish_target"] == "test"
+        assert snapshot["privacy_status"] == "private"
+
     def test_dry_run_publishes_with_placeholder(
         self, db_session, approved_episode, approved_review_task, settings, tmp_path
     ):
@@ -650,6 +796,8 @@ class TestPublishVideo:
         data = json.loads(prov_path.read_text())
         assert data["episode_id"] == approved_episode.episode_id
         assert data["dry_run"] is True
+        assert data["publish_target"] == "production"
+        assert data["metadata_snapshot"]["quota_estimate"]["upload_calls"] == 1
         assert "safety_checks" in data
 
 
@@ -744,7 +892,7 @@ class TestSuggestNewsTitle:
 
         assert _suggest_news_title(news_episode, []) == ""
 
-    def test_news_metadata_hides_source_brand_and_puts_chapters_first(
+    def test_news_metadata_keeps_source_off_title_but_credits_description(
         self, db_session, news_episode, settings, tmp_path
     ):
         _make_news_chapters_json(tmp_path, news_episode.episode_id)
@@ -758,7 +906,8 @@ class TestSuggestNewsTitle:
         assert title.startswith("ALMANYA24 11.07.2026")
         assert "tagesschau" not in title.lower()
         assert description.startswith("0:00 ")
-        assert "tagesschau" not in description.lower()
+        assert "tagesschau" in description.lower()
+        assert "Kaynak:" in description
         assert all(tag.lower() != "tagesschau" for tag in tags)
 
 
@@ -788,7 +937,8 @@ class TestGenerateMetadataSuggestion:
 
         data = generate_metadata_suggestion(db_session, news_episode.episode_id, settings)
         assert data["category_id"] == "25"
-        assert data["privacy_status"] == "unlisted"
+        assert data["publish_target"] == "test"
+        assert data["privacy_status"] == "private"
         assert data["default_language"] == "tr"
 
     def test_does_not_overwrite_existing_without_force(
@@ -888,7 +1038,9 @@ class TestGenerateMetadataSuggestion:
         assert again["title"] == "Elle yazılmış"
         assert again["source"] == "edited"
 
-    def test_force_regenerates(self, db_session, news_episode, settings, tmp_path):
+    def test_force_does_not_overwrite_reviewer_edits(
+        self, db_session, news_episode, settings, tmp_path
+    ):
         _make_news_chapters_json(tmp_path, news_episode.episode_id)
         from btcedu.core.publisher import generate_metadata_suggestion, save_metadata_edits
 
@@ -897,8 +1049,8 @@ class TestGenerateMetadataSuggestion:
         regen = generate_metadata_suggestion(
             db_session, news_episode.episode_id, settings, force=True
         )
-        assert regen["source"] == "auto"
-        assert regen["title"] != "X"
+        assert regen["source"] == "edited"
+        assert regen["title"] == "X"
 
 
 class TestSaveMetadataEdits:

@@ -8,6 +8,10 @@ Story-Ranking, informativen Overlays und ohne sichtbare Fremdquellenzeile.
 Profil: `tagesschau_tr`. Alle Änderungen sind profilgesteuert; andere Profile und
 `pipeline_version=1` bleiben unverändert.
 
+Kanonischer Brand-/Rights-Stand: `docs/implementation/almanya24-brand-rights.md`.
+Die Werte in diesem Plan spiegeln die aktuelle Profilkonfiguration wider; die
+Markenbezeichnungen werden hier nicht neu erfunden.
+
 ---
 
 ## 1. Aktuelle relevante Architektur
@@ -94,16 +98,21 @@ Neuer Profilblock:
 
 ```yaml
 branding:
-  show_name: "Almanya'nın Nabzı"
+  show_name: "ALMANYA24"
+  display_name: "ALMANYA24"
+  spoken_name: "Almanya Yirmi Dört"
   slogan: "Almanya'nın nabzı burada atıyor."
   visible_source_attribution: false
   internal_source_provenance: true
   source_in_description: true
   forbidden_visible_terms: [...]
 ```
+Diese Werte sind bindend für den aktuellen Stand: `display_name` bleibt auf dem
+Bild, `spoken_name` wird gesprochen.
 
 - Attributionsregel aus `chapterize.md` entfernen.
-- `render.outro_text` auf den Slogan umstellen.
+- `render.outro_text` auf den bestehenden Lockup
+  `ALMANYA24 — Almanya'nın nabzı burada atıyor.` setzen.
 - Neues Modul `core/branding_guard.py`:
   - `scan_visible_texts()` sammelt Kapiteltitel, Overlay-Texte, Narration,
     Intro-/Outro-Texte, Ticker.
@@ -308,7 +317,7 @@ stage_config:
   tts:
     voices: {anchor_female: {...}, reporter_male: {...}}
   render:
-    outro_text: "Almanya'nın nabzı burada atıyor."
+    outro_text: "ALMANYA24 — Almanya'nın nabzı burada atıyor."
 ```
 
 ### 3.12 Rendering

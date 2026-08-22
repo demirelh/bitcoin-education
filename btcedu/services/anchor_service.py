@@ -1,6 +1,7 @@
-"""D-ID anchor video service: generate talking-head videos from photo + audio."""
+"""Provider-neutral talking-avatar video services."""
 
 import logging
+import mimetypes
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,50 +11,125 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-# D-ID API
 DID_API_BASE = "https://api.d-id.com"
-DID_COST_PER_SECOND = 0.015  # ~$0.90/min on Pro plan
+HEYGEN_API_BASE = "https://api.heygen.com"
+DID_COST_PER_SECOND = 0.015
+HEYGEN_COST_PER_SECOND = {
+    ("avatar_iii", "digital_twin"): 0.0167,
+    ("avatar_iii", "studio_avatar"): 0.0167,
+    ("avatar_iii", "photo_avatar"): 0.0433,
+    ("avatar_iv", "digital_twin"): 0.0667,
+    ("avatar_iv", "studio_avatar"): 0.0667,
+    ("avatar_iv", "photo_avatar"): 0.05,
+    ("avatar_v", "digital_twin"): 0.0667,
+}
+HEYGEN_MAX_ASSET_BYTES = 32 * 1024 * 1024
 
-# Poll settings
 POLL_INTERVAL_SECONDS = 5
-POLL_MAX_ATTEMPTS = 120  # 10 minutes max
+POLL_MAX_ATTEMPTS = 120
+
+
+class AnchorAPIError(RuntimeError):
+    """Structured provider failure without exposing request credentials."""
+
+    def __init__(
+        self,
+        provider: str,
+        status_code: int,
+        detail: str,
+        error_code: str | None = None,
+    ):
+        self.provider = provider
+        self.status_code = status_code
+        self.error_code = error_code
+        self.detail = detail
+        code_suffix = f" ({error_code})" if error_code else ""
+        super().__init__(f"{provider} API error {status_code}{code_suffix}: {detail}")
 
 
 @dataclass
 class AnchorRequest:
-    """Request for anchor video generation."""
+    """Provider-neutral request for a talking-avatar video."""
 
-    source_image_path: str  # Local path to anchor photo
-    source_image_url: str  # Pre-uploaded URL (optional, preferred over path)
-    audio_path: str  # Local path to TTS audio MP3
+    source_image_path: str
+    source_image_url: str
+    audio_path: str
     chapter_id: str
     expression: str = "serious"
+    expected_duration_seconds: float = 0.0
 
 
 @dataclass
 class AnchorResponse:
-    """Response from anchor video generation."""
+    """Provider-neutral result from talking-avatar generation."""
 
-    video_path: str  # Local path to downloaded video
+    video_path: str
     chapter_id: str
     duration_seconds: float
     size_bytes: int
     cost_usd: float
-    did_talk_id: str
+    provider: str = "d-id"
+    provider_job_id: str = ""
+    output_format: str = "mp4"
+    mime_type: str = "video/mp4"
+    did_talk_id: str = ""
+
+    def __post_init__(self) -> None:
+        """Keep the legacy D-ID field synchronized with the generic job ID."""
+        if self.did_talk_id and not self.provider_job_id:
+            self.provider_job_id = self.did_talk_id
+        elif self.provider == "d-id" and self.provider_job_id and not self.did_talk_id:
+            self.did_talk_id = self.provider_job_id
 
 
 class AnchorService(Protocol):
-    """Protocol for anchor video generation services."""
+    """Protocol implemented by talking-avatar providers."""
+
+    provider: str
+    engine: str
+    output_format: str
+    output_extension: str
+    mime_type: str
+
+    def estimate_cost(self, duration_seconds: float) -> float: ...
 
     def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse: ...
 
 
-class DIDService:
-    """D-ID Talks API: photo + audio -> talking-head video."""
+def heygen_cost_per_second(engine: str, avatar_type: str) -> float:
+    """Return the published HeyGen self-serve rate for an engine/avatar pair."""
+    key = (engine.strip().lower(), avatar_type.strip().lower())
+    try:
+        return HEYGEN_COST_PER_SECOND[key]
+    except KeyError as exc:
+        raise ValueError(
+            f"Unsupported HeyGen pricing combination: engine={engine!r}, "
+            f"avatar_type={avatar_type!r}"
+        ) from exc
 
-    def __init__(self, api_key: str, output_dir: str):
+
+class DIDService:
+    """D-ID Talks API: source photo plus pre-generated audio."""
+
+    provider = "d-id"
+    engine = "talks"
+    output_format = "mp4"
+    output_extension = ".mp4"
+    mime_type = "video/mp4"
+
+    def __init__(
+        self,
+        api_key: str,
+        output_dir: str,
+        cost_per_second_usd: float = DID_COST_PER_SECOND,
+    ):
+        if not api_key:
+            raise ValueError("D-ID anchor provider requires DID_API_KEY")
+        if cost_per_second_usd < 0:
+            raise ValueError("D-ID cost_per_second_usd must be non-negative")
         self.api_key = api_key
         self.output_dir = Path(output_dir)
+        self.cost_per_second_usd = cost_per_second_usd
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -62,67 +138,60 @@ class DIDService:
             }
         )
 
-    def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse:
-        """Generate a talking-head video via D-ID Talks API.
+    def estimate_cost(self, duration_seconds: float) -> float:
+        return round(max(0.0, duration_seconds) * self.cost_per_second_usd, 6)
 
-        1. Upload source image (if no URL provided)
-        2. Create talk with audio
-        3. Poll until done
-        4. Download result video
-        """
-        # Resolve source image URL
+    def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse:
+        """Generate a D-ID talking-head video and download it."""
         source_url = request.source_image_url
         if not source_url:
             source_url = self._upload_image(request.source_image_path)
 
-        # Upload audio
         audio_url = self._upload_audio(request.audio_path)
-
-        # Create talk
         talk_id = self._create_talk(source_url, audio_url, request.expression)
-
-        # Poll until done
         result_url, duration = self._poll_talk(talk_id)
 
-        # Download video
-        output_path = self.output_dir / f"{request.chapter_id}.mp4"
+        output_path = self.output_dir / f"{request.chapter_id}{self.output_extension}"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._download_video(result_url, output_path)
-
-        size_bytes = output_path.stat().st_size
-        cost_usd = duration * DID_COST_PER_SECOND
 
         return AnchorResponse(
             video_path=str(output_path),
             chapter_id=request.chapter_id,
             duration_seconds=duration,
-            size_bytes=size_bytes,
-            cost_usd=cost_usd,
-            did_talk_id=talk_id,
+            size_bytes=output_path.stat().st_size,
+            cost_usd=self.estimate_cost(duration),
+            provider=self.provider,
+            provider_job_id=talk_id,
+            output_format=self.output_format,
+            mime_type=self.mime_type,
         )
 
     def _upload_image(self, image_path: str) -> str:
-        """Upload source image to D-ID and return URL."""
-        with open(image_path, "rb") as f:
-            resp = self.session.post(
+        path = _require_file(image_path, "D-ID source image")
+        mime_type = mimetypes.guess_type(path.name)[0] or "image/png"
+        with path.open("rb") as file_obj:
+            response = self.session.post(
                 f"{DID_API_BASE}/images",
-                files={"image": (Path(image_path).name, f, "image/png")},
+                files={"image": (path.name, file_obj, mime_type)},
+                timeout=120,
             )
-        resp.raise_for_status()
-        return resp.json()["url"]
+        data = _response_data(response, "D-ID")
+        return _required_string(data, "url", "D-ID image upload response")
 
     def _upload_audio(self, audio_path: str) -> str:
-        """Upload audio file to D-ID and return URL."""
-        with open(audio_path, "rb") as f:
-            resp = self.session.post(
+        path = _require_file(audio_path, "D-ID audio")
+        mime_type = _audio_mime_type(path)
+        with path.open("rb") as file_obj:
+            response = self.session.post(
                 f"{DID_API_BASE}/audios",
-                files={"audio": (Path(audio_path).name, f, "audio/mpeg")},
+                files={"audio": (path.name, file_obj, mime_type)},
+                timeout=120,
             )
-        resp.raise_for_status()
-        return resp.json()["url"]
+        data = _response_data(response, "D-ID")
+        return _required_string(data, "url", "D-ID audio upload response")
 
     def _create_talk(self, source_url: str, audio_url: str, expression: str) -> str:
-        """Create a D-ID talk and return the talk ID."""
         payload = {
             "source_url": source_url,
             "script": {
@@ -134,25 +203,27 @@ class DIDService:
                 "expression": {"expressions": [{"expression": expression, "intensity": 0.5}]},
             },
         }
-        resp = self.session.post(f"{DID_API_BASE}/talks", json=payload)
-        resp.raise_for_status()
-        return resp.json()["id"]
+        response = self.session.post(f"{DID_API_BASE}/talks", json=payload, timeout=120)
+        data = _response_data(response, "D-ID")
+        return _required_string(data, "id", "D-ID talk response")
 
     def _poll_talk(self, talk_id: str) -> tuple[str, float]:
-        """Poll until talk is done. Returns (result_url, duration_seconds)."""
         for attempt in range(POLL_MAX_ATTEMPTS):
-            resp = self.session.get(f"{DID_API_BASE}/talks/{talk_id}")
-            resp.raise_for_status()
-            data = resp.json()
+            response = self.session.get(f"{DID_API_BASE}/talks/{talk_id}", timeout=120)
+            data = _response_data(response, "D-ID")
+            status = str(data.get("status") or "").lower()
 
-            status = data.get("status")
             if status == "done":
-                result_url = data.get("result_url", "")
-                duration = float(data.get("duration", 0))
-                return result_url, duration
-            elif status == "error":
-                error_msg = data.get("error", {}).get("description", "Unknown D-ID error")
-                raise RuntimeError(f"D-ID talk {talk_id} failed: {error_msg}")
+                result_url = _required_string(data, "result_url", "D-ID completed talk")
+                return result_url, _required_duration(data, "duration", "D-ID completed talk")
+            if status == "error":
+                error = data.get("error")
+                detail = (
+                    str(error.get("description") or "Unknown D-ID error")
+                    if isinstance(error, dict)
+                    else str(error or "Unknown D-ID error")
+                )
+                raise AnchorAPIError("D-ID", 422, detail, "generation_failed")
 
             logger.debug("D-ID talk %s status: %s (attempt %d)", talk_id, status, attempt + 1)
             time.sleep(POLL_INTERVAL_SECONDS)
@@ -160,31 +231,280 @@ class DIDService:
         raise TimeoutError(f"D-ID talk {talk_id} did not complete within timeout")
 
     def _download_video(self, url: str, output_path: Path) -> None:
-        """Download the result video."""
-        resp = requests.get(url, stream=True, timeout=120)
-        resp.raise_for_status()
-        with open(output_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                f.write(chunk)
+        """Download through the legacy D-ID test seam."""
+        _download_video("D-ID", url, output_path)
 
 
-class DryRunAnchorService:
-    """Placeholder anchor service for dry-run and testing."""
+class HeyGenService:
+    """HeyGen v3 avatar video API driven by pre-generated TTS audio.
 
-    def __init__(self, output_dir: str = ""):
-        self.output_dir = Path(output_dir) if output_dir else Path("/tmp/anchor_dry_run")
+    WebM alpha is available at this API boundary; active profiles use MP4 until
+    the renderer can composite a transparent presenter over a studio.
+    """
+
+    provider = "heygen"
+
+    def __init__(
+        self,
+        api_key: str,
+        output_dir: str,
+        avatar_id: str,
+        engine: str = "avatar_iv",
+        avatar_type: str = "digital_twin",
+        output_format: str = "mp4",
+        resolution: str = "1080p",
+        aspect_ratio: str = "auto",
+        cost_per_second_usd: float | None = None,
+    ):
+        if not api_key:
+            raise ValueError("HeyGen anchor provider requires HEYGEN_API_KEY")
+        if not avatar_id:
+            raise ValueError("HeyGen anchor provider requires HEYGEN_AVATAR_ID")
+
+        engine = engine.strip().lower()
+        if engine not in {"avatar_iii", "avatar_iv", "avatar_v"}:
+            raise ValueError(f"Unsupported HeyGen engine: {engine!r}")
+        output_format = output_format.strip().lower()
+        if output_format not in {"mp4", "webm"}:
+            raise ValueError("HeyGen output_format must be 'mp4' or 'webm'")
+        if cost_per_second_usd is None:
+            cost_per_second_usd = heygen_cost_per_second(engine, avatar_type)
+        if cost_per_second_usd < 0:
+            raise ValueError("HeyGen cost_per_second_usd must be non-negative")
+
+        self.output_dir = Path(output_dir)
+        self.avatar_id = avatar_id
+        self.engine = engine
+        self.avatar_type = avatar_type.strip().lower()
+        self.output_format = output_format
+        self.output_extension = f".{output_format}"
+        self.mime_type = "video/webm" if output_format == "webm" else "video/mp4"
+        self.resolution = resolution
+        self.aspect_ratio = aspect_ratio
+        self.cost_per_second_usd = cost_per_second_usd
+        self.session = requests.Session()
+        self.session.headers.update(
+            {
+                "x-api-key": api_key,
+                "Accept": "application/json",
+            }
+        )
+
+    def estimate_cost(self, duration_seconds: float) -> float:
+        return round(max(0.0, duration_seconds) * self.cost_per_second_usd, 6)
 
     def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse:
-        """Return a placeholder response without calling any API."""
-        output_path = self.output_dir / f"{request.chapter_id}.mp4"
+        """Upload TTS audio, create an avatar video, poll, and download it."""
+        audio_asset_id = self._upload_audio(request.audio_path)
+        video_id = self._create_video(audio_asset_id, request.chapter_id)
+        result_url, duration = self._poll_video(video_id)
+
+        output_path = self.output_dir / f"{request.chapter_id}{self.output_extension}"
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        # Write a tiny placeholder file
-        output_path.write_bytes(b"\x00" * 1024)
+        _download_video("HeyGen", result_url, output_path)
+
         return AnchorResponse(
             video_path=str(output_path),
             chapter_id=request.chapter_id,
-            duration_seconds=30.0,
+            duration_seconds=duration,
+            size_bytes=output_path.stat().st_size,
+            cost_usd=self.estimate_cost(duration),
+            provider=self.provider,
+            provider_job_id=video_id,
+            output_format=self.output_format,
+            mime_type=self.mime_type,
+        )
+
+    def _upload_audio(self, audio_path: str) -> str:
+        path = _require_file(audio_path, "HeyGen audio")
+        if path.stat().st_size > HEYGEN_MAX_ASSET_BYTES:
+            raise ValueError(
+                f"HeyGen audio asset exceeds the 32 MB upload limit: {path.stat().st_size} bytes"
+            )
+        with path.open("rb") as file_obj:
+            response = self.session.post(
+                f"{HEYGEN_API_BASE}/v3/assets",
+                files={"file": (path.name, file_obj, _audio_mime_type(path))},
+                timeout=120,
+            )
+        data = _response_data(response, "HeyGen")
+        return _required_string(data, "asset_id", "HeyGen asset upload response")
+
+    def _create_video(self, audio_asset_id: str, chapter_id: str) -> str:
+        payload = {
+            "type": "avatar",
+            "avatar_id": self.avatar_id,
+            "audio_asset_id": audio_asset_id,
+            "title": chapter_id,
+            "resolution": self.resolution,
+            "aspect_ratio": self.aspect_ratio,
+            "output_format": self.output_format,
+            "engine": {"type": self.engine},
+        }
+        response = self.session.post(
+            f"{HEYGEN_API_BASE}/v3/videos",
+            json=payload,
+            timeout=120,
+        )
+        data = _response_data(response, "HeyGen")
+        resolved_format = str(data.get("output_format") or self.output_format).lower()
+        if resolved_format != self.output_format:
+            raise AnchorAPIError(
+                "HeyGen",
+                502,
+                f"requested {self.output_format}, provider resolved {resolved_format}",
+                "unexpected_output_format",
+            )
+        return _required_string(data, "video_id", "HeyGen create-video response")
+
+    def _poll_video(self, video_id: str) -> tuple[str, float]:
+        active_statuses = {"waiting", "pending", "processing"}
+        for attempt in range(POLL_MAX_ATTEMPTS):
+            response = self.session.get(f"{HEYGEN_API_BASE}/v3/videos/{video_id}", timeout=120)
+            data = _response_data(response, "HeyGen")
+            status = str(data.get("status") or "").lower()
+
+            if status == "completed":
+                result_url = _required_string(data, "video_url", "HeyGen completed video")
+                return result_url, _required_duration(data, "duration", "HeyGen completed video")
+            if status == "failed":
+                detail = str(data.get("failure_message") or "Unknown HeyGen generation error")
+                error_code = str(data.get("failure_code") or "generation_failed")
+                raise AnchorAPIError("HeyGen", 422, detail, error_code)
+            if status not in active_statuses:
+                raise AnchorAPIError(
+                    "HeyGen",
+                    502,
+                    f"unexpected video status {status!r}",
+                    "unexpected_status",
+                )
+
+            logger.debug(
+                "HeyGen video %s status: %s (attempt %d)",
+                video_id,
+                status,
+                attempt + 1,
+            )
+            time.sleep(POLL_INTERVAL_SECONDS)
+
+        raise TimeoutError(f"HeyGen video {video_id} did not complete within timeout")
+
+
+class DryRunAnchorService:
+    """Local placeholder implementation for dry-run and tests."""
+
+    def __init__(
+        self,
+        output_dir: str = "",
+        provider: str = "d-id",
+        engine: str = "talks",
+        output_format: str = "mp4",
+    ):
+        self.output_dir = Path(output_dir) if output_dir else Path("data/outputs/anchor_dry_run")
+        self.provider = provider
+        self.engine = engine
+        self.output_format = output_format
+        self.output_extension = f".{output_format}"
+        self.mime_type = "video/webm" if output_format == "webm" else "video/mp4"
+
+    def estimate_cost(self, duration_seconds: float) -> float:
+        del duration_seconds
+        return 0.0
+
+    def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse:
+        output_path = self.output_dir / f"{request.chapter_id}{self.output_extension}"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"\x00" * 1024)
+        duration = request.expected_duration_seconds or 30.0
+        return AnchorResponse(
+            video_path=str(output_path),
+            chapter_id=request.chapter_id,
+            duration_seconds=duration,
             size_bytes=1024,
             cost_usd=0.0,
-            did_talk_id="dry-run",
+            provider=self.provider,
+            provider_job_id="dry-run",
+            output_format=self.output_format,
+            mime_type=self.mime_type,
         )
+
+
+def _response_data(response, provider: str) -> dict:
+    status_code = getattr(response, "status_code", 200)
+    if not isinstance(status_code, int):
+        status_code = 200
+    try:
+        payload = response.json()
+    except (TypeError, ValueError) as exc:
+        if status_code >= 400:
+            detail = str(getattr(response, "text", "") or "non-JSON error response")[:300]
+            raise AnchorAPIError(provider, status_code, detail) from exc
+        raise AnchorAPIError(provider, 502, "provider returned invalid JSON") from exc
+
+    if status_code >= 400:
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if not isinstance(error, dict) and isinstance(payload, dict):
+            error = payload.get("detail")
+        if isinstance(error, dict):
+            error_code = error.get("code") or error.get("status")
+            detail = error.get("message") or error.get("description") or str(error)
+        else:
+            error_code = None
+            detail = str(error or getattr(response, "text", "") or "provider request failed")
+        raise AnchorAPIError(
+            provider,
+            status_code,
+            str(detail)[:300],
+            str(error_code or "") or None,
+        )
+
+    if not isinstance(payload, dict):
+        raise AnchorAPIError(provider, 502, "provider returned a non-object response")
+    data = payload.get("data", payload)
+    if not isinstance(data, dict):
+        raise AnchorAPIError(provider, 502, "provider response data is not an object")
+    return data
+
+
+def _required_string(data: dict, key: str, context: str) -> str:
+    value = data.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise AnchorAPIError("Avatar provider", 502, f"{context} is missing {key!r}")
+    return value
+
+
+def _required_duration(data: dict, key: str, context: str) -> float:
+    try:
+        duration = float(data.get(key))
+    except (TypeError, ValueError) as exc:
+        raise AnchorAPIError("Avatar provider", 502, f"{context} has invalid {key!r}") from exc
+    if duration <= 0:
+        raise AnchorAPIError("Avatar provider", 502, f"{context} has non-positive {key!r}")
+    return duration
+
+
+def _require_file(path_value: str, label: str) -> Path:
+    path = Path(path_value)
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} not found: {path}")
+    return path
+
+
+def _audio_mime_type(path: Path) -> str:
+    mime_type = mimetypes.guess_type(path.name)[0]
+    if mime_type in {"audio/mpeg", "audio/wav", "audio/x-wav"}:
+        return "audio/wav" if mime_type == "audio/x-wav" else mime_type
+    raise ValueError(f"Unsupported anchor audio format: {path.suffix or path.name}")
+
+
+def _download_video(provider: str, url: str, output_path: Path) -> None:
+    if not url:
+        raise AnchorAPIError(provider, 502, "completed video response has no download URL")
+    response = requests.get(url, stream=True, timeout=120)
+    status_code = getattr(response, "status_code", 200)
+    if isinstance(status_code, int) and status_code >= 400:
+        raise AnchorAPIError(provider, status_code, "video download failed")
+    with output_path.open("wb") as file_obj:
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                file_obj.write(chunk)

@@ -78,7 +78,9 @@
 **Branch:** `claude/ai-news-anchor-plan-As4ov` (1 Commit, 217 Zeilen Plan-Dokument)
 
 **Plan vorhanden** (`docs/plans/ai-news-anchor.md`):
-- Empfehlung: D-ID API
+- Empfehlung: D-ID API (nur für den synthetischen Branch; die
+  Real-Presenter-Entscheidung lebt in
+  `docs/implementation/almanya24-brand-rights.md`)
 - Kostenanalyse: ~$2.45-3.35 pro Episode
 - Architektur: Neues Stage `ANCHOR_GENERATED` nach TTS_DONE
 - MVP-Definition: 7 Dateien

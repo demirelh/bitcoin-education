@@ -63,9 +63,9 @@ The Opus planning output for this sprint is provided below. Follow it precisely.
    - Verify `youtube_video_id` and `published_at_youtube` fields exist on Episode model (added in Sprint 1 migration). If missing, add them in this migration.
 
 4. **Extend configuration** — add to `btcedu/config.py`:
-   - `YOUTUBE_CLIENT_SECRETS_FILE: str = "data/.youtube_client_secrets.json"` (Google OAuth client ID/secret)
-   - `YOUTUBE_CREDENTIALS_FILE: str = "data/.youtube_credentials.json"` (stored OAuth tokens)
-   - `YOUTUBE_DEFAULT_PRIVACY: str = "unlisted"` (default upload privacy)
+   - Separate test/production OAuth client and credential paths
+   - Expected public channel ID for each target
+   - Test privacy default `"private"`; production default `"unlisted"`
    - `YOUTUBE_DEFAULT_CATEGORY: str = "27"` (Education category)
    - `YOUTUBE_UPLOAD_CHUNK_SIZE: int = -1` (-1 = single request; set to e.g., 10*1024*1024 for chunked)
    - Update `.env.example` with new variables

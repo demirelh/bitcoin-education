@@ -240,10 +240,9 @@ The system is **ready for supervised production use** on episodes that are manua
 
 ### 4.2 `.env.example` Incomplete
 
-The `.env.example` is missing:
-- `YOUTUBE_CLIENT_SECRETS_PATH`
-- `YOUTUBE_CREDENTIALS_PATH`
-- `YOUTUBE_DEFAULT_PRIVACY`
+The historical audit found the single-target settings missing. They are now
+superseded by explicit `YOUTUBE_TEST_*` and `YOUTUBE_PRODUCTION_*` paths,
+channel IDs and privacy defaults, plus:
 - `YOUTUBE_UPLOAD_CHUNK_SIZE_MB`
 - `YOUTUBE_CATEGORY_ID`
 - `YOUTUBE_DEFAULT_LANGUAGE`

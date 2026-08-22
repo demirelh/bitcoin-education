@@ -14,6 +14,7 @@ from btcedu.core.pipeline import (
     PipelineReport,
     StagePlan,
     StageResult,
+    _mark_orphaned_pipeline_runs_interrupted,
     _run_stage,
     resolve_pipeline_plan,
     retry_episode,
@@ -322,6 +323,62 @@ class TestEnsureStagePipelineRun:
             db_session.query(PipelineRun).filter(PipelineRun.episode_id == new_episode.id).count()
             == 0
         )
+
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_persists_running_stage_before_execution(
+        self, mock_stage, db_session, new_episode, tmp_path
+    ):
+        from btcedu.models.episode import PipelineRun, PipelineStage, RunStatus
+
+        def inspect_active_run(*_args, **_kwargs):
+            active = (
+                db_session.query(PipelineRun)
+                .filter(
+                    PipelineRun.episode_id == new_episode.id,
+                    PipelineRun.stage == PipelineStage.DOWNLOAD,
+                    PipelineRun.status == RunStatus.RUNNING,
+                )
+                .one()
+            )
+            assert active.completed_at is None
+            return StageResult("download", "success", 1.0, detail="ok")
+
+        mock_stage.side_effect = inspect_active_run
+
+        run_episode_pipeline(db_session, new_episode, _make_settings(tmp_path))
+
+        completed = (
+            db_session.query(PipelineRun)
+            .filter(
+                PipelineRun.episode_id == new_episode.id,
+                PipelineRun.stage == PipelineStage.DOWNLOAD,
+            )
+            .one()
+        )
+        assert completed.status == RunStatus.SUCCESS
+        assert completed.completed_at is not None
+
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_failed_stage_closes_running_record(
+        self, mock_stage, db_session, new_episode, tmp_path
+    ):
+        from btcedu.models.episode import PipelineRun, PipelineStage, RunStatus
+
+        mock_stage.return_value = StageResult("download", "failed", 1.0, error="network down")
+
+        run_episode_pipeline(db_session, new_episode, _make_settings(tmp_path))
+
+        failed = (
+            db_session.query(PipelineRun)
+            .filter(
+                PipelineRun.episode_id == new_episode.id,
+                PipelineRun.stage == PipelineStage.DOWNLOAD,
+            )
+            .one()
+        )
+        assert failed.status == RunStatus.FAILED
+        assert failed.completed_at is not None
+        assert failed.error_message == "network down"
 
 
 class TestRunPending:
@@ -651,6 +708,86 @@ class TestRunLatest:
         result = run_latest(db_session, _make_settings(tmp_path))
 
         assert result is None
+
+    @patch("btcedu.core.pipeline.run_episode_pipeline")
+    @patch("btcedu.core.detector.detect_episodes")
+    def test_resumes_anchor_generated_episode_after_interrupted_render(
+        self, mock_detect, mock_run, db_session, tmp_path
+    ):
+        from btcedu.core.detector import DetectResult
+
+        mock_detect.return_value = DetectResult(found=1, new=0, total=1)
+        episode = Episode(
+            episode_id="interrupted-render",
+            source="youtube_rss",
+            title="Interrupted render",
+            url="https://youtube.com/watch?v=interrupted",
+            status=EpisodeStatus.ANCHOR_GENERATED,
+            pipeline_version=2,
+            published_at=datetime(2026, 8, 21, tzinfo=UTC),
+        )
+        db_session.add(episode)
+        db_session.commit()
+        orphaned = PipelineRun(
+            episode_id=episode.id,
+            stage=PipelineStage.RENDER,
+            status=RunStatus.RUNNING,
+        )
+        db_session.add(orphaned)
+        db_session.commit()
+        mock_run.return_value = PipelineReport(
+            episode_id=episode.episode_id,
+            title=episode.title,
+            success=True,
+        )
+
+        result = run_latest(db_session, _make_settings(tmp_path))
+
+        assert result is not None
+        assert mock_run.call_args.args[1].episode_id == episode.episode_id
+        db_session.refresh(orphaned)
+        assert orphaned.status == RunStatus.FAILED
+        assert orphaned.completed_at is not None
+        assert "next scheduled run will resume" in orphaned.error_message
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        EpisodeStatus.SCRIPTED,
+        EpisodeStatus.FRAMES_EXTRACTED,
+        EpisodeStatus.ANCHOR_GENERATED,
+    ],
+)
+@patch("btcedu.core.pipeline.run_episode_pipeline")
+def test_run_pending_includes_every_durable_intermediate_status(
+    mock_run, status, db_session, tmp_path
+):
+    episode = Episode(
+        episode_id=f"resume-{status.value}",
+        source="youtube_rss",
+        title="Resume intermediate status",
+        url="https://youtube.com/watch?v=resume",
+        status=status,
+        pipeline_version=2,
+        published_at=datetime(2026, 8, 21, tzinfo=UTC),
+    )
+    db_session.add(episode)
+    db_session.commit()
+    mock_run.return_value = PipelineReport(
+        episode_id=episode.episode_id,
+        title=episode.title,
+        success=True,
+    )
+
+    reports = run_pending(db_session, _make_settings(tmp_path))
+
+    assert len(reports) == 1
+    assert mock_run.call_args.args[1].episode_id == episode.episode_id
+
+
+def test_orphan_recovery_is_noop_without_running_rows(db_session):
+    assert _mark_orphaned_pipeline_runs_interrupted(db_session) == 0
 
 
 # ── RetryEpisode ─────────────────────────────────────────────────

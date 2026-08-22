@@ -4,7 +4,7 @@ import hashlib
 import json
 import logging
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,6 +19,8 @@ from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
 from btcedu.models.media_asset import MediaAsset, MediaAssetType
 
 logger = logging.getLogger(__name__)
+
+_TTS_MAX_REQUEST_CHARS = 750
 
 
 def _utcnow() -> datetime:
@@ -195,7 +197,8 @@ def generate_tts(
             fallback_api_keys=_reserve_keys,
         )
 
-        # Filter chapters to process
+        # Opening and closing are spoken chapters, not decorative render cards.
+        # Keep every story type in the normal TTS path.
         chapters_to_process = chapters_doc.chapters
         if chapter_id:
             chapters_to_process = [c for c in chapters_doc.chapters if c.chapter_id == chapter_id]
@@ -455,8 +458,6 @@ def generate_tts(
             total_duration,
             total_cost,
         )
-
-        _prune_cache(settings)
 
         return TTSResult(
             episode_id=episode_id,
@@ -786,10 +787,10 @@ def _concat_mp3(parts: list[Path], target: Path, pause_seconds: float) -> None:
     concat_inputs = ""
     for index in range(len(parts)):
         concat_inputs += f"[a{index}]"
-        if index < len(parts) - 1:
+        if pause_seconds > 0 and index < len(parts) - 1:
             filters.append(f"{silence}[p{index}]")
             concat_inputs += f"[p{index}]"
-    segment_count = len(parts) * 2 - 1
+    segment_count = len(parts) * 2 - 1 if pause_seconds > 0 else len(parts)
     filters.append(f"{concat_inputs}concat=n={segment_count}:v=0:a=1[out]")
 
     command = [
@@ -946,36 +947,6 @@ def _normalize_loudness(
     )
 
 
-def _cache_dir(settings: Settings) -> Path | None:
-    """Where reusable takes live, or ``None`` when reuse is switched off.
-
-    Both values are checked for their actual type, not merely for being
-    truthy. A stand-in settings object hands back a placeholder that would
-    otherwise be turned into a path and quietly fill a directory named after
-    it. Anything that is not a real switch and a real path means no cache.
-    """
-    enabled = getattr(settings, "tts_cache_enabled", False)
-    if not isinstance(enabled, bool) or not enabled:
-        return None
-    directory = getattr(settings, "tts_cache_dir", None)
-    if not isinstance(directory, (str, Path)) or not str(directory).strip():
-        return None
-    return Path(directory)
-
-
-def _prune_cache(settings: Settings) -> None:
-    """Keep the store bounded. Never let housekeeping fail a finished stage."""
-    cache_dir = _cache_dir(settings)
-    if cache_dir is None:
-        return
-    try:
-        from btcedu.core import tts_cache
-
-        tts_cache.prune(cache_dir, int(getattr(settings, "tts_cache_max_mb", 512)) * 1024 * 1024)
-    except Exception as exc:  # pragma: no cover - housekeeping must not throw
-        logger.warning("TTS cache pruning skipped (%s)", exc)
-
-
 def _stutter_model(settings: Settings):
     """The recogniser used to listen to takes, loaded once per episode.
 
@@ -1009,7 +980,6 @@ def _synthesize_clean_take(
     max_attempts: int,
     noise_floor_max_db: float,
     label: str,
-    cache_dir: Path | None = None,
     stutter_model=None,
 ):
     """Synthesize *request*, retrying while the take is unusable.
@@ -1025,31 +995,13 @@ def _synthesize_clean_take(
     first thing they hear. So a clean-sounding take that stutters is rejected
     even though every level in it is right.
 
-    With *cache_dir* set, a line already recorded with this voice and these
-    parameters is taken from disk instead of bought again. This is the only
-    place synthesis happens, so it is the only place the cache has to reach.
-
     Returns ``(response, noise_floor_db, attempts)``.
     """
-    from btcedu.core import tts_cache
-
-    key = tts_cache.cache_key(request) if cache_dir is not None else None
-    if key is not None:
-        hit = tts_cache.lookup(cache_dir, key, target)
-        if hit is not None:
-            logger.info("%s: reusing a stored take (no ElevenLabs call)", label)
-            return hit.response, hit.noise_floor_db, 0
-
     best_response = None
     best_floor: float | None = None
     last_response = None
     last_floor: float | None = None
     attempts = 0
-
-    def _keep(response, floor: float | None) -> None:
-        if key is None:
-            return
-        tts_cache.store(cache_dir, key, target, response, noise_floor_db=floor, text=request.text)
 
     for attempt in range(1, max(1, max_attempts) + 1):
         attempts = attempt
@@ -1076,14 +1028,12 @@ def _synthesize_clean_take(
             continue
 
         if floor is None:
-            _keep(response, None)
             return response, None, attempts
         if best_floor is None or floor < best_floor:
             best_response, best_floor = response, floor
         if floor <= noise_floor_max_db:
             if attempt > 1:
                 logger.info("%s: take %d is clean (noise floor %.1f dB)", label, attempt, floor)
-            _keep(response, floor)
             return response, floor, attempts
 
         logger.warning(
@@ -1099,15 +1049,13 @@ def _synthesize_clean_take(
         # Not one take read the line as asked — every attempt either stumbled
         # over its opening or ran off from the text entirely. Publishing a
         # stumble is bad; publishing nothing at all is worse, and there is
-        # nothing left to choose from. The take is kept but deliberately not
-        # stored, so the next episode gets a fresh chance instead of
-        # inheriting this one for good.
+        # nothing left to choose from.
         if last_response is not None:
             target.write_bytes(last_response.audio_bytes)
             _normalize_loudness(target)
             logger.error(
                 "%s: none of the %d takes read the line correctly; keeping the last one "
-                "and not storing it — the audio should be checked by ear",
+                "— the audio should be checked by ear",
                 label,
                 attempts,
             )
@@ -1125,10 +1073,105 @@ def _synthesize_clean_take(
             attempts,
             best_floor,
         )
-        # Deliberately not cached: this take failed the noise check. Storing it
-        # would freeze the hiss into every future episode, and the retry logic
-        # exists precisely to get away from it.
     return best_response, best_floor, attempts
+
+
+def _tts_chunks(text: str) -> list[str]:
+    from btcedu.services.elevenlabs_service import _chunk_text
+
+    return _chunk_text(text, _TTS_MAX_REQUEST_CHARS)
+
+
+def _synthesize_chunked_clean_take(
+    tts_service,
+    request,
+    target: Path,
+    *,
+    max_attempts: int,
+    noise_floor_max_db: float,
+    label: str,
+    stutter_model=None,
+):
+    """Synthesize and validate bounded chunks so retries only rebuy one chunk."""
+    from btcedu.services.elevenlabs_service import TTSResponse, WordTiming
+
+    chunks = _tts_chunks(request.text)
+    if len(chunks) == 1:
+        return _synthesize_clean_take(
+            tts_service,
+            request,
+            target,
+            max_attempts=max_attempts,
+            noise_floor_max_db=noise_floor_max_db,
+            label=label,
+            stutter_model=stutter_model,
+        )
+
+    logger.info(
+        "%s: split %d characters into %d bounded TTS requests",
+        label,
+        len(request.text),
+        len(chunks),
+    )
+    chunk_paths: list[Path] = []
+    responses = []
+    floors: list[float] = []
+    total_takes = 0
+    total_cost = 0.0
+    total_duration = 0.0
+    word_timings: list[WordTiming] | None = []
+    try:
+        for index, chunk in enumerate(chunks):
+            chunk_path = target.with_name(f".{target.stem}.chunk-{index:02d}{target.suffix}")
+            chunk_paths.append(chunk_path)
+            response, floor, takes = _synthesize_clean_take(
+                tts_service,
+                replace(request, text=chunk),
+                chunk_path,
+                max_attempts=max_attempts,
+                noise_floor_max_db=noise_floor_max_db,
+                label=f"{label} chunk {index + 1}/{len(chunks)}",
+                stutter_model=stutter_model,
+            )
+            responses.append(response)
+            total_takes += takes
+            total_cost += response.cost_usd * takes
+            if floor is not None:
+                floors.append(floor)
+            if word_timings is not None:
+                if response.word_timings is None:
+                    word_timings = None
+                else:
+                    word_timings.extend(
+                        WordTiming(
+                            word.word,
+                            word.start + total_duration,
+                            word.end + total_duration,
+                        )
+                        for word in response.word_timings
+                    )
+            total_duration += response.duration_seconds
+
+        _concat_mp3(chunk_paths, target, 0.0)
+        first = responses[0]
+        average_take_cost = total_cost / total_takes if total_takes else 0.0
+        combined = TTSResponse(
+            audio_bytes=target.read_bytes(),
+            duration_seconds=total_duration,
+            sample_rate=first.sample_rate,
+            model=first.model,
+            voice_id=first.voice_id,
+            character_count=len(request.text),
+            cost_usd=average_take_cost,
+            word_timings=word_timings or None,
+        )
+        return combined, max(floors) if floors else None, total_takes
+    finally:
+        for chunk_path in chunk_paths:
+            try:
+                chunk_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 _DURATION_MIN_RATIO = 0.5
@@ -1311,7 +1354,7 @@ def _generate_multi_voice_audio(
             takes = 1
             part_words = None
         else:
-            response, noise_floor, takes = _synthesize_clean_take(
+            response, noise_floor, takes = _synthesize_chunked_clean_take(
                 tts_service,
                 TTSRequest(
                     text=spoken,
@@ -1327,7 +1370,6 @@ def _generate_multi_voice_audio(
                 max_attempts=int(voice.get("noise_retries", _NOISE_MAX_TAKES)),
                 noise_floor_max_db=float(voice.get("noise_floor_max_db", _NOISE_FLOOR_WARN_DB)),
                 label=f"Chapter {chapter.chapter_id} part {index:02d} ({role})",
-                cache_dir=_cache_dir(settings),
                 stutter_model=_stutter_model(settings),
             )
             duration = response.duration_seconds
@@ -1354,6 +1396,7 @@ def _generate_multi_voice_audio(
                 "file": part_path.name,
                 "noise_floor_db": None if noise_floor is None else round(noise_floor, 1),
                 "takes": takes,
+                "chunks": len(_tts_chunks(spoken)),
             }
         )
         total_cost += cost
@@ -1487,14 +1530,13 @@ def _generate_single_audio(
         speed=effective_speed,
     )
 
-    response, noise_floor, takes = _synthesize_clean_take(
+    response, noise_floor, takes = _synthesize_chunked_clean_take(
         tts_service,
         request,
         mp3_path,
         max_attempts=_NOISE_MAX_TAKES,
         noise_floor_max_db=_NOISE_FLOOR_WARN_DB,
         label=f"Chapter {chapter.chapter_id}",
-        cache_dir=_cache_dir(settings),
         stutter_model=_stutter_model(settings),
     )
 
@@ -1526,6 +1568,7 @@ def _generate_single_audio(
             "lexicon_applied": lexicon_applied,
             "noise_floor_db": None if noise_floor is None else round(noise_floor, 1),
             "takes": takes,
+            "chunks": len(_tts_chunks(spoken_text)),
             "word_timings": _word_timings_metadata(response),
         },
     )

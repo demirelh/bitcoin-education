@@ -16,19 +16,6 @@ Settings.model_config["env_file"] = None
 
 
 @pytest.fixture(autouse=True)
-def _isolate_tts_cache(tmp_path_factory, monkeypatch):
-    """Keep the reusable-take store out of the working tree.
-
-    The default location is ``data/tts_cache`` relative to the CWD, so without
-    this a test run would both litter the real cache and read from it — a
-    synthesis test would silently be served an earlier test's audio and stop
-    testing synthesis at all.
-    """
-    monkeypatch.setenv("TTS_CACHE_DIR", str(tmp_path_factory.mktemp("tts-cache")))
-    yield
-
-
-@pytest.fixture(autouse=True)
 def _no_real_recogniser_in_tests(monkeypatch):
     """Keep the stutter check from loading a real Whisper model.
 

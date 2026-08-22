@@ -50,8 +50,13 @@ def make_recording(
         "title": f"tagesschau 20:00 Uhr, {day.strftime('%d.%m.%Y')}",
         "scheduled_start": f"{day.isoformat()}T20:00:00+02:00",
         "duration_seconds": 873.988,
+        "extra": {"completion_verified": "true"},
     }
-    payload.update(metadata or {})
+    supplied = dict(metadata or {})
+    supplied_extra = supplied.pop("extra", None)
+    payload.update(supplied)
+    if isinstance(supplied_extra, dict):
+        payload["extra"].update(supplied_extra)
     (directory / f"{slug}.metadata.json").write_text(json.dumps(payload), encoding="utf-8")
 
     if done:
@@ -106,6 +111,24 @@ class TestScanRecordings:
 
     def test_ignores_an_empty_video(self, recordings_dir):
         make_recording(recordings_dir, date(2026, 8, 6), video_bytes=b"")
+
+        assert scan_recordings(recordings_dir) == []
+
+    def test_ignores_a_done_recording_without_completion_verification(self, recordings_dir):
+        make_recording(
+            recordings_dir,
+            date(2026, 8, 6),
+            metadata={"extra": {"completion_verified": "false"}},
+        )
+
+        assert scan_recordings(recordings_dir) == []
+
+    def test_does_not_grandfather_old_metadata_without_a_verdict(self, recordings_dir):
+        video = make_recording(recordings_dir, date(2026, 8, 6))
+        metadata = video.with_name("tagesschau_2026-08-06_2000.metadata.json")
+        payload = json.loads(metadata.read_text(encoding="utf-8"))
+        payload["extra"].pop("completion_verified")
+        metadata.write_text(json.dumps(payload), encoding="utf-8")
 
         assert scan_recordings(recordings_dir) == []
 
@@ -745,7 +768,7 @@ class TestWeatherVerdictFromTheRecorder:
         make_recording(
             recordings_dir,
             date(2026, 8, 6),
-            metadata={"extra": extra} if extra is not None else {},
+            metadata={"extra": extra} if extra is not None else None,
         )
         return scan_recordings(str(recordings_dir))[0]
 

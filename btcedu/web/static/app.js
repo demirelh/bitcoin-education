@@ -208,6 +208,16 @@
     return (s / 3600).toFixed(1) + "h";
   }
 
+  function formatStageStart(value) {
+    if (!value) return "";
+    return new Date(value).toLocaleString("de-DE", {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
   function renderPipelineStepper(sp) {
     if (!sp || !sp.stages || sp.stages.length === 0) return "";
     let html = '<div class="pipeline-stepper">';
@@ -231,7 +241,17 @@
         ? `$${stage.cost_usd.toFixed(3)}`
         : "";
       const commit = stage.git_commit ? `commit ${stage.git_commit}` : "";
-      const tooltip = [stage.label, dur, cost, commit, "Click for details"].filter(Boolean).join(" \u00b7 ");
+      const started = formatStageStart(stage.started_at);
+      const attempts = stage.attempt_count > 1 ? `${stage.attempt_count} attempts` : "";
+      const tooltip = [
+        stage.label,
+        started ? `Started ${started}` : "",
+        dur,
+        attempts,
+        cost,
+        commit,
+        "Click for details",
+      ].filter(Boolean).join(" \u00b7 ");
 
       html += `
         <div class="ps-stage ps-clickable${gateClass} ${stateClass}"
@@ -239,6 +259,8 @@
              onclick="showStageDetail('${esc(stage.name)}')">
           <div class="ps-blob">${icon}</div>
           <div class="ps-label">${esc(stage.label)}</div>
+          ${started ? `<div class="ps-started">${esc(started)}</div>` : ""}
+          ${attempts ? `<div class="ps-started">${esc(attempts)}</div>` : ""}
           ${dur ? `<div class="ps-duration">${dur}</div>` : ""}
         </div>`;
     });
@@ -246,7 +268,10 @@
     const commitBadge = sp.git_commit
       ? ` &middot; <span class="ps-commit" title="Git commit this run executed with">commit ${esc(sp.git_commit)}</span>`
       : "";
-    html += `<div class="ps-summary">${sp.completed_count}/${sp.total_count} stages complete${commitBadge}</div>`;
+    const pipelineStarted = sp.pipeline_started_at
+      ? ` &middot; started ${esc(new Date(sp.pipeline_started_at).toLocaleString("de-DE"))}`
+      : "";
+    html += `<div class="ps-summary">${sp.completed_count}/${sp.total_count} stages complete${pipelineStarted}${commitBadge}</div>`;
     return html;
   }
 

@@ -120,6 +120,21 @@ class LocalRecording:
             return None
 
     @property
+    def completion_verified(self) -> bool:
+        """Whether the recorder proved both live programme boundaries.
+
+        A technically valid MP4 is not necessarily a complete bulletin. The
+        2026-08-20 capture passed duration and stream checks after losing more
+        than three minutes, so the recorder now writes an explicit semantic
+        verdict. Missing verdicts are deliberately unsafe rather than being
+        grandfathered in.
+        """
+        extra = self.metadata.get("extra")
+        if not isinstance(extra, dict):
+            return False
+        return str(extra.get("completion_verified", "")).lower() == "true"
+
+    @property
     def weather(self) -> WeatherCheck:
         """What the recorder found when it checked its own cut.
 
@@ -194,7 +209,14 @@ def _recording_from_marker(done: Path) -> LocalRecording | None:
 
     metadata_file = directory / f"{slug}{METADATA_SUFFIX}"
     metadata = _read_metadata(metadata_file) if metadata_file.is_file() else {}
-    return LocalRecording(day=day, slug=slug, video=video, metadata=metadata)
+    recording = LocalRecording(day=day, slug=slug, video=video, metadata=metadata)
+    if not recording.completion_verified:
+        logger.error(
+            "recorder output %s is not completion-verified; ignoring local source",
+            slug,
+        )
+        return None
+    return recording
 
 
 def scan_recordings(base_dir: str | Path, *, since: date | None = None) -> list[LocalRecording]:

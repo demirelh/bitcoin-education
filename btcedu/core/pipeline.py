@@ -340,6 +340,52 @@ _STAGE_NAME_TO_PIPELINE_STAGE = {
     "publish": PipelineStage.PUBLISH,
 }
 
+_RESUMABLE_EPISODE_STATUSES = (
+    EpisodeStatus.NEW,
+    EpisodeStatus.DOWNLOADED,
+    EpisodeStatus.TRANSCRIBED,
+    EpisodeStatus.CORRECTED,
+    EpisodeStatus.SEGMENTED,
+    EpisodeStatus.TRANSLATED,
+    EpisodeStatus.ADAPTED,
+    EpisodeStatus.SCRIPTED,
+    EpisodeStatus.CHAPTERIZED,
+    EpisodeStatus.FRAMES_EXTRACTED,
+    EpisodeStatus.IMAGES_GENERATED,
+    EpisodeStatus.TTS_DONE,
+    EpisodeStatus.ANCHOR_GENERATED,
+    EpisodeStatus.RENDERED,
+    EpisodeStatus.APPROVED,
+)
+
+
+def _mark_orphaned_pipeline_runs_interrupted(session: Session) -> int:
+    """Close RUNNING rows left behind by a dead process before resuming.
+
+    Callers hold the exclusive pipeline lock, so no live pipeline can own a
+    RUNNING row at this point. The episode status remains unchanged; the next
+    idempotent stage resumes from that durable status.
+    """
+    orphaned = (
+        session.query(PipelineRun)
+        .filter(PipelineRun.status == RunStatus.RUNNING)
+        .all()
+    )
+    if not orphaned:
+        return 0
+
+    now = _utcnow()
+    for run in orphaned:
+        run.status = RunStatus.FAILED
+        run.completed_at = now
+        run.error_message = (
+            "Pipeline process ended before this stage completed; "
+            "the next scheduled run will resume it."
+        )
+    session.commit()
+    logger.warning("Marked %d orphaned pipeline run(s) as interrupted.", len(orphaned))
+    return len(orphaned)
+
 
 def _ensure_stage_pipeline_run(
     session: Session,
@@ -347,6 +393,7 @@ def _ensure_stage_pipeline_run(
     stage_name: str,
     duration_seconds: float,
     since: datetime,
+    tracking_run: PipelineRun | None = None,
 ) -> None:
     """Record a PipelineRun for stages that don't create one themselves.
 
@@ -375,13 +422,25 @@ def _ensure_stage_pipeline_run(
             PipelineRun.stage == ps,
             PipelineRun.status == RunStatus.SUCCESS,
             PipelineRun.completed_at >= since,
+            PipelineRun.id != tracking_run.id if tracking_run is not None else True,
         )
         .first()
     )
     if existing is not None:
+        if tracking_run is not None:
+            session.delete(tracking_run)
+            session.commit()
         return
 
     now = _utcnow()
+    if tracking_run is not None:
+        tracking_run.status = RunStatus.SUCCESS
+        tracking_run.started_at = now - timedelta(seconds=max(duration_seconds, 0.0))
+        tracking_run.completed_at = now
+        tracking_run.error_message = None
+        session.commit()
+        return
+
     started = now - timedelta(seconds=max(duration_seconds, 0.0))
     from btcedu.version import get_git_commit
 
@@ -395,6 +454,50 @@ def _ensure_stage_pipeline_run(
             git_commit=get_git_commit(),
         )
     )
+    session.commit()
+
+
+def _start_stage_pipeline_run(
+    session: Session,
+    episode: Episode,
+    stage_name: str,
+    started_at: datetime,
+) -> PipelineRun | None:
+    """Persist an active stage immediately for progress display and reboot recovery."""
+    ps = _STAGE_NAME_TO_PIPELINE_STAGE.get(stage_name)
+    if ps is None:
+        return None
+
+    from btcedu.version import get_git_commit
+
+    run = PipelineRun(
+        episode_id=episode.id,
+        stage=ps,
+        status=RunStatus.RUNNING,
+        started_at=started_at,
+        git_commit=get_git_commit(),
+    )
+    session.add(run)
+    session.commit()
+    return run
+
+
+def _finish_stage_pipeline_run(
+    session: Session,
+    tracking_run: PipelineRun | None,
+    result: StageResult,
+) -> None:
+    """Close or discard the active tracking row when a stage does not succeed."""
+    if tracking_run is None:
+        return
+    if result.status == "failed":
+        tracking_run.status = RunStatus.FAILED
+        tracking_run.completed_at = _utcnow()
+        tracking_run.error_message = result.error or result.detail or "unknown error"
+        session.commit()
+        return
+
+    session.delete(tracking_run)
     session.commit()
 
 
@@ -1578,13 +1681,21 @@ def run_episode_pipeline(
         if stage_callback:
             stage_callback(stage_name)
         stage_started = _utcnow()
+        tracking_run = _start_stage_pipeline_run(session, episode, stage_name, stage_started)
         result = _run_stage(session, episode, settings, stage_name, force=force)
         report.stages.append(result)
 
         if result.status == "success":
             _ensure_stage_pipeline_run(
-                session, episode, stage_name, result.duration_seconds, stage_started
+                session,
+                episode,
+                stage_name,
+                result.duration_seconds,
+                stage_started,
+                tracking_run=tracking_run,
             )
+        else:
+            _finish_stage_pipeline_run(session, tracking_run, result)
 
         if result.status == "failed":
             # A stage may carry its reason in `detail` instead of `error`; report
@@ -1715,6 +1826,7 @@ def run_pending(
 
     try:
         with pipeline_lock(settings):
+            _mark_orphaned_pipeline_runs_interrupted(session)
             return _run_pending_locked(
                 session, settings, max_episodes=max_episodes, since=since, profile=profile
             )
@@ -1732,9 +1844,8 @@ def _run_pending_locked(
 ) -> list[PipelineReport]:
     """Process all pending episodes through the pipeline.
 
-    Queries episodes with status in (NEW, DOWNLOADED, TRANSCRIBED,
-    CORRECTED, SEGMENTED, TRANSLATED, ADAPTED, CHAPTERIZED, IMAGES_GENERATED,
-    TTS_DONE, RENDERED, APPROVED), ordered by published_at ASC (oldest first).
+    Queries all resumable episode statuses, ordered by published_at ASC
+    (oldest first).
 
     Args:
         session: DB session.
@@ -1749,23 +1860,7 @@ def _run_pending_locked(
     query = (
         session.query(Episode)
         .filter(
-            Episode.status.in_(
-                [
-                    EpisodeStatus.NEW,
-                    EpisodeStatus.DOWNLOADED,
-                    EpisodeStatus.TRANSCRIBED,
-                    # v2 pipeline statuses
-                    EpisodeStatus.CORRECTED,
-                    EpisodeStatus.SEGMENTED,  # news profiles
-                    EpisodeStatus.TRANSLATED,
-                    EpisodeStatus.ADAPTED,
-                    EpisodeStatus.CHAPTERIZED,
-                    EpisodeStatus.IMAGES_GENERATED,
-                    EpisodeStatus.TTS_DONE,  # Sprint 9: render stage
-                    EpisodeStatus.RENDERED,  # Sprint 10: review gate 3
-                    EpisodeStatus.APPROVED,  # Sprint 11: publish stage
-                ]
-            ),
+            Episode.status.in_(_RESUMABLE_EPISODE_STATUSES),
             Episode.error_message.is_(None),
         )
         .order_by(Episode.published_at.asc())
@@ -1826,6 +1921,7 @@ def run_latest(
     from btcedu.core.runlock import pipeline_lock
 
     with pipeline_lock(settings):
+        _mark_orphaned_pipeline_runs_interrupted(session)
         return _run_latest_locked(session, settings, profile=profile, detect_all=detect_all)
 
 
@@ -1888,23 +1984,7 @@ def _run_latest_locked(
     candidates_query = (
         session.query(Episode)
         .filter(
-            Episode.status.in_(
-                [
-                    EpisodeStatus.NEW,
-                    EpisodeStatus.DOWNLOADED,
-                    EpisodeStatus.TRANSCRIBED,
-                    # v2 pipeline statuses
-                    EpisodeStatus.CORRECTED,
-                    EpisodeStatus.SEGMENTED,  # news profiles
-                    EpisodeStatus.TRANSLATED,
-                    EpisodeStatus.ADAPTED,
-                    EpisodeStatus.CHAPTERIZED,
-                    EpisodeStatus.IMAGES_GENERATED,
-                    EpisodeStatus.TTS_DONE,  # Sprint 9
-                    EpisodeStatus.RENDERED,  # Sprint 10
-                    EpisodeStatus.APPROVED,  # Sprint 11: publish
-                ]
-            ),
+            Episode.status.in_(_RESUMABLE_EPISODE_STATUSES),
             Episode.error_message.is_(None),
         )
         .order_by(Episode.published_at.desc())

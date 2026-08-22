@@ -163,19 +163,6 @@ class Settings(BaseSettings):
     # Higher = faster/less sluggish delivery.
     elevenlabs_speed: float = 1.0
 
-    # Reuse of takes across episodes. Off by default, and the reason is worth
-    # keeping: reuse saves a few cents an evening and costs editorial control
-    # of the most exposed seconds in the bulletin. The greeting has four fixed
-    # variants, so a stored take comes back every third or fourth evening —
-    # byte for byte the same recording. Whatever gets improved about the way
-    # takes are made never reaches those lines, because they are not made any
-    # more. That is how a delivery nobody liked survived three rounds of fixes.
-    # Keyed on text plus voice plus parameters, so a changed line or a changed
-    # voice pays for a new recording.
-    tts_cache_enabled: bool = False
-    tts_cache_dir: str = "data/tts_cache"
-    tts_cache_max_mb: int = 512  # 0 disables pruning
-
     # Listening to what a take actually says. The noise check reads levels and
     # cannot see a voice stumbling over its opening words, which is how "İyi
     # Dağ'ım, İyi Akşamlar" reached a finished video. Costs roughly half a

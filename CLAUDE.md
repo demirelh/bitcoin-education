@@ -108,14 +108,6 @@ Failures fall back to a local render. See `docs/remote-render.md`.
 - **pydub + Python 3.13**: `audioop` removed. Tests mock via `sys.modules`. Production needs `pyaudioop`.
 - **Chapter.visual is singular** (`Visual`), not a list. Narration has `.text`, `.word_count`, `.estimated_duration_seconds`.
 - **Lazy imports**: stage functions lazy-imported in `_run_stage()` to avoid circular deps.
-- **TTS takes are reused across episodes**: keyed on synthesis text + voice + every
-  sound-shaping parameter (`core/tts_cache.py`, hooked into `_synthesize_clean_take`).
-  The greeting, sign-off and weather handover come from short fixed profile lists, so
-  they stop costing anything once recorded. Takes that failed the noise check are never
-  stored. Tests must not write into the real `data/tts_cache` — `conftest.py` redirects it.
-  `_CACHE_VERSION` in that module is part of the key: bumping it invalidates every
-  stored take, and `prune()` deletes the superseded ones (a cache under its size cap
-  would otherwise keep them for good).
 - **Every take is levelled to −15 LUFS before anything else reads it**
   (`_normalize_loudness` in `core/tts.py`, two-pass EBU R128 so the gain is linear
   and the delivery is untouched). ElevenLabs returns the same voice up to 18 dB apart
@@ -168,7 +160,7 @@ Failures fall back to a local render. See `docs/remote-render.md`.
 Key settings: transcription primary/secondary providers, transcript QA
 thresholds, `qa_review_enabled`, `qa_model`, LLM/provider credentials,
 `default_content_profile`, `dry_run`, `max_episode_cost_usd`,
-`episode_retention_days`, image/TTS/render providers, `TTS_CACHE_*`,
+`episode_retention_days`, image/TTS/render providers,
 `NOTIFY_WHATSAPP_*`, and YouTube OAuth paths. Profile YAML owns stage routing
 and may override applicable `.env` values. Full list: `btcedu/config.py`.
 

@@ -340,6 +340,72 @@ class TestBuildStageProgressV2:
         download_stage = next(s for s in sp["stages"] if s["name"] == "download")
         assert download_stage["duration_seconds"] is not None
         assert download_stage["duration_seconds"] >= 11.0  # allow small float variance
+        assert download_stage["started_at"] == run.started_at.replace(tzinfo=UTC).isoformat()
+        assert download_stage["completed_at"] == run.completed_at.replace(tzinfo=UTC).isoformat()
+        assert download_stage["run_status"] == "success"
+        assert sp["pipeline_started_at"] == run.started_at.replace(tzinfo=UTC).isoformat()
+
+    def test_active_stage_exposes_start_time(self, seeded_db, test_settings):
+        _, factory = seeded_db
+        session = factory()
+        ep = session.query(Episode).filter(Episode.episode_id == "ep_new").first()
+        started = datetime.now(UTC) - timedelta(minutes=3)
+        run = PipelineRun(
+            episode_id=ep.id,
+            stage=PipelineStage.DOWNLOAD,
+            status=RunStatus.RUNNING,
+            started_at=started,
+        )
+        session.add(run)
+        session.commit()
+
+        sp = _build_stage_progress(session, ep, test_settings, review_context=None)
+        session.close()
+
+        download_stage = next(s for s in sp["stages"] if s["name"] == "download")
+        assert download_stage["started_at"] == started.isoformat()
+        assert download_stage["completed_at"] is None
+        assert download_stage["run_status"] == "running"
+
+    def test_retried_stage_shows_full_history(self, seeded_db, test_settings):
+        _, factory = seeded_db
+        session = factory()
+        ep = session.query(Episode).filter(Episode.episode_id == "ep_published").first()
+        first_start = datetime.now(UTC) - timedelta(minutes=20)
+        first_end = first_start + timedelta(minutes=4)
+        second_start = first_end + timedelta(minutes=6)
+        second_end = second_start + timedelta(minutes=3)
+        session.add_all(
+            [
+                PipelineRun(
+                    episode_id=ep.id,
+                    stage=PipelineStage.ADAPT,
+                    status=RunStatus.SUCCESS,
+                    started_at=first_start,
+                    completed_at=first_end,
+                    estimated_cost_usd=0.1,
+                ),
+                PipelineRun(
+                    episode_id=ep.id,
+                    stage=PipelineStage.ADAPT,
+                    status=RunStatus.SUCCESS,
+                    started_at=second_start,
+                    completed_at=second_end,
+                    estimated_cost_usd=0.2,
+                ),
+            ]
+        )
+        session.commit()
+
+        sp = _build_stage_progress(session, ep, test_settings, review_context=None)
+        session.close()
+
+        adapt = next(s for s in sp["stages"] if s["name"] == "adapt")
+        assert adapt["started_at"] == first_start.isoformat()
+        assert adapt["completed_at"] == second_end.isoformat()
+        assert adapt["duration_seconds"] == pytest.approx(7 * 60)
+        assert adapt["cost_usd"] == pytest.approx(0.3)
+        assert adapt["attempt_count"] == 2
 
     def test_gate_stages_have_no_duration(self, seeded_db, test_settings):
         """Review gates always have duration_seconds=None."""

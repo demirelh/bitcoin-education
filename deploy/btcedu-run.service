@@ -12,14 +12,14 @@ EnvironmentFile=/home/pi/AI-Startup-Lab/bitcoin-education/.env
 StandardOutput=journal
 StandardError=journal
 # A full tagesschau pipeline (translate + render on the Pi) can take well over
-# 30 min, so allow up to 2 hours before systemd considers the run hung.
-TimeoutStartSec=7200
+# 30 min, so allow up to 6 hours before systemd considers the run hung.
+TimeoutStartSec=6h
 # The Pi has 4 cores and an armed hardware watchdog (RuntimeWatchdogSec=1m in
 # /usr/lib/systemd/system.conf.d/40-rpi-enable-watchdog.conf). A software-encoded
 # ffmpeg render saturated all cores, starved PID 1 for over a minute and the
 # watchdog hard-reset the board mid-render (see the orphaned RENDER/RUNNING rows
-# in pipeline_runs). Capping the job at 3 of 4 cores keeps systemd schedulable.
-CPUQuota=300%
+# in pipeline_runs). Keep two cores available for systemd, storage and the dashboard.
+CPUQuota=200%
 CPUWeight=20
 IOWeight=20
 Nice=10

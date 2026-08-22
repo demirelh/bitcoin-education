@@ -289,7 +289,7 @@ if command -v caddy &>/dev/null; then
   HASH=$(caddy hash-password --plaintext "$PASSWORD")
   ok "Hash generiert"
   echo ""
-  echo "  Caddyfile aktualisieren — Block in lnodebtc.duckdns.org { } einfügen:"
+  echo "  Caddyfile aktualisieren — Block in sahimi.app { } einfügen:"
   echo ""
   echo "    redir /dashboard /dashboard/ permanent"
   echo "    @dashboard path /dashboard/*"
@@ -359,6 +359,6 @@ fi
 echo ""
 echo "  Timer:     sudo systemctl list-timers btcedu-*"
 echo "  Logs:      sudo journalctl -u btcedu-web -f"
-echo "  Dashboard: https://lnodebtc.duckdns.org/dashboard/"
+echo "  Dashboard: https://sahimi.app/dashboard/"
 echo "  Caddy:     sudo systemctl reload caddy"
 echo ""

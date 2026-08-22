@@ -1943,6 +1943,13 @@ body {
     opacity: 0.7;
 }
 
+.ps-started {
+    font-size: 8px;
+    color: var(--text-dim);
+    white-space: nowrap;
+    opacity: 0.85;
+}
+
 /* Connector lines between stages */
 .ps-connector {
     flex: 1 0 8px;

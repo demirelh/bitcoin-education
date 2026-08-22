@@ -481,6 +481,100 @@ def test_generate_tts_happy_path(mock_service_cls, db_session, tmp_path):
 
 
 @patch("btcedu.services.elevenlabs_service.ElevenLabsService")
+def test_opening_and_closing_are_generated_as_normal_chapters(
+    mock_service_cls, db_session, tmp_path
+):
+    episode = _setup_episode(db_session, tmp_path)
+    settings = _make_settings(tmp_path)
+    chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
+    chapters = json.loads(json.dumps(CHAPTERS_JSON))
+    chapters["total_chapters"] = 3
+    chapters["estimated_duration_seconds"] = 30
+    chapters["chapters"] = [
+        {
+            "chapter_id": "ch01",
+            "title": "Açılış",
+            "order": 1,
+            "story_type": "opening",
+            "narration": {
+                "text": "İyi akşamlar, haber bültenimize hoş geldiniz.",
+                "word_count": 6,
+                "estimated_duration_seconds": 10,
+            },
+            "visual": {"type": "title_card", "description": "Opening card"},
+            "overlays": [],
+            "transitions": {"in": "fade", "out": "cut"},
+        },
+        {
+            "chapter_id": "ch02",
+            "title": "Günün haberi",
+            "order": 2,
+            "story_type": "politik",
+            "narration": {
+                "text": "Günün önemli gelişmesi burada normal şekilde anlatılıyor.",
+                "word_count": 7,
+                "estimated_duration_seconds": 10,
+            },
+            "visual": {
+                "type": "b_roll",
+                "description": "News footage",
+                "image_prompt": "Neutral editorial news footage",
+            },
+            "overlays": [],
+            "transitions": {"in": "cut", "out": "cut"},
+        },
+        {
+            "chapter_id": "ch03",
+            "title": "Kapanış",
+            "order": 3,
+            "story_type": "closing",
+            "narration": {
+                "text": "Bültenimizin sonuna geldik, iyi akşamlar.",
+                "word_count": 5,
+                "estimated_duration_seconds": 10,
+            },
+            "visual": {"type": "title_card", "description": "Closing card"},
+            "overlays": [],
+            "transitions": {"in": "cut", "out": "fade"},
+        },
+    ]
+    chapters_path.write_text(json.dumps(chapters, ensure_ascii=False), encoding="utf-8")
+
+    from btcedu.services.elevenlabs_service import TTSResponse
+
+    mock_service = mock_service_cls.return_value
+    mock_service.synthesize.return_value = TTSResponse(
+        audio_bytes=b"fresh_audio",
+        duration_seconds=10.0,
+        sample_rate=44100,
+        model="eleven_multilingual_v2",
+        voice_id="voice_123",
+        character_count=50,
+        cost_usd=0.03,
+    )
+
+    result = generate_tts(db_session, episode.episode_id, settings)
+
+    assert mock_service.synthesize.call_count == 3
+    spoken = [call.args[0].text for call in mock_service.synthesize.call_args_list]
+    assert spoken == [
+        "İyi akşamlar, haber bültenimize hoş geldiniz.",
+        "Günün önemli gelişmesi burada normal şekilde anlatılıyor.",
+        "Bültenimizin sonuna geldik, iyi akşamlar.",
+    ]
+    manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+    assert [segment["chapter_id"] for segment in manifest["segments"]] == [
+        "ch01",
+        "ch02",
+        "ch03",
+    ]
+    assert all(
+        (Path(settings.outputs_dir) / episode.episode_id / segment["file_path"]).exists()
+        for segment in manifest["segments"]
+    )
+
+
+@patch("btcedu.services.elevenlabs_service.ElevenLabsService")
 def test_generate_tts_idempotency(mock_service_cls, db_session, tmp_path):
     """Second run with unchanged content is skipped."""
     episode = _setup_episode(db_session, tmp_path)

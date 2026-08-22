@@ -4,6 +4,7 @@ Description=Check every 10 minutes for a new tagesschau 20:00 Uhr episode and pr
 [Timer]
 # Fire every 10 minutes (on the clock). Overlapping runs are prevented by
 # systemd: while btcedu-run.service is still active a new trigger is skipped.
+OnBootSec=2min
 OnCalendar=*:0/10
 Persistent=true
 RandomizedDelaySec=30

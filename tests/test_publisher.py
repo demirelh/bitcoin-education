@@ -652,19 +652,38 @@ class TestSuggestNewsTitle:
         data = _make_news_chapters_json(tmp_path, news_episode.episode_id)
         from btcedu.core.publisher import _suggest_news_title
 
-        title = _suggest_news_title(news_episode, data["chapters"])
+        title = _suggest_news_title(news_episode, data["chapters"], show_name="ALMANYA24")
         assert "11.07.2026" in title
         assert "İran-ABD Görüşmeleri" in title
         assert "Türkçe" in title
         # Generic intro/weather chapters are skipped
-        assert "tagesschau" in title  # date prefix
+        assert title.startswith("ALMANYA24 11.07.2026")
+        assert "tagesschau" not in title.lower()
         assert "Hava Durumu" not in title
         assert len(title) <= 100
+        assert not title.endswith("PSİ")
 
     def test_returns_empty_without_topics(self, news_episode):
         from btcedu.core.publisher import _suggest_news_title
 
         assert _suggest_news_title(news_episode, []) == ""
+
+    def test_news_metadata_hides_source_brand_and_puts_chapters_first(
+        self, db_session, news_episode, settings, tmp_path
+    ):
+        _make_news_chapters_json(tmp_path, news_episode.episode_id)
+
+        title, description, tags = _build_youtube_metadata(
+            news_episode,
+            settings,
+            session=db_session,
+        )
+
+        assert title.startswith("ALMANYA24 11.07.2026")
+        assert "tagesschau" not in title.lower()
+        assert description.startswith("0:00 ")
+        assert "tagesschau" not in description.lower()
+        assert all(tag.lower() != "tagesschau" for tag in tags)
 
 
 class TestGenerateMetadataSuggestion:

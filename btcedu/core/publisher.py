@@ -3,6 +3,7 @@
 import hashlib
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -637,21 +638,24 @@ def _conform_chapter_marks(
     return kept
 
 
-def _suggest_news_title(episode: Episode, chapters_list: list[dict]) -> str:
+def _suggest_news_title(
+    episode: Episode,
+    chapters_list: list[dict],
+    show_name: str = "",
+) -> str:
     """Build a topic-based YouTube title for a news episode.
 
-    Combines the broadcast date (parsed from the episode title) with the
-    most substantive chapter topics, e.g.
-    "tagesschau 11.07.2026 — İran-ABD, Ukrayna, Srebrenica | Türkçe".
+    Combines the programme name and broadcast date with the most substantive
+    chapter topics, e.g.
+    "ALMANYA24 11.07.2026 — İran-ABD, Ukrayna, Srebrenica | Türkçe".
     Returns an empty string if no usable topics are found.
     """
-    import re
-
     date_match = re.search(r"\b(\d{1,2}\.\d{1,2}\.\d{4})\b", episode.title or "")
     date_str = date_match.group(1) if date_match else ""
 
     # Chapter titles to skip: intro/title cards and weather boilerplate.
     _skip = ("tagesschau", "hava durumu", "hava tahmini", "giriş", "wetter", "intro")
+    normalized_show_name = show_name.strip().lower()
 
     topics: list[str] = []
     for ch in sorted(chapters_list, key=lambda c: c.get("order", 0)):
@@ -659,7 +663,7 @@ def _suggest_news_title(episode: Episode, chapters_list: list[dict]) -> str:
         if not ch_title:
             continue
         low = ch_title.lower()
-        if any(s in low for s in _skip):
+        if any(s in low for s in _skip) or low == normalized_show_name:
             continue
         topics.append(ch_title)
         if len(topics) >= 3:
@@ -668,10 +672,34 @@ def _suggest_news_title(episode: Episode, chapters_list: list[dict]) -> str:
     if not topics:
         return ""
 
-    base = f"tagesschau {date_str}".strip()
-    topic_str = ", ".join(topics)
-    title = f"{base} — {topic_str} | Türkçe"
-    return title[:100]
+    base = f"{show_name.strip()} {date_str}".strip() or date_str
+    selected: list[str] = []
+    for topic in topics:
+        candidate_topics = ", ".join([*selected, topic])
+        candidate = (
+            f"{base} — {candidate_topics} | Türkçe"
+            if base
+            else f"{candidate_topics} | Türkçe"
+        )
+        if len(candidate) > 100:
+            break
+        selected.append(topic)
+
+    if not selected:
+        topic = topics[0]
+        suffix = " | Türkçe"
+        prefix = f"{base} — " if base else ""
+        return f"{prefix}{topic[: 100 - len(prefix) - len(suffix)]}{suffix}"
+
+    topic_str = ", ".join(selected)
+    return f"{base} — {topic_str} | Türkçe" if base else f"{topic_str} | Türkçe"
+
+
+def _public_chapter_title(title: str, show_name: str) -> str:
+    """Replace the source programme name in public chapter labels."""
+    if not show_name:
+        return title
+    return re.sub(r"\btagesschau(?:24)?\b", show_name, title, flags=re.IGNORECASE)
 
 
 def _metadata_path(episode_id: str, settings: Settings) -> Path:
@@ -820,6 +848,7 @@ def _build_youtube_metadata(
 
     # Load profile for profile-specific YouTube metadata
     _yt_config: dict = {}
+    _branding_config: dict = {}
     _profile_domain = "cryptocurrency"
     if session is not None:
         try:
@@ -830,6 +859,7 @@ def _build_youtube_metadata(
             )
             _profile = _get_profile_registry(settings).get(_profile_name)
             _yt_config = _profile.youtube if _profile else {}
+            _branding_config = _profile.branding if _profile else {}
             _profile_domain = getattr(_profile, "domain", "cryptocurrency") or "cryptocurrency"
         except Exception:
             pass
@@ -851,7 +881,11 @@ def _build_youtube_metadata(
     # For news content, prefer a topic-based title over the generic
     # "tagesschau … — Türkçe" placeholder so viewers see the actual stories.
     if _profile_domain == "news":
-        news_title = _suggest_news_title(episode, chapters_list)
+        news_title = _suggest_news_title(
+            episode,
+            chapters_list,
+            show_name=str(_branding_config.get("display_name", "")),
+        )
         if news_title:
             title = news_title
     title = title[:100]
@@ -862,13 +896,20 @@ def _build_youtube_metadata(
     ordered_chapters = sorted(chapters_list, key=lambda c: c.get("order", 0))
     timeline = _load_render_timeline(episode.episode_id, settings)
     offsets = _chapter_start_offsets(timeline)
+    show_name = str(_branding_config.get("display_name", ""))
 
     raw_marks: list[tuple[float, str]] = []
     total_seconds = 0.0
     if offsets and all(ch.get("chapter_id", "") in offsets for ch in ordered_chapters):
         total_seconds = _timeline_total_seconds(timeline)
         raw_marks = [
-            (offsets[ch.get("chapter_id", "")], ch.get("title", ch.get("chapter_id", "")))
+            (
+                offsets[ch.get("chapter_id", "")],
+                _public_chapter_title(
+                    ch.get("title", ch.get("chapter_id", "")),
+                    show_name,
+                ),
+            )
             for ch in ordered_chapters
         ]
     else:
@@ -878,7 +919,12 @@ def _build_youtube_metadata(
         cumulative_seconds = 0.0
         for ch in ordered_chapters:
             ch_id = ch.get("chapter_id", "")
-            raw_marks.append((cumulative_seconds, ch.get("title", ch_id)))
+            raw_marks.append(
+                (
+                    cumulative_seconds,
+                    _public_chapter_title(ch.get("title", ch_id), show_name),
+                )
+            )
             duration = tts_durations.get(ch_id, 0.0)
             if duration == 0.0:
                 narration = ch.get("narration") or {}
@@ -903,14 +949,13 @@ def _build_youtube_metadata(
             intro += "..."
 
     description_parts = []
-    if intro:
-        description_parts.append(intro)
+    if timestamp_lines:
+        # Keep the contiguous timestamp block first for reliable YouTube parsing.
+        description_parts.extend(timestamp_lines)
         description_parts.append("")
 
-    if timestamp_lines:
-        # YouTube auto-detects chapters if first timestamp is 0:00
-        description_parts.append("📋 Bölümler / Chapters:")
-        description_parts.extend(timestamp_lines)
+    if intro:
+        description_parts.append(intro)
         description_parts.append("")
 
     # Profile-specific hashtags / attribution
@@ -920,8 +965,9 @@ def _build_youtube_metadata(
     else:
         hashtags_str = "#Bitcoin #Kripto #Türkçe #Eğitim #Blockchain"
 
-    # For news domain, prepend source attribution
-    if _profile_domain == "news":
+    # Source attribution is profile-owned. Independent productions may keep
+    # provenance internally without exposing the source brand in metadata.
+    if _profile_domain == "news" and _yt_config.get("source_attribution", True):
         attribution = (
             "Kaynak: ARD tagesschau — Türkçe çeviri btcedu tarafından hazırlanmıştır.\n"
             "Source: ARD tagesschau — Turkish translation by btcedu.\n\n"
@@ -938,7 +984,7 @@ def _build_youtube_metadata(
     base_tags = profile_tags_list if profile_tags_list else list(_BASE_TAGS)
     tags = list(base_tags)
     for ch in chapters_list[:5]:  # Limit extra tags from first 5 chapters
-        ch_title = ch.get("title", "")
+        ch_title = _public_chapter_title(ch.get("title", ""), show_name)
         if ch_title and len(ch_title) <= 30:
             tags.append(ch_title)
 

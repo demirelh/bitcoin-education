@@ -3,7 +3,7 @@
 ElevenLabs returns the same voice up to 18 dB apart from one generation to the
 next. Two things went wrong because of that: neighbouring segments jumped in
 volume, and the noise check — which measures in absolute terms — kept picking
-the quietest take rather than the cleanest one and froze it into the cache.
+the quietest take rather than the cleanest one.
 
 These tests pin down that the levelling happens, that it happens first, and
 that it never damages the take it is supposed to improve.
@@ -279,7 +279,6 @@ class TestLevellingComesBeforeTheNoiseCheck:
             max_attempts=1,
             noise_floor_max_db=-60.0,
             label="test",
-            cache_dir=None,
         )
 
         assert order == ["level", "noise"]
@@ -326,7 +325,6 @@ class TestLevellingComesBeforeTheNoiseCheck:
             max_attempts=2,
             noise_floor_max_db=-60.0,
             label="test",
-            cache_dir=None,
         )
 
         assert attempts == 2 and response is not None

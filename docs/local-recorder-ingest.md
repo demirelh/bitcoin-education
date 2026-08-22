@@ -36,7 +36,11 @@ Two rules follow from that contract and are enforced in
   of the next, so a loose `*.mp4` glob would silently ingest foreign content.
 
 The published `.mp4` is already cut to the programme boundaries by the recorder,
-so nothing here trims it again.
+so nothing here trims it again. New recorder outputs also carry
+`extra.completion_verified=true`: this means the opening announcement, closing
+content and weather/sign-off checks agreed using the live capture itself. btcedu
+rejects a `.DONE` marker without that verdict and continues to the feed fallback;
+a technically playable but semantically truncated MP4 is not a valid local source.
 
 ## Configuration
 

@@ -32,6 +32,49 @@ _SSE_MAX_CLIENTS = 10  # Limit for Raspberry Pi
 _INTRO_AUDIO_MAX_BYTES = 20 * 1024 * 1024
 
 
+def _utc_isoformat(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
+
+
+def _summarize_pipeline_runs(
+    runs: list[PipelineRun],
+) -> tuple[dict[PipelineStage, dict], datetime | None]:
+    """Aggregate retries while retaining the latest status and commit."""
+    summaries: dict[PipelineStage, dict] = {}
+    pipeline_started_at = None
+    for run in sorted(runs, key=lambda item: item.started_at, reverse=True):
+        if pipeline_started_at is None or run.started_at < pipeline_started_at:
+            pipeline_started_at = run.started_at
+
+        summary = summaries.get(run.stage)
+        if summary is None:
+            summary = {
+                "duration_seconds": None,
+                "cost_usd": 0.0,
+                "git_commit": getattr(run, "git_commit", None),
+                "started_at": run.started_at,
+                "completed_at": run.completed_at,
+                "run_status": run.status.value,
+                "attempt_count": 0,
+            }
+            summaries[run.stage] = summary
+
+        summary["attempt_count"] += 1
+        summary["started_at"] = min(summary["started_at"], run.started_at)
+        summary["cost_usd"] += run.estimated_cost_usd or 0.0
+        if run.completed_at and run.started_at:
+            duration = (run.completed_at - run.started_at).total_seconds()
+            summary["duration_seconds"] = (summary["duration_seconds"] or 0.0) + max(
+                duration, 0.0
+            )
+
+    return summaries, pipeline_started_at
+
+
 def _tagesschau_intro_audio_path() -> Path:
     settings = current_app.config["settings"]
     data_root = Path(settings.raw_data_dir).resolve().parent
@@ -1322,6 +1365,7 @@ def _build_stage_progress(
     settings,
     review_context: dict | None,
     duration_cache: dict | None = None,
+    pipeline_started_cache: dict[int, datetime] | None = None,
 ) -> dict:
     """Build the stage_progress dict for an episode.
 
@@ -1330,7 +1374,8 @@ def _build_stage_progress(
         episode: Episode ORM object
         settings: Application settings
         review_context: Pre-computed review context dict (or None)
-        duration_cache: Optional pre-fetched {episode.id: {PipelineStage: (duration_s, cost_usd)}}
+        duration_cache: Optional pre-fetched latest PipelineRun metadata by episode and stage.
+        pipeline_started_cache: Optional pre-fetched first stage start by episode.
 
     Returns:
         Dict with pipeline_version, stages list, current_stage, completed_count, total_count.
@@ -1360,6 +1405,10 @@ def _build_stage_progress(
                 "duration_seconds": None,
                 "cost_usd": None,
                 "git_commit": None,
+                "started_at": None,
+                "completed_at": None,
+                "run_status": None,
+                "attempt_count": 0,
             }
         )
 
@@ -1412,33 +1461,21 @@ def _build_stage_progress(
                     found = True
 
     # Attach durations from duration_cache or query directly
-    ep_duration_map: dict[PipelineStage, tuple[float, float, str | None]] = {}
+    ep_duration_map: dict[PipelineStage, dict] = {}
+    pipeline_started_at = (
+        pipeline_started_cache.get(episode.id) if pipeline_started_cache is not None else None
+    )
     if duration_cache is not None:
         ep_duration_map = duration_cache.get(episode.id, {})
     else:
         # Single-episode query
         runs = (
             session.query(PipelineRun)
-            .filter(
-                PipelineRun.episode_id == episode.id,
-                PipelineRun.status == RunStatus.SUCCESS,
-            )
-            .order_by(PipelineRun.completed_at.desc())
+            .filter(PipelineRun.episode_id == episode.id)
+            .order_by(PipelineRun.started_at.desc())
             .all()
         )
-        seen: set[PipelineStage] = set()
-        for run in runs:
-            if run.stage not in seen:
-                seen.add(run.stage)
-                if run.completed_at and run.started_at:
-                    dur = (run.completed_at - run.started_at).total_seconds()
-                else:
-                    dur = 0.0
-                ep_duration_map[run.stage] = (
-                    dur,
-                    run.estimated_cost_usd,
-                    getattr(run, "git_commit", None),
-                )
+        ep_duration_map, pipeline_started_at = _summarize_pipeline_runs(runs)
 
     latest_commit = None
     for s in stages:
@@ -1446,12 +1483,16 @@ def _build_stage_progress(
             continue
         ps = _STAGE_TO_PIPELINE_STAGE.get(s["name"])
         if ps and ps in ep_duration_map:
-            dur, cost, commit = ep_duration_map[ps]
-            s["duration_seconds"] = dur
-            s["cost_usd"] = cost
-            s["git_commit"] = commit
-            if commit:
-                latest_commit = commit
+            summary = ep_duration_map[ps]
+            s["duration_seconds"] = summary["duration_seconds"]
+            s["cost_usd"] = summary["cost_usd"]
+            s["git_commit"] = summary["git_commit"]
+            s["started_at"] = _utc_isoformat(summary["started_at"])
+            s["completed_at"] = _utc_isoformat(summary["completed_at"])
+            s["run_status"] = summary["run_status"]
+            s["attempt_count"] = summary["attempt_count"]
+            if summary["git_commit"]:
+                latest_commit = summary["git_commit"]
 
     # Compute summary fields
     current_stage = None
@@ -1470,6 +1511,7 @@ def _build_stage_progress(
         "completed_count": completed_count,
         "total_count": total_count,
         "git_commit": latest_commit,
+        "pipeline_started_at": _utc_isoformat(pipeline_started_at),
     }
 
 
@@ -1479,6 +1521,7 @@ def _episode_to_dict(
     session=None,
     pending_cache: dict | None = None,
     duration_cache: dict | None = None,
+    pipeline_started_cache: dict[int, datetime] | None = None,
 ) -> dict:
     """Serialize an Episode ORM object to a JSON-safe dict."""
     status_val = ep.status.value
@@ -1492,7 +1535,12 @@ def _episode_to_dict(
     if session is not None:
         try:
             stage_progress = _build_stage_progress(
-                session, ep, settings, review_context, duration_cache=duration_cache
+                session,
+                ep,
+                settings,
+                review_context,
+                duration_cache=duration_cache,
+                pipeline_started_cache=pipeline_started_cache,
             )
         except Exception:
             logger.exception("Failed to build stage_progress for %s", ep.episode_id)
@@ -1630,32 +1678,23 @@ def list_episodes():
             if task.episode_id not in pending_cache:
                 pending_cache[task.episode_id] = task
 
-        # Batch duration query: most recent successful PipelineRun per (episode, stage)
-        # PipelineRun.episode_id is an int FK to episodes.id
-        # Build {episode.id: {PipelineStage: (duration_seconds, cost_usd)}}
-        duration_cache: dict[int, dict[PipelineStage, tuple[float, float, str | None]]] = {}
+        # Most recent PipelineRun per (episode, stage), plus the first recorded
+        # stage start for the pipeline summary.
+        duration_cache: dict[int, dict[PipelineStage, dict]] = {}
+        pipeline_started_cache: dict[int, datetime] = {}
         all_runs = (
             session.query(PipelineRun)
-            .filter(PipelineRun.status == RunStatus.SUCCESS)
-            .order_by(PipelineRun.episode_id, PipelineRun.stage, PipelineRun.completed_at.desc())
+            .order_by(PipelineRun.episode_id, PipelineRun.stage, PipelineRun.started_at.desc())
             .all()
         )
-        seen_run_keys: set[tuple[int, PipelineStage]] = set()
+        runs_by_episode: dict[int, list[PipelineRun]] = {}
         for run in all_runs:
-            key = (run.episode_id, run.stage)
-            if key not in seen_run_keys:
-                seen_run_keys.add(key)
-                if run.completed_at and run.started_at:
-                    dur = (run.completed_at - run.started_at).total_seconds()
-                else:
-                    dur = 0.0
-                if run.episode_id not in duration_cache:
-                    duration_cache[run.episode_id] = {}
-                duration_cache[run.episode_id][run.stage] = (
-                    dur,
-                    run.estimated_cost_usd,
-                    getattr(run, "git_commit", None),
-                )
+            runs_by_episode.setdefault(run.episode_id, []).append(run)
+        for episode_id, runs in runs_by_episode.items():
+            summaries, pipeline_started_at = _summarize_pipeline_runs(runs)
+            duration_cache[episode_id] = summaries
+            if pipeline_started_at is not None:
+                pipeline_started_cache[episode_id] = pipeline_started_at
 
         return jsonify(
             [
@@ -1665,6 +1704,7 @@ def list_episodes():
                     session=session,
                     pending_cache=pending_cache,
                     duration_cache=duration_cache,
+                    pipeline_started_cache=pipeline_started_cache,
                 )
                 for ep in episodes
             ]

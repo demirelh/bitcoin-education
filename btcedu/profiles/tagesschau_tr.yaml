@@ -290,7 +290,8 @@ youtube:
   category_id: "25"
   default_language: tr
   default_privacy: unlisted
-  tags: [haberler, almanya, türkçe, tagesschau]
+  source_attribution: false
+  tags: [haberler, almanya, türkçe, almanya24]
 review_gates: {}
 prompt_namespace: tagesschau_tr
 # Run the pipeline fully automatically: skip all human review gates

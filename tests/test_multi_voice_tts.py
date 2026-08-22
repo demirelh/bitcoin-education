@@ -13,6 +13,7 @@ import pytest
 
 from btcedu.config import Settings
 from btcedu.core.tts import (
+    _TTS_MAX_REQUEST_CHARS,
     _concat_mp3,
     _generate_multi_voice_audio,
     _resolve_role_voices,
@@ -278,6 +279,35 @@ class TestMultiVoiceSynthesis:
             text_hash="sha256:x",
         )
         assert "gyundemi" in service.requests[0].text
+
+    def test_long_segment_is_split_into_bounded_provider_requests(
+        self, tmp_path, role_voices, fallback, monkeypatch
+    ):
+        import btcedu.core.tts as tts_module
+
+        monkeypatch.setattr(tts_module, "_take_runs_off", lambda *_args: False)
+        long_text = (
+            "Bu cümle ElevenLabs isteğini güvenli sınırda tutmak için tekrarlanır. " * 30
+        ).strip()
+        segments = [{"role": "reporter_male", "purpose": "report", "text": long_text}]
+        service = FakeTTSService(tmp_path)
+
+        entry = _generate_multi_voice_audio(
+            _chapter(segments),
+            segments,
+            service,
+            tmp_path,
+            Settings(dry_run=False),
+            role_voices=role_voices,
+            fallback=fallback,
+            lexicon={},
+            text_hash="sha256:x",
+        )
+
+        assert len(service.requests) > 1
+        assert all(len(request.text) <= _TTS_MAX_REQUEST_CHARS for request in service.requests)
+        assert "".join(request.text for request in service.requests) == long_text
+        assert entry.metadata["speaker_parts"][0]["chunks"] == len(service.requests)
 
     def test_dry_run_makes_no_provider_call(self, tmp_path, role_voices, fallback):
         service = FakeTTSService(tmp_path)
@@ -658,15 +688,12 @@ class TestRunawayTakesInTheRetryLoop:
         assert takes == 3
         assert response is not None
 
-    def test_a_runaway_take_is_never_stored_for_reuse(self, tmp_path):
-        """Storing one would hand the same broken recording to every later
-        episode that says the same line."""
+    def test_a_runaway_take_leaves_only_the_requested_output(self, tmp_path):
         from unittest.mock import patch
 
         from btcedu.core.tts import _synthesize_clean_take
         from btcedu.services.elevenlabs_service import TTSRequest
 
-        cache_dir = tmp_path / "cache"
         target = tmp_path / "part.mp3"
 
         with (
@@ -680,11 +707,9 @@ class TestRunawayTakesInTheRetryLoop:
                 max_attempts=2,
                 noise_floor_max_db=-55.0,
                 label="ch01",
-                cache_dir=cache_dir,
             )
 
-        stored = list(cache_dir.glob("*.mp3")) if cache_dir.exists() else []
-        assert stored == []
+        assert list(tmp_path.iterdir()) == [target]
 
 
 class _TimedTTSService(FakeTTSService):

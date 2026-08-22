@@ -117,6 +117,10 @@ Failures fall back to a local render. See `docs/remote-render.md`.
   permanently, for exactly the recurring lines (greeting, sign-off, weather handover).
   Levelling must keep the 44.1 kHz rate explicitly (`loudnorm` works at 192 kHz
   internally) and must run again after the fallback rewrites the best take's bytes.
+- **TTS provider calls are capped at 750 characters** and quality retries apply per
+  chunk, so one noisy response never rebills a whole long speaker segment. Manifests
+  aggregate quality by voice; consistently clean voices use one fewer allowed attempt.
+  Profile `tts.max_cost_usd` is a hard stage budget charged after every successful call.
 - **A spent ElevenLabs plan is an HTTP 401, same as a bad key.** The body tells
   them apart (`detail.code` / `detail.status` = `quota_exceeded`). Reserve
   accounts live in `ELEVENLABS_API_KEY_FALLBACK` (comma-separated) and

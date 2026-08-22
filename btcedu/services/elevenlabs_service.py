@@ -109,6 +109,7 @@ class ElevenLabsService:
         default_voice_id: str = "",
         default_model: str = "eleven_multilingual_v2",
         before_api_call: Callable[[int, int], None] | None = None,
+        after_api_call: Callable[[int], None] | None = None,
         fallback_api_keys: Sequence[str] = (),
         request_timestamps: bool = True,
     ):
@@ -116,6 +117,7 @@ class ElevenLabsService:
         self.default_voice_id = default_voice_id
         self.default_model = default_model
         self.before_api_call = before_api_call
+        self.after_api_call = after_api_call
         # Ask for the character alignment alongside the audio. It costs no
         # extra credits and is the only exact source of subtitle timing we
         # have, but it must never be a precondition for getting audio.
@@ -368,7 +370,10 @@ class ElevenLabsService:
                         )
                     raise api_error
 
-                return _decode_audio_response(response)
+                decoded = _decode_audio_response(response)
+                if self.after_api_call is not None:
+                    self.after_api_call(len(text))
+                return decoded
 
             except requests.RequestException as e:
                 if attempt < max_retries - 1:

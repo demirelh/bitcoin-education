@@ -206,6 +206,26 @@ def test_synthesize_success(mock_post, mock_measure):
 
 @patch("btcedu.services.elevenlabs_service._measure_duration")
 @patch("btcedu.services.elevenlabs_service.requests.post")
+def test_successful_call_reports_billed_characters(mock_post, mock_measure):
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"audio"
+    mock_post.return_value = mock_response
+    mock_measure.return_value = (1.0, 44100)
+    billed = []
+    service = ElevenLabsService(
+        api_key="key",
+        default_voice_id="voice",
+        after_api_call=billed.append,
+    )
+
+    service.synthesize(TTSRequest(text="Merhaba", voice_id="voice"))
+
+    assert billed == [7]
+
+
+@patch("btcedu.services.elevenlabs_service._measure_duration")
+@patch("btcedu.services.elevenlabs_service.requests.post")
 def test_synthesize_sends_speed_in_voice_settings(mock_post, mock_measure):
     """The speed voice setting is forwarded to the ElevenLabs payload."""
     mock_response = MagicMock()

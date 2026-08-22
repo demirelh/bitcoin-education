@@ -8,7 +8,9 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from btcedu.config import Settings
 from btcedu.core.tts import (
+    _adaptive_retry_limit,
     _compute_chapters_narration_hash,
     _compute_narration_hash,
     _compute_tts_content_hash,
@@ -229,6 +231,66 @@ def test_compute_chapters_narration_hash_ignores_visual_changes():
     doc2 = ChapterDocument(**modified)
     h2 = _compute_chapters_narration_hash(doc2)
     assert h1 == h2
+
+
+def test_clean_voice_history_reduces_retry_ceiling(tmp_path):
+    manifest_path = tmp_path / "outputs" / "ep" / "tts" / "manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "metadata": {
+                            "speaker_parts": [
+                                {
+                                    "voice_id": "clean",
+                                    "chunks": 12,
+                                    "takes": 12,
+                                    "noise_floor_db": -75.0,
+                                    "noise_floor_limit_db": -55.0,
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(outputs_dir=str(tmp_path / "outputs"), _env_file=None)
+
+    assert _adaptive_retry_limit(settings, "clean", 3, enabled=True) == 2
+
+
+def test_noisy_voice_keeps_configured_retry_ceiling(tmp_path):
+    manifest_path = tmp_path / "outputs" / "ep" / "tts" / "manifest.json"
+    manifest_path.parent.mkdir(parents=True)
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "segments": [
+                    {
+                        "metadata": {
+                            "speaker_parts": [
+                                {
+                                    "voice_id": "noisy",
+                                    "chunks": 10,
+                                    "takes": 14,
+                                    "noise_floor_db": -45.0,
+                                    "noise_floor_limit_db": -55.0,
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    settings = Settings(outputs_dir=str(tmp_path / "outputs"), _env_file=None)
+
+    assert _adaptive_retry_limit(settings, "noisy", 3, enabled=True) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -478,6 +540,9 @@ def test_generate_tts_happy_path(mock_service_cls, db_session, tmp_path):
         .all()
     )
     assert len(assets) == 2
+    assert manifest["quality_by_voice"]["voice_123"]["chunks"] == 2
+    assert manifest["quality_by_voice"]["voice_123"]["takes"] == 2
+    assert manifest["quality_by_voice"]["voice_123"]["retries"] == 0
 
 
 @patch("btcedu.services.elevenlabs_service.ElevenLabsService")
@@ -687,6 +752,44 @@ def test_generate_tts_cost_limit(mock_service_cls, db_session, tmp_path):
     with pytest.raises(PipelineError) as exc_info:
         generate_tts(db_session, episode.episode_id, settings)
     assert exc_info.value.category == ErrorCategory.PERMANENT_COST_LIMIT
+    db_session.refresh(episode)
+    assert episode.status == EpisodeStatus.COST_LIMIT
+
+
+def test_tts_stage_budget_counts_each_successful_provider_call(db_session, tmp_path):
+    episode = _setup_episode(db_session, tmp_path)
+    settings = _make_settings(tmp_path)
+    from btcedu.services.elevenlabs_service import TTSResponse
+    from btcedu.services.errors import PipelineError
+
+    resolved = _resolve_tts_config(episode, settings)
+    resolved["max_cost_usd"] = 0.015
+
+    class BillingService:
+        def __init__(self, *, before_api_call, after_api_call, **_kwargs):
+            self.before_api_call = before_api_call
+            self.after_api_call = after_api_call
+
+        def synthesize(self, request):
+            self.before_api_call(0, len(request.text))
+            self.after_api_call(len(request.text))
+            return TTSResponse(
+                audio_bytes=b"audio",
+                duration_seconds=3.0,
+                sample_rate=44100,
+                model=request.model,
+                voice_id=request.voice_id,
+                character_count=len(request.text),
+                cost_usd=0.30 * len(request.text) / 1000,
+            )
+
+    with (
+        patch("btcedu.core.tts._resolve_tts_config", return_value=resolved),
+        patch("btcedu.services.elevenlabs_service.ElevenLabsService", BillingService),
+        pytest.raises(PipelineError, match="TTS credit budget exceeded"),
+    ):
+        generate_tts(db_session, episode.episode_id, settings)
+
     db_session.refresh(episode)
     assert episode.status == EpisodeStatus.COST_LIMIT
 

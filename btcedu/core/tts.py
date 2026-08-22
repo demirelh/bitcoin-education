@@ -164,22 +164,58 @@ def generate_tts(
         _style = tts_config["style"]
         _speed = tts_config["speed"]
         _role_voices = tts_config.get("voices") or {}
+        _adaptive_retries = bool(tts_config["adaptive_retries"])
+        _default_retry_limit = _adaptive_retry_limit(
+            settings,
+            _voice_id,
+            tts_config["noise_retries"],
+            enabled=_adaptive_retries,
+        )
+        for voice in _role_voices.values():
+            voice["effective_noise_retries"] = _adaptive_retry_limit(
+                settings,
+                str(voice.get("voice_id") or _voice_id),
+                int(voice.get("noise_retries", tts_config["noise_retries"])),
+                enabled=_adaptive_retries,
+            )
+        tts_budget = min(
+            float(tts_config["max_cost_usd"]),
+            float(settings.max_episode_cost_usd),
+        )
+        tts_spend = 0.0
         total_cost = 0.0
 
         def _before_tts_api_call(sent_chars: int, chunk_chars: int) -> None:
             from btcedu.services.elevenlabs_service import _compute_cost
             from btcedu.services.errors import ErrorCategory, PipelineError
 
+            del sent_chars
             episode_total_cost = _get_episode_total_cost(session, episode_id)
-            projected = episode_total_cost + total_cost + _compute_cost(sent_chars + chunk_chars)
-            if projected > settings.max_episode_cost_usd:
+            next_cost = _compute_cost(chunk_chars)
+            projected_tts = tts_spend + next_cost
+            if projected_tts > tts_budget:
                 error = PipelineError(
-                    f"Episode cost limit exceeded before TTS API call: "
-                    f"${projected:.4f} > ${settings.max_episode_cost_usd:.4f}",
+                    f"TTS credit budget exceeded before API call: "
+                    f"${projected_tts:.4f} > ${tts_budget:.4f}",
                     ErrorCategory.PERMANENT_COST_LIMIT,
                 )
-                error.cost_usd = _compute_cost(sent_chars)
+                error.cost_usd = tts_spend
                 raise error
+            projected_episode = episode_total_cost + projected_tts
+            if projected_episode > settings.max_episode_cost_usd:
+                error = PipelineError(
+                    f"Episode cost limit exceeded before TTS API call: "
+                    f"${projected_episode:.4f} > ${settings.max_episode_cost_usd:.4f}",
+                    ErrorCategory.PERMANENT_COST_LIMIT,
+                )
+                error.cost_usd = tts_spend
+                raise error
+
+        def _after_tts_api_call(billed_chars: int) -> None:
+            from btcedu.services.elevenlabs_service import _compute_cost
+
+            nonlocal tts_spend
+            tts_spend += _compute_cost(billed_chars)
 
         # Create TTS service (profile model is honoured, not the global default)
         from btcedu.services.elevenlabs_service import ElevenLabsService
@@ -194,6 +230,7 @@ def generate_tts(
             default_voice_id=_voice_id,
             default_model=_model,
             before_api_call=_before_tts_api_call,
+            after_api_call=_after_tts_api_call,
             fallback_api_keys=_reserve_keys,
         )
 
@@ -342,6 +379,9 @@ def generate_tts(
                         "style": _style,
                         "speed": _speed,
                         "use_speaker_boost": tts_config["use_speaker_boost"],
+                        "noise_retries": tts_config["noise_retries"],
+                        "effective_noise_retries": _default_retry_limit,
+                        "noise_floor_max_db": tts_config["noise_floor_max_db"],
                         "voice_id_configured": bool(_voice_id),
                     },
                     lexicon=lexicon,
@@ -363,6 +403,8 @@ def generate_tts(
                     use_speaker_boost=tts_config["use_speaker_boost"],
                     synthesis_text=synthesis_text,
                     text_hash=text_hash,
+                    max_attempts=_default_retry_limit,
+                    noise_floor_max_db=tts_config["noise_floor_max_db"],
                 )
             audio_entries.append(entry)
             total_cost += entry.cost_usd
@@ -374,6 +416,7 @@ def generate_tts(
 
         order_by_id = {chapter.chapter_id: chapter.order for chapter in chapters_doc.chapters}
         audio_entries.sort(key=lambda entry: order_by_id.get(entry.chapter_id, 10**9))
+        quality_by_voice = _quality_summary(audio_entries)
 
         # Write manifest
         manifest_data = {
@@ -387,6 +430,9 @@ def generate_tts(
             "total_duration_seconds": total_duration,
             "total_characters": total_characters,
             "total_cost_usd": total_cost,
+            "provider_spend_usd": round(tts_spend, 4),
+            "tts_budget_usd": tts_budget,
+            "quality_by_voice": quality_by_voice,
             "segments": [asdict(entry) for entry in audio_entries],
         }
         manifest_path.write_text(
@@ -411,6 +457,8 @@ def generate_tts(
             "total_duration_seconds": total_duration,
             "total_characters": total_characters,
             "cost_usd": total_cost,
+            "provider_spend_usd": round(tts_spend, 4),
+            "tts_budget_usd": tts_budget,
         }
         provenance_path.parent.mkdir(parents=True, exist_ok=True)
         provenance_path.write_text(
@@ -477,7 +525,11 @@ def generate_tts(
         pipeline_run.status = RunStatus.FAILED.value
         pipeline_run.completed_at = _utcnow()
         pipeline_run.error_message = str(e)
-        pipeline_run.estimated_cost_usd = total_cost + float(getattr(e, "cost_usd", 0.0))
+        pipeline_run.estimated_cost_usd = max(
+            total_cost,
+            tts_spend,
+            float(getattr(e, "cost_usd", 0.0)),
+        )
         if isinstance(e, PipelineError) and e.category == ErrorCategory.PERMANENT_COST_LIMIT:
             episode.status = EpisodeStatus.COST_LIMIT
         episode.error_message = str(e)
@@ -541,6 +593,10 @@ def _resolve_tts_config(episode, settings: Settings) -> dict:
         "use_speaker_boost": cfg.get("use_speaker_boost", settings.elevenlabs_use_speaker_boost),
         "pronunciation_lexicon": {str(k): str(v) for k, v in lexicon.items()},
         "speech_normalization": bool(cfg.get("speech_normalization", True)),
+        "noise_retries": int(cfg.get("noise_retries", _NOISE_MAX_TAKES)),
+        "noise_floor_max_db": float(cfg.get("noise_floor_max_db", _NOISE_FLOOR_WARN_DB)),
+        "adaptive_retries": bool(cfg.get("adaptive_retries", True)),
+        "max_cost_usd": float(cfg.get("max_cost_usd", settings.max_episode_cost_usd)),
         "voices": _resolve_role_voices(cfg, settings),
     }
 
@@ -572,6 +628,10 @@ def _resolve_role_voices(cfg: dict, settings: Settings) -> dict:
             "use_speaker_boost": raw.get(
                 "use_speaker_boost",
                 cfg.get("use_speaker_boost", settings.elevenlabs_use_speaker_boost),
+            ),
+            "noise_retries": int(raw.get("noise_retries", cfg.get("noise_retries", 3))),
+            "noise_floor_max_db": float(
+                raw.get("noise_floor_max_db", cfg.get("noise_floor_max_db", -55.0))
             ),
             "voice_id_configured": bool(raw.get("voice_id")),
         }
@@ -1082,6 +1142,119 @@ def _tts_chunks(text: str) -> list[str]:
     return _chunk_text(text, _TTS_MAX_REQUEST_CHARS)
 
 
+def _voice_quality_history(settings: Settings, voice_id: str, limit: int = 20) -> dict:
+    """Read recent manifests and summarize paid calls for one voice."""
+    manifests = sorted(
+        Path(settings.outputs_dir).glob("*/tts/manifest.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )[:limit]
+    stats = {"chunks": 0, "takes": 0, "noisy_accepts": 0}
+    for manifest_path in manifests:
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for segment in manifest.get("segments", []):
+            metadata = segment.get("metadata") or {}
+            parts = metadata.get("speaker_parts")
+            if not isinstance(parts, list):
+                parts = [
+                    {
+                        "voice_id": segment.get("voice_id"),
+                        "chunks": metadata.get("chunks", 1),
+                        "takes": metadata.get("takes", 1),
+                        "noise_floor_db": metadata.get("noise_floor_db"),
+                        "noise_floor_limit_db": metadata.get(
+                            "noise_floor_limit_db", _NOISE_FLOOR_WARN_DB
+                        ),
+                    }
+                ]
+            for part in parts:
+                if str(part.get("voice_id") or "") != voice_id:
+                    continue
+                chunks = max(int(part.get("chunks") or 1), 1)
+                takes = max(int(part.get("takes") or chunks), chunks)
+                stats["chunks"] += chunks
+                stats["takes"] += takes
+                floor = part.get("noise_floor_db")
+                limit_db = part.get("noise_floor_limit_db", _NOISE_FLOOR_WARN_DB)
+                if floor is not None and float(floor) > float(limit_db):
+                    stats["noisy_accepts"] += 1
+    return stats
+
+
+def _adaptive_retry_limit(
+    settings: Settings,
+    voice_id: str,
+    configured_limit: int,
+    *,
+    enabled: bool,
+) -> int:
+    """Use one fewer attempt for voices with a consistently clean history."""
+    configured_limit = max(int(configured_limit), 1)
+    if not enabled or configured_limit <= 2:
+        return configured_limit
+    stats = _voice_quality_history(settings, voice_id)
+    if stats["chunks"] < 10:
+        return configured_limit
+    retries = stats["takes"] - stats["chunks"]
+    retry_rate = retries / stats["chunks"]
+    if retry_rate <= 0.05 and stats["noisy_accepts"] == 0:
+        return configured_limit - 1
+    return configured_limit
+
+
+def _quality_summary(entries: list[AudioEntry]) -> dict[str, dict]:
+    """Aggregate manifest quality metadata by provider voice."""
+    summary: dict[str, dict] = {}
+    for entry in entries:
+        metadata = entry.metadata or {}
+        parts = metadata.get("speaker_parts")
+        if not isinstance(parts, list):
+            parts = [
+                {
+                    "voice_id": entry.voice_id,
+                    "characters": entry.text_length,
+                    "chunks": metadata.get("chunks", 1),
+                    "takes": metadata.get("takes", 1),
+                    "noise_floor_db": metadata.get("noise_floor_db"),
+                    "noise_floor_limit_db": metadata.get(
+                        "noise_floor_limit_db", _NOISE_FLOOR_WARN_DB
+                    ),
+                    "cost_usd": entry.cost_usd,
+                }
+            ]
+        for part in parts:
+            voice_id = str(part.get("voice_id") or "unknown")
+            voice = summary.setdefault(
+                voice_id,
+                {
+                    "characters": 0,
+                    "chunks": 0,
+                    "takes": 0,
+                    "retries": 0,
+                    "noisy_accepts": 0,
+                    "cost_usd": 0.0,
+                },
+            )
+            chunks = max(int(part.get("chunks") or 1), 1)
+            takes = max(int(part.get("takes") or chunks), chunks)
+            voice["characters"] += int(part.get("characters") or 0)
+            voice["chunks"] += chunks
+            voice["takes"] += takes
+            voice["retries"] += takes - chunks
+            voice["cost_usd"] += float(part.get("cost_usd") or 0.0)
+            floor = part.get("noise_floor_db")
+            limit_db = part.get("noise_floor_limit_db", _NOISE_FLOOR_WARN_DB)
+            if floor is not None and float(floor) > float(limit_db):
+                voice["noisy_accepts"] += 1
+    for voice in summary.values():
+        voice["cost_usd"] = round(voice["cost_usd"], 4)
+        voice["retry_rate"] = round(voice["retries"] / max(voice["chunks"], 1), 4)
+    return summary
+
+
 def _synthesize_chunked_clean_take(
     tts_service,
     request,
@@ -1367,7 +1540,12 @@ def _generate_multi_voice_audio(
                     speed=voice.get("speed"),
                 ),
                 part_path,
-                max_attempts=int(voice.get("noise_retries", _NOISE_MAX_TAKES)),
+                max_attempts=int(
+                    voice.get(
+                        "effective_noise_retries",
+                        voice.get("noise_retries", _NOISE_MAX_TAKES),
+                    )
+                ),
                 noise_floor_max_db=float(voice.get("noise_floor_max_db", _NOISE_FLOOR_WARN_DB)),
                 label=f"Chapter {chapter.chapter_id} part {index:02d} ({role})",
                 stutter_model=_stutter_model(settings),
@@ -1395,8 +1573,18 @@ def _generate_multi_voice_audio(
                 "duration_seconds": round(duration, 3),
                 "file": part_path.name,
                 "noise_floor_db": None if noise_floor is None else round(noise_floor, 1),
+                "noise_floor_limit_db": float(
+                    voice.get("noise_floor_max_db", _NOISE_FLOOR_WARN_DB)
+                ),
                 "takes": takes,
                 "chunks": len(_tts_chunks(spoken)),
+                "retry_limit": int(
+                    voice.get(
+                        "effective_noise_retries",
+                        voice.get("noise_retries", _NOISE_MAX_TAKES),
+                    )
+                ),
+                "cost_usd": round(cost, 4),
             }
         )
         total_cost += cost
@@ -1465,6 +1653,8 @@ def _generate_single_audio(
     use_speaker_boost: bool | None = None,
     synthesis_text: str | None = None,
     text_hash: str | None = None,
+    max_attempts: int = _NOISE_MAX_TAKES,
+    noise_floor_max_db: float = _NOISE_FLOOR_WARN_DB,
 ) -> AudioEntry:
     """Generate audio for a single chapter.
 
@@ -1534,8 +1724,8 @@ def _generate_single_audio(
         tts_service,
         request,
         mp3_path,
-        max_attempts=_NOISE_MAX_TAKES,
-        noise_floor_max_db=_NOISE_FLOOR_WARN_DB,
+        max_attempts=max_attempts,
+        noise_floor_max_db=noise_floor_max_db,
         label=f"Chapter {chapter.chapter_id}",
         stutter_model=_stutter_model(settings),
     )
@@ -1567,8 +1757,10 @@ def _generate_single_audio(
             "generated_at": _utcnow().isoformat(),
             "lexicon_applied": lexicon_applied,
             "noise_floor_db": None if noise_floor is None else round(noise_floor, 1),
+            "noise_floor_limit_db": noise_floor_max_db,
             "takes": takes,
             "chunks": len(_tts_chunks(spoken_text)),
+            "retry_limit": max_attempts,
             "word_timings": _word_timings_metadata(response),
         },
     )

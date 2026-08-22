@@ -179,19 +179,25 @@ stage_config:
         # put the stress, which is what made some evenings sound wrong.
         stability: 0.65
         similarity_boost: 0.75
-        style: 0.2
+        style: 0.0
         speed: 0.98
       reporter_male:
         display_name: "Cavit"
         stability: 0.6
         similarity_boost: 0.75
-        style: 0.25
+        style: 0.0
         speed: 1.0
         voice_id: "Q2IX97JeHBY3vNGzgM5s"
     stability: 0.6
     similarity_boost: 0.75
-    style: 0.25
+    style: 0.0
     speed: 1.0
+    # Every successful provider call is charged against this stage-local cap,
+    # including quality retries. The global episode cap still applies too.
+    max_cost_usd: 6.0
+    noise_retries: 3
+    noise_floor_max_db: -55.0
+    adaptive_retries: true
     # eleven_turbo_v2_5 is unreliable on Turkish: on the fixed opening line it
     # garbled "günün öne çıkan" into "gününün ..." (and worse) in 3 of 6 takes,
     # and swallowed sentence openings. The same text on eleven_multilingual_v2

@@ -3787,4 +3787,115 @@ async function setRenderMode(useGithub) {
   }
 }
 
+// ============================================================
+// Failover mode switch (control-plane driven)
+// ============================================================
+
+function _failoverModeNotify(message, ok) {
+  if (typeof toast === "function") {
+    toast(message, ok);
+  } else if (!ok) {
+    console.warn(message);
+  }
+}
+
+function _formatFailoverOwner(role, node) {
+  if (!role) return "none";
+  return node ? `${role}/${node}` : role;
+}
+
+function _relativeHeartbeat(ts) {
+  if (!ts) return "never";
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(ts).getTime()) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.round(seconds / 60)}m ago`;
+  return `${Math.round(seconds / 3600)}h ago`;
+}
+
+function _applyFailoverUI(data) {
+  const box = document.getElementById("failover-mode");
+  const select = document.getElementById("failover-mode-select");
+  const label = document.getElementById("failover-mode-label");
+  if (!box || !select || !label) return;
+
+  if (!data || data.enabled === false) {
+    box.classList.add("is-disabled");
+    select.disabled = true;
+    label.textContent = "disabled";
+    box.title = "Failover ist deaktiviert.";
+    return;
+  }
+
+  if (data.error) {
+    box.classList.add("is-unavailable");
+    select.disabled = true;
+    label.textContent = "error";
+    box.title = data.error;
+    return;
+  }
+
+  box.classList.remove("is-disabled", "is-unavailable");
+  select.value = data.mode;
+  select.disabled = !data.operator_configured;
+  label.textContent = _formatFailoverOwner(data.effective_owner_role, data.effective_owner_node);
+  box.classList.toggle("is-primary", data.effective_owner_role === "primary");
+  box.classList.toggle("is-secondary", data.effective_owner_role === "secondary");
+  box.classList.toggle("is-paused", data.mode === "paused");
+
+  const nodeLines = (data.nodes || []).map((node) => {
+    const health = node.healthy ? "healthy" : "unhealthy";
+    const eligible = node.eligible ? "eligible" : "standby";
+    return `${node.role}/${node.node_id}: ${health}, ${eligible}, heartbeat ${_relativeHeartbeat(node.last_heartbeat_at)}`;
+  });
+  const leaseLines = (data.active_leases || []).map((lease) =>
+    `${lease.resource} -> ${lease.role}/${lease.node_id} until ${lease.expires_at}`
+  );
+  box.title = [
+    `Mode: ${data.mode}`,
+    `Owner: ${_formatFailoverOwner(data.effective_owner_role, data.effective_owner_node)}`,
+    nodeLines.length ? `Nodes:\n${nodeLines.join("\n")}` : "Nodes: none",
+    leaseLines.length ? `Leases:\n${leaseLines.join("\n")}` : "Leases: none",
+    data.operator_configured ? "" : "Operator token missing: read-only status",
+  ].filter(Boolean).join("\n\n");
+}
+
+async function loadFailoverStatus() {
+  try {
+    const response = await fetch("api/failover/status");
+    const data = await response.json();
+    _applyFailoverUI(response.ok ? data : { enabled: true, error: data.error || "HTTP error" });
+  } catch (err) {
+    _applyFailoverUI({ enabled: true, error: err.message || "Failover status unavailable" });
+  }
+}
+
+async function setFailoverMode(mode) {
+  const select = document.getElementById("failover-mode-select");
+  if (select) select.disabled = true;
+  try {
+    const response = await fetch("api/failover/mode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode }),
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      _failoverModeNotify(data.error || "Failover mode could not be updated", false);
+      await loadFailoverStatus();
+      return;
+    }
+    _applyFailoverUI(data);
+    _failoverModeNotify(`Failover mode set to ${mode}`, true);
+  } catch (err) {
+    _failoverModeNotify("Failover mode could not be updated", false);
+    await loadFailoverStatus();
+  } finally {
+    const current = document.getElementById("failover-mode-select");
+    if (current && !current.disabled) return;
+    setTimeout(loadFailoverStatus, 0);
+  }
+}
+
 document.addEventListener("DOMContentLoaded", loadRenderMode);
+document.addEventListener("DOMContentLoaded", loadFailoverStatus);
+setInterval(loadFailoverStatus, 60 * 1000);

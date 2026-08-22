@@ -581,8 +581,9 @@ def translation_qa(
 @click.pass_context
 def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: str | None) -> None:
     """Run the full pipeline for specific or all pending episodes."""
-    from btcedu.core.pipeline import run_episode_pipeline, write_report
+    from btcedu.core.pipeline import run_episode_pipeline_coordinated, write_report
     from btcedu.core.runlock import PipelineBusyError, pipeline_lock
+    from btcedu.services.failover_service import FailoverExecutionRejected
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
@@ -631,7 +632,13 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: 
             with pipeline_lock(settings):
                 for ep in episodes:
                     click.echo(f"Processing: {ep.episode_id} ({ep.title})")
-                    report = run_episode_pipeline(session, ep, settings, force=force)
+                    try:
+                        report = run_episode_pipeline_coordinated(
+                            session, ep, settings, force=force
+                        )
+                    except FailoverExecutionRejected as exc:
+                        click.echo(f"  -> SKIP: {exc}")
+                        continue
                     write_report(report, settings.reports_dir)
 
                     for sr in report.stages:
@@ -652,6 +659,134 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: 
             sys.exit(1)
     finally:
         session.close()
+
+
+@cli.command(name="failover-heartbeat")
+@click.option("--json-output", is_flag=True, default=False, help="Print the raw JSON response.")
+@click.pass_context
+def failover_heartbeat_cmd(ctx: click.Context, json_output: bool) -> None:
+    """Send one node heartbeat to the external failover control plane."""
+    from btcedu.services.failover_service import (
+        FailoverControlPlaneClient,
+        build_node_health,
+        failover_boot_id,
+        load_failover_client_config,
+    )
+    from btcedu.version import get_git_commit
+
+    settings = ctx.obj["settings"]
+    if load_failover_client_config(settings) is None:
+        click.echo("Failover disabled.")
+        return
+
+    session = ctx.obj["session_factory"]()
+    try:
+        client = FailoverControlPlaneClient.from_settings(settings)
+        result = client.heartbeat(
+            boot_id=failover_boot_id(),
+            git_commit=get_git_commit(),
+            health=build_node_health(settings, session),
+        )
+    finally:
+        session.close()
+
+    payload = {
+        "mode": result.mode.value,
+        "effective_owner_role": (
+            result.effective_owner_role.value if result.effective_owner_role else None
+        ),
+        "effective_owner_node": result.effective_owner_node,
+        "eligible": result.eligible,
+    }
+    if json_output:
+        click.echo(json.dumps(payload, ensure_ascii=False))
+        return
+    owner = payload["effective_owner_role"] or "none"
+    if payload["effective_owner_node"]:
+        owner = f"{owner}/{payload['effective_owner_node']}"
+    click.echo(
+        f"mode={payload['mode']} owner={owner} eligible={'yes' if payload['eligible'] else 'no'}"
+    )
+
+
+@cli.command(name="failover-reconcile")
+@click.option(
+    "--resource",
+    required=True,
+    help="Lease resource, e.g. pipeline:profile/edition/date.",
+)
+@click.option(
+    "--resolution",
+    required=True,
+    type=click.Choice(["retry", "completed"], case_sensitive=False),
+    help="Operator resolution to record.",
+)
+@click.option(
+    "--status",
+    default=None,
+    help=(
+        "Optional reconciled status override. Defaults to failed/publish_failed for retry and "
+        "completed/published for completed."
+    ),
+)
+@click.option(
+    "--youtube-id",
+    default=None,
+    help="YouTube video id required when reconciling a published result.",
+)
+@click.option("--json-output", is_flag=True, default=False, help="Print the raw JSON response.")
+@click.pass_context
+def failover_reconcile_cmd(
+    ctx: click.Context,
+    resource: str,
+    resolution: str,
+    status: str | None,
+    youtube_id: str | None,
+    json_output: bool,
+) -> None:
+    """Reconcile an uncertain failover broadcast status.
+
+    Examples:
+
+        btcedu failover-reconcile --resource pipeline:tagesschau_tr/2000/2026-08-22 \
+            --resolution retry
+        btcedu failover-reconcile --resource publish:tagesschau_tr/2000/2026-08-22 \
+            --resolution completed --status published --youtube-id YT123
+    """
+    from btcedu.services.failover_service import (
+        FailoverControlPlaneClient,
+        FailoverError,
+        failover_enabled,
+        load_failover_operator_config,
+    )
+
+    settings = ctx.obj["settings"]
+    if not failover_enabled(settings):
+        raise click.ClickException("Failover is disabled")
+    if load_failover_operator_config(settings) is None:
+        raise click.ClickException("No failover operator token is configured")
+
+    try:
+        payload = FailoverControlPlaneClient.operator_from_settings(settings).reconcile_broadcast(
+            resource=resource,
+            resolution=resolution,
+            status=status,
+            youtube_id=youtube_id,
+        )
+    except FailoverError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if json_output:
+        click.echo(json.dumps(payload, ensure_ascii=False))
+        return
+
+    summary = (
+        f"resource={payload.get('resource')} resolution={resolution} "
+        f"status={payload.get('status')} fencing={payload.get('fencing_token')}"
+    )
+    if payload.get("youtube_id"):
+        summary = f"{summary} youtube_id={payload['youtube_id']}"
+    click.echo(summary)
 
 
 @cli.command(name="regression-run")

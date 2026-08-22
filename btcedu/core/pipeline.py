@@ -1616,6 +1616,7 @@ def run_episode_pipeline(
     settings: Settings,
     force: bool = False,
     stage_callback: Callable[[str], None] | None = None,
+    lease_guard=None,
 ) -> PipelineReport:
     """Run the full pipeline for a single episode.
 
@@ -1659,6 +1660,18 @@ def run_episode_pipeline(
 
     stages = _get_stages(settings, episode)
     for stage_name, required_status in stages:
+        if lease_guard is not None:
+            try:
+                lease_guard.ensure_active()
+            except Exception as exc:  # noqa: BLE001
+                report.stages.append(StageResult(stage_name, "failed", 0.0, error=str(exc)))
+                report.error = f"Stage '{stage_name}' failed: {exc}"
+                session.refresh(episode)
+                episode.error_message = report.error
+                episode.retry_count += 1
+                session.commit()
+                break
+
         # Refresh episode status from DB
         session.refresh(episode)
 
@@ -1809,6 +1822,46 @@ def run_episode_pipeline(
     return report
 
 
+def run_episode_pipeline_coordinated(
+    session: Session,
+    episode: Episode,
+    settings: Settings,
+    force: bool = False,
+    stage_callback: Callable[[str], None] | None = None,
+) -> PipelineReport:
+    """Run one episode behind the external failover lease when enabled."""
+    from btcedu.failover.coordination import acquire_pipeline_lease_guard
+
+    guard = acquire_pipeline_lease_guard(session, episode, settings)
+    try:
+        report = run_episode_pipeline(
+            session,
+            episode,
+            settings,
+            force=force,
+            stage_callback=stage_callback,
+            lease_guard=guard,
+        )
+        session.refresh(episode)
+        completion_status = "failed"
+        if report.success or getattr(episode, "youtube_video_id", None):
+            completion_status = episode.status.value
+        try:
+            guard.report_completion(
+                status=completion_status,
+                youtube_id=getattr(episode, "youtube_video_id", None),
+            )
+        except Exception:
+            logger.warning(
+                "Could not report failover completion for %s",
+                episode.episode_id,
+                exc_info=True,
+            )
+        return report
+    finally:
+        guard.close()
+
+
 def run_pending(
     session: Session,
     settings: Settings,
@@ -1901,7 +1954,15 @@ def _run_pending_locked(
 
     reports = []
     for ep in episodes:
-        report = run_episode_pipeline(session, ep, settings)
+        try:
+            report = run_episode_pipeline_coordinated(session, ep, settings)
+        except Exception as exc:
+            from btcedu.services.failover_service import FailoverExecutionRejected
+
+            if not isinstance(exc, FailoverExecutionRejected):
+                raise
+            logger.info("Skipping %s: %s", ep.episode_id, exc)
+            continue
         reports.append(report)
 
     return reports
@@ -2013,7 +2074,15 @@ def _run_latest_locked(
         logger.info("No pending episodes after detection.")
         return None
 
-    return run_episode_pipeline(session, episode, settings)
+    try:
+        return run_episode_pipeline_coordinated(session, episode, settings)
+    except Exception as exc:
+        from btcedu.services.failover_service import FailoverExecutionRejected
+
+        if not isinstance(exc, FailoverExecutionRejected):
+            raise
+        logger.info("run_latest skipped %s: %s", episode.episode_id, exc)
+        return None
 
 
 def retry_episode(
@@ -2099,7 +2168,12 @@ def retry_episode(
     episode.error_message = None
     session.commit()
 
-    return run_episode_pipeline(session, episode, settings, stage_callback=stage_callback)
+    return run_episode_pipeline_coordinated(
+        session,
+        episode,
+        settings,
+        stage_callback=stage_callback,
+    )
 
 
 def write_report(report: PipelineReport, reports_dir: str) -> str:

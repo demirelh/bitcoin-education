@@ -157,6 +157,12 @@ def detect_episodes(
     Returns:
         DetectResult with counts.
     """
+    from btcedu.services.failover_service import failover_feed_detection_enabled
+
+    if not failover_feed_detection_enabled(settings):
+        logger.info("Feed detection skipped on the secondary failover node.")
+        return DetectResult(total=session.query(Episode).count())
+
     feed_url = feed_url or settings.rss_url
     if not feed_url:
         raise ValueError(
@@ -412,6 +418,33 @@ def _report_incomplete_recording(settings: Settings, recording) -> None:
         logger.warning("could not send the incomplete-recording notification", exc_info=True)
 
 
+def _recording_allowed_for_node(settings: Settings, recording) -> tuple[bool, str]:
+    """Whether a local recording may be ingested on this node role."""
+    if not getattr(settings, "failover_enabled", False):
+        return True, ""
+    if str(getattr(settings, "failover_node_role", "") or "").strip().lower() != "secondary":
+        return True, ""
+    if recording.node_role != "secondary":
+        return False, "metadata.node_role must be 'secondary'"
+    if recording.source_kind not in {"vod", "mediathek"}:
+        return False, "metadata.source_kind must identify a Mediathek VOD"
+    provider = str(recording.metadata.get("provider") or "").strip().lower()
+    provenance = recording.provenance
+    provenance_source = (
+        str(provenance.get("source") or "").strip().lower()
+        if isinstance(provenance, dict)
+        else ""
+    )
+    if provider != "ard_mediathek" and provenance_source not in {
+        "ard_mediathek",
+        "ard-mediathek",
+    }:
+        return False, "metadata must identify ard_mediathek as the VOD source"
+    if provenance in (None, "", {}, []):
+        return False, "metadata.provenance is required on the secondary node"
+    return True, ""
+
+
 def detect_local_recordings(
     session: Session,
     settings: Settings,
@@ -447,6 +480,15 @@ def detect_local_recordings(
         # the feed fallback exists precisely for this case.
         logger.warning("cannot scan local recorder directory", exc_info=True)
         return DetectResult()
+
+    filtered_recordings = []
+    for recording in recordings:
+        allowed, reason = _recording_allowed_for_node(settings, recording)
+        if allowed:
+            filtered_recordings.append(recording)
+        else:
+            logger.warning("Skipping local recording %s: %s", recording.slug, reason)
+    recordings = filtered_recordings
 
     episodes = [rec.to_episode_info() for rec in recordings]
     result = DetectResult(found=len(episodes))
@@ -766,6 +808,7 @@ def _ingest_local_recording(
 
     from btcedu.services.local_recorder_service import (
         extract_audio,
+        metadata_for_video,
         resolve_local_video,
     )
 
@@ -778,6 +821,7 @@ def _ingest_local_recording(
         )
 
     source_video = resolve_local_video(episode.url, base_dir)
+    recorder_metadata = metadata_for_video(source_video)
     out_path = Path(output_dir)
     out_path.mkdir(parents=True, exist_ok=True)
 
@@ -807,6 +851,9 @@ def _ingest_local_recording(
                 "video_path": str(video_path),
                 "source": "local_recorder",
                 "source_video": str(source_video),
+                "node_role": recorder_metadata.get("node_role"),
+                "source_kind": recorder_metadata.get("source_kind"),
+                "provenance": recorder_metadata.get("provenance"),
                 "downloaded_at": datetime.now(UTC).isoformat(),
             },
             indent=2,

@@ -10,7 +10,21 @@ Each service uses a Protocol for swappable implementations:
 ## Services
 
 - `claude_service.py` — `call_claude()` -> `ClaudeResponse(text, input_tokens, output_tokens, cost_usd)`. Providers: `anthropic`, `openai`, `github_models`, `copilot_cli`. Also: `compute_prompt_hash()`, `calculate_cost()`
-- `elevenlabs_service.py` — raw HTTP (not SDK). Retry logic, text chunking for long narrations.
+- `elevenlabs_service.py` — raw HTTP (not SDK). Provider retries, quota-only
+  account fallback, timestamp/alignment responses and callbacks that charge
+  every successful billed request. The 750-character splitting and quality
+  retries live in `core/tts.py`.
+- `failover_service.py` — typed node/operator client for the external control
+  plane; reads bearer tokens from settings or credential files, sends
+  heartbeats, manages leases/completions/reconciliation and fails closed when
+  failover is enabled
+- `local_recorder_service.py` — reads only atomically committed `.DONE`
+  recordings, validates completion/provenance and adapts local MP4s to
+  `EpisodeInfo`
+- `github_actions_service.py` — GitHub Actions workflow dispatch/artifact client
+  used by remote rendering
+- `image_provider_factory.py` plus `flux_service.py` / `ideogram_service.py` —
+  profile-owned generative image routing
 - `image_gen_service.py` — DALL-E 3 via openai SDK
 - `pexels_service.py` — Pexels stock photo/video search via raw HTTP
 - `meteo_service.py` — Open-Meteo / DWD ICON forecasts via urllib (`OpenMeteoService`, `MeteoService` Protocol). One multi-location request, never raises: failures degrade to an empty list. `_request()` is the seam patched in tests.
@@ -26,12 +40,16 @@ Each service uses a Protocol for swappable implementations:
 ## Conventions
 
 - Raw HTTP (`requests`) for ElevenLabs, Pexels, and Gemini (no SDKs); `urllib` for Open-Meteo and the WhatsApp notifier
-- All services are stateless (instantiated per-call or with minimal config)
+- Services are stateless or hold only minimal per-run state. The ElevenLabs
+  account switch is intentionally sticky for one service instance after proven
+  quota exhaustion.
 - Tests mock all external APIs — no real API calls ever
+- Never log bearer tokens, API keys, rejected credentials or credential-file
+  contents; use the repository redaction helpers
 
 <!--
 Documentation sync
-Baseline: 1d7291b
-Synced through: HEAD
-Date: 2026-08-04
+Baseline: d1b4676
+Synced through: current working tree
+Date: 2026-08-22
 -->

@@ -3,10 +3,10 @@
 ## Architecture
 
 - `app.py` — Flask app factory, registers `api_bp` under `/api`, serves the page routes (`/`, `/whatsapp`)
-- `api.py` — 80+ REST endpoints under `/api` prefix (136KB)
+- `api.py` — REST endpoints under `/api` prefix (~165KB)
 - `jobs.py` — `JobManager` for background pipeline execution (thread-based)
-- `static/app.js` — JavaScript SPA (vanilla JS, no framework), 140KB
-- `static/styles.css` — styling, 64KB
+- `static/app.js` — JavaScript SPA (vanilla JS, no framework), ~157KB
+- `static/styles.css` — styling, ~66KB
 - `templates/index.html` — HTML shell; `templates/whatsapp.html` — WhatsApp pairing page
 
 ## Key API Endpoints
@@ -28,11 +28,18 @@ Weather: `GET /api/episodes/<id>/weather` (summary), `.../weather/<chapter_id>/d
 `POST .../weather/<chapter_id>/rerender`, `POST .../weather/<chapter_id>/override`,
 `GET .../weather/overrides`
 Intro audio: `GET/POST/DELETE /api/intro-audio`, `GET /api/intro-audio/file` (Tagesschau intro MP3, max 20 MB)
+Render mode: `GET/POST /api/render-mode` (local `app_settings` override)
+Failover: `GET /api/failover/status`, `POST /api/failover/mode` (proxy the
+external control plane; operator token required for mode changes)
 
 ## Conventions
 
 - All endpoints return JSON
 - Background jobs use `JobManager._execute_job()` -> updates job status in-memory
+- Full-pipeline jobs use `run_episode_pipeline_coordinated()` so web-triggered
+  work obeys the same failover lease as CLI/timer runs
+- Pipeline progress aggregates retries: earliest start, latest completion,
+  summed duration/cost and `attempt_count`; timestamps are normalized to UTC
 - Health check: `GET /api/health` -> `{"status": "ok", ...}`
 - Production: gunicorn with gthread worker, behind Caddy reverse proxy
 - Dashboard served at `/dashboard/*` path via Caddy with basic auth
@@ -40,7 +47,7 @@ Intro audio: `GET/POST/DELETE /api/intro-audio`, `GET /api/intro-audio/file` (Ta
 
 <!--
 Documentation sync
-Baseline: 1d7291b
-Synced through: HEAD
-Date: 2026-08-04
+Baseline: d1b4676
+Synced through: current working tree
+Date: 2026-08-22
 -->

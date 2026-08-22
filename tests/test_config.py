@@ -100,6 +100,13 @@ class TestSettings:
         assert settings.claude_temperature == 0.7
         assert settings.dry_run is True
 
+    def test_failover_defaults_preserve_backward_compatibility(self):
+        settings = Settings()
+        assert settings.failover_enabled is False
+        assert settings.failover_node_role == "primary"
+        assert settings.failover_pipeline_lease_ttl_seconds == 540
+        assert settings.failover_publish_lease_ttl_seconds == 900
+
     def test_anthropic_api_key_loads(self):
         settings = Settings(anthropic_api_key="sk-ant-test")
         assert settings.anthropic_api_key == "sk-ant-test"

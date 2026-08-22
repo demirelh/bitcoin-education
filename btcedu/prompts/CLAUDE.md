@@ -15,11 +15,15 @@ max_tokens: 4096
 Jinja2 template body with {{ variables }}
 ```
 
-Templates: `correct_transcript.md`, `translate.md`, `adapt.md`, `chapterize.md`, `imagegen.md`, `imagegen_news.md`, `qa_review.md`, `system.md`, `intent_extract.md`, `stock_rank.md`, `gemini_frame_edit.md`, `segment_broadcast.md`
+Templates: `correct_transcript.md`, `translate.md`, `adapt.md`, `chapterize.md`,
+`imagegen.md`, `imagegen_news.md`, `qa_review.md`, `system.md`,
+`intent_extract.md`, `stock_rank.md`, `gemini_frame_edit.md`,
+`segment_broadcast.md`
 
 Profile overrides live in `templates/<profile>/` (`bitcoin_podcast/`, `tagesschau_tr/`) and take
 precedence over the same-named template in `templates/`. `tagesschau_tr/` additionally provides
-`translate_intro_outro.md`. Term glossaries: `glossaries/glossary_bitcoin_tr.yaml`,
+`translate_intro_outro.md` and `script_broadcast.md`. Term glossaries:
+`glossaries/glossary_bitcoin_tr.yaml`,
 `glossaries/glossary_news_tr.yaml`.
 
 `PromptRegistry` in `core/prompt_registry.py` loads templates, computes SHA-256 hash, registers `PromptVersion` in DB. Use `btcedu prompt list` to view registered versions.
@@ -36,12 +40,14 @@ These build prompts programmatically for v1 pipeline. Do not modify unless fixin
 - `correct_transcript.md` supports `{{ reviewer_feedback }}` injection for re-correction after review
 - Most templates target `claude-sonnet-4-20250514`. Exceptions: `gemini_frame_edit.md`
   (`gemini-2.0-flash-exp`), `qa_review.md` (`gpt-5.6-sol`),
-  `bitcoin_podcast/chapterize.md` (`claude-sonnet-4-5-20250929`)
+  `tagesschau_tr/qa_review.md` and `tagesschau_tr/script_broadcast.md`
+  (`gpt-5.6-sol`), `bitcoin_podcast/chapterize.md`
+  (`claude-sonnet-4-5-20250929`)
 - Automatic gate adjudication is configured in the profile YAML (provider `copilot_cli`, model `gpt-5.6-sol`), not in a prompt template
 
 <!--
 Documentation sync
-Baseline: 1d7291b
-Synced through: HEAD
-Date: 2026-08-04
+Baseline: d1b4676
+Synced through: current working tree
+Date: 2026-08-22
 -->

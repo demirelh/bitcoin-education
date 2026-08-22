@@ -18,7 +18,11 @@ Each v2 stage module follows the same pattern:
 
 ## Key Modules
 
-- `pipeline.py` — orchestration: `_V2_STAGES`, `_run_stage()` (lazy imports), `run_episode_pipeline()`, `run_pending()`, `run_latest()`
+- `pipeline.py` — orchestration: `_V2_STAGES`, `_run_stage()` (lazy imports),
+  `run_episode_pipeline()`, lease-aware `run_episode_pipeline_coordinated()`,
+  `run_pending()`, `run_latest()`. Scheduled entry points close orphaned
+  `RUNNING` rows only after taking `pipeline.lock`, then resume from the
+  episode's durable status.
 - `reviewer.py` — review CRUD: `create_review_task()`, `approve_review()`, `reject_review()`, `has_approved_review()`, `has_pending_review()`, `approve_stage_for_artifacts()`
 - `qa_reviewer.py` — transcript/translation QA plus `adjudicate_quality_gate()` and `adjudicate_transcript_qa_gate()` (independent-model gate decisions, written to `gate_adjudication.json`)
 - `translation_qa.py` — deterministic checks + LLM cascade, GREEN/RED gate, bounded targeted retries
@@ -30,18 +34,31 @@ Each v2 stage module follows the same pattern:
 - `stock_images.py` (60KB) — Pexels stock search, intent extraction, ranking, candidate finalization
 - `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro cards, ticker
 - `frame_editor.py` — Gemini 2.0 Flash frame editing for tagesschau episodes (translates German text overlays to Turkish)
+- `tts.py` — fresh per-part ElevenLabs synthesis (no reusable take cache),
+  750-character provider chunks, −15 LUFS normalization before quality checks,
+  adaptive per-voice retry ceilings and a profile-owned hard stage budget
+- `publisher.py` — upload safety checks, timeline-based chapters and
+  failover-safe publish coordination. Persist a successful YouTube ID locally
+  before fallible central reconciliation so a retry cannot duplicate an upload.
+- `../failover/coordination.py` — canonical broadcast IDs, heartbeat checks and
+  renewable pipeline/publish `LeaseGuard`s
 
 ## Common Tasks
 
 - **Adding a new stage**: follow the pattern in `tts.py` (cleanest example), add to `_V2_STAGES` in pipeline.py
 - **Fixing a stage**: always clear `episode.error_message = None` on success path
 - **Pipeline debugging**: check `PipelineRun` records, `episode.error_message`, `episode.retry_count`
+- **Reboot debugging**: a stage writes and commits its `RUNNING` row before
+  work; retry summaries aggregate all attempts instead of showing only the last
+- **Failover debugging**: `processing`/`publishing` are intentionally
+  fail-closed. Do not delete records or bypass leases; use the authenticated
+  `btcedu failover-reconcile` operator command after determining the outcome.
 - **Cost extraction**: `run_episode_pipeline()` parses cost from `StageResult.detail` (splits on `$`)
 - **Failure notifications**: a failed stage calls `services/notify_service.notify_stage_failure()`; notification errors are swallowed and must never affect the run
 
 <!--
 Documentation sync
-Baseline: 1d7291b
-Synced through: HEAD
-Date: 2026-08-04
+Baseline: d1b4676
+Synced through: current working tree
+Date: 2026-08-22
 -->

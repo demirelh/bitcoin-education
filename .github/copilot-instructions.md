@@ -23,7 +23,8 @@ Entry point: `btcedu = "btcedu.cli:cli"`.
 - `btcedu/profiles/` — profile YAML: stage routing, providers, gates
 - `btcedu/prompts/` — versioned templates (YAML frontmatter + Jinja2)
 - `btcedu/web/` — Flask dashboard (`api.py`, `static/app.js`)
-- `tests/` — pytest suite (~1955 tests)
+- `btcedu/failover/` — external control plane, leases/fencing and node coordination
+- `tests/` — pytest suite (~2655 tests)
 - `docs/implementation/` — implementation notes and audits
 
 ## Pipeline (v2)
@@ -58,6 +59,8 @@ not supported. All v2-only stages are guarded in `_run_stage()`.
 - Lazy-imported functions must be patched at their **source** module
 - `btcedu regression-run` replays recent episodes against a cloned DB and
   copied outputs; it never touches production data
+- Failover tests use local Flask/SQLite fakes; never contact the production
+  control plane
 
 ## Models & Providers
 
@@ -69,7 +72,8 @@ deterministically (HTML/SVG + headless Chromium), never by an image model.
 ElevenLabs may hold several accounts (`ELEVENLABS_API_KEY_FALLBACK`); the
 next one is taken up only when the current plan reports its quota spent.
 Generated takes are levelled to −15 LUFS before the noise check reads them and
-before they reach the cache — see the gotchas in `CLAUDE.md`.
+before they are accepted — see the gotchas in `CLAUDE.md`. TTS has no reusable
+take cache: intro, chapters and outro are synthesized as ordinary fresh parts.
 
 ## Configuration
 
@@ -85,6 +89,12 @@ downstream invalidation, partial recovery (skip unchanged chapters),
 `render --force` still skips segments whose picture and audio are unchanged;
 changed render settings invalidate them automatically via
 `render/segments/.render_settings`.
+
+Scheduled runs acquire the local pipeline lock, close orphaned `RUNNING`
+`PipelineRun` rows after an unclean reboot, and resume from every durable v2
+episode status. When failover is enabled, recorder/pipeline/publish work also
+requires central leases with fencing tokens; uncertain `processing` or
+`publishing` states fail closed until `btcedu failover-reconcile` resolves them.
 
 ## Review Gates
 
@@ -102,7 +112,8 @@ calls. `settings.dry_run` must produce placeholders instead of API calls.
 ## External APIs & Secrets
 
 Credentials come from `.env` / environment only. **Never** commit secrets, keys,
-tokens or `auth/` session data, and never print them in logs or output.
+tokens, failover credential files or `auth/` session data, and never print them
+in logs or output.
 Two safeguards back this up: `Settings` masks credential fields in its own
 `repr`, and `utils/secrets.install_log_redaction()` strikes the configured
 values out of every log record — needed because a third-party library may
@@ -120,7 +131,7 @@ temperatures) must be attributed and excluded from claim validation.
 
 <!--
 Documentation sync
-Baseline: 1d7291b
-Synced through: HEAD
-Date: 2026-08-04
+Baseline: d1b4676
+Synced through: current working tree
+Date: 2026-08-22
 -->

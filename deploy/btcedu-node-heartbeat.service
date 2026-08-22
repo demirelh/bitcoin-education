@@ -1,0 +1,14 @@
+[Unit]
+Description=btcedu failover heartbeat
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/AI-Startup-Lab/bitcoin-education
+ExecStart=/home/pi/AI-Startup-Lab/bitcoin-education/.venv/bin/btcedu failover-heartbeat
+EnvironmentFile=/home/pi/AI-Startup-Lab/bitcoin-education/.env
+StandardOutput=journal
+StandardError=journal
+

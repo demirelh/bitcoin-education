@@ -51,6 +51,10 @@ class PublishResult:
     error: str | None = None
 
 
+class PublishCoordinationError(RuntimeError):
+    """Upload finished locally, but cross-node reconciliation did not."""
+
+
 # ---------------------------------------------------------------------------
 # Safety checks
 # ---------------------------------------------------------------------------
@@ -1048,13 +1052,6 @@ def publish_video(
             "Publish is only supported for v2 pipeline."
         )
 
-    # Allow APPROVED (or PUBLISHED with force) to proceed
-    if episode.status != EpisodeStatus.APPROVED and not force:
-        raise ValueError(
-            f"Episode {episode_id} is in status '{episode.status.value}', "
-            "expected 'approved'. Use --force to override."
-        )
-
     # Idempotency: already published
     if episode.youtube_video_id and not force:
         logger.info(
@@ -1067,6 +1064,13 @@ def publish_video(
             youtube_video_id=episode.youtube_video_id,
             youtube_url=f"https://youtu.be/{episode.youtube_video_id}",
             skipped=True,
+        )
+
+    # Allow APPROVED (or PUBLISHED with force) to proceed
+    if episode.status != EpisodeStatus.APPROVED and not force:
+        raise ValueError(
+            f"Episode {episode_id} is in status '{episode.status.value}', "
+            "expected 'approved'. Use --force to override."
         )
 
     # Load profile for YouTube metadata overrides
@@ -1109,164 +1113,223 @@ def publish_video(
         )
         raise ValueError(msg)
 
-    # Create PublishJob (pending)
-    publish_job = PublishJob(
-        episode_id=episode_id,
-        status=PublishJobStatus.PENDING.value,
-    )
-    session.add(publish_job)
-    session.commit()
-
-    # Find thumbnail (first chapter image)
-    thumbnail_path: Path | None = None
-    images_dir = Path(settings.outputs_dir) / episode_id / "images"
-    chapters_path_file = Path(settings.outputs_dir) / episode_id / "chapters.json"
-    if images_dir.exists() and chapters_path_file.exists():
-        try:
-            chapters_data = json.loads(chapters_path_file.read_text(encoding="utf-8"))
-            chapters_list = chapters_data.get("chapters", [])
-            if chapters_list:
-                first_ch = sorted(chapters_list, key=lambda c: c.get("order", 0))[0]
-                first_ch_id = first_ch.get("chapter_id", "")
-                candidate = images_dir / f"{first_ch_id}.png"
-                if candidate.exists():
-                    thumbnail_path = candidate
-        except (json.JSONDecodeError, OSError, IndexError):
-            pass
-
-    draft_path = Path(settings.outputs_dir) / episode_id / "render" / "draft.mp4"
-    # Written by the render stage against the finished timeline. The burned-in
-    # lines and this track come from the same cues, so switching the track off
-    # in YouTube leaves the viewer with exactly the same text on the picture.
-    subtitle_candidate = Path(settings.outputs_dir) / episode_id / "render" / "subtitles.tr.srt"
-    subtitle_path = subtitle_candidate if subtitle_candidate.exists() else None
-
-    # Build upload request
-    from btcedu.services.youtube_service import (
-        DryRunYouTubeService,
-        YouTubeDataAPIService,
-        YouTubeUploadRequest,
-    )
-
-    upload_req = YouTubeUploadRequest(
-        video_path=draft_path,
-        title=title,
-        description=description,
-        tags=tags,
-        category_id=(
-            _yt_config.get("category_id") or getattr(settings, "youtube_category_id", "27")
-        ),
-        default_language=(
-            _yt_config.get("default_language")
-            or getattr(settings, "youtube_default_language", "tr")
-        ),
-        privacy_status=effective_privacy,
-        thumbnail_path=thumbnail_path,
-        subtitle_path=subtitle_path,
-    )
-
     is_dry_run = getattr(settings, "dry_run", False)
+    publish_guard = None
+    if not is_dry_run:
+        from btcedu.failover.coordination import acquire_publish_lease_guard
 
-    if is_dry_run:
-        youtube_svc = DryRunYouTubeService()
-    else:
-        credentials_path = getattr(
-            settings,
-            "youtube_credentials_path",
-            "data/.youtube_credentials.json",
-        )
-        youtube_svc = YouTubeDataAPIService(
-            credentials_path=credentials_path,
-            chunk_size_bytes=getattr(settings, "youtube_upload_chunk_size_mb", 10) * 1024 * 1024,
-        )
-
-    # Update PublishJob to uploading
-    publish_job.status = PublishJobStatus.UPLOADING.value
-    session.commit()
-
-    # Metadata snapshot
-    metadata_snapshot = {
-        "title": title,
-        "description": description,
-        "tags": tags,
-        "category_id": upload_req.category_id,
-        "default_language": upload_req.default_language,
-        "privacy_status": effective_privacy,
-    }
-
-    def _progress_cb(uploaded: int, total: int) -> None:
-        pct = int(uploaded / total * 100) if total else 100
-        logger.info("YouTube upload: %d%% (%d / %d bytes)", pct, uploaded, total)
+        publish_guard = acquire_publish_lease_guard(session, episode, settings)
 
     try:
-        response = youtube_svc.upload_video(upload_req, progress_callback=_progress_cb)
-    except Exception as exc:
-        # Record failure
-        publish_job.status = PublishJobStatus.FAILED.value
-        publish_job.error_message = str(exc)
+        # Create PublishJob (pending)
+        publish_job = PublishJob(
+            episode_id=episode_id,
+            status=PublishJobStatus.PENDING.value,
+        )
+        session.add(publish_job)
+        session.commit()
+
+        # Find thumbnail (first chapter image)
+        thumbnail_path: Path | None = None
+        images_dir = Path(settings.outputs_dir) / episode_id / "images"
+        chapters_path_file = Path(settings.outputs_dir) / episode_id / "chapters.json"
+        if images_dir.exists() and chapters_path_file.exists():
+            try:
+                chapters_data = json.loads(chapters_path_file.read_text(encoding="utf-8"))
+                chapters_list = chapters_data.get("chapters", [])
+                if chapters_list:
+                    first_ch = sorted(chapters_list, key=lambda c: c.get("order", 0))[0]
+                    first_ch_id = first_ch.get("chapter_id", "")
+                    candidate = images_dir / f"{first_ch_id}.png"
+                    if candidate.exists():
+                        thumbnail_path = candidate
+            except (json.JSONDecodeError, OSError, IndexError):
+                pass
+
+        draft_path = Path(settings.outputs_dir) / episode_id / "render" / "draft.mp4"
+        # Written by the render stage against the finished timeline. The burned-in
+        # lines and this track come from the same cues, so switching the track off
+        # in YouTube leaves the viewer with exactly the same text on the picture.
+        subtitle_candidate = (
+            Path(settings.outputs_dir) / episode_id / "render" / "subtitles.tr.srt"
+        )
+        subtitle_path = subtitle_candidate if subtitle_candidate.exists() else None
+
+        # Build upload request
+        from btcedu.services.youtube_service import (
+            DryRunYouTubeService,
+            YouTubeDataAPIService,
+            YouTubeUploadRequest,
+        )
+
+        upload_req = YouTubeUploadRequest(
+            video_path=draft_path,
+            title=title,
+            description=description,
+            tags=tags,
+            category_id=(
+                _yt_config.get("category_id") or getattr(settings, "youtube_category_id", "27")
+            ),
+            default_language=(
+                _yt_config.get("default_language")
+                or getattr(settings, "youtube_default_language", "tr")
+            ),
+            privacy_status=effective_privacy,
+            thumbnail_path=thumbnail_path,
+            subtitle_path=subtitle_path,
+        )
+
+        if is_dry_run:
+            youtube_svc = DryRunYouTubeService()
+        else:
+            credentials_path = getattr(
+                settings,
+                "youtube_credentials_path",
+                "data/.youtube_credentials.json",
+            )
+            youtube_svc = YouTubeDataAPIService(
+                credentials_path=credentials_path,
+                chunk_size_bytes=(
+                    getattr(settings, "youtube_upload_chunk_size_mb", 10) * 1024 * 1024
+                ),
+            )
+
+        # Update PublishJob to uploading
+        publish_job.status = PublishJobStatus.UPLOADING.value
+        session.commit()
+
+        # Metadata snapshot
+        metadata_snapshot = {
+            "title": title,
+            "description": description,
+            "tags": tags,
+            "category_id": upload_req.category_id,
+            "default_language": upload_req.default_language,
+            "privacy_status": effective_privacy,
+        }
+
+        if publish_guard is not None:
+            try:
+                publish_guard.ensure_active()
+                publish_guard.report_completion(status="publishing")
+            except Exception as exc:
+                message = f"Could not record publishing state before upload: {exc}"
+                publish_job.status = PublishJobStatus.FAILED.value
+                publish_job.error_message = message
+                publish_job.metadata_snapshot = json.dumps(metadata_snapshot)
+                session.commit()
+                raise PublishCoordinationError(message) from exc
+
+        def _progress_cb(uploaded: int, total: int) -> None:
+            pct = int(uploaded / total * 100) if total else 100
+            logger.info("YouTube upload: %d%% (%d / %d bytes)", pct, uploaded, total)
+
+        try:
+            if publish_guard is not None:
+                publish_guard.ensure_active()
+            response = youtube_svc.upload_video(upload_req, progress_callback=_progress_cb)
+        except Exception as exc:
+            failure_suffix = ""
+            if publish_guard is not None:
+                try:
+                    publish_guard.ensure_active()
+                    publish_guard.report_completion(status="publish_failed")
+                except Exception as record_exc:
+                    logger.warning(
+                        "Could not record publish_failed for %s after upload error: %s",
+                        episode_id,
+                        record_exc,
+                    )
+                    failure_suffix = (
+                        " (control-plane publish_failed update also failed: "
+                        f"{record_exc})"
+                    )
+            # Record failure
+            publish_job.status = PublishJobStatus.FAILED.value
+            publish_job.error_message = f"{exc}{failure_suffix}"
+            publish_job.metadata_snapshot = json.dumps(metadata_snapshot)
+            session.commit()
+            logger.error("YouTube upload failed for %s: %s", episode_id, exc)
+            raise
+
+        now = _utcnow()
+
+        # Update PublishJob with success
+        publish_job.status = PublishJobStatus.PUBLISHED.value
+        publish_job.youtube_video_id = response.video_id
+        publish_job.youtube_url = response.video_url
+        publish_job.published_at = now
+        publish_job.error_message = None
         publish_job.metadata_snapshot = json.dumps(metadata_snapshot)
         session.commit()
-        logger.error("YouTube upload failed for %s: %s", episode_id, exc)
-        raise
 
-    now = _utcnow()
+        # Update Episode
+        if not is_dry_run:
+            episode.youtube_video_id = response.video_id
+            episode.published_at_youtube = now
+            episode.status = EpisodeStatus.PUBLISHED
+            episode.error_message = None
+            session.commit()
 
-    # Update PublishJob with success
-    publish_job.status = PublishJobStatus.PUBLISHED.value
-    publish_job.youtube_video_id = response.video_id
-    publish_job.youtube_url = response.video_url
-    publish_job.published_at = now
-    publish_job.metadata_snapshot = json.dumps(metadata_snapshot)
-    session.commit()
+        if publish_guard is not None:
+            try:
+                publish_guard.ensure_active()
+                publish_guard.report_completion(status="published", youtube_id=response.video_id)
+            except Exception as exc:
+                message = (
+                    "Control-plane publication record failed after upload; "
+                    f"local publish state was kept (video_id={response.video_id}): {exc}"
+                )
+                publish_job.error_message = message
+                session.commit()
+                raise PublishCoordinationError(message) from exc
 
-    # Update Episode
-    if not is_dry_run:
-        episode.youtube_video_id = response.video_id
-        episode.published_at_youtube = now
-        episode.status = EpisodeStatus.PUBLISHED
+        # Record PipelineRun
+        pipeline_run = PipelineRun(
+            episode_id=episode.id,
+            stage="publish",
+            status=RunStatus.SUCCESS.value,
+            started_at=now,
+            completed_at=now,
+            estimated_cost_usd=0.0,
+            input_tokens=0,
+            output_tokens=0,
+        )
+        session.add(pipeline_run)
         session.commit()
 
-    # Record PipelineRun
-    pipeline_run = PipelineRun(
-        episode_id=episode.id,
-        stage="publish",
-        status=RunStatus.SUCCESS.value,
-        started_at=now,
-        completed_at=now,
-        estimated_cost_usd=0.0,
-        input_tokens=0,
-        output_tokens=0,
-    )
-    session.add(pipeline_run)
-    session.commit()
+        # Write provenance
+        _write_provenance(
+            settings=settings,
+            episode_id=episode_id,
+            video_id=response.video_id,
+            video_url=response.video_url,
+            privacy=effective_privacy,
+            safety_checks=checks,
+            metadata_snapshot=metadata_snapshot,
+            dry_run=is_dry_run,
+            lease_token=publish_guard.lease_token if publish_guard is not None else None,
+            fencing_token=publish_guard.fencing_token if publish_guard is not None else None,
+        )
 
-    # Write provenance
-    _write_provenance(
-        settings=settings,
-        episode_id=episode_id,
-        video_id=response.video_id,
-        video_url=response.video_url,
-        privacy=effective_privacy,
-        safety_checks=checks,
-        metadata_snapshot=metadata_snapshot,
-        dry_run=is_dry_run,
-    )
+        logger.info(
+            "Episode %s published%s: %s",
+            episode_id,
+            " (dry-run)" if is_dry_run else "",
+            response.video_url,
+        )
 
-    logger.info(
-        "Episode %s published%s: %s",
-        episode_id,
-        " (dry-run)" if is_dry_run else "",
-        response.video_url,
-    )
-
-    return PublishResult(
-        episode_id=episode_id,
-        youtube_video_id=response.video_id,
-        youtube_url=response.video_url,
-        publish_job_id=publish_job.id,
-        safety_checks=check_results,
-        dry_run=is_dry_run,
-    )
+        return PublishResult(
+            episode_id=episode_id,
+            youtube_video_id=response.video_id,
+            youtube_url=response.video_url,
+            publish_job_id=publish_job.id,
+            safety_checks=check_results,
+            dry_run=is_dry_run,
+        )
+    finally:
+        if publish_guard is not None:
+            publish_guard.close()
 
 
 def _write_provenance(
@@ -1278,6 +1341,8 @@ def _write_provenance(
     safety_checks: list[SafetyCheck],
     metadata_snapshot: dict,
     dry_run: bool,
+    lease_token: str | None = None,
+    fencing_token: int | None = None,
 ) -> None:
     """Write provenance JSON for the publish operation."""
     prov_dir = Path(settings.outputs_dir) / episode_id / "provenance"
@@ -1290,6 +1355,8 @@ def _write_provenance(
         "youtube_url": video_url,
         "privacy_status": privacy,
         "dry_run": dry_run,
+        "lease_token": lease_token,
+        "fencing_token": fencing_token,
         "safety_checks": {c.name: [c.passed, c.message] for c in safety_checks},
         "metadata_snapshot": metadata_snapshot,
     }

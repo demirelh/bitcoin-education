@@ -4,7 +4,10 @@ Synchronisation der Claude-/Copilot-Anweisungsdateien mit dem tatsächlichen
 Code-Stand. Dieser Auftrag hat **ausschließlich Dokumentation** geändert —
 kein Produktcode, keine Pipeline-Stages, keine Refactorings.
 
-## Gefundene Instruktionsdateien
+Der Bericht bis einschließlich „Angepasste Dokumente“ beschreibt den ersten
+Sync vom 04.08.2026. Der aktuelle Nachtrag vom 22.08.2026 folgt direkt danach.
+
+## Erster Sync: gefundene Instruktionsdateien (04.08.2026)
 
 | Datei | Letzte inhaltliche Änderung | Datum |
 |---|---|---|
@@ -23,7 +26,7 @@ Nicht vorhanden vor diesem Auftrag: `AGENTS.md`,
 Arbeitsverzeichnis vor Beginn: Branch `main`, keine uncommitted Änderungen an
 getrackten Dateien, ein einziger Worktree, kein Stash.
 
-## Analysierte Commitspanne
+## Erster Sync: analysierte Commitspanne
 
 `1d7291b..HEAD` — 46 Commits (2026-07-19 bis 2026-08-03).
 
@@ -36,7 +39,7 @@ Analysiert wurden die Diffs (nicht die Commitmessages) unter `btcedu/`,
 `tests/`, `pyproject.toml` und `run.sh`. Ignoriert wurden Episodendaten,
 Datenbanken, Logs, generierte Artefakte und reine Formatierung.
 
-## Erkannte Änderungen mit Dokumentationsrelevanz
+## Erster Sync: erkannte Änderungen mit Dokumentationsrelevanz
 
 **Neue Core-Module**
 - `btcedu/core/weather/` — vollständiges deterministisches Wetter-Subsystem
@@ -93,7 +96,7 @@ Datenbanken, Logs, generierte Artefakte und reine Formatierung.
 - Testanzahl von ~1189 auf 1955 gestiegen (via `pytest --collect-only -q`
   verifiziert).
 
-## Angepasste Dokumente
+## Erster Sync: angepasste Dokumente
 
 | Datei | Änderung |
 |---|---|
@@ -109,9 +112,51 @@ Datenbanken, Logs, generierte Artefakte und reine Formatierung.
 Alle aktualisierten Dateien tragen am Ende einen Sync-Marker mit Baseline,
 Zielstand und Datum.
 
+## Aktueller Sync (22.08.2026)
+
+Erneut geprüft wurden alle acht von Copilot/Claude verwendeten
+Repository-Anweisungsdateien:
+
+- `.github/copilot-instructions.md`
+- `CLAUDE.md`
+- `btcedu/core/CLAUDE.md`
+- `btcedu/models/CLAUDE.md`
+- `btcedu/services/CLAUDE.md`
+- `btcedu/web/CLAUDE.md`
+- `btcedu/prompts/CLAUDE.md`
+- `tests/CLAUDE.md`
+
+Baseline ist Commit `d1b4676`; zusätzlich wurden die noch nicht committeden
+Failover-Änderungen im aktuellen Working Tree dokumentiert. Andere vorhandene
+Produktcodeänderungen wurden nicht verändert oder zurückgesetzt.
+
+Neu bzw. korrigiert dokumentiert:
+
+- aktuelle Testsammlung: **2655 Tests**
+- vollständige Pipeline-Reboot-Recovery inklusive verwaister `RUNNING`-Rows,
+  aller resumierbaren v2-Status und früh persistierter Stage-Startzeiten
+- Dashboard-Zeitangaben, Retry-Aggregation und Versuchszähler
+- vollständig entfernter TTS-Take-Cache; Intro und Outro werden immer frisch
+  und wie gewöhnliche Kapitel synthetisiert
+- 750-Zeichen-Providerchunks, adaptive Voice-Retries, Qualitätsstatistik,
+  quota-spezifischer Accountwechsel und hartes TTS-Stufenbudget
+- lokaler Recorder-Ingest mit bidirektionaler Sendetags-Deduplizierung,
+  Completion-Prüfung und rollenabhängiger Mediathek-Provenienz
+- externe Failover-Control-Plane, Heartbeats, zentrale Modi, erneuerbare
+  Recorder-/Pipeline-/Publish-Leases, Fencing-Tokens und fail-closed
+  `processing`-/`publishing`-Zustände
+- Operator-Reconciliation über `btcedu failover-reconcile`
+- neue/fehlende Modelle (`AppSetting`, `DeadLetterEntry`), Services,
+  Web-Endpunkte und das Profil-Prompt `tagesschau_tr/script_broadcast.md`
+- aktuelle Web-Dateigrößen sowie die Failover- und Render-Mode-Oberflächen
+
+Die Produktionsaktivierung des Failovers wird ausdrücklich nicht als bereits
+erfolgt dargestellt: externer HTTPS-Host, DNS/TLS, getrennte Credential-Dateien
+und der echte Zwei-Pi-Abnahmelauf stehen noch aus.
+
 ## Copilot-Status
 
-Die verwendete Copilot CLI (Version 1.0.78-2) liest Instruktionen offiziell aus:
+Die verwendete Copilot CLI (Version 1.0.80) liest Instruktionen aus:
 
 ```
 CLAUDE.md (git root & cwd)
@@ -148,7 +193,7 @@ dokumentiert. Nach diesem Commit muss `/init` nicht mehr ausgeführt werden.
 
 ## `/allow-all`
 
-**Ergebnis: nicht dauerhaft aktivierbar.**
+**Stand des ersten Audits: nicht dauerhaft als Sitzungszustand aktivierbar.**
 
 `/allow-all` ist in dieser CLI-Version ein Sitzungsbefehl ohne `on`/`off`-Argument
 („Enable all permissions (tools, paths, and URLs)"). Es existiert kein
@@ -180,11 +225,12 @@ Sicherheitsumgehungen implementiert und keine Berechtigungsdateien manipuliert.
 - `btcedu/web/CLAUDE.md`-Struktur — nur ergänzt, nicht umgebaut.
 - Der externe `whatsapp-service` unter `/home/pi/services/whatsapp-service`
   liegt außerhalb dieses Repositories und hat eine eigene `README.md`.
-- Keine Bereinigung der 17 vorbestehenden ruff-Fehler in unberührten Dateien.
+- Keine Bereinigung historischer, nicht mit der Instruktionssynchronisierung
+  zusammenhängender Produktprobleme.
 
 <!--
 Documentation sync
-Baseline: 1d7291b
-Synced through: HEAD
-Date: 2026-08-04
+Baseline: d1b4676
+Synced through: current working tree
+Date: 2026-08-22
 -->

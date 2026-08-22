@@ -3,7 +3,7 @@
 import hashlib
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 
 from btcedu.config import Settings
 from btcedu.core.publisher import (
+    PublishCoordinationError,
     _build_youtube_metadata,
     _check_approval_gate,
     _check_artifact_integrity,
@@ -22,7 +23,7 @@ from btcedu.core.publisher import (
 )
 from btcedu.db import Base
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
-from btcedu.models.publish_job import PublishJob
+from btcedu.models.publish_job import PublishJob, PublishJobStatus
 from btcedu.models.review import ReviewStatus, ReviewTask
 
 # ---------------------------------------------------------------------------
@@ -557,6 +558,81 @@ class TestPublishVideo:
         _job = get_latest_publish_job(db_session, approved_episode.episode_id)  # noqa: F841
         # We may not have a job if it failed at safety checks rather than upload
         # This is an optional assertion — main point is no uncaught exceptions
+
+    def test_upload_failure_reports_publish_failed_state(
+        self, db_session, approved_episode, approved_review_task, settings, tmp_path
+    ):
+        settings.outputs_dir = str(tmp_path / "outputs")
+        _make_chapters_json(tmp_path, approved_episode.episode_id)
+
+        guard = MagicMock()
+        guard.ensure_active.return_value = None
+        guard.lease_token = "lease-123"
+        guard.fencing_token = 9
+        guard.report_completion.return_value = None
+
+        with (
+            patch(
+                "btcedu.failover.coordination.acquire_publish_lease_guard",
+                return_value=guard,
+            ),
+            patch("btcedu.services.youtube_service.YouTubeDataAPIService") as mock_svc,
+        ):
+            mock_svc.return_value.upload_video.side_effect = RuntimeError("Upload failed")
+            with pytest.raises(RuntimeError, match="Upload failed"):
+                publish_video(db_session, approved_episode.episode_id, settings)
+
+        assert guard.report_completion.call_args_list[0].kwargs == {"status": "publishing"}
+        assert guard.report_completion.call_args_list[1].kwargs == {"status": "publish_failed"}
+        job = get_latest_publish_job(db_session, approved_episode.episode_id)
+        assert job is not None
+        assert job.status == PublishJobStatus.FAILED.value
+
+    def test_post_upload_coordination_failure_keeps_local_publish_state(
+        self, db_session, approved_episode, approved_review_task, settings, tmp_path
+    ):
+        settings.outputs_dir = str(tmp_path / "outputs")
+        _make_chapters_json(tmp_path, approved_episode.episode_id)
+
+        guard = MagicMock()
+        guard.ensure_active.return_value = None
+        guard.lease_token = "lease-123"
+        guard.fencing_token = 9
+        guard.report_completion.side_effect = [
+            None,
+            RuntimeError("central publish record failed"),
+        ]
+
+        with (
+            patch(
+                "btcedu.failover.coordination.acquire_publish_lease_guard",
+                return_value=guard,
+            ),
+            patch("btcedu.services.youtube_service.YouTubeDataAPIService") as mock_svc,
+        ):
+            mock_svc.return_value.upload_video.return_value = MagicMock(
+                video_id="YT123",
+                video_url="https://youtu.be/YT123",
+            )
+            with pytest.raises(PublishCoordinationError, match="local publish state was kept"):
+                publish_video(db_session, approved_episode.episode_id, settings)
+
+        db_session.refresh(approved_episode)
+        assert approved_episode.status == EpisodeStatus.PUBLISHED
+        assert approved_episode.youtube_video_id == "YT123"
+
+        job = get_latest_publish_job(db_session, approved_episode.episode_id)
+        assert job is not None
+        assert job.status == PublishJobStatus.PUBLISHED.value
+        assert job.youtube_video_id == "YT123"
+        assert "local publish state was kept" in (job.error_message or "")
+
+        with patch("btcedu.services.youtube_service.YouTubeDataAPIService") as retry_svc:
+            result = publish_video(db_session, approved_episode.episode_id, settings)
+
+        assert result.skipped is True
+        assert result.youtube_video_id == "YT123"
+        retry_svc.return_value.upload_video.assert_not_called()
 
     def test_provenance_file_written_on_dry_run(
         self, db_session, approved_episode, approved_review_task, settings, tmp_path

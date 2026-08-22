@@ -12,7 +12,13 @@ All use `Mapped[]` / `mapped_column()` with `Base` from `btcedu/db.py` **EXCEPT 
 - `prompt_version.py` — PromptVersion (unique: `(name, version)` and `(name, content_hash)`)
 - `publish_job.py` — PublishJob, PublishJobStatus
 - `channel.py` — Channel (has `content_profile` column, default `bitcoin_podcast`)
+- `app_setting.py` — operator-editable runtime settings; currently the local
+  render execution mode (central failover mode is never stored here)
+- `dead_letter.py` — DeadLetterEntry for permanent failures requiring intervention
 - `migration.py` — SchemaMigration
+
+Additional Pydantic schemas: `story_schema.py`, `script_schema.py`,
+`transcript_schema.py`, `schemas.py`.
 
 ## Pydantic Models (chapter_schema.py)
 
@@ -39,7 +45,7 @@ ChapterDocument > Chapter > { Narration, Visual, Overlay, Transitions }
 
 <!--
 Documentation sync
-Baseline: 1d7291b
-Synced through: HEAD
-Date: 2026-08-04
+Baseline: d1b4676
+Synced through: current working tree
+Date: 2026-08-22
 -->

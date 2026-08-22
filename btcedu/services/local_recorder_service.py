@@ -120,6 +120,38 @@ class LocalRecording:
             return None
 
     @property
+    def node_role(self) -> str | None:
+        value = self.metadata.get("node_role")
+        if value is None:
+            extra = self.metadata.get("extra")
+            if isinstance(extra, dict):
+                value = extra.get("node_role")
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+        return None
+
+    @property
+    def source_kind(self) -> str | None:
+        value = self.metadata.get("source_kind")
+        if isinstance(value, str) and value.strip():
+            return value.strip().lower()
+        return None
+
+    @property
+    def provenance(self):
+        value = self.metadata.get("provenance")
+        if value not in (None, "", {}, []):
+            return value
+        extra = self.metadata.get("extra")
+        if not isinstance(extra, dict):
+            return None
+        source = extra.get("source_provenance")
+        item_id = extra.get("item_id")
+        if source or item_id:
+            return {"source": source, "item_id": item_id}
+        return None
+
+    @property
     def completion_verified(self) -> bool:
         """Whether the recorder proved both live programme boundaries.
 
@@ -184,6 +216,15 @@ def _read_metadata(path: Path) -> dict:
         logger.warning("cannot read recorder metadata %s: %s", path, exc)
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def metadata_for_video(path: str | Path) -> dict:
+    """Read the recorder metadata that sits next to *path*, if present."""
+    video = Path(path)
+    metadata_path = video.with_name(f"{video.stem}{METADATA_SUFFIX}")
+    if not metadata_path.is_file():
+        return {}
+    return _read_metadata(metadata_path)
 
 
 def _recording_from_marker(done: Path) -> LocalRecording | None:

@@ -35,6 +35,16 @@
         </label>
         <span class="render-mode-label" id="render-mode-label">…</span>
       </div>
+      <div class="failover-mode" id="failover-mode" title="Zentrale Primary/Secondary-Steuerung.">
+        <span class="failover-mode-title">Failover</span>
+        <select id="failover-mode-select" onchange="setFailoverMode(this.value)">
+          <option value="automatic">Automatic</option>
+          <option value="force_primary">Primary</option>
+          <option value="force_secondary">Secondary</option>
+          <option value="paused">Paused</option>
+        </select>
+        <span class="failover-mode-label" id="failover-mode-label">disabled</span>
+      </div>
       <button class="btn" onclick="refresh()">Refresh</button>
     </div>
   </div>

@@ -2782,3 +2782,45 @@ body {
   cursor: not-allowed;
   opacity: 0.5;
 }
+
+.failover-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border: 1px solid var(--border, #333);
+  border-radius: 6px;
+  font-size: 13px;
+}
+
+.failover-mode-title {
+  opacity: 0.75;
+}
+
+.failover-mode select {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.failover-mode-label {
+  min-width: 110px;
+  font-weight: 600;
+}
+
+.failover-mode.is-primary .failover-mode-label {
+  color: #4aa3ff;
+}
+
+.failover-mode.is-secondary .failover-mode-label {
+  color: #e6a23c;
+}
+
+.failover-mode.is-paused .failover-mode-label,
+.failover-mode.is-disabled .failover-mode-label,
+.failover-mode.is-unavailable .failover-mode-label {
+  color: var(--text-dim);
+}

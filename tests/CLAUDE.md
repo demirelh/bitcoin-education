@@ -1,4 +1,4 @@
-# tests/ — Test Suite (~1955 tests)
+# tests/ — Test Suite (~2655 tests)
 
 ## Running Tests
 
@@ -6,6 +6,7 @@
 pytest                                # full suite
 pytest tests/test_pipeline.py -x -q   # specific file, stop on first failure
 pytest -k "test_render" -x            # match pattern
+pytest --collect-only -q              # refresh the collection baseline
 ```
 
 ## Core Fixtures (conftest.py)
@@ -29,16 +30,32 @@ pytest -k "test_render" -x            # match pattern
 
 6. **Mock all external APIs**: never make real API calls. Mock `call_claude`, `DallE3ImageService`, `ElevenLabsService`, `GeminiImageService`, `YouTubeDataAPIService`, etc.
 
+7. **Failover tests are local only**: use the Flask control-plane test client,
+fake HTTP responses and temporary SQLite files. Never use production node or
+operator tokens and never contact the live control plane.
+
+8. **TTS has no reusable take cache**: regression tests must expect identical
+text (including intro/outro) to trigger fresh provider calls. Keep provider
+chunks at or below 750 characters and charge retries per successful call.
+
+9. **Full-suite shared state**: background web jobs are asynchronous. Wait for
+terminal job state and cleanly isolate DB/app fixtures; a failure seen only
+after thousands of tests but passing alone may be leaked suite state, not a
+reason to weaken the production behavior.
+
 ## Test File Organization
 
 - `test_<module>.py` — maps to `btcedu/core/<module>.py` or `btcedu/services/<module>.py`
 - `test_web*.py` / `test_*_api.py` — Flask test client tests for web endpoints
+- `test_failover_*.py` — control-plane auth, mode/health policy, lease CAS,
+  fencing, reconciliation, pipeline gating and dashboard proxy tests
+- `test_tts_no_cache.py` — fresh synthesis regression coverage
 - `conftest.py` — shared fixtures (db, episodes, transcripts)
 - `fixtures/` — static test data files
 
 <!--
 Documentation sync
-Baseline: 1d7291b
-Synced through: HEAD
-Date: 2026-08-04
+Baseline: d1b4676
+Synced through: current working tree
+Date: 2026-08-22
 -->

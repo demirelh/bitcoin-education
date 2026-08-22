@@ -327,6 +327,76 @@ class TestDetectLocalRecordings:
         assert detect_local_recordings(db_session, settings).new == 0
 
 
+class TestSecondaryFailoverRecorderValidation:
+    def test_secondary_requires_mediathek_metadata_when_failover_enabled(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        make_recording(
+            recordings_dir,
+            date(2026, 8, 6),
+            metadata={"node_role": "primary", "source_kind": "live", "provenance": {"id": 1}},
+        )
+        settings = local_settings(
+            tmp_path,
+            recordings_dir,
+            failover_enabled=True,
+            failover_node_role="secondary",
+        )
+
+        assert detect_local_recordings(db_session, settings).new == 0
+
+    def test_secondary_accepts_recordings_with_secondary_mediathek_provenance(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        make_recording(
+            recordings_dir,
+            date(2026, 8, 6),
+            metadata={
+                "provider": "ard_mediathek",
+                "source_kind": "vod",
+                "extra": {
+                    "completion_verified": "true",
+                    "node_role": "secondary",
+                    "source_provenance": "ard_mediathek",
+                    "item_id": "ITEM_2000",
+                },
+            },
+        )
+        settings = local_settings(
+            tmp_path,
+            recordings_dir,
+            failover_enabled=True,
+            failover_node_role="secondary",
+        )
+
+        assert detect_local_recordings(db_session, settings).new == 1
+
+    def test_secondary_rejects_generic_vod_without_mediathek_provenance(
+        self, db_session, tmp_path, recordings_dir
+    ):
+        make_recording(
+            recordings_dir,
+            date(2026, 8, 6),
+            metadata={
+                "provider": "other_vod",
+                "source_kind": "vod",
+                "extra": {
+                    "completion_verified": "true",
+                    "node_role": "secondary",
+                    "source_provenance": "other",
+                },
+            },
+        )
+        settings = local_settings(
+            tmp_path,
+            recordings_dir,
+            failover_enabled=True,
+            failover_node_role="secondary",
+        )
+
+        assert detect_local_recordings(db_session, settings).new == 0
+
+
 class TestFeedIsSupersededByLocalRecording:
     """The YouTube upload of an already-recorded broadcast must be ignored.
 

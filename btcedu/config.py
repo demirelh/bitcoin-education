@@ -243,6 +243,21 @@ class Settings(BaseSettings):
     youtube_category_id: str = "27"  # Education
     youtube_default_language: str = "tr"
 
+    # Primary/secondary failover coordination
+    failover_enabled: bool = False
+    failover_node_id: str = ""
+    failover_node_role: str = "primary"  # "primary" | "secondary"
+    failover_control_plane_url: str = ""
+    failover_token: str = ""
+    failover_token_file: str = ""
+    failover_operator_token: str = ""
+    failover_operator_token_file: str = ""
+    failover_request_timeout_seconds: int = 5
+    failover_heartbeat_interval_seconds: int = 60
+    failover_pipeline_lease_ttl_seconds: int = 540
+    failover_pipeline_lease_renew_interval_seconds: int = 120
+    failover_publish_lease_ttl_seconds: int = 900
+
     # Agent (meta-agent that creates GitHub Issues for Copilot)
     agent_enabled: bool = False
     agent_interval_hours: int = 24

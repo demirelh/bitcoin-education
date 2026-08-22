@@ -17,6 +17,9 @@ ruff check btcedu/ tests/            # lint (py312, line-length 100, E/W/F/I/UP)
 btcedu regression-run                # replay recent episodes in an isolated DB/output copy
 ```
 
+Current collection baseline: **2655 tests** (`pytest --collect-only -q`,
+2026-08-22).
+
 ## Pipeline Architecture
 
 New profiles use v2. Existing stored v1 episodes retain a compatibility path;
@@ -71,6 +74,9 @@ the same broadcast is uploaded, which is the single largest latency saving in
 the pipeline. The YouTube branch is untouched and remains the fallback whenever
 no local file exists. Configured under `ingest.local_recorder` in the profile;
 see `services/local_recorder_service.py` and `docs/local-recorder-ingest.md`.
+When failover is enabled, the primary accepts its live recorder output and the
+secondary accepts only completion-verified ARD Mediathek VOD sidecars carrying
+the expected node role and provenance.
 
 **Retention**: `core/retention.py` prunes expired episodes (files + DB rows)
 during `detect`. Controlled by `episode_retention_days` (0 = off); profiles may
@@ -84,6 +90,24 @@ render implementation. The result comes back as a run artifact; the Pi writes
 the DB records. Default `RENDER_EXECUTION_MODE=github`, switchable at runtime in
 the dashboard (`app_settings` table) or via `btcedu render --where local`.
 Failures fall back to a local render. See `docs/remote-render.md`.
+
+**Primary/secondary failover (implemented, opt-in):** `btcedu/failover/` ships
+an independently deployable Flask/SQLite control plane. Nodes authenticate with
+separate bearer-token files, heartbeat to the control plane and acquire
+recorder/pipeline/publish leases with monotonically increasing fencing tokens.
+Modes are `automatic`, `force_primary`, `force_secondary` and `paused`; the
+dashboard proxies central status/mode rather than storing a local copy. A
+durable `processing` or `publishing` record blocks blind takeover after a crash;
+an operator must use `btcedu failover-reconcile` for an uncertain outcome.
+Production activation still requires an external HTTPS host, DNS/TLS and
+per-node credentials; see `docs/runbooks/failover-control-plane.md`.
+
+**Reboot recovery and observability:** scheduled `run-latest`/`run-pending`
+calls obtain the exclusive local pipeline lock, mark orphaned `RUNNING`
+`PipelineRun` rows interrupted, and select every resumable v2 status including
+`SCRIPTED`, `FRAMES_EXTRACTED` and `ANCHOR_GENERATED`. A `RUNNING` row is
+committed before long stage work. The dashboard shows pipeline/stage start
+times, completion times, summed retry duration/cost and attempt counts.
 
 ## Coding Conventions
 
@@ -113,10 +137,12 @@ Failures fall back to a local render. See `docs/remote-render.md`.
   and the delivery is untouched). ElevenLabs returns the same voice up to 18 dB apart
   between generations. The ordering matters twice over: the noise check measures
   absolute levels, so on unlevelled takes it correlates with loudness (r = +0.77) and
-  keeps the *quietest* take rather than the cleanest — which the cache then froze in,
-  permanently, for exactly the recurring lines (greeting, sign-off, weather handover).
+  keeps the *quietest* take rather than the cleanest.
   Levelling must keep the 44.1 kHz rate explicitly (`loudnorm` works at 192 kHz
   internally) and must run again after the fallback rewrites the best take's bytes.
+- **TTS has no reusable take cache.** Intro and outro use the same fresh
+  synthesis, quality checks, retries, budget accounting and manifest path as
+  every ordinary chapter; identical text must still cause a new provider call.
 - **TTS provider calls are capped at 750 characters** and quality retries apply per
   chunk, so one noisy response never rebills a whole long speaker segment. Manifests
   aggregate quality by voice; consistently clean voices use one fewer allowed attempt.
@@ -165,7 +191,7 @@ Key settings: transcription primary/secondary providers, transcript QA
 thresholds, `qa_review_enabled`, `qa_model`, LLM/provider credentials,
 `default_content_profile`, `dry_run`, `max_episode_cost_usd`,
 `episode_retention_days`, image/TTS/render providers,
-`NOTIFY_WHATSAPP_*`, and YouTube OAuth paths. Profile YAML owns stage routing
+`FAILOVER_*`, `NOTIFY_WHATSAPP_*`, and YouTube OAuth paths. Profile YAML owns stage routing
 and may override applicable `.env` values. Full list: `btcedu/config.py`.
 
 Credentials never reach a log: `Settings` masks them in its own `repr`, and
@@ -184,7 +210,7 @@ The dashboard page `/whatsapp` shows the pairing QR code.
 
 <!--
 Documentation sync
-Baseline: 1d7291b
-Synced through: HEAD
-Date: 2026-08-04
+Baseline: d1b4676
+Synced through: current working tree
+Date: 2026-08-22
 -->

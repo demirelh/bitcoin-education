@@ -1,0 +1,21 @@
+[Unit]
+Description=btcedu failover control plane
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/AI-Startup-Lab/bitcoin-education
+EnvironmentFile=/etc/btcedu-control-plane.env
+ExecStart=/home/pi/AI-Startup-Lab/bitcoin-education/.venv/bin/gunicorn --workers 1 --threads 4 --bind 127.0.0.1:8092 btcedu.failover.wsgi:app
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

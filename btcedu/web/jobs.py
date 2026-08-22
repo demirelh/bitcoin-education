@@ -730,10 +730,11 @@ class JobManager:
     def _do_full_pipeline(self, job, session, settings):
         from btcedu.core.pipeline import (
             resolve_pipeline_plan,
-            run_episode_pipeline,
+            run_episode_pipeline_coordinated,
             write_report,
         )
         from btcedu.models.episode import Episode
+        from btcedu.services.failover_service import FailoverExecutionRejected
 
         episode = (
             session.query(Episode)
@@ -768,13 +769,16 @@ class JobManager:
 
         # Execute via the same function CLI uses
         self._update(job, stage=run_stages[0].stage)
-        report = run_episode_pipeline(
-            session,
-            episode,
-            settings,
-            force=job.force,
-            stage_callback=on_stage,
-        )
+        try:
+            report = run_episode_pipeline_coordinated(
+                session,
+                episode,
+                settings,
+                force=job.force,
+                stage_callback=on_stage,
+            )
+        except FailoverExecutionRejected as exc:
+            raise RuntimeError(f"Failover coordination rejected execution: {exc}") from exc
         write_report(report, settings.reports_dir)
 
         if report.success:
@@ -901,13 +905,14 @@ class JobManager:
         first (applying bounded repairs) and then resumes the pipeline, which stops
         at the gate when the result is not GREEN/approved.
         """
-        from btcedu.core.pipeline import _run_stage, run_episode_pipeline, write_report
+        from btcedu.core.pipeline import _run_stage, run_episode_pipeline_coordinated, write_report
         from btcedu.core.qa_reviewer import (
             gate_review_artifacts,
             resolve_translation_quality_gate,
         )
         from btcedu.core.reviewer import has_approved_review_for_artifacts
         from btcedu.models.episode import Episode
+        from btcedu.services.failover_service import FailoverExecutionRejected
 
         self._update(job, stage="qa")
         self._log(job, "QA-Re-Run (alles): Qualitätsgate mit gebundenen Reparaturen...")
@@ -963,13 +968,16 @@ class JobManager:
             self._log(job, f"Running: {stage_name}")
 
         self._log(job, "QA-Re-Run (alles): Pipeline wird fortgesetzt (Gate entscheidet)...")
-        report = run_episode_pipeline(
-            session,
-            episode,
-            settings,
-            force=False,
-            stage_callback=on_stage,
-        )
+        try:
+            report = run_episode_pipeline_coordinated(
+                session,
+                episode,
+                settings,
+                force=False,
+                stage_callback=on_stage,
+            )
+        except FailoverExecutionRejected as exc:
+            raise RuntimeError(f"Failover coordination rejected execution: {exc}") from exc
         write_report(report, settings.reports_dir)
 
         gate2 = next((sr for sr in report.stages if sr.stage == "review_gate_2"), None)
@@ -1286,9 +1294,10 @@ class JobManager:
                     # Process the episode
                     try:
                         from btcedu.core.pipeline import (
-                            run_episode_pipeline,
+                            run_episode_pipeline_coordinated,
                             write_report,
                         )
+                        from btcedu.services.failover_service import FailoverExecutionRejected
 
                         episode = (
                             session.query(Episode)
@@ -1325,13 +1334,17 @@ class JobManager:
                                 current_stage=stage_name,
                             )
 
-                        report = run_episode_pipeline(
-                            session,
-                            episode,
-                            settings,
-                            force=batch_job.force,
-                            stage_callback=on_stage,
-                        )
+                        try:
+                            report = run_episode_pipeline_coordinated(
+                                session,
+                                episode,
+                                settings,
+                                force=batch_job.force,
+                                stage_callback=on_stage,
+                            )
+                        except FailoverExecutionRejected as exc:
+                            logger.info("Batch skipped %s due to failover: %s", episode_id, exc)
+                            continue
                         write_report(report, settings.reports_dir)
 
                         if report.success:

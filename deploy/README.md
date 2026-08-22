@@ -16,10 +16,12 @@ cd /home/pi/AI-Startup-Lab/bitcoin-education
 sudo cp deploy/btcedu-web.service /etc/systemd/system/
 sudo cp deploy/btcedu-detect.service deploy/btcedu-detect.timer /etc/systemd/system/
 sudo cp deploy/btcedu-run.service deploy/btcedu-run.timer /etc/systemd/system/
+sudo cp deploy/btcedu-node-heartbeat.service deploy/btcedu-node-heartbeat.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now btcedu-web.service
 sudo systemctl enable --now btcedu-detect.timer
 sudo systemctl enable --now btcedu-run.timer
+sudo systemctl enable --now btcedu-node-heartbeat.timer
 
 # Configure passwordless sudo for automated deployments
 echo "pi ALL=(ALL) NOPASSWD: /bin/systemctl restart btcedu-web, /bin/systemctl status btcedu-web, /bin/systemctl stop btcedu-web, /bin/systemctl start btcedu-web, /bin/systemctl is-active btcedu-web, /bin/systemctl daemon-reload, /bin/systemctl restart btcedu-detect.timer, /bin/systemctl restart btcedu-run.timer" | sudo tee /etc/sudoers.d/pi-btcedu
@@ -44,6 +46,8 @@ For detailed instructions, see: [docs/SERVER_DEPLOYMENT_GUIDE.md](../docs/SERVER
 | `btcedu-web.service` | Web dashboard service (gunicorn on port 8091) |
 | `btcedu-detect.service` + `.timer` | Periodic RSS feed detection (every 6 hours) |
 | `btcedu-run.service` + `.timer` | Periodic episode processing (daily at 02:00) |
+| `btcedu-node-heartbeat.service` + `.timer` | Per-node failover heartbeat to the external control plane |
+| `btcedu-control-plane.service` | Optional external primary/secondary control plane |
 
 ### Configuration Files
 
@@ -81,6 +85,8 @@ run.sh deployment script
         +- btcedu detect
     btcedu-run.timer (every 10 min)
         +- btcedu run-latest
+    btcedu-node-heartbeat.timer (every 60s)
+        +- btcedu failover-heartbeat
     ard-recorder.service (OnSuccess=)
         +- btcedu-run.service   <- fires as soon as a recording is finished
 ```
@@ -116,6 +122,14 @@ run.sh deployment script
 - Overlapping runs are impossible: systemd skips a trigger while the unit is
   still active, and `pipeline_lock` guards the process as well
 
+### btcedu-node-heartbeat.timer
+
+- Runs `btcedu failover-heartbeat` every minute
+- Keeps the external control plane's node view fresh
+- Safe to enable even while `FAILOVER_ENABLED=false` (the command no-ops)
+- Remote nodes must use the control plane's public HTTPS URL (for this setup:
+  `https://sahimi.app/failover`), never raw cross-host `http://...:8092`
+
 ### Event trigger from the recorder
 
 `deploy/ard-recorder-btcedu-trigger.conf` is a drop-in for the neighbouring
@@ -141,6 +155,7 @@ failed recorder run and for the YouTube fallback path.
 sudo journalctl -u btcedu-web -f
 sudo journalctl -u btcedu-detect -n 20
 sudo journalctl -u btcedu-run -n 20
+sudo journalctl -u btcedu-node-heartbeat -n 20
 sudo systemctl list-timers btcedu-*
 ```
 
@@ -171,6 +186,10 @@ Before running `setup-web.sh` or manual installation, ensure:
 3. Environment file exists: `.env` (systemd units load it via `EnvironmentFile`)
 4. Database is initialized: `.venv/bin/btcedu init-db && .venv/bin/btcedu migrate`
 5. (Optional) YouTube credentials: `pip install -e ".[youtube]"` + `data/client_secret.json`
+6. (Optional failover) The control plane stays bound to `127.0.0.1:8092` and
+   must be exposed to other nodes through an HTTPS reverse proxy (see
+   `docs/runbooks/failover-control-plane.md` for the `sahimi.app` Caddy
+   example and node URL configuration)
 
 Before upgrading an existing installation, back up `data/btcedu.db` and
 `data/outputs/`. The deployed profile selects transcript analysis,

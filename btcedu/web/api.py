@@ -196,6 +196,72 @@ def set_render_mode_endpoint():
     return jsonify({"mode": mode})
 
 
+@api_bp.route("/failover/status", methods=["GET"])
+def get_failover_status_endpoint():
+    """Proxy the external failover control-plane status into the dashboard."""
+    from btcedu.services.failover_service import FailoverError, proxy_failover_status
+
+    settings = current_app.config["settings"]
+    try:
+        return jsonify(proxy_failover_status(settings))
+    except FailoverError as exc:
+        return jsonify({"enabled": True, "error": str(exc)}), 502
+
+
+@api_bp.route("/failover/mode", methods=["POST"])
+def set_failover_mode_endpoint():
+    """Change the external failover mode via the operator token."""
+    from btcedu.failover.types import FailoverMode
+    from btcedu.services.failover_service import (
+        FailoverControlPlaneClient,
+        FailoverError,
+        failover_enabled,
+        load_failover_operator_config,
+    )
+
+    settings = current_app.config["settings"]
+    if not failover_enabled(settings):
+        return jsonify({"error": "Failover is disabled"}), 400
+    if load_failover_operator_config(settings) is None:
+        return jsonify({"error": "No failover operator token is configured"}), 503
+
+    payload = request.get_json(silent=True) or {}
+    mode_value = str(payload.get("mode", "")).strip()
+    try:
+        mode = FailoverMode(mode_value)
+    except ValueError:
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "mode must be one of automatic, force_primary, "
+                        "force_secondary, paused"
+                    )
+                }
+            ),
+            400,
+        )
+
+    try:
+        status = FailoverControlPlaneClient.operator_from_settings(settings).set_mode(mode)
+    except FailoverError as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    return jsonify(
+        {
+            "enabled": True,
+            "operator_configured": True,
+            "mode": status.mode.value,
+            "effective_owner_role": (
+                status.effective_owner_role.value if status.effective_owner_role else None
+            ),
+            "effective_owner_node": status.effective_owner_node,
+            "nodes": [node.to_dict() for node in status.nodes],
+            "active_leases": [lease.to_public_dict() for lease in status.active_leases],
+        }
+    )
+
+
 # ---------------------------------------------------------------------------
 # Health check
 # ---------------------------------------------------------------------------

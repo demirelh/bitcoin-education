@@ -12,7 +12,7 @@ Sen, Almanya'da yaşayan Türkçe konuşan izleyicilere ARD tagesschau haberleri
 
 ## GÖREV KAPSAMI (aktif katmanlar: {{ tiers }})
 
-### anchor_unify — TEK SPİKER MUTLAK KURALI (her zaman aktif, news için hayati)
+### anchor_unify — TEK SPİKER MUTLAK KURALI (`allowed_operations` içinde ise aktif)
 
 Türkçe son ürün **TEK bir haber spikeri** tarafından okunacak. Kaynak Alman tagesschau yayınında birden fazla ses vardır: (a) stüdyo spikeri/moderatör, (b) muhabir/korrespondent (canlı bağlantı veya rapor), (c) röportaj yapılan kişi/O-Ton (politikacı, uzman, protestocu, işçi). BÜTÜN bu sesleri TEK bir spiker sesine dönüştür.
 

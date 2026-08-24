@@ -26,6 +26,9 @@ Each v2 stage module follows the same pattern:
 - `reviewer.py` — review CRUD: `create_review_task()`, `approve_review()`, `reject_review()`, `has_approved_review()`, `has_pending_review()`, `approve_stage_for_artifacts()`
 - `qa_reviewer.py` — transcript/translation QA plus `adjudicate_quality_gate()` and `adjudicate_transcript_qa_gate()` (independent-model gate decisions, written to `gate_adjudication.json`)
 - `translation_qa.py` — deterministic checks + LLM cascade, GREEN/RED gate, bounded targeted retries
+- `adapter.py` — conditional per-story adaptation. Keep its returned-operation allowlist strict;
+  `anchor_unify` selection checks Turkish markers and German first-person source markers because
+  Turkish may encode first person only in verb or possessive suffixes.
 - `narration_lock.py` — approved-narration invariant: `normalize_narration_text()`, `compose_chapter_narration()`, `check_narration_lock()`, plus deterministic repair of minor drift/truncation
 - `final_review.py` — deterministic weather video checks at `review_gate_3` (asset exists, 1920x1080, segment resolution, blank/freeze/stale frames, narration coverage). Fail-closed: a crash blocks the gate.
 - `retention.py` — `prune_expired_episodes()` (files + DB rows), called from `detector.py`. Honors `episode_retention_days` / profile `ingest.retention_days`.

@@ -873,11 +873,16 @@ def _needed_adaptation_operations(story, text: str, allowed_operations: list[str
     """Return only operations justified by concrete markers in this story."""
     needed: list[str] = []
     lowered = text.casefold()
+    source_lowered = (story.source_text or story.text_de or "").casefold()
     if "anchor_unify" in allowed_operations and (
         story.story_type == "interview"
         or story.reporter
         or re.search(r"\b(ben|biz|bizim|bize)\b", lowered)
         or re.search(r"\b(muhabirimiz|meslektaşımız|teşekkürler)\b", lowered)
+        or re.search(
+            r"\b(ich|mich|mir|wir|uns|unser(?:e|er|es|en|em)?|mein(?:e|er|es|en|em)?)\b",
+            source_lowered,
+        )
     ):
         needed.append("anchor_unify")
     if "institution_explanation" in allowed_operations and re.search(

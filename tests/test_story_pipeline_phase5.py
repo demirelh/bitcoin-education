@@ -3,11 +3,16 @@
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from btcedu.core.adapter import _adapt_per_story, _adaptation_fidelity_risks
+from btcedu.core.adapter import (
+    _adapt_per_story,
+    _adaptation_fidelity_risks,
+    _needed_adaptation_operations,
+)
 from btcedu.core.segmenter import _normalize_story_inventory
 from btcedu.core.translator import (
     _call_story_translation,
@@ -438,6 +443,127 @@ def test_intro_outro_may_remove_program_time_during_cleaning():
 
     assert output.translated_text == ""
     assert len(responses) == 1
+
+
+def test_needed_adaptation_detects_german_first_person_with_implicit_turkish_person():
+    story = SimpleNamespace(
+        story_type="bericht",
+        reporter=None,
+        source_text=(
+            "Dem Ergebnis der laufenden Abstimmung möchte ich nicht vorgreifen. "
+            "Unser Ziel ist es, dass der Bundestag den Gesetzentwurf berät."
+        ),
+        text_de="",
+    )
+    text_tr = (
+        "Devam eden koordinasyonun sonucunu şimdiden öngörmek istemiyorum. "
+        "Hedefimiz, Bundestag'ın yasa tasarısını görüşmesidir."
+    )
+
+    assert _needed_adaptation_operations(
+        story,
+        text_tr,
+        ["anchor_unify", "institution_explanation", "local_relevance", "register_polish"],
+    ) == ["anchor_unify", "institution_explanation"]
+
+
+def test_conditional_story_adaptation_allows_detected_german_first_person(tmp_path):
+    source_de = (
+        "Dem Ergebnis der laufenden Abstimmung möchte ich nicht vorgreifen. "
+        "Unser Ziel ist es, dass der Bundestag den Gesetzentwurf berät."
+    )
+    source_tr = (
+        "Devam eden koordinasyonun sonucunu şimdiden öngörmek istemiyorum. "
+        "Hedefimiz, Bundestag'ın yasa tasarısını görüşmesidir."
+    )
+    adapted_tr = (
+        "Adalet Bakanlığı devam eden koordinasyonun sonucuna ilişkin açıklama yapmadı. "
+        "Bakanlığın hedefi, Bundestag (Almanya Federal Meclisi)'ın yasa tasarısını "
+        "görüşmesidir."
+    )
+    story_doc = StoryDocument.model_validate(
+        {
+            "episode_id": "ep-german-first-person",
+            "broadcast_date": "2026-08-23",
+            "source_attribution": {"source": "tagesschau"},
+            "total_stories": 1,
+            "total_duration_seconds": 20,
+            "stories": [
+                {
+                    "story_id": "s03",
+                    "order": 1,
+                    "headline_de": "Gesetzentwurf",
+                    "category": "politik",
+                    "story_type": "bericht",
+                    "text_de": source_de,
+                    "word_count": 18,
+                    "estimated_duration_seconds": 20,
+                    "source_segment_ids": ["seg-0100"],
+                    "text_tr": source_tr,
+                }
+            ],
+        }
+    )
+    outputs = tmp_path / "outputs" / "ep-german-first-person"
+    outputs.mkdir(parents=True)
+    translated_path = outputs / "stories_translated.json"
+    adapted_path = outputs / "stories_adapted.json"
+    translated_path.write_text(story_doc.model_dump_json(), encoding="utf-8")
+    response = MagicMock(
+        text=json.dumps(
+            {
+                "story_id": "s03",
+                "adapted_text": adapted_tr,
+                "operations_applied": ["anchor_unify", "institution_explanation"],
+            },
+            ensure_ascii=False,
+        ),
+        input_tokens=20,
+        output_tokens=20,
+        cost_usd=0.001,
+    )
+    settings = MagicMock(outputs_dir=str(tmp_path / "outputs"), dry_run=False)
+
+    with patch("btcedu.core.adapter.call_claude", return_value=response):
+        _, diff, *_ = _adapt_per_story(
+            stories_translated_path=translated_path,
+            stories_adapted_path=adapted_path,
+            episode_id="ep-german-first-person",
+            system_prompt="system",
+            user_template="{{ translation }}\n{{ original_german }}",
+            settings=settings,
+            mode="conditional",
+            allowed_operations=[
+                "anchor_unify",
+                "institution_explanation",
+                "local_relevance",
+                "register_polish",
+            ],
+        )
+
+    adapted = json.loads(adapted_path.read_text(encoding="utf-8"))["stories"][0]
+    assert adapted["text_adapted_tr"] == adapted_tr
+    assert adapted["adaptation_operations"] == ["anchor_unify", "institution_explanation"]
+    assert [item["category"] for item in diff["adaptations"]] == [
+        "anchor_unify",
+        "institution_explanation",
+    ]
+
+
+def test_needed_adaptation_does_not_flag_plain_german_narration():
+    story = SimpleNamespace(
+        story_type="bericht",
+        reporter=None,
+        source_text="Die Bundesregierung kündigte einen Gesetzentwurf an.",
+        text_de="",
+    )
+
+    assert (
+        _needed_adaptation_operations(
+            story, "Federal Hükümet bir tasarı duyurdu.", ["anchor_unify"]
+        )
+        == []
+    )
 
 
 def test_adaptation_rejects_changed_dates():

@@ -37,6 +37,8 @@ These build prompts programmatically for v1 pipeline. Do not modify unless fixin
 ## Conventions
 
 - Template variables come from the calling core module (e.g., `{{ transcript }}`, `{{ reviewer_feedback }}`)
+- Conditional adaptation instructions must honor each story payload's `allowed_operations`; do not
+  describe an operation as always active when the caller may omit it from that per-story list.
 - `correct_transcript.md` supports `{{ reviewer_feedback }}` injection for re-correction after review
 - Most templates target `claude-sonnet-4-20250514`. Exceptions: `gemini_frame_edit.md`
   (`gemini-2.0-flash-exp`), `qa_review.md` (`gpt-5.6-sol`),

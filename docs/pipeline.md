@@ -141,7 +141,10 @@ türkische YouTube-Videos umwandeln.
 - **Begrenzte Adaption:** Für `tagesschau_tr` ist Adaption nicht deaktiviert,
   sondern bewusst auf `mode: conditional` gesetzt. Nur konkret benötigte
   Operationen (`anchor_unify`, Institutionserklärung, lokale Relevanz,
-  Registerpolitur) sind erlaubt. `stories_adapted.json` erhält pro Story den
+  Registerpolitur) sind erlaubt. Die Erkennung von Sprecherwechseln prüft neben
+  dem türkischen Text auch deutsche Ich-/Wir-Marker im Original, damit implizite
+  türkische Verbformen die `anchor_unify`-Auswahl nicht umgehen.
+  `stories_adapted.json` erhält pro Story den
   adaptierten Text und die tatsächlich angewandten Operationen;
   `script.adapted.tr.md` bleibt für bestehende Downstream-Stages erhalten.
 - **Narration-Lock:** Bei GREEN speichert das Translation-QA-Gate den SHA-256

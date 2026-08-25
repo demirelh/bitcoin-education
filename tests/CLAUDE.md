@@ -43,6 +43,11 @@ terminal job state and cleanly isolate DB/app fixtures; a failure seen only
 after thousands of tests but passing alone may be leaked suite state, not a
 reason to weaken the production behavior.
 
+10. **Endpoint acceptance tests**: tests that only assert a background action
+returns `202` must stub `JobManager.submit()` so synthetic episode URLs cannot
+reach yt-dlp or any other external provider. Exercise real submission only in
+job lifecycle tests, with every stage dependency mocked and the job awaited.
+
 ## Test File Organization
 
 - `test_<module>.py` — maps to `btcedu/core/<module>.py` or `btcedu/services/<module>.py`

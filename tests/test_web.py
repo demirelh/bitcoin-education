@@ -390,6 +390,21 @@ class TestPipelineRunGitCommit:
 
 
 class TestPipelineActions:
+    @pytest.fixture(autouse=True)
+    def stub_background_jobs(self, monkeypatch):
+        """Endpoint response tests must not execute real pipeline stages."""
+        from btcedu.web.jobs import Job, JobManager
+
+        def submit(_manager, action, episode_id, app, **kwargs):
+            return Job(
+                job_id="test-job",
+                action=action,
+                episode_id=episode_id,
+                force=kwargs.get("force", False),
+            )
+
+        monkeypatch.setattr(JobManager, "submit", submit)
+
     def test_detect_endpoint_sync(self, client):
         """Detect stays synchronous."""
         mock_result = MagicMock(found=5, new=2, total=10)

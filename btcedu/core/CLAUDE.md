@@ -60,6 +60,9 @@ Each v2 stage module follows the same pattern:
   `btcedu failover-reconcile` operator command after determining the outcome.
 - **Cost extraction**: `run_episode_pipeline()` parses cost from `StageResult.detail` (splits on `$`)
 - **Failure notifications**: a failed stage calls `services/notify_service.notify_stage_failure()`; notification errors are swallowed and must never affect the run
+- **Structured translation output**: keep strict schema validation after the
+  translator's `json_repair` fallback; malformed quoting may be repaired, but
+  structurally or factually invalid story translations must still fail.
 
 <!--
 Documentation sync

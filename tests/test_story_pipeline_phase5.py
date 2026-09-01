@@ -16,6 +16,7 @@ from btcedu.core.adapter import (
 from btcedu.core.segmenter import _normalize_story_inventory
 from btcedu.core.translator import (
     _call_story_translation,
+    _parse_structured_response,
     _translation_fidelity_risks,
 )
 from btcedu.models.story_schema import StoryDocument
@@ -89,6 +90,21 @@ def _story_document() -> StoryDocument:
             ],
         }
     )
+
+
+def test_parse_story_translation_repairs_unescaped_direct_quote():
+    response = """
+    {
+      "story_id": "s01",
+      "translated_headline": "Karar",
+      "translated_text": "Sunucu "kritik karar" dedi ve devam etti.",
+      "source_segment_ids": ["seg-0001"]
+    }
+    """
+
+    parsed = _parse_structured_response(response)
+
+    assert parsed["translated_text"] == 'Sunucu "kritik karar" dedi ve devam etti.'
 
 
 def test_story_inventory_has_stable_ids_order_and_traceability():

@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+import json_repair
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
@@ -1076,7 +1077,7 @@ def _adjudicate_story_translation(
 
 
 def _parse_structured_response(response_text: str) -> dict:
-    """Parse a JSON object while tolerating a surrounding markdown fence."""
+    """Parse a JSON object while tolerating fences and malformed string quotes."""
     text = response_text.strip()
     if text.startswith("```json"):
         text = text[7:].strip()
@@ -1088,7 +1089,22 @@ def _parse_structured_response(response_text: str) -> dict:
     end = text.rfind("}")
     if start < 0 or end <= start:
         raise json.JSONDecodeError("No JSON object found", text, 0)
-    return json.loads(text[start : end + 1])
+    candidate = text[start : end + 1]
+    try:
+        return json.loads(candidate)
+    except json.JSONDecodeError as exc:
+        logger.warning(
+            "Standard JSON parse failed for story translation (%s); "
+            "attempting structural repair",
+            exc,
+        )
+        try:
+            repaired = json_repair.loads(candidate)
+        except Exception as repair_error:  # noqa: BLE001 - preserve the original parse error
+            raise exc from repair_error
+        if isinstance(repaired, dict) and repaired:
+            return repaired
+        raise exc
 
 
 _TRANSLATION_TERMS = {

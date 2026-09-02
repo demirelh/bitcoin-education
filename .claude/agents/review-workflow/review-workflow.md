@@ -2,7 +2,7 @@
 name: review-workflow
 description: Manage review gates in the btcedu pipeline — list pending reviews, inspect diffs, approve/reject review tasks, and understand the review gate flow.
 tools: Read, Glob, Grep, Bash
-model: sonnet
+model: claude-sonnet-4.6
 maxTurns: 20
 ---
 

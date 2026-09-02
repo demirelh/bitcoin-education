@@ -22,7 +22,7 @@ stage_config:
     register: casual_educational
     use_glossary: true
   chapterize:
-    model: claude-haiku-4-5
+    model: claude-haiku-4.5
     max_chapter_seconds: 120
     min_chapter_seconds: 60
     require_hook: true

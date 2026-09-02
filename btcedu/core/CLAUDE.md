@@ -33,6 +33,7 @@ Each v2 stage module follows the same pattern:
 - `final_review.py` — deterministic weather video checks at `review_gate_3` (asset exists, 1920x1080, segment resolution, blank/freeze/stale frames, narration coverage). Fail-closed: a crash blocks the gate.
 - `retention.py` — `prune_expired_episodes()` (files + DB rows), called from `detector.py`. Honors `episode_retention_days` / profile `ingest.retention_days`.
 - `regression_runner.py` — `run_recent_episode_regression()`: replays recent episodes stage-by-stage against a cloned DB and copied outputs, never touching production data (`btcedu regression-run`)
+- `copilot_fix.py` — `start_copilot_fix()`: one-shot autonomous repair of a failed stage in a detached tmux session (`copilotfix`). Called from the failure branch of `run_episode_pipeline()`, at most once per distinct error (marker `provenance/copilot_fixes.json`), never in dry-run and disabled via `copilot_auto_fix_enabled`
 - `weather/` — deterministic Tagesschau weather subsystem: `detector.py` (is this a weather chapter?), `extractor.py` (claims from approved narration), `scene_planner.py`, `renderer.py` (HTML/SVG → headless Chromium → PNG/MP4), `validator.py` (claims must be narration-backed), `models.py`, `lexicon.py`, `dates.py` (absolute Turkish date labels), `cities.py` (map projection), `templates/`, `assets/`
 - `stock_images.py` (60KB) — Pexels stock search, intent extraction, ranking, candidate finalization
 - `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro cards, ticker
@@ -63,6 +64,11 @@ Each v2 stage module follows the same pattern:
 - **Structured translation output**: keep strict schema validation after the
   translator's `json_repair` fallback; malformed quoting may be repaired, but
   structurally or factually invalid story translations must still fail.
+- **Automatic repair**: the same failure branch then calls `copilot_fix.start_copilot_fix(automatic=True)`. A launch error is logged but never replaces the reported stage failure.
+- **Copilot model ids expire**: GitHub retires ids without notice and the CLI
+  then aborts with `Model "..." from --model flag is not available`, failing the
+  stage. Verify any new id in `.env`, `config.py` or a profile with
+  `copilot --model <id> -p ok` before committing it.
 
 <!--
 Documentation sync

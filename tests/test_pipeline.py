@@ -3,6 +3,7 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -164,6 +165,35 @@ class TestRunEpisodePipeline:
         db_session.refresh(new_episode)
         assert new_episode.retry_count == 1
         assert new_episode.error_message is not None
+
+    @patch("btcedu.core.copilot_fix.start_copilot_fix")
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_failure_starts_copilot_fix(
+        self, mock_stage, mock_fix, db_session, new_episode, tmp_path
+    ):
+        mock_stage.return_value = StageResult("download", "failed", 0.1, error="Boom")
+        mock_fix.return_value = SimpleNamespace(started=True, model="gpt-5.6-sol")
+        settings = _make_settings(tmp_path)
+
+        run_episode_pipeline(db_session, new_episode, settings)
+
+        assert mock_fix.call_count == 1
+        assert mock_fix.call_args.kwargs["stage"] == "download"
+        assert mock_fix.call_args.kwargs["automatic"] is True
+        assert "Boom" in mock_fix.call_args.kwargs["error_message"]
+
+    @patch("btcedu.core.copilot_fix.start_copilot_fix", side_effect=RuntimeError("no tmux"))
+    @patch("btcedu.core.pipeline._run_stage")
+    def test_copilot_fix_launch_error_does_not_mask_stage_failure(
+        self, mock_stage, mock_fix, db_session, new_episode, tmp_path
+    ):
+        mock_stage.return_value = StageResult("download", "failed", 0.1, error="Boom")
+        settings = _make_settings(tmp_path)
+
+        report = run_episode_pipeline(db_session, new_episode, settings)
+
+        assert report.success is False
+        assert "Boom" in report.error
 
     @patch("btcedu.core.pipeline._run_stage")
     def test_stops_on_failure(self, mock_stage, db_session, new_episode, tmp_path):

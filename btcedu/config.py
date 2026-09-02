@@ -91,9 +91,18 @@ class Settings(BaseSettings):
         "openai/gpt-4.1"  # e.g. "openai/gpt-4.1", "anthropic/claude-sonnet-4.5"
     )
     github_models_endpoint: str = "https://models.github.ai/inference"
-    copilot_cli_model: str = "claude-sonnet-4.5"  # e.g. "claude-sonnet-4.5", "claude-opus-4.6"
+    # Copilot retires model ids without notice; a stage then fails with
+    # 'Model "..." from --model flag is not available'. Keep this on a current
+    # id and verify a new value with `copilot --model <id> -p ok` before use.
+    copilot_cli_model: str = "claude-sonnet-4.6"  # e.g. "claude-sonnet-4.6", "gpt-5.6-sol"
     copilot_cli_binary: str = "copilot"
     copilot_cli_timeout: int = 900  # seconds per call
+
+    # One-shot Copilot repair of a failed stage, launched in a detached tmux
+    # session. Started at most once per distinct automatic error and never in
+    # dry-run mode.
+    copilot_auto_fix_enabled: bool = True
+    copilot_auto_fix_model: str = "gpt-5.6-sol"
 
     # Independent second-opinion QA of the adapted script (after adapt, before
     # Review Gate 2). Profile configuration controls routing, escalation, and

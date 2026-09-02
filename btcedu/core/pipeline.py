@@ -1775,6 +1775,31 @@ def run_episode_pipeline(
             except Exception:
                 logger.debug("Could not send failure notification", exc_info=True)
 
+            # One-shot autonomous repair. Launched at most once per distinct
+            # error and never in dry-run; a launch problem must not mask the
+            # stage failure that is being reported here.
+            try:
+                from btcedu.core.copilot_fix import start_copilot_fix
+
+                launch = start_copilot_fix(
+                    settings,
+                    episode_id=episode.episode_id,
+                    title=episode.title or "",
+                    stage=stage_name,
+                    error_message=report.error,
+                    automatic=True,
+                    profile=getattr(episode, "content_profile", "") or "tagesschau_tr",
+                )
+                if launch.started:
+                    logger.info(
+                        "  Copilot fix session started for %s/%s (model=%s)",
+                        episode.episode_id,
+                        stage_name,
+                        launch.model,
+                    )
+            except Exception:
+                logger.warning("Could not start Copilot fix session", exc_info=True)
+
             break
         elif result.status == "review_pending":
             logger.info("  Stage %s: %s", stage_name, result.detail)

@@ -2,7 +2,7 @@
 name: visual-assets
 description: Handle per-chapter visual asset workflows — searching, ranking, reviewing, normalizing, and finalizing images and video clips for the btcedu video pipeline.
 tools: Read, Glob, Grep, Bash
-model: sonnet
+model: claude-sonnet-4.6
 maxTurns: 25
 ---
 

@@ -119,6 +119,27 @@ def test_copilot_json_extraction_preserves_non_json_for_stage_retry():
     assert _extract_json_object(text) == text
 
 
+@patch("subprocess.run")
+def test_copilot_cli_uses_current_default_model(mock_run):
+    mock_run.return_value = CompletedProcess(
+        args=["copilot"],
+        returncode=0,
+        stdout=json.dumps(
+            {
+                "type": "assistant.message_delta",
+                "data": {"messageId": "m1", "deltaContent": "ok"},
+            }
+        ),
+        stderr="",
+    )
+
+    response = _call_copilot_cli("system", "user", SimpleNamespace())
+
+    command = mock_run.call_args.args[0]
+    assert command[command.index("--model") + 1] == "claude-sonnet-5"
+    assert response.model == "copilot/claude-sonnet-5"
+
+
 @patch("btcedu.services.claude_service._copilot_cli_fallback_text")
 @patch("subprocess.run")
 def test_copilot_missing_assistant_event_fails_without_second_model_call(

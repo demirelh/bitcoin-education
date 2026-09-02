@@ -83,7 +83,7 @@ türkische YouTube-Videos umwandeln.
 - **Deterministische Heuristiken** → Transkriptanalyse (Stage 3, keine KI/API)
 - **OpenAI `gpt-4o-mini-transcribe`** → selektive Zweittranskription
   verdächtiger Audioausschnitte (Stage 4)
-- **Claude Sonnet 4.5** (über Copilot CLI, `llm_provider=copilot_cli`) →
+- **Claude Sonnet 5** (über Copilot CLI, `llm_provider=copilot_cli`) →
   correct, segment, translate, adapt, chapterize (Stages 5, 9, 10, 11, 13) —
   das **inhaltliche Kernmodell**
 - **Deterministische Transcript-QA** → blockierender Faktenrisiko-Check

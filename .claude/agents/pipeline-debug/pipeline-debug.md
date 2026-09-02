@@ -2,7 +2,7 @@
 name: pipeline-debug
 description: Debug failed pipeline episodes by systematically checking episode status, error messages, pipeline run records, logs, and common failure patterns in the btcedu video pipeline.
 tools: Read, Glob, Grep, Bash, Agent
-model: claude-sonnet-4.6
+model: claude-sonnet-5
 maxTurns: 30
 ---
 

@@ -795,12 +795,18 @@ def failover_reconcile_cmd(
     required=True,
     help="Earliest stage to rerun; execution stops after chapterize.",
 )
+@click.option(
+    "--only-stage",
+    is_flag=True,
+    help="Run only --from-stage instead of continuing through chapterize.",
+)
 @click.option("--profile", default="tagesschau_tr", show_default=True)
 @click.option("--count", default=3, show_default=True, type=click.IntRange(min=1))
 @click.pass_context
 def regression_run(
     ctx: click.Context,
     from_stage: str,
+    only_stage: bool,
     profile: str,
     count: int,
 ) -> None:
@@ -816,6 +822,7 @@ def regression_run(
             from_stage=from_stage,
             profile=profile,
             count=count,
+            only_stage=only_stage,
         )
     except Exception as exc:
         raise click.ClickException(str(exc)) from exc
@@ -838,7 +845,10 @@ def regression_run(
 
     if failed:
         raise click.ClickException("3-episode regression failed")
-    click.echo("\nRegression passed through chapterize.")
+    if only_stage:
+        click.echo(f"\nRegression passed for {from_stage}.")
+    else:
+        click.echo("\nRegression passed through chapterize.")
 
 
 @cli.command(name="run-latest")

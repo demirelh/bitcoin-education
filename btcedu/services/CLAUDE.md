@@ -9,7 +9,7 @@ Each service uses a Protocol for swappable implementations:
 
 ## Services
 
-- `claude_service.py` — `call_claude()` -> `ClaudeResponse(text, input_tokens, output_tokens, cost_usd)`. Providers: `anthropic`, `openai`, `github_models`, `copilot_cli`. Also: `compute_prompt_hash()`, `calculate_cost()`
+- `claude_service.py` — `call_claude()` -> `ClaudeResponse(text, input_tokens, output_tokens, cost_usd)`. Providers: `anthropic`, `openai`, `github_models`, `copilot_cli`; the current Copilot CLI producer default is `claude-sonnet-5`. Also: `compute_prompt_hash()`, `calculate_cost()`
 - `elevenlabs_service.py` — raw HTTP (not SDK). Provider retries, quota-only
   account fallback, timestamp/alignment responses and callbacks that charge
   every successful billed request. The 750-character splitting and quality

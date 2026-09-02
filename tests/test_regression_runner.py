@@ -88,12 +88,13 @@ def test_regression_run_is_stage_major_and_isolated(tmp_path):
         result = run_recent_episode_regression(
             session,
             settings,
-            from_stage="chapterize",
+            from_stage="correct",
+            only_stage=True,
         )
 
     assert result.episode_ids == episode_ids
-    assert result.stages == ["chapterize"]
-    assert calls == [("chapterize", episode_id) for episode_id in episode_ids]
+    assert result.stages == ["correct"]
+    assert calls == [("correct", episode_id) for episode_id in episode_ids]
     for episode_id in episode_ids:
         assert (outputs / episode_id / "marker.txt").read_text(encoding="utf-8") == "production"
     session.close()

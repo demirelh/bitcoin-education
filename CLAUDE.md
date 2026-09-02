@@ -14,7 +14,7 @@ pytest                               # run full test suite
 pytest tests/test_pipeline.py -x -q  # run specific test file
 ruff check btcedu/ tests/            # lint (py312, line-length 100, E/W/F/I/UP)
 ./run.sh                             # production deploy: git pull → pip → migrate → restart
-btcedu regression-run                # replay recent episodes in an isolated DB/output copy
+btcedu regression-run --from-stage correct --only-stage  # isolated stage replay
 ```
 
 Current collection baseline: **2655 tests** (`pytest --collect-only -q`,

@@ -94,7 +94,7 @@ class Settings(BaseSettings):
     # Copilot retires model ids without notice; a stage then fails with
     # 'Model "..." from --model flag is not available'. Keep this on a current
     # id and verify a new value with `copilot --model <id> -p ok` before use.
-    copilot_cli_model: str = "claude-sonnet-4.6"  # e.g. "claude-sonnet-4.6", "gpt-5.6-sol"
+    copilot_cli_model: str = "claude-sonnet-5"  # e.g. "claude-sonnet-5", "gpt-5.6-sol"
     copilot_cli_binary: str = "copilot"
     copilot_cli_timeout: int = 900  # seconds per call
 

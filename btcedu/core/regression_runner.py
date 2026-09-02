@@ -126,7 +126,13 @@ def _recent_episode_ids(
     return [episode.episode_id for episode in episodes]
 
 
-def _regression_stages(settings: Settings, episodes: list[Episode], from_stage: str) -> list[str]:
+def _regression_stages(
+    settings: Settings,
+    episodes: list[Episode],
+    from_stage: str,
+    *,
+    only_stage: bool = False,
+) -> list[str]:
     from btcedu.core.pipeline import _get_stages
 
     plans = [[name for name, _ in _get_stages(settings, episode)] for episode in episodes]
@@ -141,6 +147,8 @@ def _regression_stages(settings: Settings, episodes: list[Episode], from_stage: 
         raise ValueError(
             f"Unknown or unsupported start stage {from_stage!r}; choose one of: " + ", ".join(plan)
         )
+    if only_stage:
+        return [from_stage]
     return plan[plan.index(from_stage) :]
 
 
@@ -151,6 +159,7 @@ def run_recent_episode_regression(
     from_stage: str,
     profile: str = "tagesschau_tr",
     count: int = 3,
+    only_stage: bool = False,
 ) -> RegressionRunResult:
     """Run recent episodes stage-major through chapterize in an isolated copy."""
     from btcedu.core.pipeline import _run_stage
@@ -186,7 +195,12 @@ def run_recent_episode_regression(
                 .all()
             }
             episodes = [episode_by_id[episode_id] for episode_id in episode_ids]
-            stages = _regression_stages(isolated_settings, episodes, from_stage)
+            stages = _regression_stages(
+                isolated_settings,
+                episodes,
+                from_stage,
+                only_stage=only_stage,
+            )
 
             for episode in episodes:
                 episode.error_message = None

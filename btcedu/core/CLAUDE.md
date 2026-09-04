@@ -32,9 +32,15 @@ Each v2 stage module follows the same pattern:
 - `narration_lock.py` — approved-narration invariant: `normalize_narration_text()`, `compose_chapter_narration()`, `check_narration_lock()`, plus deterministic repair of minor drift/truncation
 - `final_review.py` — deterministic weather video checks at `review_gate_3` (asset exists, 1920x1080, segment resolution, blank/freeze/stale frames, narration coverage). Fail-closed: a crash blocks the gate.
 - `retention.py` — `prune_expired_episodes()` (files + DB rows), called from `detector.py`. Honors `episode_retention_days` / profile `ingest.retention_days`.
-- `regression_runner.py` — `run_recent_episode_regression()`: replays recent episodes stage-by-stage against a cloned DB and copied outputs, never touching production data; `btcedu regression-run --only-stage` limits validation to the selected stage
+- `regression_runner.py` — `run_recent_episode_regression()`: replays recent
+  episodes against a cloned DB and copied outputs, never touching production
+  data; `btcedu regression-run --only-stage` can isolate any stage in the
+  profile pipeline, while multi-stage runs stop after chapterize. Its temporary
+  workspace lives under `outputs_dir/.regression-workspaces`, not the small
+  system `/tmp` tmpfs used on the Raspberry Pi.
 - `copilot_fix.py` — `start_copilot_fix()`: one-shot autonomous repair of a failed stage in a detached tmux session (`copilotfix`). Called from the failure branch of `run_episode_pipeline()`, at most once per distinct error (marker `provenance/copilot_fixes.json`), never in dry-run and disabled via `copilot_auto_fix_enabled`
 - `weather/` — deterministic Tagesschau weather subsystem: `detector.py` (is this a weather chapter?), `extractor.py` (claims from approved narration), `scene_planner.py`, `renderer.py` (HTML/SVG → headless Chromium → PNG/MP4), `validator.py` (claims must be narration-backed), `models.py`, `lexicon.py`, `dates.py` (absolute Turkish date labels), `cities.py` (map projection), `templates/`, `assets/`
+- `image_generator.py` — per-chapter pictures. On a provider error the chapter is retried with the profile's `fallback_provider`; if it still has no file the stage **fails** instead of writing a `*_failed.png` entry. Manifest and provenance are written first, so a rerun regenerates only the missing chapters (`_chapters_needing_regen`).
 - `stock_images.py` (60KB) — Pexels stock search, intent extraction, ranking, candidate finalization
 - `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro cards, ticker
 - `frame_editor.py` — Gemini 2.0 Flash frame editing for tagesschau episodes (translates German text overlays to Turkish)

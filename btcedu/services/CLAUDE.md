@@ -27,7 +27,9 @@ Each service uses a Protocol for swappable implementations:
   HeyGen can request alpha-capable WebM, but active profiles remain on opaque
   MP4 until the renderer gains alpha-aware studio compositing.
 - `image_provider_factory.py` plus `flux_service.py` / `ideogram_service.py` —
-  profile-owned generative image routing
+  profile-owned generative image routing. Flux and Ideogram retry transient CDN
+  failures while downloading an already-generated (and already-billed) image,
+  as DALL-E 3 has always done.
 - `image_gen_service.py` — DALL-E 3 via openai SDK
 - `pexels_service.py` — Pexels stock photo/video search via raw HTTP
 - `meteo_service.py` — Open-Meteo / DWD ICON forecasts via urllib (`OpenMeteoService`, `MeteoService` Protocol). One multi-location request, never raises: failures degrade to an empty list. `_request()` is the seam patched in tests.

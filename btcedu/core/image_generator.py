@@ -574,6 +574,9 @@ def generate_images(
         _profile_provider = str(_imagegen_cfg.get("provider", "") or "").lower()
         _generative_profile = _profile_provider in GENERATIVE_PROVIDERS
         _smart_routing = _generative_profile or getattr(settings, "image_gen_smart_routing", False)
+        # The profile names a second provider for exactly this case; without it
+        # a single provider outage turned into a dangling manifest entry.
+        _fallback_provider = str(_imagegen_cfg.get("fallback_provider", "") or "").lower()
 
         for chapter in chapters_to_process:
             # Skip if no visual or processing only a specific chapter
@@ -662,6 +665,9 @@ def generate_images(
             if _needs_generation(visual.type) or (
                 _generative_profile and visual.type in GENERATIVE_EXTRA_TYPES
             ):
+                # Reset per chapter: the fallback below must never reuse the
+                # prompt of the previous chapter when this one has no prompt yet.
+                image_prompt = None
                 try:
                     beats = _visual_beats(chapter)
                     if beats:
@@ -717,21 +723,45 @@ def generate_images(
                     raise
                 except Exception as e:
                     logger.error(f"Failed to generate image for chapter {chapter.chapter_id}: {e}")
-                    # Create failed entry
-                    image_entry = ImageEntry(
-                        chapter_id=chapter.chapter_id,
-                        chapter_title=chapter.title,
-                        visual_type=visual.type,
-                        file_path=f"images/{chapter.chapter_id}_failed.png",
-                        prompt=None,
-                        generation_method="failed",
-                        model=None,
-                        size="0x0",
-                        mime_type="image/png",
-                        size_bytes=0,
-                        metadata={"error": str(e)},
-                    )
-                    failed_count += 1
+                    image_entry = None
+                    if _fallback_provider and image_prompt:
+                        try:
+                            from btcedu.services.image_provider_factory import (
+                                get_image_service as _get_fallback_service,
+                            )
+
+                            logger.info(
+                                "Retrying chapter %s with fallback provider %s",
+                                chapter.chapter_id,
+                                _fallback_provider,
+                            )
+                            _check_cost_limit(before_call=True)
+                            image_entry = _generate_single_image(
+                                chapter,
+                                image_prompt,
+                                _get_fallback_service(settings, provider=_fallback_provider),
+                                output_dir,
+                                settings,
+                                style_prefix_override=_profile_style_prefix,
+                                smart_routing=False,
+                                branding=_branding_cfg,
+                            )
+                            total_cost += image_entry.metadata.get("cost_usd", 0.0)
+                            _check_cost_limit(before_call=False)
+                            generated_count += 1
+                        except PipelineError:
+                            raise
+                        except Exception as fallback_error:
+                            logger.error(
+                                "Fallback provider %s also failed for chapter %s: %s",
+                                _fallback_provider,
+                                chapter.chapter_id,
+                                fallback_error,
+                            )
+                            image_entry = None
+                    if image_entry is None:
+                        image_entry = _failed_image_entry(chapter, str(e))
+                        failed_count += 1
 
             else:
                 # Create template placeholder for title_card/talking_head
@@ -858,6 +888,24 @@ def generate_images(
                     "Weather overrides changed during image generation; rerun imagegen"
                 )
             _clear_stale_marker(manifest_path.with_suffix(".json.stale"))
+
+        # A failed chapter entry points at a file that was never written. The
+        # renderer only discovers that after tts/anchorgen have run, and a retry
+        # then resumes past imagegen and can never repair it. Fail here instead,
+        # where a rerun regenerates exactly the missing chapters. The manifest
+        # and provenance above are already written, so that recovery is partial.
+        unresolved = [
+            entry.chapter_id
+            for entry in image_entries
+            if entry.generation_method == "failed"
+            or not (output_dir.parent / entry.file_path).exists()
+        ]
+        if unresolved:
+            raise PipelineError(
+                "Image generation left chapter(s) without a usable picture: "
+                f"{', '.join(sorted(set(unresolved)))}. Rerun imagegen to regenerate them.",
+                ErrorCategory.TRANSIENT_SERVER,
+            )
 
         # Create ContentArtifact record
         artifact = ContentArtifact(

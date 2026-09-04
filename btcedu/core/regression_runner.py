@@ -1,4 +1,4 @@
-"""Isolated stage-major regression runs for recent episodes."""
+"""Isolated regression runs for recent episodes."""
 
 from __future__ import annotations
 
@@ -139,16 +139,21 @@ def _regression_stages(
     if any(plan != plans[0] for plan in plans[1:]):
         raise ValueError("Selected episodes do not share the same profile-aware pipeline plan")
 
-    plan = plans[0]
-    if "chapterize" not in plan:
-        raise ValueError("Selected pipeline plan has no chapterize stage")
-    plan = plan[: plan.index("chapterize") + 1]
-    if from_stage not in plan:
+    full_plan = plans[0]
+    if from_stage not in full_plan:
         raise ValueError(
-            f"Unknown or unsupported start stage {from_stage!r}; choose one of: " + ", ".join(plan)
+            f"Unknown start stage {from_stage!r}; choose one of: " + ", ".join(full_plan)
         )
     if only_stage:
         return [from_stage]
+
+    if "chapterize" not in full_plan:
+        raise ValueError("Selected pipeline plan has no chapterize stage")
+    plan = full_plan[: full_plan.index("chapterize") + 1]
+    if from_stage not in plan:
+        raise ValueError(
+            f"Start stage {from_stage!r} is after chapterize; use --only-stage to run it"
+        )
     return plan[plan.index(from_stage) :]
 
 
@@ -161,12 +166,17 @@ def run_recent_episode_regression(
     count: int = 3,
     only_stage: bool = False,
 ) -> RegressionRunResult:
-    """Run recent episodes stage-major through chapterize in an isolated copy."""
+    """Run recent episodes in an isolated copy."""
     from btcedu.core.pipeline import _run_stage
 
     episode_ids = _recent_episode_ids(production_session, profile=profile, count=count)
 
-    with tempfile.TemporaryDirectory(prefix="btcedu-regression-") as workspace_str:
+    workspace_root = Path(settings.outputs_dir).resolve() / ".regression-workspaces"
+    workspace_root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="btcedu-regression-",
+        dir=workspace_root,
+    ) as workspace_str:
         workspace = Path(workspace_str)
         database_url = _clone_database(settings.database_url, workspace / "btcedu.db")
         isolated_settings = settings.model_copy(

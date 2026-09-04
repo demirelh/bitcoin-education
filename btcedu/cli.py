@@ -793,12 +793,12 @@ def failover_reconcile_cmd(
 @click.option(
     "--from-stage",
     required=True,
-    help="Earliest stage to rerun; execution stops after chapterize.",
+    help="Stage to rerun; multi-stage execution stops after chapterize.",
 )
 @click.option(
     "--only-stage",
     is_flag=True,
-    help="Run only --from-stage instead of continuing through chapterize.",
+    help="Run only --from-stage; supports any stage in the profile pipeline.",
 )
 @click.option("--profile", default="tagesschau_tr", show_default=True)
 @click.option("--count", default=3, show_default=True, type=click.IntRange(min=1))
@@ -810,7 +810,7 @@ def regression_run(
     profile: str,
     count: int,
 ) -> None:
-    """Run recent episodes stage-by-stage through chapterize in isolation."""
+    """Run recent episodes against isolated copies of their data."""
     from btcedu.core.regression_runner import run_recent_episode_regression
 
     settings = ctx.obj["settings"]

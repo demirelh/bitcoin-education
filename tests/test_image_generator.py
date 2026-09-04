@@ -691,3 +691,107 @@ def test_a_lower_third_does_not_route_the_picture_to_the_text_provider():
         overlays=[SimpleNamespace(text="EMEKLİLİK PAKETİ TARTIŞMASI")],
     )
     assert _route_provider_for_chapter(chapter) == "flux"
+
+
+def _prepare_generative_episode(db_session, tmp_path, episode_id):
+    """An episode ready for imagegen on the generative (fallback-capable) profile."""
+    from btcedu.config import Settings
+
+    ep = Episode(
+        episode_id=episode_id,
+        source="local_recorder",
+        title="Generative",
+        url="/tmp/recording.mp4",
+        status=EpisodeStatus.IMAGES_GENERATED,
+        pipeline_version=2,
+        content_profile="tagesschau_tr",
+    )
+    db_session.add(ep)
+    db_session.commit()
+
+    settings = Settings(anthropic_api_key="test", outputs_dir=str(tmp_path / "outputs"))
+    episode_dir = Path(settings.outputs_dir) / episode_id
+    episode_dir.mkdir(parents=True)
+    (episode_dir / "chapters.json").write_text(
+        json.dumps(
+            _make_chapters_json(
+                episode_id=episode_id,
+                visual_type="b_roll",
+                num_chapters=1,
+                image_prompt="A quiet street at dusk",
+            )
+        )
+    )
+    return settings
+
+
+def test_unresolved_chapter_image_fails_the_stage(db_session, tmp_path):
+    """A dangling manifest entry must not be reported as a successful stage.
+
+    The renderer only notices the missing file after tts/anchorgen, and a retry
+    then resumes past imagegen and can never repair it.
+    """
+    from btcedu.core.image_generator import generate_images
+    from btcedu.services.errors import PipelineError
+
+    episode_id = "ep_unresolved"
+    settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+
+    with (
+        patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
+        patch("btcedu.core.image_generator._create_media_asset_record"),
+        patch(
+            "btcedu.core.image_generator._generate_single_image",
+            side_effect=RuntimeError("500 Server Error for url: https://cdn.example/x.jpg"),
+        ),
+        pytest.raises(PipelineError) as excinfo,
+    ):
+        generate_images(db_session, episode_id, settings, force=True)
+
+    assert "ch01" in str(excinfo.value)
+
+    # The manifest is still written so a rerun regenerates only this chapter.
+    manifest = json.loads(
+        (Path(settings.outputs_dir) / episode_id / "images" / "manifest.json").read_text()
+    )
+    assert manifest["images"][0]["generation_method"] == "failed"
+
+
+def test_fallback_provider_rescues_a_failed_chapter_image(db_session, tmp_path):
+    """The profile's fallback_provider must actually be used, not just configured."""
+    from btcedu.core.image_generator import generate_images
+
+    episode_id = "ep_fallback"
+    settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+    images_dir = Path(settings.outputs_dir) / episode_id / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    (images_dir / "ch01_rescued.png").write_bytes(b"rescued")
+
+    rescued = ImageEntry(
+        chapter_id="ch01",
+        chapter_title="Chapter 1",
+        visual_type="b_roll",
+        file_path="images/ch01_rescued.png",
+        prompt="A quiet street at dusk",
+        generation_method="ideogram",
+        model="ideogram-v2",
+        size="1792x1024",
+        mime_type="image/png",
+        size_bytes=7,
+        metadata={"cost_usd": 0.08},
+    )
+
+    with (
+        patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
+        patch("btcedu.core.image_generator._create_media_asset_record"),
+        patch(
+            "btcedu.core.image_generator._generate_single_image",
+            side_effect=[RuntimeError("primary provider is down"), rescued],
+        ) as mock_generate,
+    ):
+        result = generate_images(db_session, episode_id, settings, force=True)
+
+    assert mock_generate.call_count == 2
+    assert result.failed_count == 0
+    manifest = json.loads((images_dir / "manifest.json").read_text())
+    assert manifest["images"][0]["generation_method"] == "ideogram"

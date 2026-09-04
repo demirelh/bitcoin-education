@@ -11,6 +11,7 @@ from btcedu.services.image_gen_service import (
     ImageGenRequest,
     ImageGenResponse,
 )
+from btcedu.services.retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
 
@@ -127,6 +128,7 @@ class FluxImageService:
         raise RuntimeError(f"Flux API failed after {max_retries} retries: {last_exc}")
 
     @staticmethod
+    @retry_on_transient(max_retries=3, base_delay=1.0)
     def download_image(image_url: str, target_path: Path) -> Path:
         target_path.parent.mkdir(parents=True, exist_ok=True)
         r = requests.get(image_url, timeout=60)

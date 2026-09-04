@@ -414,7 +414,13 @@ def test_escalation_triggers_for_hallucination(db_session, tmp_path):
     kinds = {c["kind"] for c in gate["model_calls"]}
     assert kinds == {"standard", "escalation"}
     esc = next(c for c in gate["model_calls"] if c["kind"] == "escalation")
-    assert esc["model"] == "claude-opus-4.6"
+    # Read the expected id from the profile: Copilot retires model ids, and a
+    # literal here turns every replacement into a false test failure.
+    from btcedu.profiles import get_registry
+
+    assert esc["model"] == (
+        get_registry(settings).get("tagesschau_tr").stage_config["qa"]["escalation"]["model"]
+    )
     assert "suspected_hallucination" in esc["triggered_by"]
 
 

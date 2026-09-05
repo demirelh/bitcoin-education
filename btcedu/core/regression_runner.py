@@ -16,6 +16,8 @@ from btcedu.db import get_session_factory
 from btcedu.models.episode import Episode
 from btcedu.models.review import ReviewTask
 
+_IRREVERSIBLE_STAGES = frozenset({"publish"})
+
 
 @dataclass(frozen=True)
 class RegressionStageResult:
@@ -211,6 +213,10 @@ def run_recent_episode_regression(
                 from_stage,
                 only_stage=only_stage,
             )
+            # An isolated database cannot undo an upload: publishing acts on the
+            # real YouTube channel, so replaying it is forced dry.
+            if not isolated_settings.dry_run and _IRREVERSIBLE_STAGES.intersection(stages):
+                isolated_settings = isolated_settings.model_copy(update={"dry_run": True})
 
             for episode in episodes:
                 episode.error_message = None

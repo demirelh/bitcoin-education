@@ -40,6 +40,16 @@ def _utc_isoformat(value: datetime | None) -> str | None:
     return value.astimezone(UTC).isoformat()
 
 
+def _copilot_stage_attribution(settings, episode_id: str) -> dict[str, dict]:
+    from btcedu.core.copilot_fix import stage_attribution
+
+    try:
+        return stage_attribution(settings.outputs_dir, episode_id)
+    except (OSError, ValueError):
+        logger.warning("Could not read Copilot fix attribution for %s", episode_id, exc_info=True)
+        return {}
+
+
 def _summarize_pipeline_runs(
     runs: list[PipelineRun],
 ) -> tuple[dict[PipelineStage, dict], datetime | None]:
@@ -1449,6 +1459,7 @@ def _build_stage_progress(
     from btcedu.core.pipeline import resolve_pipeline_plan
 
     plan = resolve_pipeline_plan(session, episode, force=False, settings=settings)
+    copilot_attribution = _copilot_stage_attribution(settings, episode.episode_id)
 
     # Map StagePlan decisions to UI states
     stages = []
@@ -1475,6 +1486,7 @@ def _build_stage_progress(
                 "completed_at": None,
                 "run_status": None,
                 "attempt_count": 0,
+                "copilot_fix": copilot_attribution.get(sp.stage),
             }
         )
 
@@ -1853,6 +1865,68 @@ def run_episode(episode_id: str):
 @api_bp.route("/episodes/<episode_id>/retry", methods=["POST"])
 def retry_episode(episode_id: str):
     return _submit_job("retry", episode_id)
+
+
+@api_bp.route("/episodes/<episode_id>/fix-problem", methods=["POST"])
+def fix_episode_problem(episode_id: str):
+    """Start an autonomous Copilot repair session for the episode's current error."""
+    from btcedu.core.copilot_fix import start_copilot_fix
+
+    session = _get_session()
+    try:
+        episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if not episode:
+            return jsonify({"error": f"Episode not found: {episode_id}"}), 404
+        if not episode.error_message:
+            return jsonify({"error": "This episode has no recorded pipeline error."}), 400
+
+        failed_run = (
+            session.query(PipelineRun)
+            .filter(
+                PipelineRun.episode_id == episode.id,
+                PipelineRun.status == RunStatus.FAILED,
+            )
+            .order_by(PipelineRun.started_at.desc())
+            .first()
+        )
+        error_stage_match = re.search(
+            r"\bStage\s+['\"]?([a-z0-9_]+)['\"]?\s+failed\b",
+            episode.error_message,
+            re.IGNORECASE,
+        )
+        failed_stage = (
+            failed_run.stage.value
+            if failed_run is not None
+            else error_stage_match.group(1).lower()
+            if error_stage_match
+            else "unknown"
+        )
+        try:
+            launch = start_copilot_fix(
+                _get_settings(),
+                episode.episode_id,
+                episode.title,
+                failed_stage,
+                episode.error_message,
+                automatic=False,
+                profile=episode.content_profile or "tagesschau_tr",
+            )
+        except RuntimeError as exc:
+            logger.exception("Could not start Copilot fix session")
+            return jsonify({"error": str(exc)}), 503
+
+        return jsonify(
+            {
+                "success": True,
+                "already_running": launch.already_running,
+                "session": launch.session,
+                "model": launch.model,
+                "stage": launch.stage,
+                "attach_command": f"tmux attach -t {launch.session}",
+            }
+        )
+    finally:
+        session.close()
 
 
 # ---------------------------------------------------------------------------

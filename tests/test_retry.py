@@ -59,6 +59,17 @@ class TestClassifyError:
         exc = ElevenLabsAPIError(429, "Too many requests", "rate_limit_exceeded")
         assert classify_error(exc) == ErrorCategory.TRANSIENT_RATE_LIMIT
 
+    def test_openai_credit_balance_exhausted_is_permanent(self):
+        class OpenAIQuotaError(Exception):
+            status_code = 429
+            code = "credit_balance_exhausted"
+
+        exc = OpenAIQuotaError(
+            "Error code: 429 - {'error': {'message': 'You have no credits remaining.', "
+            "'type': 'insufficient_quota', 'code': 'credit_balance_exhausted'}}"
+        )
+        assert classify_error(exc) == ErrorCategory.PERMANENT_QUOTA
+
     def test_server_500(self):
         exc = RuntimeError("Internal server error 500")
         assert classify_error(exc) == ErrorCategory.TRANSIENT_SERVER
@@ -224,6 +235,27 @@ class TestRetryOnTransient:
         assert call_count == 1  # No retries
         assert mock_sleep.call_count == 0
         assert exc_info.value.category == ErrorCategory.PERMANENT_AUTH
+
+    @patch("btcedu.services.retry.time.sleep")
+    def test_fail_fast_on_exhausted_openai_credits(self, mock_sleep):
+        class OpenAIQuotaError(Exception):
+            status_code = 429
+            code = "credit_balance_exhausted"
+
+        call_count = 0
+
+        @retry_on_transient(max_retries=3)
+        def quota_fail():
+            nonlocal call_count
+            call_count += 1
+            raise OpenAIQuotaError("insufficient_quota: no credits remaining")
+
+        with pytest.raises(PipelineError) as exc_info:
+            quota_fail()
+
+        assert call_count == 1
+        assert mock_sleep.call_count == 0
+        assert exc_info.value.category == ErrorCategory.PERMANENT_QUOTA
 
     @patch("btcedu.services.retry.time.sleep")
     def test_exhaust_retries(self, mock_sleep):

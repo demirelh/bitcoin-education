@@ -254,13 +254,16 @@ def _load_transcription_profile_config(settings: Settings, episode: Episode) -> 
 
 
 def _provider_api_key(settings: Settings, provider: str) -> str:
-    if provider.strip().lower() == "openai":
+    normalized = provider.strip().lower()
+    if normalized == "openai":
         api_key = settings.effective_whisper_api_key
         if not api_key:
             raise ValueError(
                 "No OpenAI transcription key configured. Set WHISPER_API_KEY or OPENAI_API_KEY."
             )
         return api_key
+    if normalized == "faster_whisper":
+        return ""
     raise ValueError(f"Unsupported transcription provider: {provider}")
 
 

@@ -54,6 +54,22 @@ GREETING_PATTERNS_DE: list[re.Pattern[str]] = [
     re.compile(r"[Ss]chönen\s+(?:Abend|Tag|Feierabend)"),
 ]
 
+_FOLLOWUP_PROGRAM_NAME_RE = re.compile(
+    r"\b(?:tagesthemen|nachtmagazin)\b",
+    re.IGNORECASE,
+)
+_FOLLOWUP_PROGRAM_SCHEDULE_RE = re.compile(
+    r"\b(?:"
+    r"melden\s+sich|"
+    r"sehen\s+sie|"
+    r"folgen?|"
+    r"gegen\s+\d{1,2}[.:]\d{2}\s*uhr|"
+    r"um\s+\d{1,2}[.:]\d{2}\s*uhr|"
+    r"halbzeitpause"
+    r")\b",
+    re.IGNORECASE,
+)
+
 
 def clean_moderator_names(text: str) -> str:
     """Remove moderator names and broadcast references from translated text.
@@ -101,6 +117,16 @@ def has_moderator_content(text_de: str) -> bool:
         if pattern.search(text_de):
             return True
     return any(name in text_de for name in MODERATOR_NAMES)
+
+
+def is_followup_program_preview(text_de: str) -> bool:
+    """Detect a schedule/teaser for a later news programme in German source text."""
+    if not text_de:
+        return False
+    return bool(
+        _FOLLOWUP_PROGRAM_NAME_RE.search(text_de)
+        and _FOLLOWUP_PROGRAM_SCHEDULE_RE.search(text_de)
+    )
 
 
 # --- Neutral broadcast flow: remove anchor transitions, program hints, sign-offs ---

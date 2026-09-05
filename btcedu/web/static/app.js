@@ -243,11 +243,17 @@
       const commit = stage.git_commit ? `commit ${stage.git_commit}` : "";
       const started = formatStageStart(stage.started_at);
       const attempts = stage.attempt_count > 1 ? `${stage.attempt_count} attempts` : "";
+      const copilotFix = stage.copilot_fix
+        ? (stage.copilot_fix.automatic
+          ? "automatic copilot fix attempted"
+          : "fixed via copilot")
+        : "";
       const tooltip = [
         stage.label,
         started ? `Started ${started}` : "",
         dur,
         attempts,
+        copilotFix,
         cost,
         commit,
         "Click for details",
@@ -262,6 +268,7 @@
           ${started ? `<div class="ps-started">${esc(started)}</div>` : ""}
           ${attempts ? `<div class="ps-started">${esc(attempts)}</div>` : ""}
           ${dur ? `<div class="ps-duration">${dur}</div>` : ""}
+          ${copilotFix ? `<div class="ps-started">${copilotFix}</div>` : ""}
         </div>`;
     });
     html += "</div>";
@@ -341,6 +348,10 @@
       // Next-action banner already has the review button
     } else if (!isPublished) {
       btns.push('<button class="btn btn-sm btn-primary" onclick="actions.run()">\u25b6 Run Pipeline</button>');
+    }
+
+    if (!isPublished && ep.error_message) {
+      btns.push('<button class="btn btn-sm btn-warning" onclick="actions.fixProblem()">Fix the problem</button>');
     }
 
     // Publish also available for rendered (before approved)
@@ -1513,6 +1524,25 @@
     retry() {
       if (!selected) return;
       submitJob("Retry", `/episodes/${selected.episode_id}/retry`);
+    },
+    async fixProblem() {
+      if (!selected) return;
+      disableActions(true);
+      try {
+        const result = await POST(`/episodes/${selected.episode_id}/fix-problem`);
+        if (result.error) {
+          toast(result.error, false);
+          return;
+        }
+        const prefix = result.already_running
+          ? "Copilot fix session is already running"
+          : `Copilot fix started with ${result.model}`;
+        toast(`${prefix}. Attach: ${result.attach_command}`);
+      } catch (err) {
+        toast("Failed: " + err.message, false);
+      } finally {
+        disableActions(false);
+      }
     },
     tts() {
       if (!selected) return;

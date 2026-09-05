@@ -313,3 +313,81 @@ class TestTranslatePerStoryIntroOutro:
         # All calls should use standard prompt since intro prompt was not found
         for call in mock_claude.call_args_list:
             assert call.kwargs["system_prompt"] == "STANDARD_SYSTEM"
+
+    @patch("btcedu.core.translator.call_claude")
+    def test_followup_program_preview_is_removed_deterministically(
+        self, mock_claude, settings, tmp_path, db_session
+    ):
+        stories = [
+            {
+                "story_id": "s01",
+                "order": 1,
+                "headline_de": "Wetter",
+                "category": "wetter",
+                "story_type": "wetter",
+                "text_de": "Morgen ist es im Norden regnerisch.",
+                "word_count": 7,
+                "estimated_duration_seconds": 10,
+                "reporter": None,
+                "location": None,
+                "is_lead_story": False,
+                "headline_tr": None,
+                "text_tr": None,
+            },
+            {
+                "story_id": "s02",
+                "order": 2,
+                "headline_de": "Vorschau auf die Tagesthemen",
+                "category": "meta",
+                "story_type": "outro",
+                "text_de": (
+                    "Die Tagesthemen melden sich gegen 21.35 Uhr in der Halbzeitpause "
+                    "des DFB-Pokalspiels Halle gegen Schalke. Darin Neustart nach der "
+                    "Sommerpause, wie der Kanzler die Reformpakete umsetzen will. "
+                    "Außerdem Ungewissheit und Wut bei VW. Einen angenehmen Abend."
+                ),
+                "word_count": 38,
+                "estimated_duration_seconds": 20,
+                "reporter": None,
+                "location": None,
+                "is_lead_story": False,
+                "headline_tr": None,
+                "text_tr": None,
+            },
+        ]
+        stories_path = _make_stories_json(tmp_path, stories)
+        translated_path = tmp_path / "transcripts" / "ep_test" / "transcript.tr.txt"
+        translated_path.parent.mkdir(parents=True, exist_ok=True)
+        mock_claude.side_effect = [
+            _mock_claude_response("s01", "Hava Durumu", "Yarın kuzeyde yağmur bekleniyor."),
+            _mock_claude_response(
+                "s02",
+                "Gündem",
+                "Başbakanın reform paketleri ve VW'deki belirsizlik ele alınacak.",
+            ),
+        ]
+
+        with patch(
+            "btcedu.core.translator._load_intro_outro_prompt",
+            return_value=("Intro/outro prompt", "# Input\n\n{{ transcript }}"),
+        ):
+            _translate_per_story(
+                stories_path=stories_path,
+                translated_path=translated_path,
+                episode_id="ep_test",
+                system_prompt="Standard system prompt",
+                user_template="# Input\n\n{{ transcript }}",
+                settings=settings,
+                profile_namespace="tagesschau_tr",
+                clean_moderator=True,
+                session=db_session,
+            )
+
+        translated = json.loads(
+            (stories_path.parent / "stories_translated.json").read_text(encoding="utf-8")
+        )
+        preview = translated["stories"][1]
+        assert preview["headline_tr"] == ""
+        assert preview["text_tr"] == ""
+        assert "broadcast_frame_removed" in preview["translator_flags"]
+        assert translated_path.read_text(encoding="utf-8") == "Yarın kuzeyde yağmur bekleniyor."

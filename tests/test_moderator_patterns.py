@@ -5,6 +5,7 @@ from btcedu.core.moderator_patterns import (
     MODERATOR_NAMES,
     clean_moderator_names,
     has_moderator_content,
+    is_followup_program_preview,
     strip_broadcast_transitions,
 )
 
@@ -154,3 +155,19 @@ class TestStripBroadcastTransitions:
 
     def test_empty(self):
         assert strip_broadcast_transitions("") == ""
+
+
+class TestFollowupProgramPreview:
+    def test_detects_tagesthemen_preview_after_weather(self):
+        text = (
+            "Die Tagesthemen melden sich gegen 21.35 Uhr in der Halbzeitpause "
+            "des DFB-Pokalspiels Halle gegen Schalke. Darin Neustart nach der "
+            "Sommerpause. Außerdem Ungewissheit und Wut bei VW."
+        )
+
+        assert is_followup_program_preview(text)
+
+    def test_does_not_match_news_report_mentioning_programme(self):
+        text = "Die Tagesthemen berichteten gestern über die Reformpläne der Bundesregierung."
+
+        assert not is_followup_program_preview(text)

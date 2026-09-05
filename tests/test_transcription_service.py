@@ -16,9 +16,11 @@ from btcedu.models.transcript_schema import (
     make_segment_id,
 )
 from btcedu.services.transcription_service import (
+    FasterWhisperTranscriptionProvider,
     OpenAITranscriptionProvider,
     ProviderTranscript,
     ProviderTranscriptSegment,
+    get_transcription_provider,
     resolve_transcription_config,
     transcribe_audio_structured,
 )
@@ -133,9 +135,55 @@ def test_openai_provider_returns_segments_and_cost(mock_openai, tmp_path):
     assert result.audio_seconds == 60
     assert result.cost_usd == pytest.approx(0.006)
     assert result.segments[0].confidence == pytest.approx(0.9048, rel=1e-3)
+    mock_openai.assert_called_once_with(api_key="sk-test", max_retries=0)
     call = mock_openai.return_value.audio.transcriptions.create.call_args.kwargs
     assert call["response_format"] == "verbose_json"
     assert call["model"] == "whisper-1"
+
+
+def test_faster_whisper_provider_returns_local_segments(monkeypatch, tmp_path):
+    audio_path = tmp_path / "audio.mp3"
+    audio_path.write_bytes(b"audio")
+    model_instance = MagicMock()
+    model_instance.transcribe.return_value = (
+        iter(
+            [
+                SimpleNamespace(start=0.0, end=1.5, text=" Guten Abend.", avg_logprob=-0.1),
+                SimpleNamespace(start=1.5, end=3.0, text=" Berlin.", avg_logprob=-0.2),
+            ]
+        ),
+        SimpleNamespace(duration=3.0),
+    )
+    model_class = MagicMock(return_value=model_instance)
+    monkeypatch.setitem(
+        __import__("sys").modules,
+        "faster_whisper",
+        SimpleNamespace(WhisperModel=model_class),
+    )
+    provider = FasterWhisperTranscriptionProvider()
+
+    result = provider.transcribe(str(audio_path), model="small", language="de")
+
+    model_class.assert_called_once_with("small", device="cpu", compute_type="int8")
+    model_instance.transcribe.assert_called_once_with(
+        str(audio_path),
+        language="de",
+        beam_size=5,
+        vad_filter=True,
+    )
+    assert result.text == "Guten Abend. Berlin."
+    assert result.audio_seconds == 3.0
+    assert result.cost_usd == 0.0
+    assert result.segments[0].confidence == pytest.approx(0.9048, rel=1e-3)
+
+
+def test_faster_whisper_provider_factory_needs_no_api_key():
+    provider = get_transcription_provider(
+        "faster_whisper",
+        api_key="",
+        openai_cost_per_minute_usd=0.006,
+    )
+    assert isinstance(provider, FasterWhisperTranscriptionProvider)
 
 
 class _FakeAudio:

@@ -3,7 +3,6 @@
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -168,19 +167,34 @@ class TestRunEpisodePipeline:
 
     @patch("btcedu.core.copilot_fix.start_copilot_fix")
     @patch("btcedu.core.pipeline._run_stage")
-    def test_failure_starts_copilot_fix(
-        self, mock_stage, mock_fix, db_session, new_episode, tmp_path
+    def test_failure_triggers_one_automatic_copilot_fix(
+        self,
+        mock_stage,
+        mock_start_fix,
+        db_session,
+        new_episode,
+        tmp_path,
     ):
-        mock_stage.return_value = StageResult("download", "failed", 0.1, error="Boom")
-        mock_fix.return_value = SimpleNamespace(started=True, model="gpt-5.6-sol")
-        settings = _make_settings(tmp_path)
+        mock_stage.return_value = StageResult(
+            "download",
+            "failed",
+            0.1,
+            error="Connection timeout",
+        )
+        mock_start_fix.return_value = MagicMock(
+            started=True,
+            already_attempted=False,
+            already_running=False,
+        )
 
-        run_episode_pipeline(db_session, new_episode, settings)
+        report = run_episode_pipeline(db_session, new_episode, _make_settings(tmp_path))
 
-        assert mock_fix.call_count == 1
-        assert mock_fix.call_args.kwargs["stage"] == "download"
-        assert mock_fix.call_args.kwargs["automatic"] is True
-        assert "Boom" in mock_fix.call_args.kwargs["error_message"]
+        assert report.error == "Stage 'download' failed: Connection timeout"
+        mock_start_fix.assert_called_once()
+        assert mock_start_fix.call_args.args[3] == "download"
+        assert mock_start_fix.call_args.args[4] == report.error
+        assert mock_start_fix.call_args.kwargs["automatic"] is True
+        assert mock_start_fix.call_args.kwargs["profile"] == new_episode.content_profile
 
     @patch("btcedu.core.copilot_fix.start_copilot_fix", side_effect=RuntimeError("no tmux"))
     @patch("btcedu.core.pipeline._run_stage")

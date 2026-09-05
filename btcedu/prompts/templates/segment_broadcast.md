@@ -34,6 +34,11 @@ Beitragsgrenzen erkennst du an:
 - Abschlussfloskel + Überleitung: "Das war der Bericht... Jetzt zu..."
 - Intro: Begrüßung und Themenvorschau am Anfang (story_type: "intro")
 - Outro: Verabschiedung am Ende (story_type: "outro")
+- Nach dem Wetter kann noch eine Vorschau auf eine spätere Sendung folgen
+  (z. B. „Die Tagesthemen melden sich um/gegen ...“, auch mit anschließender
+  Aufzählung ihrer Themen). Dieser gesamte Block ist reiner Programminhalt und
+  gehört zusammen mit der Verabschiedung in eine eigene `outro`-Story. Die
+  darin angeteaserten Themen sind KEINE Beiträge dieser Sendung.
 
 ## KATEGORIEN
 
@@ -43,7 +48,8 @@ Beitragsgrenzen erkennst du an:
 - `gesellschaft`: Soziales, Gesundheit, Bildung, Gesellschaft
 - `kultur`: Kultur, Wissenschaft, Technologie, Medien
 - `sport`: Sport, Bundesliga, Olympia
-- `wetter`: Wetterbericht (immer vorletzter Beitrag)
+- `wetter`: Wetterbericht (letzter redaktioneller Beitrag; danach kann nur noch
+  eine `outro`-Story mit Verabschiedung oder Folgesendungs-Vorschau kommen)
 - `meta`: Intro, Outro, Überleitung
 
 ## STORY-TYPEN

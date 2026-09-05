@@ -28,7 +28,8 @@ class ErrorCategory(str, Enum):
 # Patterns for classifying errors by exception message
 _RATE_LIMIT_PATTERNS = re.compile(r"rate.?limit|429|too.?many.?requests", re.IGNORECASE)
 _QUOTA_PATTERNS = re.compile(
-    r"quota[_\s-]?exceeded|insufficient.*credits|not enough.*credits",
+    r"quota[_\s-]?exceeded|insufficient[_\s-]?quota|insufficient.*credits|"
+    r"not enough.*credits|no credits remaining|credit[_\s-]?balance[_\s-]?exhausted",
     re.IGNORECASE,
 )
 _NETWORK_PATTERNS = re.compile(
@@ -109,11 +110,18 @@ def classify_error(exc: Exception) -> ErrorCategory:
     Uses exception type first, then falls back to message pattern matching.
     """
     status_code = getattr(exc, "status_code", None)
-    error_code = str(getattr(exc, "error_code", "") or "").lower()
+    error_code = str(
+        getattr(exc, "error_code", None) or getattr(exc, "code", None) or ""
+    ).lower()
+    msg = str(exc)
+    if error_code in {
+        "quota_exceeded",
+        "insufficient_quota",
+        "credit_balance_exhausted",
+    } or _QUOTA_PATTERNS.search(msg):
+        return ErrorCategory.PERMANENT_QUOTA
     if status_code == 429:
         return ErrorCategory.TRANSIENT_RATE_LIMIT
-    if error_code == "quota_exceeded":
-        return ErrorCategory.PERMANENT_QUOTA
     if status_code in {401, 403}:
         return ErrorCategory.PERMANENT_AUTH
 
@@ -123,14 +131,10 @@ def classify_error(exc: Exception) -> ErrorCategory:
             return _EXCEPTION_TYPE_MAP[parent.__name__]
 
     # Fall back to message pattern matching
-    msg = str(exc)
-
     if _COST_PATTERNS.search(msg):
         return ErrorCategory.PERMANENT_COST_LIMIT
     if _RATE_LIMIT_PATTERNS.search(msg):
         return ErrorCategory.TRANSIENT_RATE_LIMIT
-    if _QUOTA_PATTERNS.search(msg):
-        return ErrorCategory.PERMANENT_QUOTA
     if _AUTH_PATTERNS.search(msg):
         return ErrorCategory.PERMANENT_AUTH
     if _CONTENT_PATTERNS.search(msg):

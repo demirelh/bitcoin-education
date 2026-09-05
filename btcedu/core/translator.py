@@ -775,12 +775,17 @@ def _translate_per_story(
         if clean_moderator:
             from btcedu.core.moderator_patterns import (
                 clean_moderator_names,
+                is_followup_program_preview,
                 strip_broadcast_transitions,
             )
 
             if is_intro_outro:
                 headline_tr = clean_moderator_names(headline_tr)
                 text_tr = clean_moderator_names(text_tr)
+            if is_followup_program_preview(story.source_text or story.text_de):
+                headline_tr = ""
+                text_tr = ""
+                translation.translator_flags.append("broadcast_frame_removed")
             # Neutral flow: drop anchor transitions, program hints and sign-offs
             # from every story body (safe: only stereotyped phrases match).
             text_tr = strip_broadcast_transitions(text_tr)

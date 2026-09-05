@@ -25,6 +25,10 @@ Transformiere den deutschen Intro/Outro-Text in einen **neutralen türkischen Na
 4. **VERABSCHIEDUNGEN**: Deutsche Verabschiedungen werden durch neutrale türkische Abschlussformeln ersetzt oder weggelassen.
 5. **KOLLEGENVERWEIS**: "Morgen begrüßt Sie dann [Name]", "Mein Kollege [Name]" → komplett entfernen.
 6. **FOLGESENDUNGS-HINWEIS**: Programm-/Sendungshinweise auf eine spätere Sendung (z. B. „die tagesthemen um 21.45 Uhr", „mit aktuellen Nachrichten", inkl. Vorschau-Teaser darauf) werden KOMPLETT entfernt — auch die Uhrzeit. Kein „…saat 21.45'te devam edeceğiz".
+   Das gilt ausdrücklich auch nach dem Wetter für Formulierungen wie „Die
+   Tagesthemen melden sich gegen ... / in der Halbzeitpause. Darin ... Außerdem
+   ...“. Die danach genannten Themen gehören zur Folgesendung und dürfen weder
+   übersetzt noch als Nachrichteninhalt übernommen werden.
 7. **VERABSCHIEDUNG KOMPLETT**: Schlussformeln wie „Ich wünsche Ihnen einen schönen Abend" / „İyi akşamlar dileriz" werden KOMPLETT weggelassen — KEINE Abschiedsformel im Output.
 
 ### BEIBEHALTEN (PFLICHT)

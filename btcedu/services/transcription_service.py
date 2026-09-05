@@ -104,7 +104,7 @@ class OpenAITranscriptionProvider:
         model: str,
         language: str,
     ) -> ProviderTranscript:
-        client = OpenAI(api_key=self._api_key)
+        client = OpenAI(api_key=self._api_key, max_retries=0)
         request_options: dict[str, object]
         if model == "whisper-1":
             request_options = {
@@ -154,6 +154,52 @@ class OpenAITranscriptionProvider:
             segments=segments,
             audio_seconds=audio_seconds,
             cost_usd=cost_usd,
+        )
+
+
+class FasterWhisperTranscriptionProvider:
+    """Local faster-whisper transcription provider."""
+
+    name = "faster_whisper"
+
+    def __init__(self) -> None:
+        self._models: dict[str, object] = {}
+
+    def transcribe(
+        self,
+        audio_path: str,
+        *,
+        model: str,
+        language: str,
+    ) -> ProviderTranscript:
+        whisper_model = self._models.get(model)
+        if whisper_model is None:
+            from faster_whisper import WhisperModel
+
+            whisper_model = WhisperModel(model, device="cpu", compute_type="int8")
+            self._models[model] = whisper_model
+
+        raw_segments, info = whisper_model.transcribe(
+            audio_path,
+            language=language,
+            beam_size=5,
+            vad_filter=True,
+        )
+        segments = [
+            ProviderTranscriptSegment(
+                start_seconds=float(segment.start),
+                end_seconds=float(segment.end),
+                text=str(segment.text).strip(),
+                confidence=math.exp(float(segment.avg_logprob)),
+            )
+            for segment in raw_segments
+            if str(segment.text).strip()
+        ]
+        return ProviderTranscript(
+            text=" ".join(segment.text for segment in segments),
+            segments=segments,
+            audio_seconds=_coerce_non_negative_float(getattr(info, "duration", 0)),
+            cost_usd=0.0,
         )
 
 
@@ -246,6 +292,8 @@ def get_transcription_provider(
     normalized = provider.strip().lower()
     if normalized == "openai":
         return OpenAITranscriptionProvider(api_key, openai_cost_per_minute_usd)
+    if normalized == "faster_whisper":
+        return FasterWhisperTranscriptionProvider()
     raise ValueError(f"Unsupported transcription provider: {provider}")
 
 

@@ -13,6 +13,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from btcedu.config import Settings
+from btcedu.core.copilot_fix import record_success
 from btcedu.db import Base
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
 
@@ -454,6 +455,61 @@ class TestPipelineActions:
         r = client.post("/api/episodes/ep003/retry")
         assert r.status_code == 202
         assert "job_id" in r.get_json()
+
+    @patch("btcedu.core.copilot_fix.start_copilot_fix")
+    def test_fix_problem_starts_copilot_tmux_session(self, mock_start, client):
+        from btcedu.core.copilot_fix import CopilotFixLaunch
+
+        mock_start.return_value = CopilotFixLaunch(started=True, stage="adapt")
+
+        r = client.post("/api/episodes/ep003/fix-problem")
+
+        assert r.status_code == 200
+        data = r.get_json()
+        assert data["session"] == "copilotfix"
+        assert data["model"] == "gpt-5.6-sol"
+        assert data["stage"] == "adapt"
+        assert data["already_running"] is False
+        assert mock_start.call_args.args[3] == "adapt"
+        assert mock_start.call_args.kwargs["automatic"] is False
+        assert mock_start.call_args.kwargs["profile"] == "bitcoin_podcast"
+
+    @patch("btcedu.core.copilot_fix.start_copilot_fix")
+    def test_fix_problem_reuses_existing_tmux_session(self, mock_start, client):
+        from btcedu.core.copilot_fix import CopilotFixLaunch
+
+        mock_start.return_value = CopilotFixLaunch(started=False, already_running=True)
+
+        r = client.post("/api/episodes/ep003/fix-problem")
+
+        assert r.status_code == 200
+        data = r.get_json()
+        assert data["already_running"] is True
+        assert data["attach_command"] == "tmux attach -t copilotfix"
+        mock_start.assert_called_once()
+
+    def test_fix_problem_requires_episode_error(self, client):
+        r = client.post("/api/episodes/ep002/fix-problem")
+        assert r.status_code == 400
+        assert "no recorded pipeline error" in r.get_json()["error"]
+
+    def test_successful_copilot_fix_is_shown_on_pipeline_stage(
+        self, client, test_settings, tmp_path
+    ):
+        record_success(
+            test_settings.outputs_dir,
+            "ep003",
+            "adapt",
+            "gpt-5.6-sol",
+            tmp_path,
+        )
+
+        data = client.get("/api/episodes/ep003").get_json()
+
+        adapt = next(
+            stage for stage in data["stage_progress"]["stages"] if stage["name"] == "adapt"
+        )
+        assert adapt["copilot_fix"]["status"] == "success"
 
     def test_qa_rerun_returns_202(self, client):
         r = client.post("/api/episodes/ep002/qa-rerun")

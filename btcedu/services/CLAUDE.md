@@ -34,7 +34,12 @@ Each service uses a Protocol for swappable implementations:
 - `pexels_service.py` — Pexels stock photo/video search via raw HTTP
 - `meteo_service.py` — Open-Meteo / DWD ICON forecasts via urllib (`OpenMeteoService`, `MeteoService` Protocol). One multi-location request, never raises: failures degrade to an empty list. `_request()` is the seam patched in tests.
 - `notify_service.py` — WhatsApp push for pipeline failures via the local whatsapp-service REST API. Never raises, skipped when disabled or in dry-run.
-- `errors.py` — `ErrorCategory` (incl. `PERMANENT_QUOTA` for exhausted provider credits), `is_transient()`, `ERROR_SUGGESTIONS`
+- `credits_service.py` — live provider balances plus locally tracked spend. OpenAI
+  runway uses an operator-recorded balance snapshot and warns when only two
+  average transcription episodes remain; recent quota failures force critical.
+- `errors.py` — `ErrorCategory` (incl. `PERMANENT_QUOTA` for exhausted provider credits),
+  `is_transient()`, `ERROR_SUGGESTIONS`. Provider quota codes take precedence over
+  generic HTTP 429 rate-limit classification.
 - `ffmpeg_service.py` — ffmpeg subprocess wrapper: `normalize_video_clip()`, `create_video_segment()`, `concat_segments()`, `probe_media()`, `generate_test_video()`, `generate_silent_audio()`
 - `youtube_service.py` — target-separated YouTube Data API upload + OAuth.
   Test/production credentials and expected channel IDs are resolved explicitly;
@@ -43,7 +48,10 @@ Each service uses a Protocol for swappable implementations:
   written, and both token/client files are maintained at mode 0600.
 - `feed_service.py` — RSS/YouTube feed parsing -> `list[EpisodeInfo]`
 - `download_service.py` — yt-dlp audio download
-- `transcription_service.py` — OpenAI Whisper API, auto-chunks large audio files
+- `transcription_service.py` — provider-neutral OpenAI and local faster-whisper
+  transcription, with automatic chunking for large OpenAI inputs. The shared retry
+  decorator owns OpenAI retries; SDK retries are disabled to avoid multiplying paid
+  or quota-rejected requests.
 - `gemini_image_service.py` — Gemini 2.0 Flash image editing via raw HTTP REST API. `edit_image()` -> `GeminiEditResult(image_path, cost_usd)`
 
 ## Conventions

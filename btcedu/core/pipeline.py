@@ -1670,6 +1670,12 @@ def run_episode_pipeline(
                 episode.error_message = report.error
                 episode.retry_count += 1
                 session.commit()
+                _trigger_automatic_copilot_fix(
+                    settings,
+                    episode,
+                    stage_name,
+                    report.error,
+                )
                 break
 
         # Refresh episode status from DB
@@ -1775,30 +1781,7 @@ def run_episode_pipeline(
             except Exception:
                 logger.debug("Could not send failure notification", exc_info=True)
 
-            # One-shot autonomous repair. Launched at most once per distinct
-            # error and never in dry-run; a launch problem must not mask the
-            # stage failure that is being reported here.
-            try:
-                from btcedu.core.copilot_fix import start_copilot_fix
-
-                launch = start_copilot_fix(
-                    settings,
-                    episode_id=episode.episode_id,
-                    title=episode.title or "",
-                    stage=stage_name,
-                    error_message=report.error,
-                    automatic=True,
-                    profile=getattr(episode, "content_profile", "") or "tagesschau_tr",
-                )
-                if launch.started:
-                    logger.info(
-                        "  Copilot fix session started for %s/%s (model=%s)",
-                        episode.episode_id,
-                        stage_name,
-                        launch.model,
-                    )
-            except Exception:
-                logger.warning("Could not start Copilot fix session", exc_info=True)
+            _trigger_automatic_copilot_fix(settings, episode, stage_name, report.error)
 
             break
         elif result.status == "review_pending":
@@ -1845,6 +1828,46 @@ def run_episode_pipeline(
     )
 
     return report
+
+
+def _trigger_automatic_copilot_fix(
+    settings: Settings,
+    episode: Episode,
+    stage_name: str,
+    error_message: str,
+) -> None:
+    """Launch one best-effort Copilot repair without masking the pipeline error."""
+    try:
+        from btcedu.core.copilot_fix import start_copilot_fix
+
+        launch = start_copilot_fix(
+            settings,
+            episode.episode_id,
+            episode.title or "",
+            stage_name,
+            error_message,
+            automatic=True,
+            profile=episode.content_profile or "tagesschau_tr",
+        )
+        if launch.started:
+            logger.info(
+                "  Automatic Copilot fix started for %s/%s",
+                episode.episode_id,
+                stage_name,
+            )
+        elif launch.already_attempted:
+            logger.info("  Automatic Copilot fix already attempted for this exact error")
+        elif launch.already_running:
+            logger.warning(
+                "  Automatic Copilot fix not started because session %s is busy",
+                launch.session,
+            )
+    except Exception:
+        logger.exception(
+            "Could not start automatic Copilot fix for %s/%s",
+            episode.episode_id,
+            stage_name,
+        )
 
 
 def run_episode_pipeline_coordinated(

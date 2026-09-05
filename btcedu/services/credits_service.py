@@ -59,6 +59,7 @@ class CreditStatus:
     spent_today_usd: float | None = None
     spent_total_usd: float | None = None
 
+    # Predictive runway based on an operator-recorded current balance.
     average_episode_cost_usd: float | None = None
     estimated_episodes_remaining: int | None = None
     warning_episode_threshold: int | None = None

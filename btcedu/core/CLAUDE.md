@@ -60,6 +60,9 @@ Each v2 stage module follows the same pattern:
 - **Adding a new stage**: follow the pattern in `tts.py` (cleanest example), add to `_V2_STAGES` in pipeline.py
 - **Fixing a stage**: always clear `episode.error_message = None` on success path
 - **Pipeline debugging**: check `PipelineRun` records, `episode.error_message`, `episode.retry_count`
+- **Local transcription**: `faster_whisper` is a supported provider and needs no
+  API key. Profiles still route transcription; `tagesschau_tr` uses OpenAI as
+  primary and as the independent suspicious-segment verifier.
 - **Reboot debugging**: a stage writes and commits its `RUNNING` row before
   work; retry summaries aggregate all attempts instead of showing only the last
 - **Failover debugging**: `processing`/`publishing` are intentionally
@@ -70,7 +73,14 @@ Each v2 stage module follows the same pattern:
 - **Structured translation output**: keep strict schema validation after the
   translator's `json_repair` fallback; malformed quoting may be repaired, but
   structurally or factually invalid story translations must still fail.
-- **Automatic repair**: the same failure branch then calls `copilot_fix.start_copilot_fix(automatic=True)`. A launch error is logged but never replaces the reported stage failure.
+- **Automatic repair**: the failure branch calls `_trigger_automatic_copilot_fix()`,
+  which launches one `gpt-5.6-sol` repair in tmux. The error fingerprint is
+  persisted before launch, so the same failure is never retried automatically,
+  and a launch error is logged but never replaces the reported stage failure.
+  Before any automatic or manually triggered Copilot fix may be committed,
+  pushed or resumed, the affected stage must pass
+  `btcedu regression-run --only-stage` against the three most recent episodes
+  of the same profile in the isolated regression workspace.
 - **Copilot model ids expire**: GitHub retires ids without notice and the CLI
   then aborts with `Model "..." from --model flag is not available`, failing the
   stage. The active producer default is `claude-sonnet-5`. Verify any new id in

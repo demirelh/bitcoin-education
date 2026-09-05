@@ -12,6 +12,12 @@
 ## Key API Endpoints
 
 Episodes: `GET/POST /api/episodes/<id>/{download,transcribe,run,retry,publish,...}`
+Copilot repair: `POST /api/episodes/<id>/fix-problem` starts one autonomous
+`copilotfix` tmux session. Automatic failure-triggered attempts are deduplicated
+by exact error fingerprint; manual and automatic attribution is persisted in
+episode provenance and shown in the pipeline stepper. Both manual and automatic
+fixes must pass the affected stage against the profile's three most recent
+episodes in the isolated regression runner before commit, push or resume.
 Reviews: `GET/POST /api/reviews/<id>/{approve,reject,request-changes}`
 QA panel actions: `POST /api/episodes/<id>/qa/transcript/{approve,request-changes}` (reuses/creates the
 `transcript_qa` ReviewTask), `POST /api/episodes/<id>/qa/findings/<finding_id>/status` (mutates a
@@ -31,6 +37,8 @@ Intro audio: `GET/POST/DELETE /api/intro-audio`, `GET /api/intro-audio/file` (Ta
 Render mode: `GET/POST /api/render-mode` (local `app_settings` override)
 Failover: `GET /api/failover/status`, `POST /api/failover/mode` (proxy the
 external control plane; operator token required for mode changes)
+Credits: `GET /api/credits`, `POST /api/credits/openai-balance` (stores the
+current OpenAI balance baseline used for the two-episode warning popup)
 
 ## Conventions
 

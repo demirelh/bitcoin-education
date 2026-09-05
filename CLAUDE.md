@@ -14,6 +14,7 @@ pytest                               # run full test suite
 pytest tests/test_pipeline.py -x -q  # run specific test file
 ruff check btcedu/ tests/            # lint (py312, line-length 100, E/W/F/I/UP)
 ./run.sh                             # production deploy: git pull → pip → migrate → restart
+                                     # (refuses a dirty tree; ALLOW_DIRTY=1 stashes instead)
 btcedu regression-run --from-stage correct --only-stage  # isolated stage replay
 ```
 

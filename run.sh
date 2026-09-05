@@ -118,10 +118,25 @@ pull_latest_code() {
     CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
     log_info "Current branch: ${CURRENT_BRANCH}"
 
-    # Check for uncommitted changes
+    # Uncommitted changes are unfinished work, and a deployment is not the place
+    # to decide what happens to it. Stashing looks harmless but hides the work in
+    # a place nobody looks at again -- three such stashes went unnoticed for weeks
+    # and one was written by an agent that called this script on its own.
     if ! git diff-index --quiet HEAD -- 2>/dev/null; then
-        log_warn "WARNING: You have uncommitted changes. Stashing them..."
-        git stash push -m "Auto-stash by run.sh at $(date)"
+        if [ "${ALLOW_DIRTY:-0}" = "1" ]; then
+            log_warn "Uncommitted changes stashed on request (ALLOW_DIRTY=1):"
+            git --no-pager diff --stat HEAD -- | sed 's/^/    /'
+            git stash push -m "Auto-stash by run.sh at $(date)"
+            log_warn "Recover them with: git stash pop"
+        else
+            git --no-pager diff --stat HEAD -- | sed 's/^/    /' >&2
+            error_exit "$(cat <<'MSG'
+Uncommitted changes in the working tree (listed above).
+Commit them, or discard them with 'git checkout -- <file>', then deploy again.
+To stash them anyway, run: ALLOW_DIRTY=1 ./run.sh
+MSG
+)"
+        fi
     fi
 
     # Pull latest changes

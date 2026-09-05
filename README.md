@@ -180,6 +180,10 @@ downstream stages.
 ./run.sh   # git pull → pip install → migrate → restart services
 ```
 
+`run.sh` refuses to deploy while the working tree has uncommitted changes;
+commit or discard them first, or stash them explicitly with `ALLOW_DIRTY=1
+./run.sh`.
+
 See `deploy/README.md` for systemd timer setup and Caddy reverse proxy config.
 For `tagesschau_tr`, publishing still requires a final artifact-bound manual
 approval; intermediate approvals never upload automatically.

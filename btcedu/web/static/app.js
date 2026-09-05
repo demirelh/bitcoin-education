@@ -3656,6 +3656,22 @@ async function loadCredits() {
         const w7 = (c.spent_7d_usd || 0).toFixed(2);
         const w30 = (c.spent_30d_usd || 0).toFixed(2);
         details += `<div><strong>Spent</strong> today: $${today} · 7d: $${w7} · 30d: $${w30}</div>`;
+        if (c.provider === 'openai') {
+          if (c.balance_usd !== null && c.balance_usd !== undefined) {
+            details += `<div><strong>Geschätztes Guthaben:</strong> $${c.balance_usd.toFixed(2)}</div>`;
+          }
+          if (c.average_episode_cost_usd !== null && c.average_episode_cost_usd !== undefined) {
+            details += `<div><strong>Ø pro Episode:</strong> $${c.average_episode_cost_usd.toFixed(3)}</div>`;
+          }
+          if (c.estimated_episodes_remaining !== null && c.estimated_episodes_remaining !== undefined) {
+            details += `<div style="font-weight:700;color:${c.status === 'critical' ? '#ef4444' : c.status === 'warn' ? '#facc15' : 'inherit'};">
+              Noch ungefähr ${c.estimated_episodes_remaining} Episode(n)
+            </div>`;
+          }
+          if (c.quota_exhausted) {
+            details += '<div style="color:#ef4444;font-weight:700;">OpenAI meldet: Credits aufgebraucht.</div>';
+          }
+        }
         if (c.note) details += `<div style="color:var(--text-dim);font-size:11px;">${c.note}</div>`;
       }
       if (c.error) details += `<div style="color:#ef4444;font-size:11px;">⚠ ${c.error}</div>`;
@@ -3685,9 +3701,56 @@ async function loadCredits() {
         badge.style.display = 'none';
       }
     }
+
+    const runwayWarnings = (j.credits || []).filter(c =>
+      c.quota_exhausted ||
+      (c.estimated_episodes_remaining !== null &&
+       c.estimated_episodes_remaining !== undefined &&
+       c.estimated_episodes_remaining <= (c.warning_episode_threshold || 2))
+    );
+    for (const warning of runwayWarnings) {
+      const fingerprint = [
+        warning.provider,
+        warning.credit_snapshot_at || 'no-snapshot',
+        warning.estimated_episodes_remaining,
+        warning.quota_exhausted
+      ].join(':');
+      let alreadyShown = false;
+      try {
+        alreadyShown = localStorage.getItem('credit-warning-popup') === fingerprint;
+      } catch (_) {
+        alreadyShown = false;
+      }
+      if (!alreadyShown) {
+        document.getElementById('credits-modal').style.display = 'flex';
+        try {
+          localStorage.setItem('credit-warning-popup', fingerprint);
+        } catch (_) {
+          // Storage may be unavailable in private browsing; showing once per poll is safer.
+        }
+        break;
+      }
+    }
   } catch (e) {
     body.innerHTML = `<div style="color:#ef4444;">Error: ${e.message}</div>`;
   }
+}
+
+async function saveOpenAIBalance() {
+  const input = document.getElementById('openai-credit-balance');
+  const balance = Number(input.value);
+  if (!Number.isFinite(balance) || balance < 0 || input.value.trim() === '') {
+    toast('Bitte ein gültiges OpenAI-Guthaben eingeben.', false);
+    return;
+  }
+  const result = await POST('/credits/openai-balance', { balance_usd: balance });
+  if (result.error) {
+    toast(result.error, false);
+    return;
+  }
+  input.value = '';
+  toast('OpenAI-Guthaben gespeichert.');
+  loadCredits();
 }
 
 function showCredits() {

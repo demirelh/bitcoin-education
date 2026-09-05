@@ -4146,6 +4146,30 @@ def get_credits():
     )
 
 
+@api_bp.route("/credits/openai-balance", methods=["POST"])
+def set_openai_credit_balance():
+    """Store the current OpenAI balance as the baseline for runway estimates."""
+    from btcedu.services.credits_service import save_openai_credit_snapshot
+
+    body = request.get_json(silent=True) or {}
+    balance = body.get("balance_usd")
+    if isinstance(balance, bool):
+        return jsonify({"error": "balance_usd must be a non-negative number"}), 400
+    try:
+        parsed_balance = float(balance)
+    except (TypeError, ValueError):
+        return jsonify({"error": "balance_usd must be a non-negative number"}), 400
+
+    session = _get_session()
+    try:
+        snapshot = save_openai_credit_snapshot(session, parsed_balance)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    finally:
+        session.close()
+    return jsonify({"success": True, "snapshot": snapshot})
+
+
 # ---------------------------------------------------------------------------
 # Weather dashboard endpoints
 # ---------------------------------------------------------------------------

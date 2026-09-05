@@ -127,6 +127,24 @@ def client(app):
 # ---------------------------------------------------------------------------
 
 
+class TestCredits:
+    def test_openai_balance_snapshot_is_saved(self, client):
+        response = client.post("/api/credits/openai-balance", json={"balance_usd": 5.0})
+
+        assert response.status_code == 200
+        data = response.get_json()
+        assert data["success"] is True
+        assert data["snapshot"]["balance_usd"] == 5.0
+        assert data["snapshot"]["tracked_spend_usd"] == 0.0
+
+    @pytest.mark.parametrize("balance", [-1, "invalid", None, True])
+    def test_openai_balance_snapshot_rejects_invalid_values(self, client, balance):
+        response = client.post("/api/credits/openai-balance", json={"balance_usd": balance})
+
+        assert response.status_code == 400
+        assert "balance_usd" in response.get_json()["error"]
+
+
 class TestHealthAndStaticAssets:
     def test_health_endpoint(self, client):
         r = client.get("/api/health")

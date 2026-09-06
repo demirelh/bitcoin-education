@@ -944,6 +944,77 @@ class CreateAvatarJobsTableMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateAvatarJobAuditTableMigration(Migration):
+    """Migration 017: Create avatar_job_audit table for operator decisions.
+
+    Reconciliation is where a human overrules the ledger, so the reason has to
+    outlive the shell session it was typed in. Nothing here is on the hot path;
+    the table exists to answer "why does this row say completed" months later.
+    """
+
+    @property
+    def version(self) -> str:
+        return "017_create_avatar_job_audit_table"
+
+    @property
+    def description(self) -> str:
+        return "Create avatar_job_audit table for avatar reconciliation decisions"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        existing = {row[0] for row in result.fetchall()}
+
+        if "avatar_job_audit" not in existing:
+            session.execute(
+                text(
+                    """
+                    CREATE TABLE avatar_job_audit (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        episode_id VARCHAR(64) NOT NULL,
+                        job_id INTEGER,
+                        scene_id VARCHAR(128) NOT NULL DEFAULT '',
+                        action VARCHAR(32) NOT NULL,
+                        from_status VARCHAR(32) NOT NULL DEFAULT '',
+                        to_status VARCHAR(32) NOT NULL DEFAULT '',
+                        provider_job_id VARCHAR(128),
+                        operator_ref VARCHAR(64) NOT NULL DEFAULT '',
+                        note TEXT NOT NULL DEFAULT '',
+                        cost_before_usd FLOAT NOT NULL DEFAULT 0.0,
+                        cost_after_usd FLOAT NOT NULL DEFAULT 0.0,
+                        created_at DATETIME NOT NULL
+                    )
+                    """
+                )
+            )
+            session.commit()
+            logger.info("Created avatar_job_audit table")
+        else:
+            logger.info("avatar_job_audit table already exists (skipped)")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
+        indexes = {row[0] for row in result.fetchall()}
+
+        if "ix_avatar_job_audit_episode_id" not in indexes:
+            session.execute(
+                text(
+                    "CREATE INDEX ix_avatar_job_audit_episode_id "
+                    "ON avatar_job_audit (episode_id)"
+                )
+            )
+            session.commit()
+
+        if "ix_avatar_job_audit_job_id" not in indexes:
+            session.execute(
+                text("CREATE INDEX ix_avatar_job_audit_job_id ON avatar_job_audit (job_id)")
+            )
+            session.commit()
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -962,6 +1033,7 @@ MIGRATIONS = [
     CreateAppSettingsTableMigration(),
     CreatePresenterAssignmentTableMigration(),
     CreateAvatarJobsTableMigration(),
+    CreateAvatarJobAuditTableMigration(),
 ]
 
 

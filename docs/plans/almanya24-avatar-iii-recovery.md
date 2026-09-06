@@ -370,15 +370,127 @@ Fixture-Hinweis: `speaker_parts` benutzen den Schlüssel `"file"` mit bloßem
 Dateinamen unter `tts/parts/`, nicht `file_path`. `OverlaySpec` kennt kein
 `duration`-Argument. Beides hat beim Schreiben der Fixtures Zeit gekostet.
 
-### WP-5 — Betriebswerkzeuge und Gates *(nächstes Paket)*
+### WP-5A — Readiness, Rechte-Gate und Avatar-Reconciliation (6. September 2026)
 
-- [ ] `btcedu anchor-readiness` (im Profil bereits erwähnt, existiert nicht):
-      lehnt Platzhalter-Look-IDs, doppelte IDs, fehlende Rechte und
-      nicht-positive Kostenrate ab.
-- [ ] `btcedu avatar-reconcile` als Operator-Kommando um `resolve_job()`.
-- [ ] Dashboard-Vorschau und Review-Gate für Avatar-Szenen.
+Bedienbar gemacht, was bisher nur im Code galt: die Frage *darf und kann diese
+Episode überhaupt moderiert werden*, und der Weg, wie ein Mensch einen Job
+schließt, dessen Ausgang die Pipeline sich bewusst weigert zu raten.
+
+**`btcedu anchor-readiness --profile tagesschau_tr`** (`core/anchor_readiness.py`)
+
+- [x] Standardlauf vollständig offline und kostenfrei; 35 Checks in den
+      Bereichen `configuration`, `studio`, `ffmpeg`, `pipeline`, `ledger`,
+      `rights`.
+- [x] Konfiguration: Provider `heygen`, Engine exakt `avatar_iii`, positive
+      Kostenrate, Anchor-Limit 7 USD und nicht größer als das Episodenlimit,
+      Look-Pool mit eindeutigen, aktiven, nicht-Platzhalter-IDs, kein Rückfall
+      auf eine erfundene globale Avatar-ID.
+- [x] Studio: Manifest vorhanden und gültig, alle Assets vorhanden, lesbar und
+      innerhalb des Asset-Verzeichnisses (Symlinkschutz), Auflösung/FPS passend
+      zum Renderer, Display-Zone und Safe Areas gültig, im opaken Modus eine
+      presenterfreie Zone oder eine Occlusion-Maske.
+- [x] FFmpeg: Binaries vorhanden, benötigte Filter je Modus verfügbar, im
+      Alpha-Modus Alpha-**Dekodierung**. Bewusst keine Encoding-Anforderung
+      erfunden: produktiv liefert HeyGen das WebM, das Ergebnis ist H.264.
+- [x] Pipeline: `sceneplan` vor `anchorgen` vor `render`, Presenter-Zuweisung
+      konfigurierbar, Job-Tabelle und Migration vorhanden, privates Testziel,
+      `auto_publish=false`, Remote-Render kann die Studioassets übertragen.
+- [x] Exitcodes 0/1/2/3, abgeleitet statt gepflegt. Ein falsch geschriebenes
+      `--profile` ist kein Aufruffehler, sondern ein blockierender Befund mit
+      Remedy — Skripte bekommen so in beiden Fällen dieselbe Reportform.
+- [x] `--json` mit versioniertem Schema; jeder blockierende Befund trägt eine
+      `remedy`, und ein Test erzwingt das. Keine Secrets, keine vollständigen
+      API-Schlüssel, keine absoluten Deployment-Pfade in beiden Ausgaben.
+- [x] Der reale Lauf gegen `tagesschau_tr` ist heute **30 pass, 1 warning,
+      4 blocked, Exitcode 2** — die ehrliche Antwort, solange Phase 1 fehlt.
+
+**Rechte- und Transparenzvertrag** (`core/anchor_rights.py`)
+
+- [x] Maschinenlesbarer Freigabesatz mit Zustimmung, Voice-/Likeness- und
+      Synthesebestätigung, Kanälen, Gebieten, Gültigkeit, Widerruf, interner
+      Vertragsreferenz, Betreiberfreigabe und KI-Kennzeichnungstext.
+- [x] Datensparsamkeit ist *mechanisch* erzwungen, nicht nur dokumentiert:
+      `parse_rights_record()` weist jeden Schlüssel außerhalb der Allow-List
+      zurück, und `presenter_rights_id`/`approved_by_ref` müssen einem Muster
+      genügen, das ein Name oder eine E-Mail-Adresse nicht erfüllen kann.
+- [x] Produktiver Satz liegt außerhalb des Repos und ist gitignored; committet
+      ist nur `assets/almanya24/rights/anchor-rights.example.json` samt README.
+- [x] Fail-closed bei fehlender Zustimmung, Widerruf, Ablauf, nicht abgedecktem
+      Kanal oder Gebiet, fehlender Betreiberfreigabe und fehlender
+      KI-Kennzeichnung. Alle Probleme werden gesammelt gemeldet, nicht das
+      erste — wer eine Freigabe nachzieht, will die ganze Liste.
+
+**Optionaler Online-Check** (`services/heygen_readonly.py`)
+
+- [x] Nur GET: Authentifizierung und Look-Abfrage. Die Klasse besitzt keine
+      Methode, die etwas erzeugen oder hochladen könnte; ein Test prüft das.
+- [x] Das Versprechen wird vor der ersten Anfrage gedruckt, nicht nur
+      dokumentiert.
+- [x] Fehlerarten getrennt: 401/403 blockieren (das ist eine Antwort),
+      Netzwerkfehler und Timeout warnen nur — ein nicht erreichbarer Provider
+      sagt nichts über die Konfiguration, und eine schlechte Minute Netz darf
+      das Offline-Urteil nicht vergiften. 429 respektiert `Retry-After`.
+- [x] Ein **fehlendes** `supported_api_engines` bleibt *unbekannt*, nicht leer.
+      Schweigen als "unterstützt kein Avatar III" zu lesen, würde einen
+      funktionierenden Look an einem Feld scheitern lassen, das der Provider nie
+      zugesagt hat.
+
+**`btcedu avatar-reconcile`** (`core/avatar_reconcile.py`, Migration 017)
+
+- [x] `list`, `inspect`, `attach`, `resolve`; Text- und JSON-Ausgabe, keine
+      Secrets, keine absoluten Pfade.
+- [x] Fünf modellierte Betreiberentscheidungen: `running`, `delivered`,
+      `not-billed`, `unresolved`, `abandon`. Jede verlangt Begründung und
+      Operatorreferenz und schreibt eine Auditzeile mit Status und Kosten davor
+      und danach.
+- [x] **Ein 404 ist kein Beweis, dass nichts berechnet wurde.** HeyGen hält
+      fertige Videos nur begrenzt vor; ein fehlender Job nach Wochen beweist
+      allein den Ablauf der Aufbewahrungsfrist. `not-billed` wird ohne gebundene
+      Provider-Job-ID verweigert — sicher sind `unresolved` oder `abandon`.
+- [x] `abandon` nullt die Kosten **nicht**. Ein aufgegebener Clip ist keine
+      Behauptung, er sei gratis gewesen.
+- [x] Keine automatische Neubeauftragung: `reserve_scene()` liefert für
+      `reserved`, `reconcile_required` und den neuen Status `ABANDONED`
+      `ACTION_RECONCILE`.
+- [x] Erledigte Jobs werden nie wieder geöffnet, eine Aufgabe ist endgültig.
+- [x] `attach` ist ein eigener Schritt und verlangt `--confirm`: eine von Hand
+      gefundene Job-ID zu binden ist eine Behauptung, die jede spätere
+      Entscheidung erbt.
+- [x] Konkurrierende Auflösung ist ein einziges bedingtes UPDATE mit
+      Rowcount-Prüfung; der Verlierer wird informiert, nicht überschrieben.
+
+**Ausfallpolitik** (`core/anchor_fallback.py`)
+
+- [x] Bei aktivem Avatarbetrieb stoppt ein fehlender, ungültiger oder
+      ungeklärter Moderatorinnenclip die Episode. Kein stiller Rückfall auf den
+      alten Vollbild-Voice-over: eine Episode, die die Moderatorin heimlich
+      weglässt, rendert, besteht die technischen Prüfungen und veröffentlicht in
+      einem Format, das der Kanal aufgegeben hat.
+- [x] Der Voice-over-Fallback existiert nur als ausdrückliche Betreiber-
+      entscheidung für **genau eine** Episode, mit Grund, Auditeintrag und
+      erzwungener neuer Endabnahme (`requires_final_review` ist immer wahr).
+- [x] Der Renderer wählt nie: `require_anchor_usable()` ist Betreiberwerkzeug.
+      Ein zweites, breiteres Veto im Renderer würde so aussehen, als entschiede
+      er über die Darstellung.
+- [x] Der Anchor-disabled-Pfad anderer Profile bleibt unberührt.
+
+**Tests**: `tests/test_anchor_readiness.py` (59), `test_anchor_readiness_online.py`
+(21), `test_anchor_rights.py` (37), `test_avatar_reconcile.py` (42),
+`test_anchor_fallback.py` (22) — 181 Tests, kein einziger Provideraufruf.
+
+**Dokumentation**: `docs/anchor-readiness.md` (CLI-Hilfe, Bereichstabelle,
+Exitcodes, JSON-Beispiel, Entscheidungstabelle und die Regeln, die Geld kosten).
+
+### WP-5B — Dashboard, Vorschau und Avatar-Review-Gate *(nächstes Paket)*
+
+- [ ] Avatar-Szenenvorschau im Dashboard, Review-Gate für Moderatorinnenclips.
+- [ ] Sichtbare Bedienung des Voice-over-Overrides (Datenmodell und Gate stehen
+      bereits, bewusst ohne Bedienoberfläche).
+- [ ] Anzeige ungeklärter Jobs und der Readiness-Befunde.
+
+### WP-5C — Begrenzte Parallelität, Backoff und Betriebshärtung
+
 - [ ] Parallelität (`max_concurrent_jobs`) mit Backoff bei 429/5xx.
-- [ ] Fail-closed-Verhalten beziehungsweise sichtbarer Voice-over-Fallback.
 - [ ] Kosmetik aus "Teilweise umgesetzt": `sceneplan` in
       `_STAGE_WORKFLOW_KEY`-Kommentar und `STAGE_PROVIDER_MAP` nachziehen.
 
@@ -396,6 +508,9 @@ Durchgeführt am 6. September 2026:
   (2 vorbestehende Fehlschläge + 1 bekannter Timing-Flake, siehe unten).
 - Volle Suite im Arbeitsverzeichnis nach WP-3: **3017 passed, 2 failed** —
   ausschließlich die beiden unten dokumentierten Baselineprobleme.
+- Volle Suite im Arbeitsverzeichnis nach WP-5A: **3293 passed, 2 failed** —
+  ausschließlich die beiden unten dokumentierten Baselineprobleme, der
+  `test_web`-Flake blieb diesmal grün.
 - Volle Suite gegen einen sauberen `HEAD`-Worktree (nur zum Vergleich angelegt
   und wieder entfernt, das Arbeitsverzeichnis blieb unangetastet):
   **2788 passed, 1 failed**.
@@ -451,3 +566,5 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-06 | WP-3 | Studio-Manifest, Compositor, Medienauflösung, 130 Tests, Ruff grün; Suite 3017 grün / 2 Baselinefehler |
 | 2026-09-06 | Checkpoint | Lokaler Commit `e9efd04` (WP-3), nicht gepusht |
 | 2026-09-06 | WP-4 | Szenenrenderer, Remote-Vertrag, 96 neue Tests, Ruff grün; Suite 3114 grün / 2 Baselinefehler |
+| 2026-09-06 | Checkpoint | Lokaler Commit `fc468bc` (WP-4), nicht gepusht |
+| 2026-09-06 | WP-5A | Readiness-CLI, Rechtevertrag, Reconciliation, Ausfallpolitik, 181 Tests, Ruff grün; Suite 3293 grün / 2 Baselinefehler |

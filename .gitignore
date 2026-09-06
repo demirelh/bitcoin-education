@@ -42,3 +42,7 @@ asr_corrected_output.json
 
 # Heap dumps written by the Copilot CLI's Node runtime when it crashes.
 report.*.json
+
+# Presenter release record. It holds only statuses and an internal contract
+# reference, but it is still rights data and belongs outside the repository.
+assets/almanya24/rights/anchor-rights.json

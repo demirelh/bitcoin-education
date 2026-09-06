@@ -139,8 +139,30 @@ def blocked_jobs(session: Session, episode_id: str) -> list[AvatarJob]:
     return [
         job
         for job in episode_jobs(session, episode_id)
-        if job.status == AvatarJobStatus.RECONCILE_REQUIRED.value
+        if job.status
+        in {AvatarJobStatus.RECONCILE_REQUIRED.value, AvatarJobStatus.ABANDONED.value}
     ]
+
+
+def unresolved_jobs(session: Session, episode_id: str | None = None) -> list[AvatarJob]:
+    """Every row whose outcome nobody has established yet.
+
+    ``reserved`` is included even though it is not yet formally held: a row that
+    has been sitting in ``reserved`` since a crash is precisely what an operator
+    needs to see, and pretending it is fine until the next run promotes it would
+    hide the one state that can cost money twice.
+    """
+    query = session.query(AvatarJob).filter(
+        AvatarJob.status.in_(
+            [
+                AvatarJobStatus.RESERVED.value,
+                AvatarJobStatus.RECONCILE_REQUIRED.value,
+            ]
+        )
+    )
+    if episode_id:
+        query = query.filter(AvatarJob.episode_id == episode_id)
+    return query.order_by(AvatarJob.reserved_at, AvatarJob.id).all()
 
 
 def reserve_scene(
@@ -184,6 +206,16 @@ def reserve_scene(
         if existing.status == AvatarJobStatus.RECONCILE_REQUIRED.value:
             return ReservationDecision(
                 ACTION_RECONCILE, existing, existing.error_message or "awaiting reconciliation"
+            )
+
+        if existing.status == AvatarJobStatus.ABANDONED.value:
+            # An operator gave this clip up knowing it might have been billed.
+            # Buying it again behind their back is exactly what they decided
+            # against, so the stage stops instead.
+            return ReservationDecision(
+                ACTION_RECONCILE,
+                existing,
+                existing.resolution_note or "abandoned by an operator",
             )
 
         # FAILED: the provider refused before generating, so nothing was billed
@@ -275,6 +307,19 @@ def hold_for_reconciliation(session: Session, job: AvatarJob, reason: str) -> Av
     return _hold_for_reconciliation(session, job, str(reason)[:1000]).job
 
 
+#: Outcomes an operator may record against a job whose fate was unknown.
+OUTCOME_DELIVERED = "delivered"
+OUTCOME_NOT_BILLED = "not_billed"
+OUTCOME_IN_PROGRESS = "in_progress"
+OUTCOME_ABANDONED = "abandoned"
+RESOLUTION_OUTCOMES = (
+    OUTCOME_DELIVERED,
+    OUTCOME_NOT_BILLED,
+    OUTCOME_IN_PROGRESS,
+    OUTCOME_ABANDONED,
+)
+
+
 def resolve_job(
     session: Session,
     job: AvatarJob,
@@ -284,12 +329,21 @@ def resolve_job(
     output_path: str = "",
     duration_seconds: float = 0.0,
     cost_usd: float | None = None,
+    provider_job_id: str = "",
 ) -> AvatarJob:
     """Operator resolution of an unknown outcome.
 
     ``delivered`` closes the row against a clip that was found and paid for;
-    ``not_billed`` releases it for a fresh attempt. Both demand a note, because
-    the whole point of the state is that only a human knows which it was.
+    ``not_billed`` releases it for a fresh attempt; ``in_progress`` hands it back
+    to the poller because the provider confirmed it is still generating; and
+    ``abandoned`` gives the clip up without pretending it was free. All four
+    demand a note, because the whole point of the state is that only a human
+    knows which it was.
+
+    The transition itself is a single conditional UPDATE. Two operators
+    resolving the same row at the same time is not hypothetical — it is what
+    happens when one of them is a cron-driven dashboard — and the loser has to
+    be told rather than silently overwrite the winner.
     """
     if job.status != AvatarJobStatus.RECONCILE_REQUIRED.value:
         raise AvatarJobConflictError(
@@ -297,26 +351,64 @@ def resolve_job(
         )
     if not note.strip():
         raise ValueError("Reconciliation requires a note describing the finding")
-
-    if outcome == "delivered":
-        if not output_path:
-            raise ValueError("Resolving as delivered requires the path of the clip")
-        job.status = AvatarJobStatus.COMPLETED.value
-        job.output_path = output_path
-        job.duration_seconds = float(duration_seconds)
-        if cost_usd is not None:
-            job.cost_usd = float(cost_usd)
-        job.completed_at = _utcnow()
-    elif outcome == "not_billed":
-        job.status = AvatarJobStatus.FAILED.value
-        job.cost_usd = 0.0
-        job.completed_at = _utcnow()
-    else:
+    if outcome not in RESOLUTION_OUTCOMES:
         raise ValueError(f"Unknown reconciliation outcome: {outcome!r}")
 
-    job.resolution_note = note.strip()[:1000]
-    job.error_message = None
+    now = _utcnow()
+    changes: dict = {
+        AvatarJob.resolution_note: note.strip()[:1000],
+        AvatarJob.error_message: None,
+    }
+
+    if outcome == OUTCOME_DELIVERED:
+        if not output_path:
+            raise ValueError("Resolving as delivered requires the path of the clip")
+        changes[AvatarJob.status] = AvatarJobStatus.COMPLETED.value
+        changes[AvatarJob.output_path] = output_path
+        changes[AvatarJob.duration_seconds] = float(duration_seconds)
+        changes[AvatarJob.completed_at] = now
+        if cost_usd is not None:
+            changes[AvatarJob.cost_usd] = float(cost_usd)
+    elif outcome == OUTCOME_NOT_BILLED:
+        changes[AvatarJob.status] = AvatarJobStatus.FAILED.value
+        changes[AvatarJob.cost_usd] = 0.0
+        changes[AvatarJob.completed_at] = now
+    elif outcome == OUTCOME_IN_PROGRESS:
+        resolved_job_id = (provider_job_id or job.provider_job_id or "").strip()
+        if not resolved_job_id:
+            raise ValueError(
+                "Resolving as in_progress requires the provider job id that is still running"
+            )
+        changes[AvatarJob.status] = AvatarJobStatus.SUBMITTED.value
+        changes[AvatarJob.provider_job_id] = resolved_job_id
+        changes[AvatarJob.submitted_at] = job.submitted_at or now
+        if cost_usd is not None:
+            changes[AvatarJob.cost_usd] = float(cost_usd)
+    else:  # OUTCOME_ABANDONED
+        # The cost is deliberately left alone. Abandoning a clip is not a
+        # statement that it was free, and the budget must keep assuming it was
+        # billed until somebody proves otherwise.
+        changes[AvatarJob.status] = AvatarJobStatus.ABANDONED.value
+        changes[AvatarJob.completed_at] = now
+        if cost_usd is not None:
+            changes[AvatarJob.cost_usd] = float(cost_usd)
+
+    updated = (
+        session.query(AvatarJob)
+        .filter(
+            AvatarJob.id == job.id,
+            AvatarJob.status == AvatarJobStatus.RECONCILE_REQUIRED.value,
+        )
+        .update(changes, synchronize_session=False)
+    )
+    if updated == 0:
+        session.rollback()
+        raise AvatarJobConflictError(
+            f"Avatar job {job.scene_id} was resolved by someone else while this "
+            "reconciliation was being prepared"
+        )
     session.commit()
+    session.refresh(job)
     logger.info(
         "Avatar job %s/%s reconciled as %s", job.episode_id, job.scene_id, outcome
     )

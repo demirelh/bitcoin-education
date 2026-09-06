@@ -58,6 +58,13 @@ class RightsConfig:
     permitted_territories: tuple[str, ...] = ()
     revoked: bool = False
     ai_disclosure_required: bool = True
+    # Path to the machine-readable release record. It lives *outside* the
+    # repository: the profile only says where to look, never what it says.
+    record_file: str = ""
+    # What this profile actually publishes to, so the release can be checked
+    # against a concrete channel and territory rather than in the abstract.
+    channel: str = ""
+    territory: str = ""
 
 
 @dataclass(frozen=True)
@@ -185,6 +192,9 @@ def parse_rights(raw) -> RightsConfig:
         permitted_territories=_as_str_tuple(raw.get("permitted_territories")),
         revoked=_as_bool(raw.get("revoked"), default=False),
         ai_disclosure_required=_as_bool(raw.get("ai_disclosure_required"), default=True),
+        record_file=str(raw.get("record_file") or "").strip(),
+        channel=str(raw.get("channel") or "").strip(),
+        territory=str(raw.get("territory") or "").strip(),
     )
 
 

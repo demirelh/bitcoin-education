@@ -40,11 +40,19 @@ class AvatarJobStatus(str, enum.Enum):
     FAILED = "failed"
     # Outcome unknown. Blocks automatic retry until an operator resolves it.
     RECONCILE_REQUIRED = "reconcile_required"
+    # An operator gave the clip up. It may well have been billed, so the cost
+    # stays on the episode — and unlike FAILED this is not a retryable state:
+    # abandoning is a decision, not a transient error.
+    ABANDONED = "abandoned"
 
 
 #: States from which no new provider call may be made automatically.
 BLOCKING_STATUSES = frozenset(
-    {AvatarJobStatus.RESERVED.value, AvatarJobStatus.RECONCILE_REQUIRED.value}
+    {
+        AvatarJobStatus.RESERVED.value,
+        AvatarJobStatus.RECONCILE_REQUIRED.value,
+        AvatarJobStatus.ABANDONED.value,
+    }
 )
 
 

@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "record_version": 1,
+  "updated_at": "2026-01-31T12:00:00Z",
+  "presenter_rights_id": "almanya24-presenter-01",
+  "consent_confirmed": true,
+  "voice_likeness_confirmed": true,
+  "synthetic_video_confirmed": true,
+  "permitted_channels": ["almanya24-youtube"],
+  "permitted_territories": ["DE", "TR"],
+  "valid_from": "2026-02-01",
+  "valid_until": "2027-01-31",
+  "revoked": false,
+  "revoked_on": null,
+  "contract_reference": "CONTRACT-2026-014",
+  "operator_approval": {
+    "approved": true,
+    "approved_by_ref": "ops-hd",
+    "approved_on": "2026-02-01"
+  },
+  "ai_disclosure_text": "Bu videodaki sunucu yapay zeka ile olusturulmustur."
+}

@@ -2979,3 +2979,297 @@ def notify_test(ctx: click.Context, message: str | None) -> None:
             f"Notification was not accepted by {settings.notify_whatsapp_url} - "
             "check that the whatsapp service is running (systemctl status whatsapp)."
         )
+
+
+@cli.command(name="anchor-readiness")
+@click.option(
+    "--profile",
+    default="tagesschau_tr",
+    help="Content profile whose anchor configuration should be checked.",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    default=False,
+    help="Emit the versioned machine-readable report instead of text.",
+)
+@click.option(
+    "--online",
+    is_flag=True,
+    default=False,
+    help="Additionally run free, read-only provider checks (no upload, no generation).",
+)
+@click.option(
+    "--studio-mode",
+    type=click.Choice(["alpha_webm", "opaque_mp4"], case_sensitive=False),
+    default=None,
+    help="Which studio compositing mode to check against. Defaults to the profile's.",
+)
+@click.pass_context
+def anchor_readiness(
+    ctx: click.Context,
+    profile: str,
+    json_output: bool,
+    online: bool,
+    studio_mode: str | None,
+) -> None:
+    """Check whether the ALMANYA24 presenter may and can be generated.
+
+    The default run is entirely offline and free. Exit codes: 0 ready,
+    1 warnings only, 2 blocked, 3 usage error.
+
+    Examples:
+
+        btcedu anchor-readiness --profile tagesschau_tr
+        btcedu anchor-readiness --profile tagesschau_tr --json
+        btcedu anchor-readiness --profile tagesschau_tr --studio-mode opaque_mp4
+        btcedu anchor-readiness --profile tagesschau_tr --online
+    """
+    from btcedu.core.anchor_readiness import (
+        EXIT_USAGE,
+        evaluate_readiness,
+        format_report,
+        online_notice,
+        resolve_studio_mode,
+    )
+
+    settings = ctx.obj["settings"]
+
+    try:
+        from btcedu.core.anchor_config import resolve_anchor_config
+
+        config = resolve_anchor_config(profile, settings)
+    except Exception:  # noqa: BLE001 - the report says why; the mode still needs a default
+        config = None
+    mode = resolve_studio_mode(config, studio_mode)
+
+    if online and not json_output:
+        # Printed before the first request, so the promise is visible rather
+        # than merely documented.
+        click.echo(online_notice())
+        click.echo("")
+
+    try:
+        session = ctx.obj["session_factory"]()
+    except Exception:  # noqa: BLE001 - readiness still works without a database
+        session = None
+
+    try:
+        report = evaluate_readiness(
+            profile,
+            settings,
+            studio_mode=mode,
+            online=online,
+            session=session,
+        )
+    except Exception as exc:  # noqa: BLE001 - a broken invocation is exit code 3
+        click.echo(f"Readiness could not be evaluated: {exc}", err=True)
+        ctx.exit(EXIT_USAGE)
+        return
+    finally:
+        if session is not None:
+            session.close()
+
+    if json_output:
+        click.echo(json.dumps(report.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        click.echo(format_report(report))
+    ctx.exit(report.exit_code)
+
+
+@cli.group(name="avatar-reconcile")
+@click.pass_context
+def avatar_reconcile(ctx: click.Context) -> None:
+    """Resolve avatar jobs whose outcome the pipeline refuses to guess."""
+    pass
+
+
+@avatar_reconcile.command(name="list")
+@click.option("--episode-id", default="", help="Restrict to one episode.")
+@click.option("--all", "show_all", is_flag=True, default=False, help="Include settled jobs.")
+@click.option("--json", "json_output", is_flag=True, default=False, help="Machine-readable output.")
+@click.pass_context
+def avatar_reconcile_list(
+    ctx: click.Context, episode_id: str, show_all: bool, json_output: bool
+) -> None:
+    """List avatar jobs awaiting an operator decision."""
+    from btcedu.core.avatar_reconcile import list_jobs
+
+    session = ctx.obj["session_factory"]()
+    try:
+        views = list_jobs(session, episode_id=episode_id, unresolved_only=not show_all)
+    finally:
+        session.close()
+
+    if json_output:
+        click.echo(
+            json.dumps(
+                {"schema_version": 1, "jobs": [v.to_dict() for v in views]},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return
+
+    if not views:
+        click.echo("No avatar jobs awaiting reconciliation.")
+        return
+
+    click.echo(
+        f"{'ID':<6} {'Episode':<18} {'Scene':<16} {'Status':<20} "
+        f"{'Provider job':<24} {'USD':>7} {'Age/h':>7}"
+    )
+    click.echo("-" * 100)
+    for view in views:
+        click.echo(
+            f"{view.job_id:<6} {view.episode_id[:18]:<18} {view.scene_id[:16]:<16} "
+            f"{view.status:<20} {(view.provider_job_id or '-')[:24]:<24} "
+            f"{view.reserved_cost_usd:>7.3f} {view.age_hours:>7.1f}"
+        )
+
+
+@avatar_reconcile.command(name="inspect")
+@click.option("--job-id", required=True, type=int, help="Ledger id of the job.")
+@click.option("--json", "json_output", is_flag=True, default=False, help="Machine-readable output.")
+@click.pass_context
+def avatar_reconcile_inspect(ctx: click.Context, job_id: int, json_output: bool) -> None:
+    """Show everything locally known about one job. No provider access."""
+    from btcedu.core.avatar_reconcile import ReconciliationError, inspect_job
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        data = inspect_job(session, job_id, outputs_dir=settings.outputs_dir)
+    except ReconciliationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        session.close()
+
+    if json_output:
+        click.echo(json.dumps(data, ensure_ascii=False, indent=2))
+        return
+
+    job = data["job"]
+    click.echo(f"Job {job['job_id']}: {job['episode_id']} / {job['scene_id']}")
+    click.echo(f"  status         {job['status']}")
+    click.echo(f"  provider       {job['provider']} ({job['engine'] or 'engine unset'})")
+    click.echo(f"  provider job   {job['provider_job_id'] or '-'}")
+    click.echo(f"  look           {job['look_id'] or '-'}")
+    click.echo(f"  reserved cost  {job['reserved_cost_usd']:.3f} USD")
+    click.echo(f"  age            {job['age_hours']:.1f} h, {job['attempt_count']} attempt(s)")
+    click.echo(f"  content hash   {data['hashes']['content_hash']}")
+    click.echo(
+        f"  output         {data['files']['output_path'] or '-'} "
+        f"({'present' if data['files']['output_exists'] else 'absent'})"
+    )
+    click.echo(f"  manifest       {data['manifest_status']}")
+    if job["note"]:
+        click.echo(f"  note           {job['note']}")
+    if data["audit"]:
+        click.echo("  audit:")
+        for entry in data["audit"]:
+            click.echo(
+                f"    {entry['created_at']} {entry['action']} "
+                f"{entry['from_status']}->{entry['to_status']} by {entry['operator_ref']}"
+            )
+    click.echo("")
+    click.echo(f"Next safe action: {data['next_safe_action']}")
+
+
+@avatar_reconcile.command(name="attach")
+@click.option("--job-id", required=True, type=int, help="Ledger id of the job.")
+@click.option("--provider-job-id", required=True, help="Provider job id found by the operator.")
+@click.option("--operator-ref", required=True, help="Non-personal operator reference.")
+@click.option("--note", required=True, help="What established that this job belongs here.")
+@click.option(
+    "--confirm",
+    is_flag=True,
+    default=False,
+    help="Required. Attaching a job id by hand is an assertion, not a lookup.",
+)
+@click.pass_context
+def avatar_reconcile_attach(
+    ctx: click.Context,
+    job_id: int,
+    provider_job_id: str,
+    operator_ref: str,
+    note: str,
+    confirm: bool,
+) -> None:
+    """Bind a manually identified provider job id to a held job."""
+    from btcedu.core.avatar_reconcile import ReconciliationError, attach_provider_job_id
+
+    session = ctx.obj["session_factory"]()
+    try:
+        job = attach_provider_job_id(
+            session,
+            job_id,
+            provider_job_id=provider_job_id,
+            operator_ref=operator_ref,
+            note=note,
+            confirm=confirm,
+        )
+        click.echo(f"[OK] job {job_id} now carries provider job {job.provider_job_id}")
+    except ReconciliationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@avatar_reconcile.command(name="resolve")
+@click.option("--job-id", required=True, type=int, help="Ledger id of the job.")
+@click.option(
+    "--decision",
+    required=True,
+    type=click.Choice(
+        ["running", "delivered", "not-billed", "unresolved", "abandon"], case_sensitive=False
+    ),
+    help="What the provider confirmed, or what the operator decided.",
+)
+@click.option("--note", required=True, help="Reason and evidence. Required for every decision.")
+@click.option("--operator-ref", required=True, help="Non-personal operator reference.")
+@click.option("--output-path", default="", help="Collected clip, required for 'delivered'.")
+@click.option("--duration-seconds", default=0.0, type=float, help="Clip duration for 'delivered'.")
+@click.option("--cost-usd", default=None, type=float, help="Actual billed cost, if known.")
+@click.option("--provider-job-id", default="", help="Provider job the decision refers to.")
+@click.pass_context
+def avatar_reconcile_resolve(
+    ctx: click.Context,
+    job_id: int,
+    decision: str,
+    note: str,
+    operator_ref: str,
+    output_path: str,
+    duration_seconds: float,
+    cost_usd: float | None,
+    provider_job_id: str,
+) -> None:
+    """Record an operator decision about a held avatar job.
+
+    A provider job nobody can find is never resolved as 'not-billed': after the
+    provider's retention window a 404 proves only that the video expired, not
+    that it was free. Use 'unresolved' or 'abandon' instead.
+    """
+    from btcedu.core.avatar_reconcile import ReconciliationError, resolve
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        job = resolve(
+            session,
+            job_id,
+            decision=decision.lower(),
+            note=note,
+            operator_ref=operator_ref,
+            output_path=output_path,
+            duration_seconds=duration_seconds,
+            cost_usd=cost_usd,
+            provider_job_id=provider_job_id,
+            outputs_dir=settings.outputs_dir,
+        )
+        click.echo(f"[OK] job {job_id} recorded as {decision.lower()} -> status {job.status}")
+    except ReconciliationError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        session.close()

@@ -307,6 +307,14 @@ stage_config:
       permitted_territories: []
       revoked: false
       ai_disclosure_required: true
+      # The machine-readable release record. It lives outside the repository
+      # (see assets/almanya24/rights/README.md) and holds statuses only, never
+      # the contract. Empty until phase 1, which is why readiness blocks.
+      record_file: ""
+      # What the release is checked against: this channel and this territory,
+      # not consent "in general".
+      channel: almanya24-youtube
+      territory: DE
   render:
     accent_color: "#004B87"
     ticker_enabled: true

@@ -40,6 +40,7 @@ _STATUS_ORDER = {
     EpisodeStatus.FRAMES_EXTRACTED: 13.5,
     EpisodeStatus.IMAGES_GENERATED: 14,
     EpisodeStatus.TTS_DONE: 15,
+    EpisodeStatus.SCENE_PLANNED: 15.3,
     EpisodeStatus.ANCHOR_GENERATED: 15.5,
     EpisodeStatus.RENDERED: 16,
     EpisodeStatus.APPROVED: 17,
@@ -65,7 +66,8 @@ _V2_STAGES = [
     ("imagegen", EpisodeStatus.FRAMES_EXTRACTED),  # search + rank (no finalize)
     ("review_gate_stock", EpisodeStatus.FRAMES_EXTRACTED),  # human pins + approve
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
-    ("anchorgen", EpisodeStatus.TTS_DONE),  # D-ID anchor (no-op if disabled)
+    ("sceneplan", EpisodeStatus.TTS_DONE),  # deterministic shot list, no provider calls
+    ("anchorgen", EpisodeStatus.SCENE_PLANNED),  # D-ID anchor (no-op if disabled)
     ("render", EpisodeStatus.ANCHOR_GENERATED),  # Sprint 9
     ("review_gate_3", EpisodeStatus.RENDERED),  # Sprint 10
     ("publish", EpisodeStatus.APPROVED),  # Sprint 11
@@ -335,6 +337,7 @@ _STAGE_NAME_TO_PIPELINE_STAGE = {
     "frameextract": PipelineStage.FRAMEEXTRACT,
     "imagegen": PipelineStage.IMAGEGEN,
     "tts": PipelineStage.TTS,
+    "sceneplan": PipelineStage.SCENEPLAN,
     "anchorgen": PipelineStage.ANCHORGEN,
     "render": PipelineStage.RENDER,
     "publish": PipelineStage.PUBLISH,
@@ -353,6 +356,7 @@ _RESUMABLE_EPISODE_STATUSES = (
     EpisodeStatus.FRAMES_EXTRACTED,
     EpisodeStatus.IMAGES_GENERATED,
     EpisodeStatus.TTS_DONE,
+    EpisodeStatus.SCENE_PLANNED,
     EpisodeStatus.ANCHOR_GENERATED,
     EpisodeStatus.RENDERED,
     EpisodeStatus.APPROVED,
@@ -529,6 +533,7 @@ def _run_stage(
         "imagegen",
         "review_gate_stock",
         "tts",
+        "sceneplan",
         "anchorgen",
         "render",
         "review_gate_3",
@@ -1326,6 +1331,25 @@ def _run_stage(
                         f"${result.cost_usd:.4f}"
                     ),
                 )
+
+        elif stage_name == "sceneplan":
+            from btcedu.core.scene_planner import plan_scenes
+
+            result = plan_scenes(session, episode.episode_id, settings, force=force)
+            elapsed = time.monotonic() - t0
+
+            if result.skipped:
+                return StageResult("sceneplan", "skipped", elapsed, detail="already up-to-date")
+            return StageResult(
+                "sceneplan",
+                "success",
+                elapsed,
+                detail=(
+                    f"{result.scene_count} scenes, "
+                    f"{result.anchor_scene_count} presenter "
+                    f"({result.anchor_duration_seconds:.1f}s)"
+                ),
+            )
 
         elif stage_name == "anchorgen":
             from btcedu.core.anchor_generator import generate_anchors

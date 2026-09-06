@@ -606,6 +606,7 @@ def run(ctx: click.Context, episode_ids: tuple[str, ...], force: bool, profile: 
                             EpisodeStatus.CHAPTERIZED,
                             EpisodeStatus.IMAGES_GENERATED,
                             EpisodeStatus.TTS_DONE,
+                            EpisodeStatus.SCENE_PLANNED,
                             EpisodeStatus.RENDERED,
                             EpisodeStatus.APPROVED,
                         ]
@@ -1508,6 +1509,50 @@ def tts(
                         f"{result.total_duration_seconds:.1f}s total, "
                         f"{result.total_characters} chars "
                         f"(${result.cost_usd:.4f})"
+                    )
+            except Exception as e:
+                click.echo(f"[FAIL] {eid}: {e}", err=True)
+    finally:
+        session.close()
+
+
+@cli.command()
+@click.option(
+    "--episode-id",
+    "episode_ids",
+    multiple=True,
+    required=True,
+    help="Episode ID(s) to plan scenes for (repeatable).",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    default=False,
+    help="Rebuild the scene plan even if it is current.",
+)
+@click.pass_context
+def sceneplan(
+    ctx: click.Context,
+    episode_ids: tuple[str, ...],
+    force: bool,
+) -> None:
+    """Build the per-speaker-block shot list (v2 pipeline). Free, no API calls."""
+    from btcedu.core.scene_planner import plan_scenes
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        for eid in episode_ids:
+            try:
+                result = plan_scenes(session, eid, settings, force=force)
+                if result.skipped:
+                    click.echo(f"[SKIP] {eid} -> already up-to-date (idempotent)")
+                else:
+                    click.echo(
+                        f"[OK] {eid} -> {result.scene_count} scenes, "
+                        f"{result.anchor_scene_count} presenter "
+                        f"({result.anchor_duration_seconds:.1f}s of "
+                        f"{result.total_duration_seconds:.1f}s)"
                     )
             except Exception as e:
                 click.echo(f"[FAIL] {eid}: {e}", err=True)

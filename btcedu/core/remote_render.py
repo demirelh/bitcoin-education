@@ -537,7 +537,12 @@ def render_video_remote(
         )
     if (
         episode.status
-        not in (EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED, EpisodeStatus.RENDERED)
+        not in (
+            EpisodeStatus.TTS_DONE,
+            EpisodeStatus.SCENE_PLANNED,
+            EpisodeStatus.ANCHOR_GENERATED,
+            EpisodeStatus.RENDERED,
+        )
         and not force
     ):
         raise ValueError(
@@ -554,7 +559,11 @@ def render_video_remote(
         is_current, reason = render_is_current(session, episode_id, settings)
         if is_current:
             logger.info("Render already current for %s (%s), skipping", episode_id, reason)
-            if episode.status in (EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED):
+            if episode.status in (
+                EpisodeStatus.TTS_DONE,
+                EpisodeStatus.SCENE_PLANNED,
+                EpisodeStatus.ANCHOR_GENERATED,
+            ):
                 episode.status = EpisodeStatus.RENDERED
                 session.commit()
             manifest_path = render_dir / "render_manifest.json"

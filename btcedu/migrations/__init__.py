@@ -859,6 +859,91 @@ class CreatePresenterAssignmentTableMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateAvatarJobsTableMigration(Migration):
+    """Migration 016: Create avatar_jobs table for restart-safe HeyGen billing.
+
+    The unique index on (episode_id, scene_id, content_hash) is what makes a
+    second purchase of the same clip impossible rather than merely unlikely: a
+    reboot mid-stage finds the existing row instead of inserting a new one. The
+    status index serves the "is anything awaiting reconciliation?" query the
+    anchor stage runs before it declares an episode finished.
+    """
+
+    @property
+    def version(self) -> str:
+        return "016_create_avatar_jobs_table"
+
+    @property
+    def description(self) -> str:
+        return "Create avatar_jobs table for restart-safe avatar generation"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        existing = {row[0] for row in result.fetchall()}
+
+        if "avatar_jobs" not in existing:
+            session.execute(
+                text(
+                    """
+                    CREATE TABLE avatar_jobs (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        episode_id VARCHAR(64) NOT NULL,
+                        scene_id VARCHAR(128) NOT NULL,
+                        chapter_id VARCHAR(128) NOT NULL DEFAULT '',
+                        content_hash VARCHAR(64) NOT NULL,
+                        provider VARCHAR(32) NOT NULL,
+                        engine VARCHAR(32) NOT NULL DEFAULT '',
+                        avatar_look_id VARCHAR(128) NOT NULL DEFAULT '',
+                        output_format VARCHAR(16) NOT NULL DEFAULT 'mp4',
+                        status VARCHAR(32) NOT NULL DEFAULT 'reserved',
+                        provider_job_id VARCHAR(128),
+                        output_path VARCHAR(500),
+                        duration_seconds FLOAT NOT NULL DEFAULT 0.0,
+                        cost_usd FLOAT NOT NULL DEFAULT 0.0,
+                        attempt_count INTEGER NOT NULL DEFAULT 0,
+                        reserved_at DATETIME NOT NULL,
+                        submitted_at DATETIME,
+                        completed_at DATETIME,
+                        error_message TEXT,
+                        resolution_note TEXT
+                    )
+                    """
+                )
+            )
+            session.commit()
+            logger.info("Created avatar_jobs table")
+        else:
+            logger.info("avatar_jobs table already exists (skipped)")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
+        indexes = {row[0] for row in result.fetchall()}
+
+        if "uq_avatar_job_scene_content" not in indexes:
+            session.execute(
+                text(
+                    "CREATE UNIQUE INDEX uq_avatar_job_scene_content "
+                    "ON avatar_jobs (episode_id, scene_id, content_hash)"
+                )
+            )
+            session.commit()
+            logger.info("Created unique index on avatar_jobs identity")
+
+        if "ix_avatar_jobs_episode_id" not in indexes:
+            session.execute(
+                text("CREATE INDEX ix_avatar_jobs_episode_id ON avatar_jobs (episode_id)")
+            )
+            session.commit()
+
+        if "ix_avatar_jobs_status" not in indexes:
+            session.execute(text("CREATE INDEX ix_avatar_jobs_status ON avatar_jobs (status)"))
+            session.commit()
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -876,6 +961,7 @@ MIGRATIONS = [
     DropV1ChunksTableMigration(),
     CreateAppSettingsTableMigration(),
     CreatePresenterAssignmentTableMigration(),
+    CreateAvatarJobsTableMigration(),
 ]
 
 

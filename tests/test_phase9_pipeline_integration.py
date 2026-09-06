@@ -28,6 +28,7 @@ _STAGE_STATUS = {
     "frameextract": EpisodeStatus.FRAMES_EXTRACTED,
     "imagegen": EpisodeStatus.IMAGES_GENERATED,
     "tts": EpisodeStatus.TTS_DONE,
+    "sceneplan": EpisodeStatus.SCENE_PLANNED,
     "anchorgen": EpisodeStatus.ANCHOR_GENERATED,
     "render": EpisodeStatus.RENDERED,
     "review_gate_3": EpisodeStatus.APPROVED,

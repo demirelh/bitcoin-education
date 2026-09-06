@@ -166,7 +166,12 @@ def render_video(
     # Check episode status (allow TTS_DONE or RENDERED for idempotency)
     if (
         episode.status
-        not in (EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED, EpisodeStatus.RENDERED)
+        not in (
+            EpisodeStatus.TTS_DONE,
+            EpisodeStatus.SCENE_PLANNED,
+            EpisodeStatus.ANCHOR_GENERATED,
+            EpisodeStatus.RENDERED,
+        )
         and not force
     ):
         raise ValueError(
@@ -359,7 +364,11 @@ def render_video(
         if _is_render_current(manifest_path, provenance_path, draft_path, content_hash):
             logger.info("Render is current for %s (use --force to re-render)", episode_id)
             # Still advance episode status so pipeline can proceed
-            if episode.status in (EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED):
+            if episode.status in (
+                EpisodeStatus.TTS_DONE,
+                EpisodeStatus.SCENE_PLANNED,
+                EpisodeStatus.ANCHOR_GENERATED,
+            ):
                 episode.status = EpisodeStatus.RENDERED
                 session.commit()
             existing_provenance = json.loads(provenance_path.read_text(encoding="utf-8"))

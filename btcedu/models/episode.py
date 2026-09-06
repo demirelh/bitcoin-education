@@ -23,6 +23,7 @@ class EpisodeStatus(str, enum.Enum):
     FRAMES_EXTRACTED = "frames_extracted"
     IMAGES_GENERATED = "images_generated"
     TTS_DONE = "tts_done"
+    SCENE_PLANNED = "scene_planned"  # Shot list written (speaker blocks -> scenes)
     ANCHOR_GENERATED = "anchor_generated"
     RENDERED = "rendered"
     APPROVED = "approved"
@@ -49,6 +50,7 @@ class PipelineStage(str, enum.Enum):
     FRAMEEXTRACT = "frameextract"
     IMAGEGEN = "imagegen"
     TTS = "tts"
+    SCENEPLAN = "sceneplan"
     ANCHORGEN = "anchorgen"
     RENDER = "render"
     REVIEW = "review"

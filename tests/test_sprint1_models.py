@@ -206,7 +206,8 @@ class TestEpisodeV2Fields:
         for stage in new_stages:
             assert stage.value  # exists and has a string value
 
-        assert len(PipelineStage) == 21
+        assert PipelineStage.SCENEPLAN.value == "sceneplan"
+        assert len(PipelineStage) == 22
 
     def test_episode_status_total_count(self):
-        assert len(EpisodeStatus) == 18
+        assert len(EpisodeStatus) == 19

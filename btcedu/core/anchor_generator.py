@@ -84,7 +84,15 @@ def generate_anchors(
         raise ValueError(f"Episode {episode_id} is v1 pipeline. Anchor generation requires v2.")
 
     # Allow TTS_DONE or ANCHOR_GENERATED for idempotency
-    if episode.status not in (EpisodeStatus.TTS_DONE, EpisodeStatus.ANCHOR_GENERATED) and not force:
+    if (
+        episode.status
+        not in (
+            EpisodeStatus.TTS_DONE,
+            EpisodeStatus.SCENE_PLANNED,
+            EpisodeStatus.ANCHOR_GENERATED,
+        )
+        and not force
+    ):
         raise ValueError(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'tts_done' or 'anchor_generated'. Use --force to override."
@@ -100,7 +108,7 @@ def generate_anchors(
     # If anchor is disabled, just advance status
     if not settings.anchor_enabled:
         logger.info("Anchor generation disabled, advancing status for %s", episode_id)
-        if episode.status == EpisodeStatus.TTS_DONE:
+        if episode.status in (EpisodeStatus.TTS_DONE, EpisodeStatus.SCENE_PLANNED):
             episode.status = EpisodeStatus.ANCHOR_GENERATED
             session.commit()
         return AnchorResult(
@@ -124,7 +132,7 @@ def generate_anchors(
 
     if not talking_head_chapters:
         logger.info("No TALKING_HEAD chapters for %s, advancing status", episode_id)
-        if episode.status == EpisodeStatus.TTS_DONE:
+        if episode.status in (EpisodeStatus.TTS_DONE, EpisodeStatus.SCENE_PLANNED):
             episode.status = EpisodeStatus.ANCHOR_GENERATED
             session.commit()
         return AnchorResult(
@@ -149,7 +157,7 @@ def generate_anchors(
     content_hash = _compute_anchor_hash(chapters_doc, anchor_config, tts_segments)
     if not force and _is_anchor_current(manifest_path, provenance_path, content_hash):
         logger.info("Anchor videos current for %s (use --force to regenerate)", episode_id)
-        if episode.status == EpisodeStatus.TTS_DONE:
+        if episode.status in (EpisodeStatus.TTS_DONE, EpisodeStatus.SCENE_PLANNED):
             episode.status = EpisodeStatus.ANCHOR_GENERATED
             session.commit()
         return AnchorResult(

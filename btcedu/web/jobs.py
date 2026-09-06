@@ -266,6 +266,7 @@ class JobManager:
                     "imagegen": self._do_imagegen,
                     "anchorgen": self._do_anchorgen,
                     "tts": self._do_tts,
+                    "sceneplan": self._do_sceneplan,
                     "render": self._do_render,
                     "publish": self._do_publish,
                     "run": self._do_full_pipeline,
@@ -571,6 +572,26 @@ class JobManager:
                 job,
                 f"Image generation complete: {result.generated_count} generated, "
                 f"{result.failed_count} failed (${result.cost_usd:.4f})",
+            )
+
+    def _do_sceneplan(self, job, session, settings):
+        from btcedu.core.scene_planner import plan_scenes
+
+        self._update(job, stage="planning_scenes")
+        self._log(job, "Planning scenes...")
+        result = plan_scenes(session, job.episode_id, settings, force=job.force)
+        if result.skipped:
+            self._update(
+                job,
+                result={"success": True, "skipped": True, "message": "Already up-to-date"},
+            )
+            self._log(job, "Scene plan already up-to-date (skipped)")
+        else:
+            self._update(job, result={"success": True, "cost_usd": 0})
+            self._log(
+                job,
+                f"Scene plan complete: {result.scene_count} scenes, "
+                f"{result.anchor_scene_count} presenter",
             )
 
     def _do_anchorgen(self, job, session, settings):
@@ -1130,6 +1151,17 @@ class JobManager:
                 "imagegen",
                 "tts",
             ],
+            EpisodeStatus.SCENE_PLANNED: [
+                "download",
+                "transcribe",
+                "correct",
+                "translate",
+                "adapt",
+                "chapterize",
+                "frameextract",
+                "imagegen",
+                "tts",
+            ],
             EpisodeStatus.ANCHOR_GENERATED: [
                 "download",
                 "transcribe",
@@ -1219,6 +1251,7 @@ class JobManager:
                             EpisodeStatus.CHAPTERIZED,
                             EpisodeStatus.IMAGES_GENERATED,
                             EpisodeStatus.TTS_DONE,
+                            EpisodeStatus.SCENE_PLANNED,
                             EpisodeStatus.RENDERED,
                             EpisodeStatus.APPROVED,
                         ]

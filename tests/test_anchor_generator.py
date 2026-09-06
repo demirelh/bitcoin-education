@@ -413,13 +413,13 @@ class TestHeyGenProfileIntegration:
         config = _resolve_anchor_config(episode, settings)
 
         assert config.provider == "heygen"
-        assert config.engine == "avatar_iv"
+        assert config.engine == "avatar_iii"
         assert config.avatar_type == "digital_twin"
-        assert config.output_format == "mp4"
-        assert config.cost_per_second_usd == 0.0667
-        assert config.max_cost_usd == 6.0
+        assert config.output_format == "webm"
+        assert config.cost_per_second_usd == 0.0167
+        assert config.max_cost_usd == 7.0
 
-    def test_dry_run_uses_renderer_safe_mp4_profile(
+    def test_dry_run_follows_the_profile_into_alpha_webm(
         self,
         session,
         episode,
@@ -436,15 +436,15 @@ class TestHeyGenProfileIntegration:
         manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
         segment = manifest["segments"][0]
         assert manifest["anchor_provider"] == "heygen"
-        assert manifest["engine"] == "avatar_iv"
-        assert manifest["output_format"] == "mp4"
-        assert manifest["cost_per_second_usd"] == 0.0667
-        assert manifest["max_cost_usd"] == 6.0
+        assert manifest["engine"] == "avatar_iii"
+        assert manifest["output_format"] == "webm"
+        assert manifest["cost_per_second_usd"] == 0.0167
+        assert manifest["max_cost_usd"] == 7.0
         assert segment["provider"] == "heygen"
         assert segment["provider_job_id"] == "dry-run"
         assert segment["did_talk_id"] is None
-        assert segment["video_path"] == "anchor/ch_01.mp4"
-        assert segment["mime_type"] == "video/mp4"
+        assert segment["video_path"] == "anchor/ch_01.webm"
+        assert segment["mime_type"] == "video/webm"
         assert (outputs_dir / "ep_test_001" / segment["video_path"]).exists()
 
     def test_provider_response_cost_and_identity_are_persisted(

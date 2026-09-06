@@ -215,11 +215,16 @@ class TestProfileRegistry:
         assert voices["reporter_male"]["display_name"] == "Cavit"
         anchor = news.stage_config["anchor"]
         assert anchor["provider"] == "heygen"
-        assert anchor["engine"] == "avatar_iv"
+        assert anchor["engine"] == "avatar_iii"
         assert anchor["avatar_type"] == "digital_twin"
-        assert anchor["output_format"] == "mp4"
-        assert anchor["cost_per_second_usd"] == 0.0667
-        assert anchor["max_cost_usd"] == 6.0
+        assert anchor["output_format"] == "webm"
+        assert anchor["studio_mode"] == "composite"
+        assert anchor["cost_per_second_usd"] == 0.0167
+        assert anchor["max_cost_usd"] == 7.0
+        # Ten outfits ship as placeholders and stay inactive until phase 1
+        # produced the real looks.
+        assert len(anchor["looks"]) == 10
+        assert not any(look["active"] for look in anchor["looks"])
         render = news.stage_config["render"]
         assert render["intro_show_name"] == "ALMANYA24"
         assert render["intro_slogan"] == "Almanya'nın nabzı burada atıyor."

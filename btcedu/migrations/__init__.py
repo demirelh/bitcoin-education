@@ -779,6 +779,86 @@ class CreateAppSettingsTableMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreatePresenterAssignmentTableMigration(Migration):
+    """Migration 015: Create presenter_assignments table for ALMANYA24 outfits.
+
+    One row per episode, enforced by a unique index. That constraint is the
+    mechanism that keeps a retry or a reboot from re-rolling the presenter's
+    outfit mid-episode, so it is created with the table rather than left to
+    application code. The index on (avatar_look_id, assigned_at) serves the
+    rotation query, which looks for the look that has gone unused longest.
+    """
+
+    @property
+    def version(self) -> str:
+        return "015_create_presenter_assignments_table"
+
+    @property
+    def description(self) -> str:
+        return "Create presenter_assignments table for per-episode avatar look assignment"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        existing = {row[0] for row in result.fetchall()}
+
+        if "presenter_assignments" not in existing:
+            session.execute(
+                text(
+                    """
+                    CREATE TABLE presenter_assignments (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        episode_id VARCHAR(64) NOT NULL,
+                        provider VARCHAR(32) NOT NULL,
+                        engine VARCHAR(32) NOT NULL,
+                        avatar_type VARCHAR(32) NOT NULL,
+                        avatar_look_id VARCHAR(128) NOT NULL,
+                        look_name VARCHAR(64) NOT NULL,
+                        strategy VARCHAR(32) NOT NULL,
+                        config_version INTEGER NOT NULL DEFAULT 1,
+                        status VARCHAR(32) NOT NULL DEFAULT 'assigned',
+                        content_hash VARCHAR(64) NOT NULL DEFAULT '',
+                        provenance_path VARCHAR(500),
+                        assigned_at DATETIME NOT NULL,
+                        superseded_at DATETIME,
+                        cost_per_second_usd FLOAT NOT NULL DEFAULT 0.0
+                    )
+                    """
+                )
+            )
+            session.commit()
+            logger.info("Created presenter_assignments table")
+        else:
+            logger.info("presenter_assignments table already exists (skipped)")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
+        indexes = {row[0] for row in result.fetchall()}
+
+        if "uq_presenter_assignment_episode" not in indexes:
+            session.execute(
+                text(
+                    "CREATE UNIQUE INDEX uq_presenter_assignment_episode "
+                    "ON presenter_assignments (episode_id)"
+                )
+            )
+            session.commit()
+            logger.info("Created unique index on presenter_assignments.episode_id")
+
+        if "ix_presenter_assignments_rotation" not in indexes:
+            session.execute(
+                text(
+                    "CREATE INDEX ix_presenter_assignments_rotation "
+                    "ON presenter_assignments (avatar_look_id, assigned_at)"
+                )
+            )
+            session.commit()
+            logger.info("Created rotation index on presenter_assignments")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -795,6 +875,7 @@ MIGRATIONS = [
     AddPipelineRunGitCommitMigration(),
     DropV1ChunksTableMigration(),
     CreateAppSettingsTableMigration(),
+    CreatePresenterAssignmentTableMigration(),
 ]
 
 

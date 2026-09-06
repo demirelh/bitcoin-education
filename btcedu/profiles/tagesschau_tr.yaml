@@ -222,18 +222,91 @@ stage_config:
     # and lip-syncs the configured presenter look. The feature flag remains
     # ANCHOR_ENABLED=false by default, so this routing is opt-in at deployment.
     provider: heygen
-    engine: avatar_iv
+    # Avatar III, deliberately. Omitting `engine` makes HeyGen default to
+    # Avatar IV, so this line is what selects the engine, not a leftover.
+    engine: avatar_iii
     avatar_type: digital_twin
-    # The HeyGen adapter can request alpha-capable WebM, but the current
-    # renderer treats anchor clips as opaque full-frame video and would discard
-    # that alpha instead of compositing the presenter over a studio.
-    output_format: mp4
+    # Alpha-capable WebM composited over a fixed studio. Falls back to `mp4`
+    # with a baked-in studio when the look was not trained with matting;
+    # `btcedu anchor-readiness` decides which of the two this account can use.
+    output_format: webm
+    studio_mode: composite
     resolution: 1080p
-    aspect_ratio: auto
-    # Published self-serve Avatar IV Digital Twin rate. Keeping it explicit in
-    # the profile makes pre-call budget estimates auditable if pricing changes.
-    cost_per_second_usd: 0.0667
-    max_cost_usd: 6.0
+    # A fixed frame, not `auto`: the presenter is composited into a studio of
+    # known geometry, so the clip must not come back in the source's ratio.
+    aspect_ratio: "16:9"
+    # Avatar III, Digital Twin, 720p/1080p: 1.00 USD per minute.
+    # Source: official HeyGen API pricing list. Checked: 2026-09-05.
+    # Kept explicit so a price change is a profile change, and so pre-call
+    # budget estimates stay auditable. Must be > 0 — a missing, null or
+    # non-positive rate would make the budget preflight useless and therefore
+    # blocks activation. 4K is priced differently and is not this rate.
+    cost_per_second_usd: 0.0167
+    cost_source: "HeyGen API pricing list — Avatar III Digital Twin 720p/1080p, 1 USD/min"
+    cost_checked_on: "2026-09-05"
+    # Hard stage budget. At 0.0167 USD/s this allows roughly seven minutes of
+    # presenter, against the 150-200 s a normal bulletin needs — a net for
+    # runaway episodes, not an everyday brake.
+    max_cost_usd: 7.0
+    # Below HeyGen's documented pay-as-you-go ceiling of 10 concurrent jobs,
+    # which counts every async generation on the account, not just ours.
+    max_concurrent_jobs: 4
+    # One outfit per episode, the least recently used one first, so all ten are
+    # spent before any repeats. Ties break on the order below, which keeps the
+    # choice reproducible without a random seed.
+    rotation_strategy: least_recently_used
+    # PLACEHOLDERS. Phase 1 produces the real looks; paste each HeyGen look ID
+    # here and set active: true. `anchor-readiness` refuses to activate while a
+    # placeholder is still active, and rejects duplicate IDs.
+    looks:
+      - name: look_01
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+      - name: look_02
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+      - name: look_03
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+      - name: look_04
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+      - name: look_05
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+      - name: look_06
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+      - name: look_07
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+      - name: look_08
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+      - name: look_09
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+      - name: look_10
+        avatar_look_id: "REPLACE_WITH_HEYGEN_LOOK_ID"
+        active: false
+    studio:
+      # Versioned studio plate, display zone geometry and foreground layers.
+      # Phase 1 fills the directory; the manifest schema is already fixed so
+      # the compositor and its tests do not wait for the artwork.
+      asset_dir: assets/almanya24/studio
+      manifest: manifest.json
+      required_version: 1
+    rights:
+      # Technical gates for the consent and disclosure policy in
+      # docs/implementation/almanya24-brand-rights.md. These record whether the
+      # paperwork exists; they do not interpret it. `revoked: true` stops every
+      # further generation immediately.
+      consent_documented: false
+      consent_reference: ""
+      permitted_channels: []
+      permitted_territories: []
+      revoked: false
+      ai_disclosure_required: true
   render:
     accent_color: "#004B87"
     ticker_enabled: true

@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
+from btcedu.core.anchor_config import AnchorConfig, resolve_anchor_config
 from btcedu.models.chapter_schema import ChapterDocument, VisualType
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
@@ -40,24 +41,6 @@ class AnchorEntry:
     output_format: str
     mime_type: str
     did_talk_id: str | None = None
-
-
-@dataclass(frozen=True)
-class AnchorConfig:
-    """Resolved provider configuration for one episode."""
-
-    provider: str
-    engine: str
-    source_image: str
-    source_image_url: str
-    avatar_id: str
-    avatar_type: str
-    expression: str
-    output_format: str
-    resolution: str
-    aspect_ratio: str
-    cost_per_second_usd: float
-    max_cost_usd: float
 
 
 @dataclass
@@ -408,109 +391,8 @@ def _load_chapters(chapters_path: Path) -> ChapterDocument:
 
 def _resolve_anchor_config(episode: Episode, settings: Settings) -> AnchorConfig:
     """Merge profile-owned avatar choices over backward-compatible settings."""
-    profile_config: dict = {}
-    try:
-        from btcedu.profiles import get_registry as _get_profile_registry
-
-        profile_name = (
-            getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
-        )
-        profile = _get_profile_registry(settings).get(profile_name)
-        profile_config = (profile.stage_config.get("anchor", {}) if profile else {}) or {}
-    except Exception as exc:  # noqa: BLE001 - missing profile keeps global defaults
-        logger.debug("Could not resolve anchor profile config; using settings: %s", exc)
-
-    if not isinstance(profile_config, dict):
-        raise ValueError("Profile stage_config.anchor must be a mapping")
-
-    provider = str(profile_config.get("provider") or settings.anchor_provider).strip().lower()
-    provider = {"did": "d-id", "d_id": "d-id"}.get(provider, provider)
-    max_cost_usd = float(
-        profile_config.get("max_cost_usd", settings.anchor_max_cost_usd)
-    )
-    if max_cost_usd < 0:
-        raise ValueError("Anchor max_cost_usd must be non-negative")
-
-    if provider == "d-id":
-        engine = str(profile_config.get("engine") or "talks").strip().lower()
-        if engine != "talks":
-            raise ValueError(f"Unsupported D-ID anchor engine: {engine!r}")
-        output_format = str(profile_config.get("output_format") or "mp4").strip().lower()
-        if output_format != "mp4":
-            raise ValueError("D-ID anchor output_format must be 'mp4'")
-        cost_per_second = float(
-            profile_config.get("cost_per_second_usd", settings.did_cost_per_second_usd)
-        )
-        if cost_per_second < 0:
-            raise ValueError("D-ID cost_per_second_usd must be non-negative")
-        return AnchorConfig(
-            provider=provider,
-            engine=engine,
-            source_image=str(
-                profile_config.get("source_image") or settings.did_source_image_path
-            ),
-            source_image_url=str(
-                profile_config.get("source_image_url") or settings.did_source_image_url
-            ),
-            avatar_id="",
-            avatar_type="photo_avatar",
-            expression=str(profile_config.get("expression") or "serious"),
-            output_format=output_format,
-            resolution="",
-            aspect_ratio="",
-            cost_per_second_usd=cost_per_second,
-            max_cost_usd=max_cost_usd,
-        )
-
-    if provider == "heygen":
-        from btcedu.services.anchor_service import heygen_cost_per_second
-
-        engine = str(profile_config.get("engine") or settings.heygen_engine).strip().lower()
-        if engine not in {"avatar_iii", "avatar_iv", "avatar_v"}:
-            raise ValueError(f"Unsupported HeyGen engine: {engine!r}")
-        avatar_type = str(
-            profile_config.get("avatar_type") or settings.heygen_avatar_type
-        ).strip().lower()
-        published_cost = heygen_cost_per_second(engine, avatar_type)
-        configured_cost = profile_config.get("cost_per_second_usd")
-        cost_per_second = (
-            float(configured_cost)
-            if configured_cost is not None
-            else published_cost
-        )
-        if cost_per_second < 0:
-            raise ValueError("HeyGen cost_per_second_usd must be non-negative")
-        output_format = str(
-            profile_config.get("output_format") or settings.heygen_output_format
-        ).strip().lower()
-        if output_format not in {"mp4", "webm"}:
-            raise ValueError("HeyGen output_format must be 'mp4' or 'webm'")
-        resolution = str(
-            profile_config.get("resolution") or settings.heygen_resolution
-        ).strip().lower()
-        if resolution not in {"720p", "1080p", "4k"}:
-            raise ValueError(f"Unsupported HeyGen resolution: {resolution!r}")
-        aspect_ratio = str(
-            profile_config.get("aspect_ratio") or settings.heygen_aspect_ratio
-        ).strip().lower()
-        if aspect_ratio not in {"16:9", "9:16", "4:5", "5:4", "1:1", "auto"}:
-            raise ValueError(f"Unsupported HeyGen aspect_ratio: {aspect_ratio!r}")
-        return AnchorConfig(
-            provider=provider,
-            engine=engine,
-            source_image="",
-            source_image_url="",
-            avatar_id=str(profile_config.get("avatar_id") or settings.heygen_avatar_id),
-            avatar_type=avatar_type,
-            expression="",
-            output_format=output_format,
-            resolution=resolution,
-            aspect_ratio=aspect_ratio,
-            cost_per_second_usd=cost_per_second,
-            max_cost_usd=max_cost_usd,
-        )
-
-    raise ValueError(f"Unsupported anchor provider: {provider!r}")
+    profile_name = getattr(episode, "content_profile", "bitcoin_podcast") or "bitcoin_podcast"
+    return resolve_anchor_config(profile_name, settings)
 
 
 def _create_anchor_service(config: AnchorConfig, settings: Settings, anchor_dir: Path):

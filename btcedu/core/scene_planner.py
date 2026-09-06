@@ -195,6 +195,16 @@ def _part_files(parts: list[dict], indices: list[int]) -> list[str]:
     return files
 
 
+def scene_audio_parts(scene: "Scene", parts: list[dict]) -> list[str]:
+    """The TTS part files a scene is spoken from, in order.
+
+    A scene may span several parts. The avatar stage sends each of them as its
+    own clip rather than joining them, so the audio handed to the provider is
+    always a file the TTS stage actually produced.
+    """
+    return _part_files(parts, list(scene.segment_indices))
+
+
 def _chapter_images(chapter_id: str, image_manifest: dict) -> list[str]:
     """Usable pictures of a chapter, ordered by presenter block."""
     entries = [

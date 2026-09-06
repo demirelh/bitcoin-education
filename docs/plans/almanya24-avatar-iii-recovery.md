@@ -138,12 +138,11 @@ Am 6. September 2026 in dieser Wiederherstellungssitzung ergänzt (WP-1):
 - [~] **Renderer-Statuskette**: `renderer.py` und `remote_render.py` akzeptieren
   `SCENE_PLANNED`, konsumieren `scene_plan.json` aber noch nicht. Der Renderer
   baut seine Blöcke weiterhin selbst.
-- [~] **Anchor-Stage**: `generate_anchors()` filtert weiterhin auf
-  `visual.type == TALKING_HEAD`. Für die Dual-Presenter-Kapitel von ALMANYA24
-  ist das faktisch ein No-op — der Plan ist genau die Ersetzung dafür, aber die
-  Stage liest ihn noch nicht.
-- [~] **Kostenprüfung Avatar**: Vor-/Nach-Prüfung gegen `max_cost_usd` existiert
-  in `anchor_generator.py`, kennt aber nur Kapitel, nicht Szenen.
+- [~] **Anchor-Stage**: Der Scene-Pfad ist umgesetzt (WP-2). Offen bleiben
+  Parallelität/Backoff und das Operator-Kommando `btcedu avatar-reconcile`.
+- [~] **Kostenprüfung Avatar**: Der Scene-Pfad prüft szenenweise gegen
+  `max_cost_usd` und `episode_avatar_cost()`. Der Kapitelpfad kennt weiterhin
+  nur Kapitel — bewusst unverändert, damit D-ID nicht betroffen ist.
 - [~] **WebM**: Der Service kann WebM anfordern und herunterladen; es gibt noch
   keinen Compositor, der Alpha über ein Studio legt. Aktiv nutzbar ist damit nur
   der MP4-Zweig (Anforderung 8 halb erfüllt).
@@ -156,21 +155,67 @@ Grob in der Reihenfolge, in der die Pakete aufeinander aufbauen.
 
 Offen bleibt nur die Anbindung: das Register wird noch von keiner Stage benutzt.
 
-### WP-2 — Anchor-Stage auf Scene-Plan und Job-Register umstellen *(nächstes Paket)*
+### WP-2 — Anchor-Stage auf Scene-Plan und Job-Register umgestellt (6. September 2026)
 
-- [ ] `generate_anchors()` liest `scene_plan.json` statt `TALKING_HEAD`.
-- [ ] Nur `anchor_scenes()` wird beauftragt; Mehrteil-Blöcke werden vorher
-      lokal zu einer Audiodatei verbunden (der Planer erfindet dafür bewusst
-      keinen Pfad).
-- [ ] Budget-Preflight über die geplante Anchor-Gesamtdauer, gespeist aus
-      `episode_avatar_cost()` statt aus dem Kapitel-Hash.
-- [ ] Jede Szene läuft durch `reserve_scene()`; `resume` pollt den bestehenden
-      HeyGen-Auftrag, `reconcile` bricht die Stage fail-closed ab.
-- [ ] Manifest je Szene statt je Kapitel, mit Job-ID und tatsächlichen Kosten.
-- [ ] Parallelität `max_concurrent_jobs`, 429-/5xx-Backoff.
+- [x] `generate_anchors()` wählt den Pfad allein anhand der Existenz von
+      `scene_plan.json`. Ohne Plan läuft der Kapitelpfad unverändert weiter —
+      gespeicherte D-ID-Episoden und alles vor dem Plan bleiben lauffähig
+      (Anforderung 11).
+- [x] Nur `anchor_scenes()` wird beauftragt. Der Reporter erzeugt keine Zeile im
+      Register und keinen Auftrag (Anforderung 6).
+- [x] Der Wetter-Übergabeblock ist zwar `needs_avatar`, wird aber im
+      Anchor-Generator zusätzlich ausgeschlossen und mit Grund im Manifest
+      vermerkt. Das Wetterbild bleibt deterministisch gerendert (Anforderung 7).
+- [x] Audioquelle ist immer eine vorhandene TTS-`speaker_part`-Datei. Ein Block
+      aus mehreren Takes wird **nicht** zusammengemischt, sondern als ein Clip je
+      Take beauftragt (`<scene_id>_p00`, `_p01`, …). Damit ist die an HeyGen
+      übergebene Audiodatei stets ein Artefakt, das die TTS-Stufe wirklich
+      erzeugt hat, und das Original-TTS bleibt die spätere Render-Audioquelle
+      (Anforderung 9).
+- [x] Alle Anchor-Szenen einer Episode verwenden die persistierte Look-ID aus
+      `PresenterAssignment`; `_create_anchor_service()` nimmt sie als Override
+      entgegen. Weicht `presenter_look_id` im Plan davon ab, bricht die Stage
+      fail-closed ab, statt zwei Outfits in einer Sendung zu mischen
+      (Anforderung 2).
+- [x] Budget-Preflight über die geplante Moderatorinnendauer: `episode_avatar_cost()`
+      plus Schätzung genau der Clips, die tatsächlich beauftragt würden.
+      Reservierte, eingereichte und ungeklärte Zeilen zählen bereits im
+      Register mit und werden nicht doppelt veranschlagt. Vor jedem einzelnen
+      bezahlten Aufruf wird erneut geprüft.
+- [x] Jede Einheit läuft durch `reserve_scene()`: `submit` kauft,
+      `resume` pollt ausschließlich, `reuse` nimmt die vorhandene Datei,
+      `reconcile` bricht mit `AnchorReconciliationRequired` fail-closed ab
+      (Anforderung 3).
+- [x] `record_submission()` läuft unmittelbar nach der Providerannahme und vor
+      dem langen Polling — das ist die Zeile, die aus einem Absturz eine
+      Wiederaufnahme statt einer zweiten Rechnung macht.
+- [x] Ein Fehler beim Einreichen wird nur dann als „nicht berechnet“ gewertet,
+      wenn der Provider nachweislich abgelehnt hat (400/401/403/404/422, Quota).
+      Alles andere — Timeout, abgerissene Verbindung — geht nach
+      `reconcile_required`.
+- [x] `AnchorRequest.idempotency_key` trägt den Content-Hash als zusätzliche
+      Absicherung. Ob HeyGen den Header ehrt, ist nicht verifiziert; die Garantie
+      liegt im Register, nicht im Header.
+- [x] Manifest v2 (`schema_version: "2.0"`) mit `scenes[]`: Scene-ID, Clip-ID,
+      Kapitel-ID, Sprecherrolle, Template, Look-ID, Audio-Pfad, Audio-Hash,
+      Content-Hash, Provider-Job-ID, Status, Dauer, Größe, Kosten, Format.
+      `segments` bleibt bewusst leer, damit der Renderer sich exakt wie bisher
+      verhält, bis WP-3 ihn auf Szenen umstellt.
+- [x] Provenienz enthält dieselben Felder je Clip plus Plan- und TTS-Manifest als
+      Eingaben; `MediaAsset`- und `ContentArtifact`-Zeilen wie bisher.
+- [x] Dry-Run schreibt **keine** Registerzeile. Eine „erledigte“ Dry-Run-Zeile
+      würde später wiederverwendet und den echten Kauf stillschweigend
+      überspringen (Anforderung 10).
+- [x] Teilweise erfolgreiche Episoden werden nach Neustart fortgesetzt: bereits
+      fertige Clips werden wiederverwendet, nur der Rest wird gekauft.
+- [x] `tests/test_anchor_generator_scenes.py` — 22 Tests, kein Provideraufruf.
+
+Innerhalb von WP-2 bewusst **nicht** erledigt (verschoben):
+
+- [ ] Parallelität `max_concurrent_jobs`, 429-/5xx-Backoff (eigene Einheit).
 - [ ] `btcedu avatar-reconcile` als Operator-Kommando für `resolve_job()`.
 
-### WP-3 — Studio-Manifest und Compositor
+### WP-3 — Studio-Manifest und Compositor *(nächstes Paket)*
 
 - [ ] `assets/almanya24/studio/manifest.json` (Schema-Version 1): Studioplatte,
       Display-Zone `main_wall`, Vordergrundebenen, Safe Areas.
@@ -204,22 +249,37 @@ Offen bleibt nur die Anbindung: das Register wird noch von keiner Stage benutzt.
 
 Durchgeführt am 6. September 2026:
 
-- Volle Suite im Arbeitsverzeichnis: **2865 passed, 2 failed**.
+- Volle Suite im Arbeitsverzeichnis nach WP-1: **2865 passed, 2 failed**.
+- Volle Suite im Arbeitsverzeichnis nach WP-2: **2886 passed, 3 failed**
+  (2 vorbestehende Fehlschläge + 1 bekannter Timing-Flake, siehe unten).
 - Volle Suite gegen einen sauberen `HEAD`-Worktree (nur zum Vergleich angelegt
   und wieder entfernt, das Arbeitsverzeichnis blieb unangetastet):
   **2788 passed, 1 failed**.
 - `.venv/bin/ruff check btcedu/ tests/` → All checks passed.
-- Die beiden verbleibenden Fehlschläge sind **vorbestehend und ohne Bezug** zur
-  Avatar-Arbeit:
-  - `test_cross_profile.py::test_tts_profile_config_values` — schlägt auch auf
-    `HEAD` fehl; der Test erwartet `style > 0`, das Profil steht committet auf
-    `style: 0.0`. Eigenes Ticket, nicht Teil dieser Arbeit.
-  - `test_speech_normalize.py::TestTheLastTenEpisodes` — liest echte gerenderte
-    Episoden dieser Maschine; im sauberen Worktree wird er übersprungen. Kein
-    Codepfad dieser Arbeit berührt die Narration.
-- `test_web.py::TestJobsAndLogs::test_run_all_nothing_to_do_on_published` fiel
-  in einem Lauf aus und war im Wiederholungslauf sowie einzeln grün — ein
-  Timing-Flake des JobManager-Threads, keine Regression.
+
+### Vorbestehende Baselineprobleme (getrennt dokumentiert, nicht abgeschwächt)
+
+Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
+
+1. `tests/test_cross_profile.py::test_tts_profile_config_values`
+   Der Test erwartet `style > 0`; das committete Profil steht auf `style: 0.0`.
+   Schlägt auf einem sauberen `HEAD`-Worktree genauso fehl. Entweder ist der
+   Profilwert falsch oder die Erwartung veraltet — das ist eine TTS-Frage und
+   gehört in ein eigenes Ticket, nicht in die Avatar-Arbeit.
+2. `tests/test_speech_normalize.py::TestTheLastTenEpisodes::test_no_markers_or_orphaned_apostrophes_are_left_behind`
+   Liest echte gerenderte Episoden aus `data/outputs` dieser Maschine und ist
+   damit maschinenabhängig; im sauberen Worktree wird er übersprungen. Kein
+   Codepfad dieser Arbeit berührt die Narration.
+
+### Bekannter Flake (keine Regression)
+
+- `tests/test_web.py::TestJobsAndLogs::test_run_all_nothing_to_do_on_published`
+  fällt gelegentlich im Gesamtlauf aus und ist einzeln reproduzierbar grün
+  (`tests/test_web.py` allein: 77 passed). Ein Timing-Effekt des
+  JobManager-Threads.
+
+### Weitere Prüfungen
+
 - `sceneplan` ist in allen gefundenen Stage-Registern eingetragen
   (`_V2_STAGES`, `_STATUS_ORDER`, `_V2_ONLY_STAGES`, `_STAGE_NAME_TO_PIPELINE_STAGE`,
   `_RESUMABLE_EPISODE_STATUSES`, `_STAGE_LABELS`, `_STAGE_TO_PIPELINE_STAGE`,
@@ -227,8 +287,12 @@ Durchgeführt am 6. September 2026:
 - `SCENE_PLANNED` ist in jeder Statusprüfung ergänzt, die vorher `TTS_DONE`
   akzeptierte (`renderer`, `remote_render`, `anchor_generator`, CLI, JobManager).
 - Kein Codepfad ruft HeyGen ohne `anchor_enabled` **und** Provider `heygen` auf.
-- Die vier `report.*.json` sind Absturzartefakte und gehören nicht zum Commit.
-- Nichts ist committet oder gepusht; alles liegt im Arbeitsverzeichnis.
+- Die bestehenden 120 Tests aus `test_anchor_generator.py`,
+  `test_anchor_service.py`, `test_scene_planner.py` und `test_avatar_jobs.py`
+  bleiben grün; der Kapitelpfad ist unverändert.
+- Die vier `report.*.json` sind Absturzartefakte und werden von `.gitignore`
+  ausgeschlossen.
+- Commits liegen ausschließlich lokal; es wurde nichts gepusht.
 
 ## Arbeitsprotokoll
 
@@ -237,3 +301,5 @@ Durchgeführt am 6. September 2026:
 | 2026-09-06 | Recovery | Stand rekonstruiert, Checkliste angelegt, Bestandstests grün |
 | 2026-09-06 | Konsistenz | 12 durch `sceneplan` veraltete Bestandstests nachgezogen |
 | 2026-09-06 | WP-1 | Avatar-Job-Register, Migration 016, 35 Tests, Ruff grün |
+| 2026-09-06 | Checkpoint | Lokaler Commit `0ec0d5b` (Sceneplan + Register), nicht gepusht |
+| 2026-09-06 | WP-2 | Anchor-Stage auf Scene-Plan und Register, 22 Tests, Ruff grün |

@@ -57,6 +57,18 @@ class AnchorRequest:
     chapter_id: str
     expression: str = "serious"
     expected_duration_seconds: float = 0.0
+    # Names the output file when one chapter yields several clips. Falls back to
+    # chapter_id, which is what the chapter-based caller has always passed.
+    clip_id: str = ""
+    # Belt and braces on top of the durable job ledger: if the provider honours
+    # the header, a retry of a request whose answer never arrived returns the
+    # original job instead of starting a second, separately billed one. The
+    # ledger does not depend on it — an ignored header changes nothing.
+    idempotency_key: str = ""
+
+    @property
+    def output_name(self) -> str:
+        return self.clip_id or self.chapter_id
 
 
 @dataclass
@@ -94,6 +106,22 @@ class AnchorService(Protocol):
     def estimate_cost(self, duration_seconds: float) -> float: ...
 
     def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse: ...
+
+    def submit_anchor_video(self, request: AnchorRequest) -> str:
+        """Start a generation and return the provider's job id, nothing more.
+
+        Split out from ``generate_anchor_video`` so the caller can persist the
+        id before the long, fallible poll-and-download. That is the difference
+        between a reboot resuming a job and a reboot buying it again.
+        """
+        ...
+
+    def collect_anchor_video(
+        self, provider_job_id: str, request: AnchorRequest
+    ) -> AnchorResponse:
+        """Poll an already-submitted job and download its result."""
+        ...
+
 
 
 def heygen_cost_per_second(engine: str, avatar_type: str) -> float:
@@ -143,15 +171,21 @@ class DIDService:
 
     def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse:
         """Generate a D-ID talking-head video and download it."""
+        talk_id = self.submit_anchor_video(request)
+        return self.collect_anchor_video(talk_id, request)
+
+    def submit_anchor_video(self, request: AnchorRequest) -> str:
         source_url = request.source_image_url
         if not source_url:
             source_url = self._upload_image(request.source_image_path)
 
         audio_url = self._upload_audio(request.audio_path)
-        talk_id = self._create_talk(source_url, audio_url, request.expression)
-        result_url, duration = self._poll_talk(talk_id)
+        return self._create_talk(source_url, audio_url, request.expression)
 
-        output_path = self.output_dir / f"{request.chapter_id}{self.output_extension}"
+    def collect_anchor_video(self, provider_job_id: str, request: AnchorRequest) -> AnchorResponse:
+        result_url, duration = self._poll_talk(provider_job_id)
+
+        output_path = self.output_dir / f"{request.output_name}{self.output_extension}"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         self._download_video(result_url, output_path)
 
@@ -162,7 +196,7 @@ class DIDService:
             size_bytes=output_path.stat().st_size,
             cost_usd=self.estimate_cost(duration),
             provider=self.provider,
-            provider_job_id=talk_id,
+            provider_job_id=provider_job_id,
             output_format=self.output_format,
             mime_type=self.mime_type,
         )
@@ -295,11 +329,21 @@ class HeyGenService:
 
     def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse:
         """Upload TTS audio, create an avatar video, poll, and download it."""
-        audio_asset_id = self._upload_audio(request.audio_path)
-        video_id = self._create_video(audio_asset_id, request.chapter_id)
-        result_url, duration = self._poll_video(video_id)
+        video_id = self.submit_anchor_video(request)
+        return self.collect_anchor_video(video_id, request)
 
-        output_path = self.output_dir / f"{request.chapter_id}{self.output_extension}"
+    def submit_anchor_video(self, request: AnchorRequest) -> str:
+        audio_asset_id = self._upload_audio(request.audio_path)
+        return self._create_video(
+            audio_asset_id,
+            request.chapter_id,
+            idempotency_key=request.idempotency_key,
+        )
+
+    def collect_anchor_video(self, provider_job_id: str, request: AnchorRequest) -> AnchorResponse:
+        result_url, duration = self._poll_video(provider_job_id)
+
+        output_path = self.output_dir / f"{request.output_name}{self.output_extension}"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         _download_video("HeyGen", result_url, output_path)
 
@@ -310,7 +354,7 @@ class HeyGenService:
             size_bytes=output_path.stat().st_size,
             cost_usd=self.estimate_cost(duration),
             provider=self.provider,
-            provider_job_id=video_id,
+            provider_job_id=provider_job_id,
             output_format=self.output_format,
             mime_type=self.mime_type,
         )
@@ -330,7 +374,12 @@ class HeyGenService:
         data = _response_data(response, "HeyGen")
         return _required_string(data, "asset_id", "HeyGen asset upload response")
 
-    def _create_video(self, audio_asset_id: str, chapter_id: str) -> str:
+    def _create_video(
+        self,
+        audio_asset_id: str,
+        chapter_id: str,
+        idempotency_key: str = "",
+    ) -> str:
         payload = {
             "type": "avatar",
             "avatar_id": self.avatar_id,
@@ -341,9 +390,16 @@ class HeyGenService:
             "output_format": self.output_format,
             "engine": {"type": self.engine},
         }
+        # An extra layer, not the guarantee. Providers that honour the header
+        # return the original job for a repeated key within their retention
+        # window (24 hours is the common one); providers that ignore it lose
+        # nothing, because the ledger has already decided whether this request
+        # may be sent at all.
+        headers = {"Idempotency-Key": idempotency_key} if idempotency_key else None
         response = self.session.post(
             f"{HEYGEN_API_BASE}/v3/videos",
             json=payload,
+            headers=headers,
             timeout=120,
         )
         data = _response_data(response, "HeyGen")
@@ -412,7 +468,15 @@ class DryRunAnchorService:
         return 0.0
 
     def generate_anchor_video(self, request: AnchorRequest) -> AnchorResponse:
-        output_path = self.output_dir / f"{request.chapter_id}{self.output_extension}"
+        job_id = self.submit_anchor_video(request)
+        return self.collect_anchor_video(job_id, request)
+
+    def submit_anchor_video(self, request: AnchorRequest) -> str:
+        del request
+        return "dry-run"
+
+    def collect_anchor_video(self, provider_job_id: str, request: AnchorRequest) -> AnchorResponse:
+        output_path = self.output_dir / f"{request.output_name}{self.output_extension}"
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_bytes(b"\x00" * 1024)
         duration = request.expected_duration_seconds or 30.0
@@ -423,7 +487,7 @@ class DryRunAnchorService:
             size_bytes=1024,
             cost_usd=0.0,
             provider=self.provider,
-            provider_job_id="dry-run",
+            provider_job_id=provider_job_id or "dry-run",
             output_format=self.output_format,
             mime_type=self.mime_type,
         )

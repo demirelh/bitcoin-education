@@ -1095,6 +1095,144 @@ class CreateAvatarRegenerationTableMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class AddAvatarConcurrencyStateMigration(Migration):
+    """Migration 019: Persist idempotency, retry telemetry, assets and breaker.
+
+    Bounded parallelism only helps if the state that makes it safe survives the
+    process. Three things move from memory into the database here: the
+    idempotency key a create call used (with its expiry), what the last attempt
+    ran into, and whether the downloaded file was ever validated. Two small
+    tables join them — one so a re-run reuses an uploaded narration instead of
+    pushing it again, one so a provider that keeps failing stops being asked.
+    """
+
+    @property
+    def version(self) -> str:
+        return "019_avatar_concurrency_state"
+
+    @property
+    def description(self) -> str:
+        return "Add avatar idempotency/retry columns plus audio asset and breaker tables"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        existing = {row[0] for row in result.fetchall()}
+
+        if "avatar_jobs" in existing:
+            result = session.execute(text("PRAGMA table_info(avatar_jobs)"))
+            columns = {row[1] for row in result.fetchall()}
+            new_columns = [
+                ("idempotency_key", "VARCHAR(128)"),
+                ("idempotency_expires_at", "DATETIME"),
+                ("audio_asset_id", "VARCHAR(128)"),
+                ("audio_hash", "VARCHAR(64)"),
+                ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
+                ("last_error_type", "VARCHAR(32)"),
+                ("last_status_code", "INTEGER"),
+                ("retry_after_seconds", "FLOAT"),
+                ("next_poll_at", "DATETIME"),
+                ("validation_status", "VARCHAR(32) NOT NULL DEFAULT 'pending'"),
+                ("validation_error", "TEXT"),
+            ]
+            for name, ddl in new_columns:
+                if name not in columns:
+                    session.execute(text(f"ALTER TABLE avatar_jobs ADD COLUMN {name} {ddl}"))
+                    session.commit()
+                    logger.info(f"Added avatar_jobs.{name}")
+
+            # Existing completed rows were downloaded before validation existed.
+            # Calling them 'valid' would be a claim nobody checked; they are
+            # marked 'legacy' so the dashboard can say so honestly.
+            session.execute(
+                text(
+                    "UPDATE avatar_jobs SET validation_status = 'legacy' "
+                    "WHERE status = 'completed' AND validation_status = 'pending'"
+                )
+            )
+            session.commit()
+
+        if "avatar_audio_assets" not in existing:
+            session.execute(
+                text(
+                    """
+                    CREATE TABLE avatar_audio_assets (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        provider VARCHAR(32) NOT NULL,
+                        audio_hash VARCHAR(64) NOT NULL,
+                        asset_id VARCHAR(128) NOT NULL,
+                        episode_id VARCHAR(64) NOT NULL DEFAULT '',
+                        scene_id VARCHAR(128) NOT NULL DEFAULT '',
+                        size_bytes INTEGER NOT NULL DEFAULT 0,
+                        status VARCHAR(32) NOT NULL DEFAULT 'active',
+                        expired_reason TEXT,
+                        created_at DATETIME NOT NULL,
+                        last_used_at DATETIME,
+                        CONSTRAINT uq_avatar_audio_asset_identity
+                            UNIQUE (provider, audio_hash)
+                    )
+                    """
+                )
+            )
+            session.commit()
+            logger.info("Created avatar_audio_assets table")
+
+        if "avatar_provider_breakers" not in existing:
+            session.execute(
+                text(
+                    """
+                    CREATE TABLE avatar_provider_breakers (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        provider VARCHAR(32) NOT NULL UNIQUE,
+                        state VARCHAR(16) NOT NULL DEFAULT 'closed',
+                        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+                        last_failure_class VARCHAR(32),
+                        last_status_code INTEGER,
+                        reason TEXT,
+                        opened_at DATETIME,
+                        cooldown_until DATETIME,
+                        last_failure_at DATETIME,
+                        last_success_at DATETIME,
+                        reset_by_ref VARCHAR(64),
+                        reset_note TEXT,
+                        reset_at DATETIME,
+                        updated_at DATETIME NOT NULL
+                    )
+                    """
+                )
+            )
+            session.commit()
+            logger.info("Created avatar_provider_breakers table")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
+        indexes = {row[0] for row in result.fetchall()}
+        wanted = {
+            "ix_avatar_audio_assets_audio_hash": (
+                "CREATE INDEX ix_avatar_audio_assets_audio_hash "
+                "ON avatar_audio_assets (audio_hash)"
+            ),
+            "ix_avatar_audio_assets_episode_id": (
+                "CREATE INDEX ix_avatar_audio_assets_episode_id "
+                "ON avatar_audio_assets (episode_id)"
+            ),
+            "ix_avatar_audio_assets_status": (
+                "CREATE INDEX ix_avatar_audio_assets_status ON avatar_audio_assets (status)"
+            ),
+            "ix_avatar_provider_breakers_provider": (
+                "CREATE INDEX ix_avatar_provider_breakers_provider "
+                "ON avatar_provider_breakers (provider)"
+            ),
+        }
+        for name, ddl in wanted.items():
+            if name not in indexes:
+                session.execute(text(ddl))
+                session.commit()
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -1115,6 +1253,7 @@ MIGRATIONS = [
     CreateAvatarJobsTableMigration(),
     CreateAvatarJobAuditTableMigration(),
     CreateAvatarRegenerationTableMigration(),
+    AddAvatarConcurrencyStateMigration(),
 ]
 
 

@@ -3273,3 +3273,132 @@ def avatar_reconcile_resolve(
         raise click.ClickException(str(exc)) from exc
     finally:
         session.close()
+
+
+@cli.command(name="avatar-status")
+@click.argument("episode_id")
+@click.option("--json", "json_output", is_flag=True, default=False, help="Machine-readable output.")
+@click.pass_context
+def avatar_status(ctx: click.Context, episode_id: str, json_output: bool) -> None:
+    """Show what the avatar stage of one episode is doing right now."""
+    import json as _json
+
+    from btcedu.core.anchor_config import resolve_anchor_config
+    from btcedu.core.avatar_runtime import runtime_snapshot
+    from btcedu.models.episode import Episode
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+        if episode is None:
+            raise click.ClickException(f"Episode not found: {episode_id}")
+        profile = getattr(episode, "content_profile", None) or settings.default_content_profile
+        config = resolve_anchor_config(profile, settings)
+        snapshot = runtime_snapshot(
+            session,
+            episode_id,
+            provider=config.provider,
+            max_concurrent_jobs=config.max_concurrent_jobs,
+        )
+        if json_output:
+            click.echo(_json.dumps(snapshot, indent=2))
+            return
+
+        breaker = snapshot["circuit_breaker"]
+        click.echo(f"Episode:      {episode_id} ({profile})")
+        click.echo(f"Provider:     {snapshot['provider']}")
+        click.echo(
+            f"Jobs:         {snapshot['active_jobs']} active, "
+            f"{snapshot['available_slots']} slot(s) free of "
+            f"{snapshot['max_concurrent_jobs']}, "
+            f"{snapshot['waiting_submits']} waiting"
+        )
+        if snapshot["next_poll_at"]:
+            click.echo(f"Next poll:    {snapshot['next_poll_at']}")
+        if snapshot["last_error_type"]:
+            click.echo(
+                f"Last error:   {snapshot['last_error_type']} "
+                f"(HTTP {snapshot['last_status_code']}), "
+                f"{snapshot['retry_count']} retr(y/ies) so far"
+            )
+        click.echo(
+            f"Breaker:      {breaker['state']} "
+            f"({'submissions allowed' if breaker['submissions_allowed'] else 'submissions held'})"
+        )
+        click.echo(
+            f"Cost:         ${snapshot['cost_actual_usd']:.4f} spent, "
+            f"${snapshot['cost_reserved_usd']:.4f} reserved, "
+            f"${snapshot['cost_unresolved_usd']:.4f} unresolved"
+        )
+        validation = snapshot["validation"]
+        click.echo(
+            f"Clips:        {validation['validated']} validated, "
+            f"{validation['quarantined']} quarantined, {validation['pending']} pending"
+        )
+        for job in snapshot["jobs"]:
+            click.echo(
+                f"  - {job['scene_id']:<16} {job['status']:<20} "
+                f"{job['validation_status']:<12} ${job['cost_usd']:.4f}"
+            )
+    finally:
+        session.close()
+
+
+@cli.group(name="avatar-breaker")
+@click.pass_context
+def avatar_breaker_group(ctx: click.Context) -> None:
+    """Inspect and reset the provider circuit breaker."""
+    pass
+
+
+@avatar_breaker_group.command(name="status")
+@click.option("--provider", default="heygen", help="Avatar provider.")
+@click.option("--json", "json_output", is_flag=True, default=False, help="Machine-readable output.")
+@click.pass_context
+def avatar_breaker_status(ctx: click.Context, provider: str, json_output: bool) -> None:
+    """Show whether new avatar submissions are currently allowed."""
+    import json as _json
+
+    from btcedu.core import avatar_breaker as breaker_module
+
+    session = ctx.obj["session_factory"]()
+    try:
+        view = breaker_module.status(session, provider)
+        if json_output:
+            click.echo(_json.dumps(view.to_dict(), indent=2))
+            return
+        click.echo(f"Provider:     {view.provider}")
+        click.echo(f"State:        {view.state}")
+        click.echo(f"Submissions:  {'allowed' if view.submissions_allowed else 'held'}")
+        click.echo(f"Failures:     {view.consecutive_failures} consecutive")
+        if view.reason:
+            click.echo(f"Reason:       {view.reason}")
+        if view.cooldown_remaining_seconds:
+            click.echo(f"Cooldown:     {view.cooldown_remaining_seconds:.0f}s remaining")
+    finally:
+        session.close()
+
+
+@avatar_breaker_group.command(name="reset")
+@click.option("--provider", default="heygen", help="Avatar provider.")
+@click.option("--operator-ref", required=True, help="Non-confidential operator reference.")
+@click.option("--note", required=True, help="Why the provider condition is considered resolved.")
+@click.pass_context
+def avatar_breaker_reset(ctx: click.Context, provider: str, operator_ref: str, note: str) -> None:
+    """Close the breaker again after a human checked the provider.
+
+    Deliberately manual and audited: the breaker opened because something was
+    wrong, and forgetting that automatically is how an account gets locked or a
+    quota gets burned twice.
+    """
+    from btcedu.core import avatar_breaker as breaker_module
+
+    session = ctx.obj["session_factory"]()
+    try:
+        view = breaker_module.reset(session, provider, operator_ref=operator_ref, note=note)
+        click.echo(f"[OK] breaker for {provider} reset to {view.state} by {operator_ref}")
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        session.close()

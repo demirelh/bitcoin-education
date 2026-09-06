@@ -1,5 +1,10 @@
 from btcedu.models.app_setting import AppSetting, get_setting, set_setting  # noqa: F401
+from btcedu.models.avatar_audio_asset import AudioAssetStatus, AvatarAudioAsset  # noqa: F401
 from btcedu.models.avatar_job import AvatarJob, AvatarJobStatus  # noqa: F401
+from btcedu.models.avatar_provider_breaker import (  # noqa: F401
+    AvatarProviderBreaker,
+    BreakerState,
+)
 from btcedu.models.avatar_regeneration import (  # noqa: F401
     AvatarRegenerationRequest,
     RegenerationStatus,

@@ -248,9 +248,17 @@ stage_config:
     # presenter, against the 150-200 s a normal bulletin needs — a net for
     # runaway episodes, not an everyday brake.
     max_cost_usd: 7.0
-    # Below HeyGen's documented pay-as-you-go ceiling of 10 concurrent jobs,
-    # which counts every async generation on the account, not just ours.
-    max_concurrent_jobs: 4
+    # No HeyGen concurrency figure has been confirmed for this account, so the
+    # cap stays conservative: three generations in flight cuts a nine-chapter
+    # bulletin's anchor stage to roughly a third of the sequential time while
+    # staying well clear of an unknown ceiling. Exceeding it would surface as
+    # 429s on paid calls, which is precisely what must not happen.
+    max_concurrent_jobs: 3
+    # Ask a running generation every five seconds; give one clip half an hour
+    # before the run stops waiting and leaves it to be resumed.
+    poll_interval_seconds: 5
+    request_timeout_seconds: 120
+    poll_timeout_seconds: 1800
     # One outfit per episode, the least recently used one first, so all ten are
     # spent before any repeats. Ties break on the order below, which keeps the
     # choice reproducible without a random seed.

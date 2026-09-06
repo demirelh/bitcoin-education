@@ -98,6 +98,37 @@ class AvatarJob(Base):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     resolution_note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # -- Retry, idempotency and validation state ----------------------------
+    # All of it persisted rather than held in the run: a process that dies
+    # mid-generation must come back knowing which key it used, how often it has
+    # already tried and whether the file it downloaded was ever checked.
+
+    #: Sent as ``Idempotency-Key``. Generated and stored *before* the first
+    #: create call so a restart repeats the same key instead of ordering again.
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: When the provider stops honouring that key. Past this point an unclear
+    #: outcome may not be retried automatically at any price.
+    idempotency_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: The provider's id for the uploaded narration, so a resumed run reuses
+    #: the asset instead of pushing the same audio again.
+    audio_asset_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    audio_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_error_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    last_status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    retry_after_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Earliest sensible time to ask the provider again. Keeps the poller off a
+    #: busy-wait loop and survives a restart.
+    next_poll_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: ``pending`` / ``valid`` / ``invalid`` / ``quarantined``. A downloaded
+    #: file that was never probed is not a usable clip.
+    validation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    validation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     def __repr__(self) -> str:
         return (
             f"<AvatarJob(episode_id='{self.episode_id}', scene_id='{self.scene_id}', "

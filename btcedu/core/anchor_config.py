@@ -17,9 +17,22 @@ logger = logging.getLogger(__name__)
 # still carrying this value is a misconfiguration, not a usable avatar.
 PLACEHOLDER_LOOK_ID = "REPLACE_WITH_HEYGEN_LOOK_ID"
 
-# HeyGen counts every asynchronous generation on the account against this, not
-# just ours, so staying below it is the caller's job.
-HEYGEN_MAX_CONCURRENT_JOBS = 10
+# HeyGen does not publish a concurrency figure that applies to every plan, and
+# the account this profile will run on has not been measured. Absent a
+# confirmed provider limit the cap is deliberately conservative: exceeding an
+# unknown ceiling shows up as 429s on paid calls, which is the one class of
+# mistake this whole subsystem exists to avoid. Raise it only against a figure
+# the provider actually stated for the account in use.
+HEYGEN_MAX_CONCURRENT_JOBS = 5
+
+# Bounds for the polling and timeout knobs. A one-second poll would hammer the
+# API for no benefit; a ten-minute one would idle away the concurrency gain.
+MIN_POLL_INTERVAL_SECONDS = 2.0
+MAX_POLL_INTERVAL_SECONDS = 120.0
+MIN_REQUEST_TIMEOUT_SECONDS = 10.0
+MAX_REQUEST_TIMEOUT_SECONDS = 600.0
+MIN_POLL_TIMEOUT_SECONDS = 60.0
+MAX_POLL_TIMEOUT_SECONDS = 3 * 60 * 60
 
 VALID_ENGINES = {"avatar_iii", "avatar_iv", "avatar_v"}
 VALID_STUDIO_MODES = {"composite", "baked"}
@@ -85,6 +98,13 @@ class AnchorConfig:
     max_cost_usd: float
     studio_mode: str = "baked"
     max_concurrent_jobs: int = 1
+    #: How often a running generation is asked whether it is done.
+    poll_interval_seconds: float = 5.0
+    #: Per-HTTP-call timeout for every provider request.
+    request_timeout_seconds: float = 120.0
+    #: How long one clip may stay in "processing" before the run stops waiting
+    #: and leaves it to be resumed. Not a failure — see the coordinator.
+    poll_timeout_seconds: float = 1800.0
     rotation_strategy: str = "least_recently_used"
     cost_source: str = ""
     cost_checked_on: str = ""
@@ -169,6 +189,34 @@ def parse_looks(raw) -> tuple[PresenterLook, ...]:
             f"{placeholders}. Paste the real HeyGen look IDs before activating."
         )
     return tuple(looks)
+
+
+def _positive_int(value, field_name: str) -> int:
+    """Reject a value that is not a whole number of at least one.
+
+    Strict on purpose: ``max_concurrent_jobs: "3 "`` from a hand-edited profile
+    should fail loudly at load time, not silently become something else on the
+    evening a bulletin has to go out.
+    """
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Anchor {field_name} must be an integer") from exc
+    if parsed < 1:
+        raise ValueError(f"Anchor {field_name} must be at least 1")
+    return parsed
+
+
+def _bounded_float(value, field_name: str, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Anchor {field_name} must be a number") from exc
+    if not minimum <= parsed <= maximum:
+        raise ValueError(
+            f"Anchor {field_name} must be between {minimum} and {maximum} (got {parsed})"
+        )
+    return parsed
 
 
 def parse_studio(raw) -> StudioConfig:
@@ -315,13 +363,37 @@ def _resolve_heygen(profile_config: dict, settings: Settings, max_cost_usd: floa
     if aspect_ratio not in {"16:9", "9:16", "4:5", "5:4", "1:1", "auto"}:
         raise ValueError(f"Unsupported HeyGen aspect_ratio: {aspect_ratio!r}")
 
-    max_concurrent_jobs = int(profile_config.get("max_concurrent_jobs", 1))
-    if max_concurrent_jobs < 1:
-        raise ValueError("Anchor max_concurrent_jobs must be at least 1")
+    max_concurrent_jobs = _positive_int(
+        profile_config.get("max_concurrent_jobs", 1), "max_concurrent_jobs"
+    )
     if max_concurrent_jobs > HEYGEN_MAX_CONCURRENT_JOBS:
         raise ValueError(
-            "Anchor max_concurrent_jobs exceeds HeyGen's documented ceiling of "
-            f"{HEYGEN_MAX_CONCURRENT_JOBS} concurrent jobs"
+            f"Anchor max_concurrent_jobs of {max_concurrent_jobs} exceeds the "
+            f"conservative ceiling of {HEYGEN_MAX_CONCURRENT_JOBS} concurrent jobs "
+            "for HeyGen; no higher provider limit has been confirmed for this account"
+        )
+
+    poll_interval_seconds = _bounded_float(
+        profile_config.get("poll_interval_seconds", 5.0),
+        "poll_interval_seconds",
+        MIN_POLL_INTERVAL_SECONDS,
+        MAX_POLL_INTERVAL_SECONDS,
+    )
+    request_timeout_seconds = _bounded_float(
+        profile_config.get("request_timeout_seconds", 120.0),
+        "request_timeout_seconds",
+        MIN_REQUEST_TIMEOUT_SECONDS,
+        MAX_REQUEST_TIMEOUT_SECONDS,
+    )
+    poll_timeout_seconds = _bounded_float(
+        profile_config.get("poll_timeout_seconds", 1800.0),
+        "poll_timeout_seconds",
+        MIN_POLL_TIMEOUT_SECONDS,
+        MAX_POLL_TIMEOUT_SECONDS,
+    )
+    if poll_timeout_seconds <= poll_interval_seconds:
+        raise ValueError(
+            "Anchor poll_timeout_seconds must be larger than poll_interval_seconds"
         )
 
     rotation_strategy = (
@@ -345,6 +417,9 @@ def _resolve_heygen(profile_config: dict, settings: Settings, max_cost_usd: floa
         max_cost_usd=max_cost_usd,
         studio_mode=studio_mode,
         max_concurrent_jobs=max_concurrent_jobs,
+        poll_interval_seconds=poll_interval_seconds,
+        request_timeout_seconds=request_timeout_seconds,
+        poll_timeout_seconds=poll_timeout_seconds,
         rotation_strategy=rotation_strategy,
         cost_source=str(profile_config.get("cost_source") or "").strip(),
         cost_checked_on=str(profile_config.get("cost_checked_on") or "").strip(),

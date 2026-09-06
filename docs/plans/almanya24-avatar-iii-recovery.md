@@ -586,11 +586,120 @@ Tests, kein Provideraufruf.
 **Dokumentation**: `docs/avatar-review.md` (Gate, Digest-Bindung, API, Vorschau,
 Regeneration, Lookwechsel, Audit).
 
-### WP-5C — Begrenzte Parallelität, Backoff und Betriebshärtung
+### WP-5C — Begrenzte Parallelität, Backoff und Betriebshärtung (6. September 2026)
 
-- [ ] Parallelität (`max_concurrent_jobs`) mit Backoff bei 429/5xx.
-- [ ] Kosmetik aus "Teilweise umgesetzt": `sceneplan` in
-      `_STAGE_WORKFLOW_KEY`-Kommentar und `STAGE_PROVIDER_MAP` nachziehen.
+**Parallelität**
+
+- [x] Profilgesteuert: `anchor.max_concurrent_jobs`, `poll_interval_seconds`,
+      `request_timeout_seconds`, `poll_timeout_seconds`.
+- [x] Strikte Validierung: Minimum 1, hartes Maximum
+      `HEYGEN_MAX_CONCURRENT_JOBS = 5`. Bewusst konservativ gesenkt (vorher 10),
+      weil für dieses Konto **kein** Providerlimit bestätigt ist. ALMANYA24
+      steht auf 3.
+- [x] `AvatarCoordinator` in drei Phasen: planen (Hauptthread, mit Session),
+      ausführen (Threadpool, **ohne** Session), persistieren (Hauptthread).
+      Worker erhalten reine Dataclasses und können die Datenbank nicht
+      erreichen; Rückmeldung über `queue.Queue`.
+- [x] Keine SQLAlchemy-Session zwischen Threads, keine offene Schreibtransaktion
+      während eines Netzwerkaufrufs.
+- [x] Bereits eingereichte Jobs belegen einen Slot (Resume zählt mit).
+- [x] Budget: Reservierung beim Planen, erneute Prüfung unmittelbar vor jedem
+      einzelnen Submit.
+- [x] Reporter-, Wetter- und Nicht-Anchor-Szenen werden gar nicht erst geplant
+      (unverändert aus WP-2).
+
+**Audioassets**
+
+- [x] Neues Modell `AvatarAudioAsset`, Identität `(provider, audio_hash)` —
+      ausdrücklich kein Pfad und keine Provider-URL.
+- [x] Unverändertes Audio wird wiederverwendet, auch szenen- und laufübergreifend.
+- [x] Abgelaufene Assets werden **markiert**, nicht gelöscht.
+- [x] Ein erneuter Audio-Upload bedeutet nie einen neuen Videoauftrag.
+
+**Retry-Matrix** (`btcedu/core/avatar_retry.py`)
+
+- [x] `retryable` und `ambiguous` sind getrennte Fragen; nur `ambiguous`
+      entscheidet über Geld.
+- [x] 401/403 permanent, 400/422 nachweislich unbezahlt, 404 kontextabhängig,
+      429 mit `Retry-After`, 5xx je nach Methode, Netzwerkabbruch nach
+      Sendezeitpunkt unterschieden.
+- [x] `Retry-After` als Sekundenwert **und** als HTTP-Datum.
+- [x] Exponentielles Backoff mit Jitter, Obergrenze, keine Endlosschleife.
+- [x] Injizierbare `sleep`/`now`/`rand` — Tests warten nie wirklich.
+- [x] Keine Secrets in Logs (Fehlerklasse statt Payload).
+
+**Idempotency-Key**
+
+- [x] `sha256(episode:scene:content_hash)`, stabil pro Generation-Attempt,
+      vor dem Aufruf persistiert, Ablaufzeit 24 h gespeichert.
+- [x] Jeder Retry — auch nach Prozessneustart — nutzt denselben Key.
+- [x] Eine bewusste Regeneration ändert `content_hash` und damit den Key.
+- [x] Nach Ablauf des Fensters keine automatische POST-Wiederholung, sondern
+      `reconcile_required`.
+
+**Polling, Download, Validierung**
+
+- [x] Mehrere Jobs abwechselnd gepollt, kein Busy-Wait; Status persistiert,
+      nach Neustart fortsetzbar.
+- [x] Unbekannter Providerstatus ist fail-closed.
+- [x] Poll-Timeout vertagt (`deferred`), Zeile bleibt `submitted`, kein Neukauf.
+- [x] Streamingdownload in `.part` + `os.replace`, Größenober- und -untergrenze,
+      SHA-256 beim Schreiben.
+- [x] FFprobe-Validierung: Container, Auflösung, Alpha hart; FPS und Dauer als
+      Warnung.
+- [x] Beschädigte Datei wird quarantänisiert, nicht gelöscht — sie wurde bezahlt.
+- [x] Abgelaufene Download-URL wird über **eine** read-only Statusabfrage
+      erneuert, niemals durch eine neue Generierung.
+
+**Circuit Breaker und Betriebsschutz**
+
+- [x] Persistenter Breaker je Provider (`AvatarProviderBreaker`), Cooldown und
+      Grund sichtbar.
+- [x] Offen blockiert nur neue Submits; laufende Jobs werden weiter gepollt und
+      heruntergeladen.
+- [x] Reine Ablehnungen (400/422) zählen nicht mit.
+- [x] Reset nur manuell, mit Operatorreferenz und Notiz, als
+      `AvatarAuditAction.BREAKER_RESET` auditiert.
+- [x] SIGTERM zwischen sicheren Zustandsübergängen; Ledger wird vor Prozessende
+      committet, keine verwaisten Threads.
+- [x] Pipeline-Lock unverändert respektiert.
+
+**Beobachtbarkeit**
+
+- [x] `btcedu/core/avatar_runtime.py`: aktive Jobs, freie Slots, wartende
+      Submits, nächster Pollzeitpunkt, Retryanzahl, letzter HTTP-Fehlertyp,
+      `Retry-After`, Breaker-Zustand, reservierte / tatsächliche / **ungeklärte**
+      Kosten, Validierungsstatus.
+- [x] Sichtbar unter `runtime` in `GET /api/episodes/<id>/avatar` und über
+      `btcedu avatar-status` sowie `btcedu avatar-breaker status|reset`.
+- [x] Keine Schlüssel, Payloads oder signierten URLs.
+
+**Fail-closed-Politik unverändert**
+
+- [x] Kein automatischer Voice-over-Fallback; eine fehlende Szene blockiert.
+- [x] Kein Provideraufruf aus Renderer oder Webrequest.
+- [x] D-ID-Pfad unverändert (Ledger und Parallelität ja, granulare Matrix nein —
+      bewusste Rückwärtskompatibilität).
+
+**Migration**: 019 `AddAvatarConcurrencyStateMigration` — elf Spalten auf
+`avatar_jobs`, zwei neue Tabellen, vier Indizes. Bereits abgeschlossene Zeilen
+werden `validation_status='legacy'` gesetzt, nicht fälschlich `validated`.
+
+**Tests**: `tests/test_avatar_concurrency.py`, 66 Tests.
+
+**Gesamtsuite nach WP-5C**: 3466 grün, **genau die zwei dokumentierten
+Baselinefehler**, kein dritter. Die in WP-5B nachgezogene Zählprüfung
+`TestReviewGateLabels` (6 → 7 Gate-Labels wegen `review_gate_anchor`) ist
+gezielt erneut geprüft und grün; sie wurde erweitert, nicht abgeschwächt.
+Kein Test wurde zur Erzeugung eines grünen Ergebnisses gelockert.
+
+**Dokumentation**: `docs/avatar-operations.md` (Konfiguration, Matrix,
+Idempotenz, Polling, Breaker, Beobachtbarkeit, Störungstabelle).
+
+### Offene Kosmetik
+
+- [ ] `sceneplan` im `_STAGE_WORKFLOW_KEY`-Kommentar und in `STAGE_PROVIDER_MAP`
+      nachziehen.
 - [ ] Sichtbare Bedienung des Voice-over-Overrides (Policy, Datenmodell und Gate
       stehen seit WP-5A, bewusst weiterhin ohne Bedienoberfläche).
 
@@ -598,6 +707,71 @@ Regeneration, Lookwechsel, Audit).
 
 - [!] HeyGen-PAYG-Zugang, echte Look-IDs, Studio-Artwork, Rechteentscheidung,
       ALMANYA24-Testkanal. Details in `almanya24-media-roadmap.md`.
+
+## Gap-Analyse nach WP-5C (6. September 2026)
+
+Klassifikation aller Anforderungen der Recovery-Checkliste. Bewusst getrennt
+nach dem, was Code leisten kann, und dem, was ohne echte Phase-1-Assets oder
+ohne den Betreiber schlicht nicht abschließbar ist.
+
+### Implementiert und automatisiert geprüft
+
+- Scene-Plan als einzige Quelle der Anchor-Aufträge (WP-0/WP-2).
+- Persistente Look-/Presenter-Zuweisung, ein Outfit pro Episode (WP-1).
+- Dauerhaftes Avatar-Job-Register mit Reservierung, Resume, Reuse und
+  Reconciliation (WP-1/WP-2).
+- Restart-fähige Aufträge ohne Doppelabrechnung, Idempotency-Key mit
+  24-Stunden-Fenster (WP-2/WP-5C).
+- Studio-Manifest und FFmpeg-Compositing, Themenbild im Studiomonitor,
+  Reporter unsichtbar mit vollflächigen Medien (WP-3).
+- Szenenbasierter Renderer inklusive Remote-Render-Vertrag (WP-4).
+- Transparentes WebM bevorzugt, opaker MP4-Fallback erhalten (WP-3/WP-4).
+- Original-TTS bleibt finale Audioquelle (WP-2/WP-4).
+- Readiness, Rechte-/Transparenz-Gate, Reconciliations-CLI (WP-5A).
+- Artefaktgebundenes Avatar-Review-Gate, Dashboard, Vorschau, bewusste
+  Regeneration mit getrenntem „Retry“ und „Regenerate“ (WP-5B).
+- Begrenzte Parallelität, providerbewusste Retry-Matrix, Circuit Breaker,
+  Streamingdownload mit FFprobe-Validierung, Beobachtbarkeit (WP-5C).
+- Keine echten Provideraufrufe, keine externen Kosten in irgendeinem Test.
+- Andere Profile und der D-ID-Pfad unverändert.
+
+### Implementiert, aber erst mit echten Phase-1-Assets real prüfbar
+
+- Tatsächliche Bildwirkung des Studios, des Monitorinhalts und der
+  Moderatorinnen-Freistellung — bisher nur gegen synthetische Clips geprüft.
+- Reale Alpha-Qualität eines HeyGen-WebM (Kantensaum, Kompression).
+- Echte Auftragsdauer, damit `poll_timeout_seconds` belastbar wird.
+- Reales Providerlimit für `max_concurrent_jobs`; der Deckel von 5 ist eine
+  konservative Annahme, keine bestätigte Zahl.
+- Reale Kosten pro Sekunde und damit die Schärfe des Budget-Preflights.
+- Verhalten des echten `Retry-After`-Headers und der echten Fehlercodes.
+- Lebensdauer eines hochgeladenen Audioassets beim Provider.
+
+### Noch offen (technisch, konkret benennbar)
+
+- **WP-6 — Ende-zu-Ende-Trockenlauf**: eine vollständige Episode von `sceneplan`
+  bis `publish` gegen Fakes, mit Review-Gates und Remote-Render, als ein Test.
+- **Kosmetik**: `sceneplan` im `_STAGE_WORKFLOW_KEY`-Kommentar und in
+  `STAGE_PROVIDER_MAP`.
+- **Bedienoberfläche für den Voice-over-Override**: Policy, Datenmodell und Gate
+  stehen seit WP-5A; es fehlt der auditierte Knopf.
+- **Dashboard-Anzeige der WP-5C-Laufzeitdaten**: die API liefert `runtime`
+  bereits, die Oberfläche zeigt es noch nicht an.
+- **Reconciliation aus dem Dashboard heraus**: bisher nur CLI.
+
+### Bewusst nicht erforderlich
+
+- Automatischer Voice-over-Fallback — widerspricht der Fail-closed-Politik.
+- Granulare Retry-Matrix für D-ID — der Altpfad bleibt eingefroren.
+- Externe Infrastruktur für den Circuit Breaker; eine Tabelle genügt.
+- Wiederverwendbarer TTS-Take-Cache — unverändert nicht vorgesehen.
+
+### Betreiberaktion
+
+- HeyGen-PAYG-Zugang, echte Avatar-III-Look-IDs und Rechteentscheidung.
+- ALMANYA24-Studio-Artwork und Testkanal.
+- Entscheidung über die Rotationsregel der Outfits.
+- Erste überwachte Pilotepisode mit aktivem Avatar-Review.
 
 ## Konsistenzprüfung der geänderten Dateien
 
@@ -678,3 +852,5 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-06 | WP-5A | Readiness-CLI, Rechtevertrag, Reconciliation, Ausfallpolitik, 181 Tests, Ruff grün; Suite 3293 grün / 2 Baselinefehler |
 | 2026-09-06 | Checkpoint | Lokaler Commit `e1bd0bb` (WP-5A), nicht gepusht |
 | 2026-09-06 | WP-5B | Avatar-Review-Gate, Digest-Bindung, Regenerationsmodell, Dashboard-API, Vorschau und Oberfläche, 104 neue Tests, Ruff grün; Suite 3398 grün / 2 Baselinefehler (Labelzähler nachgezogen) |
+| 2026-09-06 | Checkpoint | Lokaler Commit `f177b88` (WP-5B), nicht gepusht |
+| 2026-09-06 | WP-5C | Coordinator mit begrenzter Parallelität, Retry-Matrix, Idempotenzfenster, Audioasset-Register, Circuit Breaker, Streamingdownload mit FFprobe, Beobachtbarkeit und CLI, Migration 019, 66 neue Tests, Ruff grün; Suite 3466 grün / 2 Baselinefehler |

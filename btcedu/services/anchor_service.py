@@ -38,11 +38,16 @@ class AnchorAPIError(RuntimeError):
         status_code: int,
         detail: str,
         error_code: str | None = None,
+        retry_after: str | float | None = None,
     ):
         self.provider = provider
         self.status_code = status_code
         self.error_code = error_code
         self.detail = detail
+        # Carried verbatim so the retry matrix can parse it; a provider may send
+        # either a delay in seconds or an HTTP date and both have to survive the
+        # trip from the response to the decision.
+        self.retry_after = retry_after
         code_suffix = f" ({error_code})" if error_code else ""
         super().__init__(f"{provider} API error {status_code}{code_suffix}: {detail}")
 
@@ -92,6 +97,34 @@ class AnchorResponse:
             self.provider_job_id = self.did_talk_id
         elif self.provider == "d-id" and self.provider_job_id and not self.did_talk_id:
             self.did_talk_id = self.provider_job_id
+
+
+#: Provider states that mean "still working, ask again later".
+ACTIVE_VIDEO_STATES = frozenset({"waiting", "pending", "processing", "queued"})
+
+STATE_PROCESSING = "processing"
+STATE_COMPLETED = "completed"
+STATE_FAILED = "failed"
+STATE_UNKNOWN = "unknown"
+
+
+@dataclass(frozen=True)
+class ProviderVideoStatus:
+    """One observation of a provider job, without any waiting attached.
+
+    Separated from the polling loop so a coordinator can ask many jobs for
+    their state in turn instead of blocking on each one until it finishes.
+    ``STATE_UNKNOWN`` is deliberately a value rather than an exception: the
+    caller has to decide whether an unmappable status means "wait" or
+    "reconcile", and that decision does not belong to the HTTP client.
+    """
+
+    state: str
+    raw_status: str = ""
+    video_url: str = ""
+    duration_seconds: float = 0.0
+    error_detail: str = ""
+    error_code: str = ""
 
 
 class AnchorService(Protocol):
@@ -289,6 +322,8 @@ class HeyGenService:
         resolution: str = "1080p",
         aspect_ratio: str = "auto",
         cost_per_second_usd: float | None = None,
+        request_timeout_seconds: float = 120.0,
+        poll_interval_seconds: float = POLL_INTERVAL_SECONDS,
     ):
         if not api_key:
             raise ValueError("HeyGen anchor provider requires HEYGEN_API_KEY")
@@ -316,6 +351,12 @@ class HeyGenService:
         self.resolution = resolution
         self.aspect_ratio = aspect_ratio
         self.cost_per_second_usd = cost_per_second_usd
+        if request_timeout_seconds <= 0:
+            raise ValueError("HeyGen request_timeout_seconds must be greater than zero")
+        if poll_interval_seconds <= 0:
+            raise ValueError("HeyGen poll_interval_seconds must be greater than zero")
+        self.request_timeout_seconds = float(request_timeout_seconds)
+        self.poll_interval_seconds = float(poll_interval_seconds)
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -359,6 +400,55 @@ class HeyGenService:
             mime_type=self.mime_type,
         )
 
+    # -- Granular operations -------------------------------------------------
+    # The coordinator drives these one at a time so that each can carry its own
+    # retry policy and, more importantly, so that the durable ledger sees the
+    # asset id and the job id the instant they exist rather than after a long
+    # blocking call that may never return.
+
+    def upload_audio_asset(self, audio_path: str) -> str:
+        """Upload one TTS part and return the provider's asset id."""
+        return self._upload_audio(audio_path)
+
+    def create_video(
+        self,
+        audio_asset_id: str,
+        *,
+        title: str,
+        idempotency_key: str = "",
+    ) -> str:
+        """Order one generation. This is the only billable call in the class."""
+        return self._create_video(audio_asset_id, title, idempotency_key=idempotency_key)
+
+    def poll_video_once(self, video_id: str) -> ProviderVideoStatus:
+        """Ask once for a job's state; never sleeps, never loops."""
+        response = self.session.get(
+            f"{HEYGEN_API_BASE}/v3/videos/{video_id}",
+            timeout=self.request_timeout_seconds,
+        )
+        data = _response_data(response, "HeyGen")
+        raw = str(data.get("status") or "").lower()
+
+        if raw == "completed":
+            return ProviderVideoStatus(
+                state=STATE_COMPLETED,
+                raw_status=raw,
+                video_url=_required_string(data, "video_url", "HeyGen completed video"),
+                duration_seconds=_required_duration(data, "duration", "HeyGen completed video"),
+            )
+        if raw == "failed":
+            return ProviderVideoStatus(
+                state=STATE_FAILED,
+                raw_status=raw,
+                error_detail=str(data.get("failure_message") or "Unknown HeyGen generation error"),
+                error_code=str(data.get("failure_code") or "generation_failed"),
+            )
+        if raw in ACTIVE_VIDEO_STATES:
+            return ProviderVideoStatus(state=STATE_PROCESSING, raw_status=raw)
+        # Not an error yet — an unmapped status is a decision for the caller,
+        # who alone knows whether a fail-closed stop or another poll is right.
+        return ProviderVideoStatus(state=STATE_UNKNOWN, raw_status=raw)
+
     def _upload_audio(self, audio_path: str) -> str:
         path = _require_file(audio_path, "HeyGen audio")
         if path.stat().st_size > HEYGEN_MAX_ASSET_BYTES:
@@ -369,7 +459,7 @@ class HeyGenService:
             response = self.session.post(
                 f"{HEYGEN_API_BASE}/v3/assets",
                 files={"file": (path.name, file_obj, _audio_mime_type(path))},
-                timeout=120,
+                timeout=self.request_timeout_seconds,
             )
         data = _response_data(response, "HeyGen")
         return _required_string(data, "asset_id", "HeyGen asset upload response")
@@ -400,7 +490,7 @@ class HeyGenService:
             f"{HEYGEN_API_BASE}/v3/videos",
             json=payload,
             headers=headers,
-            timeout=120,
+            timeout=self.request_timeout_seconds,
         )
         data = _response_data(response, "HeyGen")
         resolved_format = str(data.get("output_format") or self.output_format).lower()
@@ -416,7 +506,10 @@ class HeyGenService:
     def _poll_video(self, video_id: str) -> tuple[str, float]:
         active_statuses = {"waiting", "pending", "processing"}
         for attempt in range(POLL_MAX_ATTEMPTS):
-            response = self.session.get(f"{HEYGEN_API_BASE}/v3/videos/{video_id}", timeout=120)
+            response = self.session.get(
+                f"{HEYGEN_API_BASE}/v3/videos/{video_id}",
+                timeout=self.request_timeout_seconds,
+            )
             data = _response_data(response, "HeyGen")
             status = str(data.get("status") or "").lower()
 
@@ -441,7 +534,7 @@ class HeyGenService:
                 status,
                 attempt + 1,
             )
-            time.sleep(POLL_INTERVAL_SECONDS)
+            time.sleep(self.poll_interval_seconds)
 
         raise TimeoutError(f"HeyGen video {video_id} did not complete within timeout")
 
@@ -475,6 +568,31 @@ class DryRunAnchorService:
         del request
         return "dry-run"
 
+    # Granular mirrors of the real provider, so the coordinator can be driven
+    # end to end in a dry run without a single network call.
+    def upload_audio_asset(self, audio_path: str) -> str:
+        del audio_path
+        return "dry-run-asset"
+
+    def create_video(
+        self,
+        audio_asset_id: str,
+        *,
+        title: str,
+        idempotency_key: str = "",
+    ) -> str:
+        del audio_asset_id, title, idempotency_key
+        return "dry-run"
+
+    def poll_video_once(self, video_id: str) -> ProviderVideoStatus:
+        del video_id
+        return ProviderVideoStatus(
+            state=STATE_COMPLETED,
+            raw_status="completed",
+            video_url="file://dry-run",
+            duration_seconds=30.0,
+        )
+
     def collect_anchor_video(self, provider_job_id: str, request: AnchorRequest) -> AnchorResponse:
         output_path = self.output_dir / f"{request.output_name}{self.output_extension}"
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -493,16 +611,29 @@ class DryRunAnchorService:
         )
 
 
+def _retry_after(response) -> str | None:
+    """Read the provider's own throttling instruction, if it sent one."""
+    headers = getattr(response, "headers", None)
+    if not headers:
+        return None
+    try:
+        value = headers.get("Retry-After") or headers.get("retry-after")
+    except AttributeError:
+        return None
+    return str(value) if value is not None else None
+
+
 def _response_data(response, provider: str) -> dict:
     status_code = getattr(response, "status_code", 200)
     if not isinstance(status_code, int):
         status_code = 200
+    retry_after = _retry_after(response)
     try:
         payload = response.json()
     except (TypeError, ValueError) as exc:
         if status_code >= 400:
             detail = str(getattr(response, "text", "") or "non-JSON error response")[:300]
-            raise AnchorAPIError(provider, status_code, detail) from exc
+            raise AnchorAPIError(provider, status_code, detail, retry_after=retry_after) from exc
         raise AnchorAPIError(provider, 502, "provider returned invalid JSON") from exc
 
     if status_code >= 400:
@@ -520,6 +651,7 @@ def _response_data(response, provider: str) -> dict:
             status_code,
             str(detail)[:300],
             str(error_code or "") or None,
+            retry_after=retry_after,
         )
 
     if not isinstance(payload, dict):

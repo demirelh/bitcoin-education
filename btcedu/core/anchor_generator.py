@@ -616,23 +616,21 @@ def _generate_anchors_from_plan(
     force: bool,
 ) -> AnchorResult:
     """Buy the presenter's clips, once each, and record what was bought."""
+    from btcedu.core.avatar_coordinator import (
+        AvatarCoordinator,
+        SceneReconciliationRequired,
+        SceneRequest,
+        plan_scene_work,
+    )
+    from btcedu.core.avatar_download import ClipExpectation
     from btcedu.core.avatar_jobs import (
-        ACTION_RECONCILE,
-        ACTION_RESUME,
-        ACTION_REUSE,
         compute_job_hash,
         episode_avatar_cost,
         get_job,
-        hold_for_reconciliation,
-        record_completion,
-        record_refusal,
-        record_submission,
-        reserve_scene,
     )
     from btcedu.core.avatar_regeneration import episode_revisions, mark_consumed
     from btcedu.core.scene_planner import anchor_scenes, load_scene_plan, scenes_from_plan
     from btcedu.models.avatar_job import AvatarJobStatus
-    from btcedu.services.anchor_service import AnchorRequest
 
     episode_id = episode.episode_id
     config = _resolve_anchor_config(episode, settings)
@@ -760,108 +758,101 @@ def _generate_anchors_from_plan(
             provider=config.provider,
         )
 
-        entries: list[SceneAnchorEntry] = []
-        total_duration = 0.0
-        submitted = reused = resumed = 0
-
-        for unit in units:
-            content_hash = hashes[unit.clip_id]
-            estimated = service.estimate_cost(unit.expected_duration_seconds)
-            decision = reserve_scene(
-                session,
-                episode_id=episode_id,
+        by_scene = {unit.clip_id: unit for unit in units}
+        scene_requests = [
+            SceneRequest(
                 scene_id=unit.clip_id,
                 chapter_id=unit.chapter_id,
-                content_hash=content_hash,
+                content_hash=hashes[unit.clip_id],
+                audio_path=unit.audio_abs_path,
+                audio_hash=unit.audio_hash,
+                expected_duration_seconds=unit.expected_duration_seconds,
+                estimated_cost_usd=service.estimate_cost(unit.expected_duration_seconds),
+                title=unit.chapter_id,
+            )
+            for unit in units
+        ]
+
+        # Two different budget questions. While planning, each new reservation
+        # is checked against the running total it will add to. While
+        # dispatching, the check is repeated against what the ledger now holds —
+        # reservations from this run included — because minutes may have passed
+        # and another process may have spent in the meantime.
+        planned_spend = 0.0
+
+        def plan_budget_check(next_cost: float) -> None:
+            nonlocal planned_spend
+            _ensure_anchor_budget(
+                session,
+                episode_id,
+                settings,
+                stage_budget=stage_budget,
+                spent_usd=committed + planned_spend,
+                next_cost_usd=next_cost,
+                provider=config.provider,
+            )
+            planned_spend += next_cost
+
+        def dispatch_budget_check(next_cost: float) -> None:
+            del next_cost  # already reserved; the ledger total is the truth now
+            _ensure_anchor_budget(
+                session,
+                episode_id,
+                settings,
+                stage_budget=stage_budget,
+                spent_usd=episode_avatar_cost(session, episode_id),
+                next_cost_usd=0.0,
+                provider=config.provider,
+            )
+
+        try:
+            work_plan = plan_scene_work(
+                session,
+                episode_id=episode_id,
+                requests=scene_requests,
                 provider=config.provider,
                 engine=config.engine,
-                avatar_look_id=look_id,
+                look_id=look_id,
                 output_format=config.output_format,
-                estimated_cost_usd=estimated,
+                outputs_dir=outputs_dir,
+                budget_check=plan_budget_check,
             )
-            job = decision.job
+        except SceneReconciliationRequired as exc:
+            raise AnchorReconciliationRequired(str(exc)) from exc
 
-            if decision.action == ACTION_RECONCILE:
-                raise AnchorReconciliationRequired(
-                    f"Avatar job for scene {unit.clip_id} of {episode_id} has an unknown "
-                    f"outcome ({decision.reason}). It may already have been billed; "
-                    "resolve it with an operator reconciliation before retrying."
-                )
+        coordinator = AvatarCoordinator(
+            session,
+            episode_id=episode_id,
+            provider=config.provider,
+            engine=config.engine,
+            look_id=look_id,
+            output_format=config.output_format,
+            service=service,
+            outputs_dir=outputs_dir,
+            anchor_dir=anchor_dir,
+            max_concurrent_jobs=config.max_concurrent_jobs,
+            poll_interval_seconds=config.poll_interval_seconds,
+            poll_timeout_seconds=config.poll_timeout_seconds,
+            expectation=ClipExpectation(
+                output_format=config.output_format,
+                # A composited studio needs the alpha channel; an opaque clip
+                # would be pasted over the set as a rectangle.
+                require_alpha=config.studio_mode == "composite",
+            ),
+            budget_check=dispatch_budget_check,
+        )
+        run_result = coordinator.run(work_plan)
 
-            request = AnchorRequest(
-                source_image_path=config.source_image,
-                source_image_url=config.source_image_url,
-                audio_path=str(unit.audio_abs_path),
-                chapter_id=unit.chapter_id,
-                clip_id=unit.clip_id,
-                expression=config.expression,
-                expected_duration_seconds=unit.expected_duration_seconds,
-                idempotency_key=content_hash,
-            )
+        entries: list[SceneAnchorEntry] = []
+        total_duration = run_result.total_duration_seconds
+        total_cost = run_result.total_cost_usd
+        submitted = run_result.submitted
+        reused = run_result.reused
+        resumed = run_result.resumed
 
-            if decision.action == ACTION_REUSE:
-                existing_video = outputs_dir / (job.output_path or "")
-                if job.output_path and existing_video.exists():
-                    entries.append(
-                        _entry_from_job(unit, job, config, look_id, existing_video, outputs_dir)
-                    )
-                    total_duration += job.duration_seconds
-                    reused += 1
-                    continue
-                # Paid for, but the file is gone. Fetch it again from the same
-                # job rather than ordering a replacement.
-                decision_action = ACTION_RESUME
-            else:
-                decision_action = decision.action
-
-            if decision_action == ACTION_RESUME:
-                response = service.collect_anchor_video(job.provider_job_id, request)
-                resumed += 1
-            else:
-                _ensure_anchor_budget(
-                    session,
-                    episode_id,
-                    settings,
-                    stage_budget=stage_budget,
-                    spent_usd=committed + total_cost,
-                    next_cost_usd=estimated,
-                    provider=config.provider,
-                )
-                try:
-                    provider_job_id = service.submit_anchor_video(request)
-                except Exception as exc:
-                    if _is_unbilled_refusal(exc):
-                        record_refusal(session, job, str(exc))
-                    else:
-                        hold_for_reconciliation(session, job, str(exc))
-                    raise
-                # Persisted before the long poll: this is the line that turns a
-                # crash from a second invoice into a resumed download.
-                record_submission(session, job, provider_job_id)
-                submitted += 1
-                try:
-                    response = service.collect_anchor_video(provider_job_id, request)
-                except Exception as exc:
-                    hold_for_reconciliation(session, job, str(exc))
-                    raise
-
-            video_path = Path(response.video_path)
-            try:
-                relative_video = video_path.relative_to(outputs_dir)
-            except ValueError as exc:
-                raise ValueError(
-                    f"Anchor provider wrote outside the episode output directory: {video_path}"
-                ) from exc
-
-            record_completion(
-                session,
-                job,
-                output_path=str(relative_video),
-                duration_seconds=response.duration_seconds,
-                cost_usd=response.cost_usd,
-            )
-            total_cost += response.cost_usd
-            total_duration += response.duration_seconds
+        for outcome in run_result.outcomes:
+            unit = by_scene[outcome.scene_id]
+            relative_video = outcome.video_path.relative_to(outputs_dir)
             entries.append(
                 SceneAnchorEntry(
                     scene_id=unit.scene_id,
@@ -873,37 +864,40 @@ def _generate_anchors_from_plan(
                     part_index=unit.part_index,
                     audio_path=unit.audio_rel_path,
                     audio_hash=unit.audio_hash,
-                    content_hash=content_hash,
-                    provider=response.provider,
-                    provider_job_id=response.provider_job_id,
+                    content_hash=hashes[unit.clip_id],
+                    provider=config.provider,
+                    provider_job_id=outcome.provider_job_id,
                     status=AvatarJobStatus.COMPLETED.value,
                     video_path=str(relative_video),
-                    duration_seconds=response.duration_seconds,
-                    size_bytes=response.size_bytes,
-                    cost_usd=response.cost_usd,
-                    output_format=response.output_format,
-                    mime_type=response.mime_type,
+                    duration_seconds=outcome.duration_seconds,
+                    size_bytes=outcome.size_bytes,
+                    cost_usd=outcome.cost_usd,
+                    output_format=outcome.output_format,
+                    mime_type=outcome.mime_type,
                 )
             )
-
+            if outcome.action == "reuse":
+                continue
             session.add(
                 MediaAsset(
                     episode_id=episode_id,
                     asset_type=MediaAssetType.VIDEO,
                     chapter_id=unit.chapter_id,
                     file_path=str(relative_video),
-                    mime_type=response.mime_type,
-                    size_bytes=response.size_bytes,
-                    duration_seconds=response.duration_seconds,
+                    mime_type=outcome.mime_type,
+                    size_bytes=outcome.size_bytes,
+                    duration_seconds=outcome.duration_seconds,
                     meta={
-                        "provider": response.provider,
-                        "provider_job_id": response.provider_job_id,
+                        "provider": config.provider,
+                        "provider_job_id": outcome.provider_job_id,
                         "engine": config.engine,
                         "scene_id": unit.scene_id,
                         "avatar_look_id": look_id,
                     },
                 )
             )
+
+        _require_complete_run(run_result, episode_id)
 
         mark_consumed(session, episode_id, list(revisions))
 
@@ -940,6 +934,49 @@ def _generate_anchors_from_plan(
         session.commit()
         logger.error("Anchor generation failed for %s: %s", episode.episode_id, exc)
         raise
+
+
+def _require_complete_run(run_result, episode_id: str) -> None:
+    """Stop the stage unless every planned presenter clip actually exists.
+
+    Fail-closed by policy: a bulletin missing its moderator is not a bulletin
+    with a gap, it is a bulletin that must not be rendered. Each case is
+    reported separately because the operator's next move differs — a deferred
+    job wants another run, a blocked one wants reconciliation, and an open
+    breaker wants somebody to look at the provider.
+    """
+    if run_result.breaker_blocked:
+        raise AnchorReconciliationRequired(
+            f"Avatar submissions for {episode_id} were stopped by the provider "
+            f"circuit breaker before {len(run_result.breaker_blocked)} scene(s) were "
+            "ordered. Resolve the provider condition and reset the breaker."
+        )
+    if run_result.failures:
+        # An unambiguous refusal is not a reconciliation case: nothing was
+        # bought, and the operator is better served by the provider's own error
+        # than by a wrapper that hides it.
+        unambiguous = [f for f in run_result.failures if not f.ambiguous and f.cause is not None]
+        if len(unambiguous) == len(run_result.failures):
+            raise unambiguous[0].cause
+        details = "; ".join(
+            f"{failure.scene_id}: {failure.message}" for failure in run_result.failures[:5]
+        )
+        raise AnchorReconciliationRequired(
+            f"{len(run_result.failures)} presenter clip(s) of {episode_id} did not "
+            f"complete: {details}"
+        )
+    if run_result.deferred:
+        scenes = ", ".join(item.scene_id for item in run_result.deferred)
+        raise TimeoutError(
+            f"Presenter clips for {episode_id} are still generating at the provider "
+            f"({scenes}). They are recorded and will be resumed; rerun the stage "
+            "rather than reordering them."
+        )
+    if run_result.interrupted:
+        raise AnchorReconciliationRequired(
+            f"Avatar generation for {episode_id} was interrupted before every scene "
+            "was ordered. The jobs already submitted are recorded; rerun to resume."
+        )
 
 
 def _is_unbilled_refusal(exc: Exception) -> bool:
@@ -1267,6 +1304,8 @@ def _create_anchor_service(
             resolution=config.resolution,
             aspect_ratio=config.aspect_ratio,
             cost_per_second_usd=config.cost_per_second_usd,
+            request_timeout_seconds=config.request_timeout_seconds,
+            poll_interval_seconds=config.poll_interval_seconds,
         )
 
     raise ValueError(f"Unsupported anchor provider: {config.provider!r}")

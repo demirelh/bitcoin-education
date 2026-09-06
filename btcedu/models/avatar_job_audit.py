@@ -41,6 +41,8 @@ class AvatarAuditAction(str, enum.Enum):
     ATTACH_JOB_ID = "attach_job_id"
     # An episode was allowed to fall back to the old voice-over presentation.
     VOICE_OVER_OVERRIDE = "voice_over_override"
+    # A provider-wide circuit breaker was closed by hand.
+    BREAKER_RESET = "breaker_reset"
 
 
 class AvatarJobAudit(Base):

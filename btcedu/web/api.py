@@ -4800,7 +4800,19 @@ def get_avatar_state(episode_id: str):
     state, error = _avatar_state(episode_id)
     if error is not None:
         return error
-    return jsonify(state.to_dict())
+
+    payload = state.to_dict()
+    config = _anchor_config_for(episode_id)
+    if config is not None:
+        from btcedu.core.avatar_runtime import runtime_snapshot
+
+        payload["runtime"] = runtime_snapshot(
+            _get_session(),
+            episode_id,
+            provider=config.provider,
+            max_concurrent_jobs=config.max_concurrent_jobs,
+        )
+    return jsonify(payload)
 
 
 @api_bp.route("/episodes/<episode_id>/avatar/scenes/<scene_id>/preview")

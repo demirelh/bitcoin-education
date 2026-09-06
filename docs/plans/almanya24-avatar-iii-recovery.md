@@ -143,9 +143,9 @@ Am 6. September 2026 in dieser Wiederherstellungssitzung ergänzt (WP-1):
 - [~] **Kostenprüfung Avatar**: Der Scene-Pfad prüft szenenweise gegen
   `max_cost_usd` und `episode_avatar_cost()`. Der Kapitelpfad kennt weiterhin
   nur Kapitel — bewusst unverändert, damit D-ID nicht betroffen ist.
-- [~] **WebM**: Der Service kann WebM anfordern und herunterladen; es gibt noch
-  keinen Compositor, der Alpha über ein Studio legt. Aktiv nutzbar ist damit nur
-  der MP4-Zweig (Anforderung 8 halb erfüllt).
+- [~] **WebM**: Der Compositor legt jetzt Alpha-WebM über das Studio (WP-3).
+  Offen bleibt die Renderer-Integration (WP-4) und das echte Studio-Artwork aus
+  Phase 1 — bis dahin ist die Bereitschaftsprüfung bewusst rot.
 
 ## Noch offen
 
@@ -215,22 +215,104 @@ Innerhalb von WP-2 bewusst **nicht** erledigt (verschoben):
 - [ ] Parallelität `max_concurrent_jobs`, 429-/5xx-Backoff (eigene Einheit).
 - [ ] `btcedu avatar-reconcile` als Operator-Kommando für `resolve_job()`.
 
-### WP-3 — Studio-Manifest und Compositor *(nächstes Paket)*
+### WP-3 — Studio-Manifest, Validierung und FFmpeg-Compositing (6. September 2026)
 
-- [ ] `assets/almanya24/studio/manifest.json` (Schema-Version 1): Studioplatte,
-      Display-Zone `main_wall`, Vordergrundebenen, Safe Areas.
-- [ ] Loader + Validator, fail-closed bei fehlender oder falscher Version.
-- [ ] ffmpeg-Compositing: Alpha-WebM über Studioplatte, Themenbild in die
-      Display-Zone (Anforderungen 4, 5, 8).
-- [ ] MP4-Fallback: Provider liefert das Studio bereits gebacken.
-- [ ] Reporter-Szenen bleiben vollflächige Medien aus der bestehenden Pipeline.
+Umgesetzt in `btcedu/core/studio_manifest.py`, `btcedu/services/studio_compositor.py`,
+`btcedu/core/studio_media.py`, `assets/almanya24/studio/`.
 
-### WP-4 — Renderer auf den Scene-Plan umstellen
+- [x] Kanonisches JSON-Schema (Schema-Version 1): Schema-/Studio-/Asset-Version,
+      Auflösung, FPS, Studiohintergrund, Intro-/Einschwenkasset, Studioloop,
+      Display-Zone mit optionalen vier Eckpunkten, Fit-Modus, Fokuspunkt,
+      Presenter-Position und -Skalierung, Shadow-Layer, Vordergrund/Desk-Layer,
+      Logo-Zone, Lower-Third-/Ticker-/Untertitel-Safe-Areas, Alpha-Modus,
+      opaker MP4-Fallback, Hashes und Provenienz.
+- [x] Strikter Loader mit Pfadeinhausung: Assetpfade müssen relativ sein, dem
+      Muster `^[A-Za-z0-9][A-Za-z0-9._/-]*$` genügen und **nach**
+      Symlinkauflösung im Studioverzeichnis liegen. Ein Manifest ist eine
+      Datei, also ein nicht vertrauenswürdiger Eingabewert.
+- [x] Geometrievalidierung: die Display-Zone darf Lower Third, Ticker und
+      Untertitel nicht überlappen — sonst verdeckt das Themenbild die Schrift.
+- [x] Fail-closed im `opaque_mp4`-Modus: ohne `presenter_free`-Zone **und** ohne
+      `occlusion_mask` lädt das Manifest nicht. Dieselbe Prüfung wiederholt der
+      Compositor, damit ein im Code gebautes Manifest sie nicht umgeht.
+- [x] `assets/almanya24/studio/manifest.example.json` mit Platzhalterpfaden und
+      `placeholder: true`. Ein produktives `manifest.json` existiert bewusst
+      **nicht**; ein Test hält das fest.
+- [x] `studio_readiness_problems()` / `require_studio_ready()`: fehlende, leere
+      oder digest-abweichende Assets und Platzhalterflags blockieren.
+- [x] `studio_content_hash()` ohne szenenbezogene Eingaben — ein neu gestrichenes
+      Studio darf niemals wie ein Grund aussehen, einen HeyGen-Clip neu zu kaufen.
+- [x] Alpha-Compositor `composite_studio_scene()`: transparentes WebM über
+      Studiohintergrund oder -loop, Themenmedium in den Monitor (Maskierung,
+      optional Perspektivtransformation), Avatar-Skalierung und -Positionierung,
+      optionaler Schatten, optionaler Desk-Layer, Ausgabe 1920×1080, 25 fps,
+      H.264/yuv420p.
+- [x] Alphaprüfung vor dem Rendern: `probe_has_alpha()` akzeptiert ein
+      Alpha-Pixelformat **oder** das Stream-Tag `alpha_mode=1` — echtes
+      HeyGen-VP9-WebM trägt Alpha außerhalb des Pixelformats, eine reine
+      pix_fmt-Prüfung würde jede echte Lieferung ablehnen. Ein opakes Video wird
+      im Alpha-Modus abgelehnt, nie stillschweigend übernommen.
+- [x] Avatar-Tonspur wird verworfen: nur die Narration wird `-map`ped; die
+      Ausgabeprüfung besteht auf genau einer Audiospur.
+- [x] Dauer exakt an der TTS-Dauer: `-t <Narrationsdauer>`, kein `-shortest`;
+      ein zu kurzer Avatarclip wird per `tpad=stop_mode=clone` gehalten, damit
+      das letzte Wort nicht abgeschnitten wird.
+- [x] Atomische Ausgabe über `.<stem>.part<suffix>` — der echte Suffix muss
+      bleiben, weil ffmpeg den Muxer daraus wählt; der führende Punkt hält die
+      Teildatei aus Medien-Globs heraus. Beschädigte, leere oder in Auflösung
+      beziehungsweise Dauer abweichende Ergebnisse werden verworfen.
+- [x] Keine Shell-Injection: `subprocess.run` bekommt immer eine Liste, nie
+      `shell=True`; in den Filtergraph gelangen ausschließlich Zahlen, jede über
+      `_num()`, das nicht-endliche Werte ablehnt. Pfade erscheinen nur als
+      `-i`-Argumente.
+- [x] Perspektivtransformation nur, wenn das lokale ffmpeg den Filter kennt
+      (`has_perspective_filter()`); sonst Rechteck-Overlay. `used_perspective`
+      protokolliert, was tatsächlich passiert ist.
+- [x] Dynamischer Studiomonitor ohne zweite Mediengenerierung:
+      `resolve_scene_media()` nimmt zuerst `scene.background_asset` (der Planer
+      setzt es bereits aus dem Image-Manifest), dann das Kapitelmedium aus
+      Video-, Wetter- und Image-Manifest, dann die neutrale Fallbackgrafik des
+      Studios. Fehlt auch diese, ist es ein `DisplayMediaUnavailableError` und
+      das Studio gilt als nicht bereit.
+- [x] Dasselbe redaktionelle Medium in beiden Darstellungsarten:
+      `ResolvedMedia.for_monitor()` und `.for_fullscreen()` liefern dieselbe
+      Datei mit unterschiedlicher Rahmung (`cover`/`contain`/Fokuspunkt).
+- [x] `composite_content_hash()` trennt Studio, Szenenplan, Themenmedium,
+      Avatarclip, Look, Audio, Compositingparameter und Rendererversion, damit
+      die Invalidierungsregeln gelten: Studioänderung invalidiert Compositing
+      und Render, nicht HeyGen; Themenmediumänderung nur die Szene und den
+      Render; reine Overlayänderung nur den Render; eine Reporteränderung
+      erzeugt gar keinen HeyGen-Auftrag.
+- [x] `tests/test_studio_manifest.py` (57), `tests/test_studio_compositor.py`
+      (42, mit synthetischen Fixtures und echtem ffmpeg), `tests/test_studio_media.py`
+      (31). Kein Provideraufruf, keine externen Kosten.
+
+Bewusst **nicht** in WP-3 vorgezogen (gehört zu WP-4): die Renderer- und
+Remote-Render-Integration auf Szenenebene. Der Compositor ist als isolierter,
+für sich testbarer Dienst gebaut; ihn und den Renderer im selben Paket
+umzustellen hätte zwei große Änderungen ununterscheidbar vermischt.
+
+**Betriebshinweis:** Das ffmpeg dieser Maschine (7.1.4) kann Alpha-VP9 zwar
+dekodieren, aber nicht *enkodieren* — `-pix_fmt yuva420p` fällt still auf
+`yuv420p` zurück. Für Alpha-Fixtures nutzen die Tests deshalb `qtrle/argb` in
+einer MOV-Datei. Für die Produktion ist das unkritisch, weil Alpha von HeyGen
+kommt und nur gelesen wird.
+
+### WP-4 — Renderer auf den Scene-Plan umstellen *(nächstes Paket)*
 
 - [ ] `render_video()` schneidet nach `scene_plan.json` statt nach eigener
       Blockaufteilung; Original-TTS bleibt die Audioquelle (Anforderung 9).
-- [ ] `render_settings`-Hash um den Plan-Hash erweitern.
-- [ ] Remote-Render-Paket: Plan als Pflichteingabe prüfen.
+- [ ] Anchor-Szenen → `composite_studio_scene()`; Reporter-Szenen → bestehender
+      Vollbild-/B-Roll-Pfad; Wetter → bestehender Wetterrenderer;
+      Opening/Closing → Studiotemplates.
+- [ ] Kapitel-, Overlay-, Timeline-, Untertitel- und YouTube-Kapitelmechanismen
+      unverändert erhalten; der Kapitelpfad ohne `scene_plan.json` bleibt, wie
+      er ist, ebenso D-ID und `bitcoin_podcast`.
+- [ ] `segments: []` im Anchor-Manifest erst ablösen, wenn der neue Renderer
+      einen dokumentierten Vertrag hat.
+- [ ] `render_settings`-Hash um Plan-, Studio- und Compositing-Hash erweitern.
+- [ ] Remote-Render-Paket: Plan, Studio-Assets und Szenenartefakte übertragen
+      oder deterministisch referenzieren, ohne große Medien zu duplizieren.
 
 ### WP-5 — Betriebswerkzeuge und Gates
 
@@ -252,6 +334,8 @@ Durchgeführt am 6. September 2026:
 - Volle Suite im Arbeitsverzeichnis nach WP-1: **2865 passed, 2 failed**.
 - Volle Suite im Arbeitsverzeichnis nach WP-2: **2886 passed, 3 failed**
   (2 vorbestehende Fehlschläge + 1 bekannter Timing-Flake, siehe unten).
+- Volle Suite im Arbeitsverzeichnis nach WP-3: **3017 passed, 2 failed** —
+  ausschließlich die beiden unten dokumentierten Baselineprobleme.
 - Volle Suite gegen einen sauberen `HEAD`-Worktree (nur zum Vergleich angelegt
   und wieder entfernt, das Arbeitsverzeichnis blieb unangetastet):
   **2788 passed, 1 failed**.
@@ -303,3 +387,5 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-06 | WP-1 | Avatar-Job-Register, Migration 016, 35 Tests, Ruff grün |
 | 2026-09-06 | Checkpoint | Lokaler Commit `0ec0d5b` (Sceneplan + Register), nicht gepusht |
 | 2026-09-06 | WP-2 | Anchor-Stage auf Scene-Plan und Register, 22 Tests, Ruff grün |
+| 2026-09-06 | Checkpoint | Lokaler Commit `684d639` (WP-2), nicht gepusht |
+| 2026-09-06 | WP-3 | Studio-Manifest, Compositor, Medienauflösung, 130 Tests, Ruff grün; Suite 3017 grün / 2 Baselinefehler |

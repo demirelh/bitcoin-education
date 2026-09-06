@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "studio_version": "0.0.0-placeholder",
+  "asset_version": "0.0.0-placeholder",
+  "name": "ALMANYA24 Studio (placeholder)",
+  "placeholder": true,
+
+  "width": 1920,
+  "height": 1080,
+  "fps": 25,
+
+  "alpha_mode": "alpha_webm",
+
+  "background": {
+    "path": "plate/studio_wide.png",
+    "kind": "image",
+    "placeholder": true
+  },
+  "intro_asset": {
+    "path": "plate/studio_intro_swing.mp4",
+    "kind": "video",
+    "placeholder": true
+  },
+  "loop_asset": {
+    "path": "plate/studio_loop.mp4",
+    "kind": "video",
+    "placeholder": true
+  },
+
+  "display_zone": {
+    "zone_id": "main_wall",
+    "rect": { "x": 960, "y": 140, "width": 820, "height": 461 },
+    "fit_mode": "cover",
+    "focus_point": [0.5, 0.45],
+    "corners": [
+      [960, 140],
+      [1780, 152],
+      [1780, 601],
+      [960, 589]
+    ],
+    "presenter_free": true,
+    "z_order": 10
+  },
+
+  "presenter": {
+    "anchor_x": 620,
+    "anchor_y": 1080,
+    "scale": 1.0,
+    "z_order": 20
+  },
+
+  "shadow_layer": {
+    "path": "layers/presenter_shadow.png",
+    "kind": "image",
+    "placeholder": true
+  },
+  "foreground_layer": {
+    "path": "layers/news_desk.png",
+    "kind": "image",
+    "placeholder": true
+  },
+  "occlusion_mask": null,
+
+  "fallback_display_media": {
+    "path": "fallback/neutral_topic_card.png",
+    "kind": "image",
+    "placeholder": true
+  },
+
+  "logo_zone": { "x": 1660, "y": 60, "width": 200, "height": 80 },
+
+  "safe_areas": {
+    "lower_third": { "x": 120, "y": 780, "width": 1200, "height": 160 },
+    "ticker": { "x": 0, "y": 960, "width": 1920, "height": 80 },
+    "subtitle": { "x": 240, "y": 860, "width": 1440, "height": 96 }
+  },
+
+  "provenance": {
+    "source": "placeholder, not produced yet",
+    "phase": "ALMANYA24 asset phase 1 outstanding",
+    "note": "Every path in this file is a name, not a file. Readiness fails on purpose.",
+    "rights": "unresolved"
+  }
+}

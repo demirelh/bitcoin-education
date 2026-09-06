@@ -91,6 +91,12 @@ class AnchorConfig:
     looks: tuple[PresenterLook, ...] = ()
     studio: StudioConfig = field(default_factory=StudioConfig)
     rights: RightsConfig = field(default_factory=RightsConfig)
+    #: Whether the presenter clips need an explicit human approval before the
+    #: renderer may use them. Its own switch rather than a reuse of
+    #: ``auto_approve_reviews``: a profile that runs unattended for editorial
+    #: gates may still want a person to look at the face on screen, and the two
+    #: decisions have nothing to do with each other.
+    review_required: bool = False
 
     @property
     def active_looks(self) -> tuple[PresenterLook, ...]:
@@ -345,4 +351,5 @@ def _resolve_heygen(profile_config: dict, settings: Settings, max_cost_usd: floa
         looks=parse_looks(profile_config.get("looks")),
         studio=parse_studio(profile_config.get("studio")),
         rights=parse_rights(profile_config.get("rights")),
+        review_required=_as_bool(profile_config.get("review_required"), False),
     )

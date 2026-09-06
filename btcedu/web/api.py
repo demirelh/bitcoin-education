@@ -1267,6 +1267,7 @@ _REVIEW_GATE_LABELS = {
     "translate": ("review_gate_translate", "Translation Review"),
     "adapt": ("review_gate_2", "Adaptation Review"),
     "stock_images": ("review_gate_stock", "Stock Image Review"),
+    "anchor": ("review_gate_anchor", "Avatar Review"),
     "render": ("review_gate_3", "Video Review"),
 }
 
@@ -1275,6 +1276,7 @@ _REVIEW_GATE_STATUS_MAP = {
     "corrected": "correct",
     "adapted": "adapt",
     "chapterized": "stock_images",
+    "anchor_generated": "anchor",
     "rendered": "render",
 }
 
@@ -1411,6 +1413,7 @@ _STAGE_LABELS = {
     "tts": "TTS",
     "sceneplan": "Scene Plan",
     "anchorgen": "D-ID Anchor",
+    "review_gate_anchor": "Review Avatar",
     "render": "Render",
     "review_gate_3": "Review 3",
     "publish": "Publish",
@@ -4738,3 +4741,357 @@ def get_weather_chapter_detail(episode_id: str, chapter_id: str):
         return jsonify({"error": "Chapter is not a weather story"}), 404
 
     return jsonify(detail)
+
+
+# ---------------------------------------------------------------------------
+# ALMANYA24 avatar stage: readiness, presenter clips and the avatar review gate
+# ---------------------------------------------------------------------------
+
+
+def _avatar_state(episode_id: str):
+    """Collect the avatar review state for one episode, or an error response."""
+    from btcedu.core.anchor_review import collect_state
+
+    session = _get_session()
+    settings = _get_settings()
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    if episode is None:
+        return None, (jsonify({"error": "Episode not found"}), 404)
+    return collect_state(session, episode_id, settings), None
+
+
+def _anchor_config_for(episode_id: str):
+    """The resolved avatar configuration of this episode's profile, or None."""
+    from btcedu.core.anchor_config import resolve_anchor_config
+
+    session = _get_session()
+    settings = _get_settings()
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    if episode is None:
+        return None
+    profile = getattr(episode, "content_profile", None) or settings.default_content_profile
+    try:
+        return resolve_anchor_config(profile, settings)
+    except Exception as exc:  # noqa: BLE001 - a bad profile is a 400, not a crash
+        logger.warning("Anchor config unavailable for %s: %s", episode_id, exc)
+        return None
+
+
+def _operator_ref() -> str:
+    """A non-confidential handle for the audit trail.
+
+    The dashboard has no login — it sits behind the reverse proxy — so the best
+    available reference is whatever the proxy forwarded plus a caller-supplied
+    label. Never an address, never a credential.
+    """
+    payload = request.get_json(silent=True) or {}
+    label = str(payload.get("operator_ref") or "").strip()[:64]
+    forwarded = str(request.headers.get("X-Forwarded-User") or "").strip()[:64]
+    return label or forwarded or "dashboard"
+
+
+@api_bp.route("/episodes/<episode_id>/avatar")
+def get_avatar_state(episode_id: str):
+    """Everything an operator needs before signing off the presenter clips."""
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    state, error = _avatar_state(episode_id)
+    if error is not None:
+        return error
+    return jsonify(state.to_dict())
+
+
+@api_bp.route("/episodes/<episode_id>/avatar/scenes/<scene_id>/preview")
+def get_avatar_preview(episode_id: str, scene_id: str):
+    """Stream one registered presenter clip.
+
+    Only clips the anchor manifest actually lists are served, and only through
+    the shared episode-path validation, so no request parameter can name a file
+    of its own choosing. The provider's own download URL is never handed to the
+    browser.
+    """
+    from flask import send_file
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id or not scene_id:
+        return jsonify({"error": "Invalid parameters"}), 400
+
+    state, error = _avatar_state(episode_id)
+    if error is not None:
+        return error
+
+    scene = next((s for s in state.scenes if s.scene_id == scene_id), None)
+    if scene is None:
+        return jsonify({"error": "Unknown presenter scene"}), 404
+    if not scene.video_path:
+        return jsonify({"error": "No clip has been generated for this scene yet"}), 404
+
+    settings = _get_settings()
+    parts = Path(scene.video_path).parts
+    path = _validate_episode_path(episode_id, Path(settings.outputs_dir), *parts)
+    if path is None or not path.exists():
+        return jsonify({"error": "Clip file is missing"}), 404
+
+    mimetype = scene.mime_type or (
+        "video/webm" if path.suffix.lower() == ".webm" else "video/mp4"
+    )
+    if mimetype not in ("video/webm", "video/mp4"):
+        return jsonify({"error": "Unsupported clip type"}), 415
+
+    response = send_file(str(path), mimetype=mimetype, conditional=True)
+    response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    # The raw clip has no studio behind it yet; label it so nobody mistakes it
+    # for the finished broadcast.
+    response.headers["X-Btcedu-Preview-Kind"] = "avatar-raw"
+    return response
+
+
+@api_bp.route("/episodes/<episode_id>/avatar/approve", methods=["POST"])
+def approve_avatar_stage(episode_id: str):
+    """Sign off the presenter clips exactly as they are now."""
+    from btcedu.core.anchor_review import (
+        AnchorReviewError,
+        StaleAnchorReviewError,
+        approve,
+    )
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    session = _get_session()
+    settings = _get_settings()
+    try:
+        approve(
+            session,
+            episode_id,
+            settings,
+            notes=str(payload.get("notes") or ""),
+            expected_review_hash=str(payload.get("review_hash") or ""),
+            operator_ref=_operator_ref(),
+        )
+    except StaleAnchorReviewError as exc:
+        session.rollback()
+        return jsonify({"error": str(exc), "stale": True}), 409
+    except AnchorReviewError as exc:
+        session.rollback()
+        return jsonify({"error": str(exc)}), 400
+
+    state, error = _avatar_state(episode_id)
+    if error is not None:
+        return error
+    return jsonify({"status": "approved", "avatar": state.to_dict()})
+
+
+@api_bp.route("/episodes/<episode_id>/avatar/reject", methods=["POST"])
+def reject_avatar_stage(episode_id: str):
+    """Refuse the presenter clips. The render stays blocked until they change."""
+    from btcedu.core.anchor_review import (
+        AnchorReviewError,
+        StaleAnchorReviewError,
+        reject,
+    )
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    session = _get_session()
+    settings = _get_settings()
+    try:
+        reject(
+            session,
+            episode_id,
+            settings,
+            notes=str(payload.get("notes") or ""),
+            expected_review_hash=str(payload.get("review_hash") or ""),
+            operator_ref=_operator_ref(),
+        )
+    except StaleAnchorReviewError as exc:
+        session.rollback()
+        return jsonify({"error": str(exc), "stale": True}), 409
+    except AnchorReviewError as exc:
+        session.rollback()
+        return jsonify({"error": str(exc)}), 400
+
+    state, error = _avatar_state(episode_id)
+    if error is not None:
+        return error
+    return jsonify({"status": "rejected", "avatar": state.to_dict()})
+
+
+@api_bp.route("/episodes/<episode_id>/avatar/scenes/<scene_id>/flag", methods=["POST"])
+def flag_avatar_scene(episode_id: str, scene_id: str):
+    """Complain about one scene without deciding the whole stage."""
+    from btcedu.core.anchor_review import AnchorReviewError, clear_scene_flag, flag_scene
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id or not scene_id:
+        return jsonify({"error": "Invalid parameters"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    session = _get_session()
+    settings = _get_settings()
+
+    if payload.get("clear"):
+        clear_scene_flag(session, episode_id, scene_id=scene_id)
+        state, error = _avatar_state(episode_id)
+        return error or jsonify({"status": "cleared", "avatar": state.to_dict()})
+
+    try:
+        flag_scene(
+            session,
+            episode_id,
+            settings,
+            scene_id=scene_id,
+            note=str(payload.get("note") or ""),
+            operator_ref=_operator_ref(),
+        )
+    except AnchorReviewError as exc:
+        session.rollback()
+        return jsonify({"error": str(exc)}), 400
+
+    state, error = _avatar_state(episode_id)
+    if error is not None:
+        return error
+    return jsonify({"status": "flagged", "avatar": state.to_dict()})
+
+
+@api_bp.route("/episodes/<episode_id>/avatar/scenes/<scene_id>/regenerate", methods=["POST"])
+def regenerate_avatar_scene(episode_id: str, scene_id: str):
+    """Prepare or confirm a deliberate, paid re-shoot of one scene.
+
+    Two steps on purpose. ``prepare`` only quotes what a new clip would cost;
+    nothing is ordered until a second call confirms the very revision the
+    operator was shown. No provider is contacted from a web request — the
+    confirmed request is picked up by the next anchorgen run.
+    """
+    from btcedu.core.avatar_regeneration import RegenerationError, confirm, prepare
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id or not scene_id:
+        return jsonify({"error": "Invalid parameters"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    session = _get_session()
+    action = str(payload.get("action") or "prepare").strip()
+
+    state, error = _avatar_state(episode_id)
+    if error is not None:
+        return error
+    if not state.enabled:
+        return jsonify({"error": state.reason or "Avatar operation is not active"}), 400
+
+    try:
+        if action == "prepare":
+            quote = prepare(
+                session,
+                episode_id,
+                scene_id,
+                reason=str(payload.get("reason") or ""),
+                requested_by_ref=_operator_ref(),
+                cost_per_second_usd=state.cost_per_second_usd,
+            )
+            return jsonify({"status": "prepared", "quote": quote.to_dict()})
+        if action == "confirm":
+            revision = payload.get("revision")
+            if revision is None:
+                return jsonify({"error": "A confirmation must name the revision it saw"}), 400
+            record = confirm(
+                session,
+                episode_id,
+                scene_id,
+                revision=int(revision),
+                confirmed_by_ref=_operator_ref(),
+            )
+            return jsonify(
+                {
+                    "status": "confirmed",
+                    "scene_id": scene_id,
+                    "revision": int(record.revision),
+                    "request_id": int(record.id),
+                }
+            )
+    except RegenerationError as exc:
+        session.rollback()
+        return jsonify({"error": str(exc)}), 400
+    except (TypeError, ValueError) as exc:
+        session.rollback()
+        return jsonify({"error": f"Invalid revision: {exc}"}), 400
+
+    return jsonify({"error": f"Unknown action {action!r}"}), 400
+
+
+@api_bp.route("/episodes/<episode_id>/avatar/look", methods=["POST"])
+def change_avatar_look(episode_id: str):
+    """Swap the outfit — only while it is still free to do so.
+
+    Once a HeyGen job exists, the assigned look is what was paid for. Changing
+    it then is a full rebuild, so it needs an explicit confirmation and it
+    invalidates every avatar approval and rendered artifact.
+    """
+    from btcedu.core.anchor_review import collect_state
+    from btcedu.core.presenter_assignment import NoActiveLookError, reassign_look
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    look_name = str(payload.get("look_name") or payload.get("look_id") or "").strip()
+    if not look_name:
+        return jsonify({"error": "look_name is required"}), 400
+
+    session = _get_session()
+    settings = _get_settings()
+    state = collect_state(session, episode_id, settings)
+    if not state.enabled:
+        return jsonify({"error": state.reason or "Avatar operation is not active"}), 400
+
+    from btcedu.models.avatar_job import AvatarJob
+
+    existing = session.query(AvatarJob).filter(AvatarJob.episode_id == episode_id).count()
+    if existing and not payload.get("confirm_rebuild"):
+        return (
+            jsonify(
+                {
+                    "error": (
+                        f"{existing} presenter job(s) already exist for this episode. "
+                        "Changing the outfit now discards paid clips and needs an "
+                        "explicit rebuild confirmation."
+                    ),
+                    "requires_confirmation": True,
+                    "existing_jobs": existing,
+                    "spent_usd": round(state.actual_cost_usd, 6),
+                }
+            ),
+            409,
+        )
+
+    try:
+        config = _anchor_config_for(episode_id)
+        if config is None:
+            return jsonify({"error": "No avatar configuration for this profile"}), 400
+        reassign_look(
+            session,
+            episode_id,
+            config,
+            settings.outputs_dir,
+            look_name=look_name,
+            confirmed=True,
+        )
+    except (NoActiveLookError, ValueError, LookupError) as exc:
+        session.rollback()
+        return jsonify({"error": str(exc)}), 400
+
+    from btcedu.core.anchor_review import REVIEW_STAGE
+    from btcedu.core.reviewer import supersede_pending_reviews
+
+    supersede_pending_reviews(session, episode_id, REVIEW_STAGE)
+
+    state = collect_state(session, episode_id, settings)
+    return jsonify({"status": "reassigned", "avatar": state.to_dict()})

@@ -629,6 +629,7 @@ def _generate_anchors_from_plan(
         record_submission,
         reserve_scene,
     )
+    from btcedu.core.avatar_regeneration import episode_revisions, mark_consumed
     from btcedu.core.scene_planner import anchor_scenes, load_scene_plan, scenes_from_plan
     from btcedu.models.avatar_job import AvatarJobStatus
     from btcedu.services.anchor_service import AnchorRequest
@@ -660,6 +661,10 @@ def _generate_anchors_from_plan(
         )
 
     look_id = _resolve_look(session, episode_id, config, plan, settings.outputs_dir)
+    # A confirmed regeneration is the only thing that makes an already paid
+    # scene different work; it changes the content hash rather than sneaking
+    # a second job past the ledger's uniqueness rule.
+    revisions = episode_revisions(session, episode_id)
     anchor_dir.mkdir(parents=True, exist_ok=True)
     service = _create_anchor_service(config, settings, anchor_dir, avatar_id=look_id)
 
@@ -674,6 +679,7 @@ def _generate_anchors_from_plan(
             output_format=config.output_format,
             resolution=config.resolution,
             aspect_ratio=config.aspect_ratio,
+            generation_revision=revisions.get(unit.clip_id, 0),
         )
         for unit in units
     }
@@ -898,6 +904,8 @@ def _generate_anchors_from_plan(
                     },
                 )
             )
+
+        mark_consumed(session, episode_id, list(revisions))
 
         return _finish_scene_anchors(
             session,

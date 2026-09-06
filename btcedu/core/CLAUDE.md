@@ -42,7 +42,10 @@ Each v2 stage module follows the same pattern:
 - `weather/` — deterministic Tagesschau weather subsystem: `detector.py` (is this a weather chapter?), `extractor.py` (claims from approved narration), `scene_planner.py`, `renderer.py` (HTML/SVG → headless Chromium → PNG/MP4), `validator.py` (claims must be narration-backed), `models.py`, `lexicon.py`, `dates.py` (absolute Turkish date labels), `cities.py` (map projection), `templates/`, `assets/`
 - `image_generator.py` — per-chapter pictures. On a provider error the chapter is retried with the profile's `fallback_provider`; if it still has no file the stage **fails** instead of writing a `*_failed.png` entry. Manifest and provenance are written first, so a rerun regenerates only the missing chapters (`_chapters_needing_regen`).
 - `stock_images.py` (60KB) — Pexels stock search, intent extraction, ranking, candidate finalization
-- `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro cards, ticker
+- `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro
+  cards, ticker. A studio scene plan is ignored while `anchor_enabled=false`,
+  preserving the chapter renderer without requiring studio or avatar artifacts;
+  reporter-only scene plans remain valid.
 - `frame_editor.py` — Gemini 2.0 Flash frame editing for tagesschau episodes (translates German text overlays to Turkish)
 - `tts.py` — fresh per-part ElevenLabs synthesis (no reusable take cache),
   750-character provider chunks, −15 LUFS normalization before quality checks,

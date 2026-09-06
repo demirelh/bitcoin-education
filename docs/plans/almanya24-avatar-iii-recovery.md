@@ -327,6 +327,11 @@ Neu: `btcedu/core/scene_renderer.py`. Geändert: `btcedu/core/renderer.py`,
       steht vor `use_beats`. Ohne Plan ist der Kapitelpfad Byte-für-Byte
       derselbe, weil `scene_hash_inputs()` ohne Plan `None` liefert und der
       Schlüssel `"scenes"` dann gar nicht erst in den Content-Hash kommt.
+- [x] Enthält ein gespeicherter Plan Studio-Szenen, während
+      `anchor_enabled=false` ist, ignoriert der Renderer den Plan einschließlich
+      seines Hash-Beitrags und verwendet den bestehenden Kapitelpfad. Dadurch
+      benötigen deaktivierte Anchor weder Studio-Manifest noch Avatar-Clips;
+      reine Reporter-Pläne bleiben weiterhin nutzbar.
 - [x] Anchor-Szenen → `composite_studio_scene()` in zwei Durchgängen: erst das
       Studio (Alpha, Monitor, Desk), dann der bestehende `create_video_segment()`
       für Overlays, Ticker und Fades. Das verhindert eine zweite Renderpipeline.
@@ -481,18 +486,113 @@ schließt, dessen Ausgang die Pipeline sich bewusst weigert zu raten.
 **Dokumentation**: `docs/anchor-readiness.md` (CLI-Hilfe, Bereichstabelle,
 Exitcodes, JSON-Beispiel, Entscheidungstabelle und die Regeln, die Geld kosten).
 
-### WP-5B — Dashboard, Vorschau und Avatar-Review-Gate *(nächstes Paket)*
+### WP-5B — Dashboard, Vorschau und Avatar-Review-Gate (6. September 2026)
 
-- [ ] Avatar-Szenenvorschau im Dashboard, Review-Gate für Moderatorinnenclips.
-- [ ] Sichtbare Bedienung des Voice-over-Overrides (Datenmodell und Gate stehen
-      bereits, bewusst ohne Bedienoberfläche).
-- [ ] Anzeige ungeklärter Jobs und der Readiness-Befunde.
+Der Betreiber kann die Moderatorinnenclips jetzt *vor* dem teuren Render sehen
+und freigeben — und zwar gebunden an genau die Artefakte, die er gesehen hat.
+
+**Pipeline-Gate** (`core/anchor_review.py`, `core/pipeline.py`)
+
+- [x] Neue Stage `review_gate_anchor` zwischen `anchorgen` und `render`, in
+      `_V2_STAGES` und `_V2_ONLY_STAGES`; Stagezahl 21 → 22.
+- [x] `gate_applies(config, settings)` — aktiv nur bei `anchor_enabled` **und**
+      `anchor.review_required`. Kein Gate für `bitcoin_podcast`, für den
+      D-ID-Pfad, ohne Szenenplan oder ohne Anchor-Szenen.
+- [x] `auto_approve_reviews` überspringt dieses Gate bewusst **nicht**; die
+      Freigabe hängt an der eigenen Profiloption `anchor.review_required`
+      (ALMANYA24: `true`).
+- [x] Ablehnung stoppt fail-closed; `renderer._require_anchor_approval()`
+      schließt zusätzlich den direkten `btcedu render`-Aufruf.
+- [x] `review_gate_3` bleibt unverändert zusätzlich erforderlich.
+
+**Artefaktbindung über ein Digest-Sidecar** (`anchor/review_digest.json`)
+
+`reviewer.py` bindet Freigaben an Datei-*Bytes*; ein Job, der nach
+`reconcile_required` wandert, ändert aber nur eine DB-Zeile. Deshalb schreibt
+`collect_state()` ein Sidecar, das genau das enthält, worüber entschieden wird:
+geplante Anchor-Szenen, Presenter-Zuweisung, Manifestidentität, Clip-Hashes,
+TTS-Speaker-Part-Hashes, Provider/Engine, **Ledger-Jobstatus** und **offene
+Regenerationsrevisionen**.
+
+- [x] Nur Anchor-Szenen fließen ein, nicht der gesamte Sceneplan-Hash: ein
+      getauschtes Reporterbild darf eine Freigabe nicht entwerten, die nie über
+      den Reporter getroffen wurde.
+- [x] `build_digest()` löst die Konfiguration selbst auf (`_config_for`). Ein
+      optionales `config`-Argument hatte denselben Zustand zweimal verschieden
+      gehasht und Freigaben sofort veralten lassen — der teuerste Fehler dieses
+      Pakets.
+- [x] Das Sidecar wird aus `collect_state()` geschrieben (und nur bei
+      Byteänderung), damit nie gegen einen veralteten Stand entschieden wird.
+- [x] `collect_state()` kehrt früh zurück, wenn das Gate nicht gilt — eine
+      Installation ohne Avatar braucht die Tabellen gar nicht erst.
+- [x] Look-, Audio-, Sceneplan-, Jobstatus- oder Clipänderung macht die Freigabe
+      automatisch ungültig; eine alte Freigabe wandert nie auf neue Clips.
+
+**Bewusste Neugenerierung** (`models/avatar_regeneration.py`,
+`core/avatar_regeneration.py`, Migration 018)
+
+- [x] Eigenes `AvatarRegenerationRequest`-Modell statt einer Spalte am Job: der
+      Vorgang hat einen eigenen Lebenszyklus, eigene Audit-Referenzen und darf
+      den abgerechneten Altjob nicht überschreiben. Begründung im Docstring.
+- [x] `prepare()` liefert ein Kostenangebot (bisherige Kosten, geschätzte
+      Zusatzkosten, Grund) und **kauft nichts**; erst `confirm()` mit der
+      angezeigten Revision gibt frei. Getrennte Felder `requested_by_ref` und
+      `confirmed_by_ref`.
+- [x] Stabiler Idempotency-Key je Attempt, Unique Constraints auf
+      `(episode_id, scene_id, revision)` und den Key: Doppelklick oder
+      HTTP-Retry erzeugt genau einen Attempt.
+- [x] `generation_revision` fließt in den **Content-Hash**, nicht in den Unique
+      Constraint — der neue Versuch *ist* nach der Regel des Ledgers andere
+      Arbeit. Revision 0 wird aus der Payload ausgelassen, alle bestehenden
+      Hashes bleiben byteidentisch.
+- [x] „Retry" (Transport/Polling) und „Regenerate" (neuer bezahlter Clip)
+      bleiben begrifflich und technisch getrennt.
+- [x] Alter Job und Clip bleiben erhalten; Avatarfreigabe und Render werden
+      stale, andere Szenen, TTS und Reportermedien nicht.
+
+**Dashboard-API** (`web/api.py`, bestehende Konventionen)
+
+- [x] `GET /api/episodes/<id>/avatar` — Readiness-Zusammenfassung, Provider,
+      Engine, Avatar-Typ, Studio-Modus, Look-Name und gekürzte Look-ID,
+      Presenter-/Sceneplan-/Manifest-/Review-Hash, Reviewstatus, erwartete,
+      fertige und blockierte Szenen, reservierte, tatsächliche und geschätzte
+      Restkosten sowie die Szenenliste. Alle Bezeichner über `_short()` gekürzt,
+      keine Schlüssel, keine vertraulichen Vertragsdaten.
+- [x] `POST .../avatar/approve`, `/reject`, `/scenes/<id>/flag`,
+      `/scenes/<id>/regenerate`, `/look`; 409 bei veraltetem Review-Hash oder
+      konkurrierender Änderung, kein Provideraufruf in der HTTP-Anfrage.
+- [x] Lookwechsel vor dem ersten Job frei, danach nur als ausdrücklich
+      bestätigter Neuaufbau; `NoActiveLookError` wird 400, nicht 500.
+- [x] `GET .../avatar/scenes/<id>/preview` — nur registrierte, validierte Clips
+      dieser Episode, Pfadeinhausung und Symlinkschutz, MP4 und WebM,
+      Range-Unterstützung über `send_file(..., conditional=True)`, keine
+      Provider-URL an den Browser.
+
+**Oberfläche** (`web/static/app.js`, Bereich „Sendung")
+
+- [x] Readiness (bereit/Warnung/Blocker mit kurzer Empfehlung), Presenterblock,
+      Szenentabelle mit Vorschau, Beanstandung und bestätigungspflichtiger
+      Regeneration, Freigabe/Ablehnung mit Notiz.
+- [x] Rohe Vorschau eindeutig als „Avatarclip – Studio wird im finalen Render
+      ergänzt" gekennzeichnet, mit sichtbarem Hinweis auf die danach noch
+      folgende finale Sendungsfreigabe.
+- [x] Korrekte Zustände ohne Phase-1-Assets, bei deaktiviertem Anchor, bei
+      teilweise fertiger Episode und bei Reconciliation.
+
+**Tests**: `tests/test_anchor_review.py` (35), `test_avatar_regeneration.py`
+(21), `test_web_avatar.py` (33), `test_anchor_review_gate.py` (15) — 104 neue
+Tests, kein Provideraufruf.
+
+**Dokumentation**: `docs/avatar-review.md` (Gate, Digest-Bindung, API, Vorschau,
+Regeneration, Lookwechsel, Audit).
 
 ### WP-5C — Begrenzte Parallelität, Backoff und Betriebshärtung
 
 - [ ] Parallelität (`max_concurrent_jobs`) mit Backoff bei 429/5xx.
 - [ ] Kosmetik aus "Teilweise umgesetzt": `sceneplan` in
       `_STAGE_WORKFLOW_KEY`-Kommentar und `STAGE_PROVIDER_MAP` nachziehen.
+- [ ] Sichtbare Bedienung des Voice-over-Overrides (Policy, Datenmodell und Gate
+      stehen seit WP-5A, bewusst weiterhin ohne Bedienoberfläche).
 
 ### Extern blockiert
 
@@ -511,6 +611,14 @@ Durchgeführt am 6. September 2026:
 - Volle Suite im Arbeitsverzeichnis nach WP-5A: **3293 passed, 2 failed** —
   ausschließlich die beiden unten dokumentierten Baselineprobleme, der
   `test_web`-Flake blieb diesmal grün.
+- Volle Suite im Arbeitsverzeichnis nach WP-5B: **3398 passed, 3 failed** —
+  die beiden Baselineprobleme plus `test_web_review_ux.py::TestReviewGateLabels`
+  `::test_all_review_stages_present`, der die Zahl der Review-Gate-Labels fest
+  gegen 6 prüfte. Das neue `review_gate_anchor` macht daraus 7; der Test wurde
+  um die Erwartung `"anchor" in _REVIEW_GATE_LABELS` **erweitert**, nicht
+  aufgeweicht. Ebenso wurden die Stagezahl 21 → 22 und die Reihenfolgelisten in
+  `test_pipeline.py` und `test_web_progress.py` nachgezogen. Nach der Korrektur
+  laufen alle drei Dateien grün.
 - Volle Suite gegen einen sauberen `HEAD`-Worktree (nur zum Vergleich angelegt
   und wieder entfernt, das Arbeitsverzeichnis blieb unangetastet):
   **2788 passed, 1 failed**.
@@ -568,3 +676,5 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-06 | WP-4 | Szenenrenderer, Remote-Vertrag, 96 neue Tests, Ruff grün; Suite 3114 grün / 2 Baselinefehler |
 | 2026-09-06 | Checkpoint | Lokaler Commit `fc468bc` (WP-4), nicht gepusht |
 | 2026-09-06 | WP-5A | Readiness-CLI, Rechtevertrag, Reconciliation, Ausfallpolitik, 181 Tests, Ruff grün; Suite 3293 grün / 2 Baselinefehler |
+| 2026-09-06 | Checkpoint | Lokaler Commit `e1bd0bb` (WP-5A), nicht gepusht |
+| 2026-09-06 | WP-5B | Avatar-Review-Gate, Digest-Bindung, Regenerationsmodell, Dashboard-API, Vorschau und Oberfläche, 104 neue Tests, Ruff grün; Suite 3398 grün / 2 Baselinefehler (Labelzähler nachgezogen) |

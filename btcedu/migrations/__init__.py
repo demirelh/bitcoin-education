@@ -1015,6 +1015,86 @@ class CreateAvatarJobAuditTableMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateAvatarRegenerationTableMigration(Migration):
+    """Migration 018: Create avatar_regeneration_requests table.
+
+    A deliberate re-purchase of a presenter clip needs a record that exists
+    before the work does, and a unique constraint that turns a double click
+    into one row rather than two invoices.
+    """
+
+    @property
+    def version(self) -> str:
+        return "018_create_avatar_regeneration_requests"
+
+    @property
+    def description(self) -> str:
+        return "Create avatar_regeneration_requests table for deliberate clip re-purchases"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        existing = {row[0] for row in result.fetchall()}
+
+        if "avatar_regeneration_requests" not in existing:
+            session.execute(
+                text(
+                    """
+                    CREATE TABLE avatar_regeneration_requests (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        episode_id VARCHAR(64) NOT NULL,
+                        scene_id VARCHAR(128) NOT NULL,
+                        revision INTEGER NOT NULL DEFAULT 1,
+                        status VARCHAR(32) NOT NULL DEFAULT 'requested',
+                        reason TEXT NOT NULL DEFAULT '',
+                        requested_by_ref VARCHAR(64) NOT NULL DEFAULT '',
+                        confirmed_by_ref VARCHAR(64) NOT NULL DEFAULT '',
+                        previous_job_id INTEGER,
+                        previous_cost_usd FLOAT NOT NULL DEFAULT 0.0,
+                        estimated_cost_usd FLOAT NOT NULL DEFAULT 0.0,
+                        idempotency_key VARCHAR(128) NOT NULL,
+                        created_at DATETIME NOT NULL,
+                        confirmed_at DATETIME,
+                        consumed_at DATETIME,
+                        CONSTRAINT uq_avatar_regeneration_scene_revision
+                            UNIQUE (episode_id, scene_id, revision),
+                        CONSTRAINT uq_avatar_regeneration_idempotency
+                            UNIQUE (idempotency_key)
+                    )
+                    """
+                )
+            )
+            session.commit()
+            logger.info("Created avatar_regeneration_requests table")
+        else:
+            logger.info("avatar_regeneration_requests table already exists (skipped)")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='index'"))
+        indexes = {row[0] for row in result.fetchall()}
+
+        if "ix_avatar_regeneration_episode_id" not in indexes:
+            session.execute(
+                text(
+                    "CREATE INDEX ix_avatar_regeneration_episode_id "
+                    "ON avatar_regeneration_requests (episode_id)"
+                )
+            )
+            session.commit()
+
+        if "ix_avatar_regeneration_status" not in indexes:
+            session.execute(
+                text(
+                    "CREATE INDEX ix_avatar_regeneration_status "
+                    "ON avatar_regeneration_requests (status)"
+                )
+            )
+            session.commit()
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 # Registry of all available migrations
 MIGRATIONS = [
     AddChannelsSupportMigration(),
@@ -1034,6 +1114,7 @@ MIGRATIONS = [
     CreatePresenterAssignmentTableMigration(),
     CreateAvatarJobsTableMigration(),
     CreateAvatarJobAuditTableMigration(),
+    CreateAvatarRegenerationTableMigration(),
 ]
 
 

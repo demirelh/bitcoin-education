@@ -993,7 +993,7 @@ class TestWriteReport:
 class TestResolvePipelinePlan:
     def test_new_episode_plans_all_stages(self, db_session, new_episode):
         plan = resolve_pipeline_plan(db_session, new_episode)
-        assert len(plan) == 21
+        assert len(plan) == 22
         assert plan[0] == StagePlan("download", "run", "status=new")
         assert plan[1] == StagePlan("transcribe", "pending", "after prior stages")
         assert plan[2] == StagePlan("transcript_analyze", "pending", "after prior stages")
@@ -1098,7 +1098,7 @@ class TestResolvePipelinePlan:
 
         plan = resolve_pipeline_plan(db_session, ep, force=True)
 
-        assert len(plan) == 21
+        assert len(plan) == 22
         assert all(p.decision == "skip" for p in plan)
         assert all(p.reason == "already completed" for p in plan)
 
@@ -1443,10 +1443,10 @@ class TestV2PipelineE2E:
         assert stage_statuses.get("publish") == "success"
 
     @patch("btcedu.core.pipeline._run_stage")
-    def test_v2_plan_shows_all_21_stages(self, mock_stage, db_session, v2_episode, v2_settings):
-        """resolve_pipeline_plan returns all 21 v2 stages."""
+    def test_v2_plan_shows_all_22_stages(self, mock_stage, db_session, v2_episode, v2_settings):
+        """resolve_pipeline_plan returns all 22 v2 stages."""
         plan = resolve_pipeline_plan(db_session, v2_episode, settings=v2_settings)
-        assert len(plan) == 21
+        assert len(plan) == 22
         stage_names = [p.stage for p in plan]
         assert stage_names == [
             "download",
@@ -1467,6 +1467,7 @@ class TestV2PipelineE2E:
             "tts",
             "sceneplan",
             "anchorgen",
+            "review_gate_anchor",
             "render",
             "review_gate_3",
             "publish",

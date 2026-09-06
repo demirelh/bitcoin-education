@@ -1,5 +1,9 @@
 from btcedu.models.app_setting import AppSetting, get_setting, set_setting  # noqa: F401
 from btcedu.models.avatar_job import AvatarJob, AvatarJobStatus  # noqa: F401
+from btcedu.models.avatar_regeneration import (  # noqa: F401
+    AvatarRegenerationRequest,
+    RegenerationStatus,
+)
 from btcedu.models.channel import Channel  # noqa: F401
 from btcedu.models.content_artifact import ContentArtifact  # noqa: F401
 from btcedu.models.episode import Episode, PipelineRun  # noqa: F401

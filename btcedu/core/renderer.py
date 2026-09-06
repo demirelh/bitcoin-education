@@ -130,6 +130,31 @@ class RenderResult:
     skipped: bool = False
 
 
+def _require_anchor_approval(session: Session, episode_id: str, settings: Settings) -> None:
+    """Refuse to render presenter clips that no one has signed off.
+
+    Fail-closed on purpose: when the avatar review is active there is no silent
+    fallback to the old full-frame voice-over. The renderer never chooses a
+    fallback itself — that stays an explicit, audited operator decision.
+    """
+    from btcedu.core.anchor_review import collect_state, has_current_approval
+
+    try:
+        state = collect_state(session, episode_id, settings)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Anchor review state unavailable for %s: %s", episode_id, exc)
+        return
+    if not state.enabled or not state.scenes:
+        return
+    if has_current_approval(session, episode_id, settings):
+        return
+    raise ValueError(
+        f"Episode {episode_id} has {len(state.scenes)} presenter scene(s) that were "
+        "not approved in the avatar review. Approve the avatar stage in the "
+        "dashboard before rendering."
+    )
+
+
 def render_video(
     session: Session,
     episode_id: str,
@@ -178,6 +203,8 @@ def render_video(
             f"Episode {episode_id} is in status '{episode.status.value}', "
             "expected 'tts_done' or 'rendered'. Use --force to override."
         )
+
+    _require_anchor_approval(session, episode_id, settings)
 
     # Load profile for profile-aware rendering (accent color, feature toggles etc.)
     _render_cfg: dict = {}
@@ -1720,7 +1747,7 @@ def _load_scene_context(base_dir, settings: Settings, episode, image_manifest, t
     that actually needs the studio fails.
     """
     try:
-        from btcedu.core.scene_renderer import load_scene_context
+        from btcedu.core.scene_renderer import is_studio_scene, load_scene_context
 
         video_manifest_path = Path(base_dir) / "video" / "manifest.json"
         video_manifest = {}
@@ -1741,6 +1768,16 @@ def _load_scene_context(base_dir, settings: Settings, episode, image_manifest, t
         )
     except Exception as exc:  # noqa: BLE001 - never let planning break the render
         logger.warning("Could not load the scene plan, rendering by chapter: %s", exc)
+        return None
+    if (
+        ctx is not None
+        and not settings.anchor_enabled
+        and any(is_studio_scene(scene) for scene in ctx.scenes)
+    ):
+        logger.info(
+            "Ignoring studio scene plan because anchor generation is disabled; "
+            "rendering by chapter"
+        )
         return None
     if ctx is not None:
         logger.info(

@@ -68,6 +68,10 @@ _V2_STAGES = [
     ("tts", EpisodeStatus.IMAGES_GENERATED),  # Sprint 8
     ("sceneplan", EpisodeStatus.TTS_DONE),  # deterministic shot list, no provider calls
     ("anchorgen", EpisodeStatus.SCENE_PLANNED),  # D-ID anchor (no-op if disabled)
+    # A person looks at the presenter clips before they are composited into
+    # anything. Inactive unless the profile asks for it, so every other profile
+    # walks straight through.
+    ("review_gate_anchor", EpisodeStatus.ANCHOR_GENERATED),
     ("render", EpisodeStatus.ANCHOR_GENERATED),  # Sprint 9
     ("review_gate_3", EpisodeStatus.RENDERED),  # Sprint 10
     ("publish", EpisodeStatus.APPROVED),  # Sprint 11
@@ -535,6 +539,7 @@ def _run_stage(
         "tts",
         "sceneplan",
         "anchorgen",
+        "review_gate_anchor",
         "render",
         "review_gate_3",
         "publish",
@@ -1413,6 +1418,69 @@ def _run_stage(
                         f"[{where}]"
                     ),
                 )
+
+        elif stage_name == "review_gate_anchor":
+            from btcedu.core.anchor_review import (
+                collect_state,
+                ensure_review_task,
+                has_current_approval,
+                has_current_rejection,
+            )
+
+            state = collect_state(session, episode.episode_id, settings)
+            elapsed = time.monotonic() - t0
+
+            if not state.enabled:
+                return StageResult(
+                    "review_gate_anchor",
+                    "skipped",
+                    elapsed,
+                    detail=state.reason or "avatar review not applicable",
+                )
+            if not state.scenes:
+                # Nothing was generated, so there is nothing to look at. A gate
+                # here would be a task no operator could ever action.
+                return StageResult(
+                    "review_gate_anchor",
+                    "skipped",
+                    elapsed,
+                    detail="no presenter scenes in this episode",
+                )
+
+            # Deliberately not gated on auto_approve_reviews: a profile may run
+            # its editorial gates unattended and still want a human to look at
+            # the face that will be broadcast.
+            if has_current_approval(session, episode.episode_id, settings):
+                return StageResult(
+                    "review_gate_anchor",
+                    "success",
+                    elapsed,
+                    detail=f"presenter clips approved ({len(state.scenes)} scenes)",
+                )
+
+            if has_current_rejection(session, episode.episode_id, settings):
+                return StageResult(
+                    "review_gate_anchor",
+                    "failed",
+                    elapsed,
+                    detail="presenter clips rejected",
+                    error=(
+                        "[review] The avatar stage was rejected. Regenerate the "
+                        "flagged scenes or clear the rejection before rendering."
+                    ),
+                )
+
+            task = ensure_review_task(session, episode.episode_id, settings)
+            elapsed = time.monotonic() - t0
+            detail = f"awaiting avatar review (task {task.id})"
+            if state.blockers:
+                detail += f"; {len(state.blockers)} blocker(s)"
+            return StageResult(
+                "review_gate_anchor",
+                "review_pending",
+                elapsed,
+                detail=detail,
+            )
 
         elif stage_name == "review_gate_3":
             from btcedu.core.reviewer import (

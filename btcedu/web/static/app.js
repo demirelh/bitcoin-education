@@ -1363,11 +1363,186 @@
 
           <h4>Stimmen</h4>
           <ul class="broadcast-voices">${voices || '<li class="muted">nicht konfiguriert</li>'}</ul>
+
+          <div id="avatar-panel"></div>
         </div>`;
+      loadAvatarPanel();
     } catch (err) {
       viewer.textContent = "Sendungsplanung konnte nicht geladen werden.";
     }
   }
+
+  // ── Moderatorin (HeyGen Avatar III) ──────────────────────────
+  // Shows the raw presenter clips *before* the studio is composited, which is
+  // the only moment where a bad take can still be caught cheaply.
+  const AVATAR_STATUS_LABEL = {
+    not_required: "nicht erforderlich",
+    not_started: "noch nicht geprüft",
+    pending: "Prüfung offen",
+    approved: "freigegeben",
+    rejected: "abgelehnt",
+    stale: "veraltet — Clips haben sich geändert",
+    superseded: "ersetzt",
+  };
+
+  async function loadAvatarPanel() {
+    const host = document.getElementById("avatar-panel");
+    if (!host || !selected) return;
+
+    let data;
+    try {
+      data = await GET(`/episodes/${selected.episode_id}/avatar`);
+    } catch (err) {
+      host.innerHTML = '<h4>Moderatorin</h4><p class="muted">Avatarstatus nicht abrufbar.</p>';
+      return;
+    }
+    if (!data || data.error) {
+      host.innerHTML = '<h4>Moderatorin</h4><p class="muted">Avatarstatus nicht abrufbar.</p>';
+      return;
+    }
+    if (!data.anchor_enabled) {
+      host.innerHTML = `
+        <h4>Moderatorin</h4>
+        <p class="muted">Avatarbetrieb ist für diese Episode nicht aktiv
+        (${esc(data.reason || "kein Grund angegeben")}).</p>`;
+      return;
+    }
+    if (!data.scenes.length) {
+      host.innerHTML = `
+        <h4>Moderatorin</h4>
+        <p class="muted">Für diese Episode sind noch keine Moderatorinnen-Szenen geplant.</p>`;
+      return;
+    }
+
+    const blockers = (data.blockers || []).map(b => `<li>${esc(b)}</li>`).join('');
+    const rows = data.scenes.map(scene => {
+      const preview = scene.preview_available
+        ? `<button class="btn btn-sm" onclick="avatarPreview('${esc(scene.scene_id)}')">ansehen</button>`
+        : '<span class="muted">keine Vorschau</span>';
+      const flag = scene.flagged
+        ? `<span class="sev sev-warning" title="${esc(scene.flag_note)}">beanstandet</span>`
+        : `<button class="btn btn-sm" onclick="avatarFlag('${esc(scene.scene_id)}')">beanstanden</button>`;
+      const reconcile = scene.job_status === 'reconcile_required'
+        ? '<br><span class="sev sev-critical">Klärung nötig: btcedu avatar-reconcile</span>'
+        : '';
+      return `
+        <tr>
+          <td>${scene.order}</td>
+          <td>${esc(scene.chapter_id)}<br><span class="muted">${esc(scene.purpose)}</span></td>
+          <td>${scene.duration_seconds.toFixed(1)} s</td>
+          <td><code>${esc(scene.look_id)}</code></td>
+          <td>${esc(scene.job_status)}${scene.revision ? ' (Rev. ' + scene.revision + ')' : ''}${reconcile}</td>
+          <td>$${scene.cost_usd.toFixed(4)}</td>
+          <td>${preview}</td>
+          <td>${flag}
+            <button class="btn btn-sm btn-danger"
+                    onclick="avatarRegenerate('${esc(scene.scene_id)}')">neu erzeugen</button></td>
+        </tr>`;
+    }).join('');
+
+    const canApprove = data.approvable && data.review_status !== 'approved';
+    host.innerHTML = `
+      <h4>Moderatorin — Avatarprüfung</h4>
+      <div class="tts-summary">
+        ${esc(data.look_name || 'kein Outfit zugewiesen')} &middot;
+        ${esc(data.engine)} &middot; ${esc(data.avatar_type)} &middot;
+        Studio ${esc(data.studio_mode)} &middot; Rotation ${esc(data.rotation_strategy)}<br>
+        ${data.completed_scene_count}/${data.expected_scene_count} Clips fertig &middot;
+        ${data.blocked_scene_count} blockiert &middot;
+        ausgegeben $${data.actual_cost_usd.toFixed(4)} &middot;
+        offen ca. $${data.estimated_remaining_usd.toFixed(4)}<br>
+        Status: <strong>${esc(AVATAR_STATUS_LABEL[data.review_status] || data.review_status)}</strong>
+        &middot; Artefakt <code>${esc(data.review_hash)}</code>
+      </div>
+
+      ${blockers ? '<ul class="broadcast-findings">' + blockers + '</ul>' : ''}
+
+      <table class="broadcast-table">
+        <thead><tr>
+          <th>#</th><th>Kapitel</th><th>Dauer</th><th>Look</th>
+          <th>Auftrag</th><th>Kosten</th><th>Vorschau</th><th>Aktion</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+
+      <p class="muted">Die Vorschau zeigt den <strong>Avatarclip</strong> —
+      Studio, Themenmonitor und Reporterbilder werden erst im finalen Render ergänzt.</p>
+
+      <div class="avatar-review-actions">
+        <textarea id="avatar-review-note" rows="2"
+                  placeholder="Notiz zur Entscheidung"></textarea>
+        <button class="btn btn-primary" ${canApprove ? '' : 'disabled'}
+                onclick="avatarDecide('approve', '${esc(data.review_hash)}')">Avatarstufe freigeben</button>
+        <button class="btn btn-danger"
+                onclick="avatarDecide('reject', '${esc(data.review_hash)}')">ablehnen</button>
+        <p class="muted">Danach folgt weiterhin die finale Sendungsfreigabe
+        nach dem vollständigen Render.</p>
+      </div>`;
+  }
+
+  function avatarPreview(sceneId) {
+    const url = `/api/episodes/${selected.episode_id}/avatar/scenes/${sceneId}/preview`;
+    const viewer = document.getElementById("avatar-preview") || (() => {
+      const el = document.createElement("div");
+      el.id = "avatar-preview";
+      document.getElementById("avatar-panel").appendChild(el);
+      return el;
+    })();
+    viewer.innerHTML = `
+      <h5>Avatarclip ${esc(sceneId)} — Studio wird im finalen Render ergänzt</h5>
+      <video controls preload="metadata" style="max-width:100%" src="${url}"></video>`;
+  }
+
+  async function avatarFlag(sceneId) {
+    const note = prompt("Was stimmt an dieser Szene nicht?");
+    if (!note) return;
+    await POST(`/episodes/${selected.episode_id}/avatar/scenes/${sceneId}/flag`, { note });
+    loadAvatarPanel();
+  }
+
+  async function avatarRegenerate(sceneId) {
+    const reason = prompt("Grund für die kostenpflichtige Neuerzeugung?");
+    if (!reason) return;
+    const prepared = await POST(
+      `/episodes/${selected.episode_id}/avatar/scenes/${sceneId}/regenerate`,
+      { action: "prepare", reason }
+    );
+    if (prepared.error) { alert(prepared.error); return; }
+    const q = prepared.quote;
+    const ok = confirm(
+      `Neuer kostenpflichtiger HeyGen-Auftrag für ${sceneId}.\n` +
+      `Bisher ausgegeben: $${q.previous_cost_usd.toFixed(4)}\n` +
+      `Zusätzlich erwartet: $${q.estimated_cost_usd.toFixed(4)}\n\n` +
+      `${q.warning}\n\nWirklich beauftragen?`
+    );
+    if (!ok) return;
+    const done = await POST(
+      `/episodes/${selected.episode_id}/avatar/scenes/${sceneId}/regenerate`,
+      { action: "confirm", revision: q.revision }
+    );
+    if (done.error) alert(done.error);
+    loadAvatarPanel();
+  }
+
+  async function avatarDecide(action, reviewHash) {
+    const note = document.getElementById("avatar-review-note");
+    const notes = note ? note.value : "";
+    if (action === "reject" && !notes.trim()) {
+      alert("Eine Ablehnung braucht eine Begründung.");
+      return;
+    }
+    const result = await POST(
+      `/episodes/${selected.episode_id}/avatar/${action}`,
+      { notes, review_hash: reviewHash }
+    );
+    if (result.error) alert(result.error);
+    loadAvatarPanel();
+  }
+
+  window.avatarPreview = avatarPreview;
+  window.avatarFlag = avatarFlag;
+  window.avatarRegenerate = avatarRegenerate;
+  window.avatarDecide = avatarDecide;
 
   async function loadTTSPanel() {
     if (!selected) return;

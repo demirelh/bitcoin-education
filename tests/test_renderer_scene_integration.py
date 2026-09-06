@@ -246,11 +246,23 @@ class TestBackwardCompatibility:
 
 
 class TestScenePlanIsRecognised:
+    def test_a_disabled_anchor_ignores_a_studio_plan(self, db_session, settings, tmp_path):
+        episode = _episode(db_session)
+        base = _write_inputs(Path(settings.outputs_dir))
+        _write_plan(base)
+        images = json.loads((base / "images" / "manifest.json").read_text(encoding="utf-8"))
+        tts = json.loads((base / "tts" / "manifest.json").read_text(encoding="utf-8"))
+
+        assert settings.anchor_enabled is False
+        assert _load_scene_context(base, settings, episode, images, tts) is None
+        assert _scene_hash_block(base, settings, episode, images, tts) is None
+
     def test_the_plan_contributes_to_the_content_hash(self, db_session, settings, tmp_path):
         episode = _episode(db_session)
         base = _write_inputs(Path(settings.outputs_dir))
         images = json.loads((base / "images" / "manifest.json").read_text(encoding="utf-8"))
         tts = json.loads((base / "tts" / "manifest.json").read_text(encoding="utf-8"))
+        settings.anchor_enabled = True
 
         before = _scene_hash_block(base, settings, episode, images, tts)
         _write_plan(base)
@@ -269,6 +281,7 @@ class TestScenePlanIsRecognised:
         chapters = _load_chapters(base / "chapters.json")
         images = json.loads((base / "images" / "manifest.json").read_text(encoding="utf-8"))
         tts = json.loads((base / "tts" / "manifest.json").read_text(encoding="utf-8"))
+        settings.anchor_enabled = True
 
         first = _compute_render_content_hash(
             chapters, images, tts, None,
@@ -289,6 +302,7 @@ class TestScenePlanIsRecognised:
         _episode(db_session)
         base = _write_inputs(Path(settings.outputs_dir))
         _write_plan(base)
+        settings.anchor_enabled = True
 
         first = _current_render_content_hash(db_session, "ep001", settings)
         second = _current_render_content_hash(db_session, "ep001", settings)
@@ -385,6 +399,7 @@ class TestSceneRenderEndToEnd:
             ],
         }
         (base / "scene_plan.json").write_text(json.dumps(plan), encoding="utf-8")
+        settings.anchor_enabled = True
         settings.dry_run = False
         return base
 

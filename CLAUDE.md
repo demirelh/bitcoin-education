@@ -138,6 +138,10 @@ times, completion times, summed retry duration/cost and attempt counts.
 - **pydub + Python 3.13**: `audioop` removed. Tests mock via `sys.modules`. Production needs `pyaudioop`.
 - **Chapter.visual is singular** (`Visual`), not a list. Narration has `.text`, `.word_count`, `.estimated_duration_seconds`.
 - **Lazy imports**: stage functions lazy-imported in `_run_stage()` to avoid circular deps.
+- **Disabled anchors must not require studio assets.** Scene plans may be
+  persisted while `anchor_enabled=false`; if such a plan contains studio
+  scenes, render ignores the plan and uses the established chapter path.
+  Reporter-only scene plans remain usable without a studio package.
 - **Every take is levelled to −15 LUFS before anything else reads it**
   (`_normalize_loudness` in `core/tts.py`, two-pass EBU R128 so the gain is linear
   and the delivery is untouched). ElevenLabs returns the same voice up to 18 dB apart

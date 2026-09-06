@@ -72,28 +72,36 @@ def compute_job_hash(
     output_format: str,
     resolution: str,
     aspect_ratio: str,
+    generation_revision: int = 0,
 ) -> str:
     """Fingerprint one clip's identity.
 
     Includes the audio hash rather than only the text: the same words
     resynthesised are a different performance of a different length, and the
     clip has to be lip-synced to the take that will actually be in the video.
+
+    ``generation_revision`` is how a deliberate re-purchase stays honest. An
+    operator who rejects a clip wants *another* take of identical text, audio
+    and outfit, which by every other measure is the same work. Folding the
+    revision in makes the ledger see different work — which it is — instead of
+    bending the uniqueness rule that stops accidental double billing. It
+    defaults to 0 and is omitted from the payload at that value, so every hash
+    computed before revisions existed stays byte-for-byte the same.
     """
-    payload = json.dumps(
-        {
-            "scene_id": scene_id,
-            "text_hash": text_hash,
-            "audio_hash": audio_hash,
-            "avatar_look_id": avatar_look_id,
-            "provider": provider,
-            "engine": engine,
-            "output_format": output_format,
-            "resolution": resolution,
-            "aspect_ratio": aspect_ratio,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    identity = {
+        "scene_id": scene_id,
+        "text_hash": text_hash,
+        "audio_hash": audio_hash,
+        "avatar_look_id": avatar_look_id,
+        "provider": provider,
+        "engine": engine,
+        "output_format": output_format,
+        "resolution": resolution,
+        "aspect_ratio": aspect_ratio,
+    }
+    if generation_revision:
+        identity["generation_revision"] = int(generation_revision)
+    payload = json.dumps(identity, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

@@ -255,6 +255,12 @@ stage_config:
     # spent before any repeats. Ties break on the order below, which keeps the
     # choice reproducible without a random seed.
     rotation_strategy: least_recently_used
+    # A human looks at the presenter clips before anything is composited.
+    # Separate from `auto_approve_reviews` on purpose: this profile runs its
+    # editorial gates unattended, but the face that goes on air is still
+    # checked by a person. Turning this off is a deliberate decision, not a
+    # side effect of running the rest of the pipeline hands-free.
+    review_required: true
     # PLACEHOLDERS. Phase 1 produces the real looks; paste each HeyGen look ID
     # here and set active: true. `anchor-readiness` refuses to activate while a
     # placeholder is still active, and rejects duplicate IDs.

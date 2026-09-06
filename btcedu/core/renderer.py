@@ -352,11 +352,15 @@ def render_video(
         }
     except (AttributeError, TypeError):
         pass  # settings may lack these attrs (backward compat / mocks)
+    _scene_hash_inputs = _scene_hash_block(
+        Path(settings.outputs_dir) / episode_id, settings, episode, image_manifest, tts_manifest
+    )
     content_hash = _compute_render_content_hash(
         chapters_doc,
         image_manifest,
         tts_manifest,
         _enh_hash_data if _enh_hash_data else None,
+        scene_context=_scene_hash_inputs,
     )
 
     # Idempotency check
@@ -451,10 +455,17 @@ def render_video(
 
         # Render each chapter segment
         segment_entries: list[RenderSegmentEntry] = []
+        scene_entries: list = []
         total_duration = 0.0
         total_size = 0
 
         base_dir = Path(settings.outputs_dir) / episode_id
+
+        # A scene plan turns a chapter into a sequence of speaker scenes. Its
+        # absence is the ordinary case for every older episode, for D-ID and for
+        # the Bitcoin podcast, and then nothing below this line changes.
+        scene_ctx = _load_scene_context(base_dir, settings, episode, image_manifest, tts_manifest)
+        _weather_ids = _weather_chapter_ids(image_manifest)
 
         # Build ticker text if enabled
         _ticker_text = None
@@ -624,7 +635,17 @@ def render_video(
             # re-rendered, otherwise the final video keeps the previous content.
             # The same holds for the render settings — a changed ffmpeg filter
             # leaves every input untouched, so `settings_unchanged` carries it.
-            if segment_path.exists() and segment_path.stat().st_size > 0 and settings_unchanged:
+            # A chapter that is cut into scenes is decided shot by shot instead:
+            # reusing a whole chapter here would hide a single changed scene.
+            _has_scenes = scene_ctx is not None and bool(
+                scene_ctx.scenes_for(chapter.chapter_id)
+            ) and chapter.chapter_id not in _weather_ids
+            if (
+                segment_path.exists()
+                and segment_path.stat().st_size > 0
+                and settings_unchanged
+                and not _has_scenes
+            ):
                 seg_mtime = segment_path.stat().st_mtime
                 input_mtimes = []
                 for _inp in (media_path, audio_path):
@@ -700,8 +721,35 @@ def render_video(
                 and not settings.dry_run
             )
 
+            # A weather chapter keeps its own deterministic renderer; the scene
+            # path only ever cuts a news chapter.
+            chapter_scenes = (
+                scene_ctx.scenes_for(chapter.chapter_id)
+                if scene_ctx is not None and chapter.chapter_id not in _weather_ids
+                else []
+            )
+            use_scenes = len(chapter_scenes) >= 1 and not settings.dry_run
+
             # Phase 4: Branch on asset_type for video vs image segments
-            if use_beats:
+            if use_scenes:
+                segment_result, _scene_entries = _render_scene_chapter(
+                    ctx=scene_ctx,
+                    chapter=chapter,
+                    scenes=chapter_scenes,
+                    parts=_speaker_parts(chapter.chapter_id, tts_manifest),
+                    audio_path=audio_path,
+                    output_path=segment_path,
+                    duration=duration,
+                    overlays=overlay_specs,
+                    fade_in_duration=fade_in_dur,
+                    fade_out_duration=fade_out_dur,
+                    settings=settings,
+                    font=_eff_font or settings.render_font,
+                    enhancement_kwargs=_enhancement_kwargs,
+                    episode_offset_seconds=total_duration,
+                )
+                scene_entries.extend(_scene_entries)
+            elif use_beats:
                 segment_result = _render_beat_chapter(
                     chapter=chapter,
                     beats=beats,
@@ -1020,6 +1068,12 @@ def render_video(
                 "audio_bitrate": settings.render_audio_bitrate,
             },
         }
+        if scene_ctx is not None and scene_entries:
+            # Added beside the existing keys, never in place of them: a reader
+            # that only knows `segments` and `timeline` keeps working.
+            from btcedu.core.scene_renderer import scene_manifest_block
+
+            manifest_data.update(scene_manifest_block(scene_ctx, scene_entries))
         manifest_path.write_text(
             json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -1182,6 +1236,7 @@ def _compute_render_content_hash(
     image_manifest: dict,
     tts_manifest: dict,
     enhancement_settings: dict | None = None,
+    scene_context: dict | None = None,
 ) -> str:
     """Compute SHA-256 hash of all render inputs.
 
@@ -1237,6 +1292,10 @@ def _compute_render_content_hash(
     }
     if enhancement_settings:
         relevant_data["enhancements"] = enhancement_settings
+    # Only present for an episode that has a scene plan, so every episode
+    # rendered before this existed keeps exactly the hash it already had.
+    if scene_context:
+        relevant_data["scenes"] = scene_context
     content_str = json.dumps(relevant_data, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(content_str.encode("utf-8")).hexdigest()
 
@@ -1391,6 +1450,7 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
         image_manifest,
         tts_manifest,
         _enh_hash_data if _enh_hash_data else None,
+        scene_context=_scene_hash_block(base, settings, episode, image_manifest, tts_manifest),
     )
 
 
@@ -1633,6 +1693,69 @@ def _resolve_chapter_media(
 
 
 _BEAT_TAIL_HEADROOM_SECONDS = 0.2
+
+
+def _scene_hash_block(base_dir, settings: Settings, episode, image_manifest, tts_manifest):
+    """The scene part of the render fingerprint, shared by both hash sites.
+
+    Both the render itself and the publisher's re-check must arrive at the same
+    number, and the remote runner must arrive at it too. One helper is the only
+    way to be sure of that.
+    """
+    try:
+        from btcedu.core.scene_renderer import scene_hash_inputs
+
+        ctx = _load_scene_context(base_dir, settings, episode, image_manifest, tts_manifest)
+        return scene_hash_inputs(ctx)
+    except Exception as exc:  # noqa: BLE001 - a hint must never break the hash
+        logger.debug("No scene contribution to the render hash: %s", exc)
+        return None
+
+
+def _load_scene_context(base_dir, settings: Settings, episode, image_manifest, tts_manifest):
+    """Resolve the scene plan for this episode, or ``None``.
+
+    Wrapped so a broken studio package cannot stop an episode from rendering at
+    all: the context still loads and carries its problems, and only a chapter
+    that actually needs the studio fails.
+    """
+    try:
+        from btcedu.core.scene_renderer import load_scene_context
+
+        video_manifest_path = Path(base_dir) / "video" / "manifest.json"
+        video_manifest = {}
+        if video_manifest_path.exists():
+            try:
+                video_manifest = json.loads(video_manifest_path.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                video_manifest = {}
+        ctx = load_scene_context(
+            Path(base_dir),
+            settings,
+            episode,
+            manifests={
+                "image_manifest": image_manifest,
+                "tts_manifest": tts_manifest,
+                "video_manifest": video_manifest,
+            },
+        )
+    except Exception as exc:  # noqa: BLE001 - never let planning break the render
+        logger.warning("Could not load the scene plan, rendering by chapter: %s", exc)
+        return None
+    if ctx is not None:
+        logger.info(
+            "Scene plan loaded: %d scenes, look %s, studio %s",
+            len(ctx.scenes),
+            ctx.presenter_look_id or "-",
+            ctx.studio.studio_version if ctx.studio else "none",
+        )
+    return ctx
+
+
+def _render_scene_chapter(**kwargs):
+    from btcedu.core.scene_renderer import render_scene_chapter
+
+    return render_scene_chapter(**kwargs)
 
 
 def _render_beat_chapter(

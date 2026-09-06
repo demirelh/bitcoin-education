@@ -106,7 +106,11 @@ def _place_assets(workdir: Path, job: dict) -> None:
     working directory, so that is where they are restored.
     """
     source_root = workdir / "assets"
-    for rel in job.get("assets") or []:
+    declared = list(job.get("assets") or [])
+    # The studio package travels the same way: relative paths that resolve
+    # against the working directory, restored before anything is encoded.
+    declared += list((job.get("scene_render") or {}).get("studio_assets") or [])
+    for rel in dict.fromkeys(declared):
         source = source_root / rel
         if not source.is_file():
             raise SystemExit(f"Job package is missing the asset it declared: {rel}")
@@ -114,6 +118,27 @@ def _place_assets(workdir: Path, job: dict) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
         print(f"Asset {rel} -> {target}", flush=True)
+
+
+def _verify_scene_inputs(episode_dir: Path, job: dict) -> None:
+    """Refuse a scene render whose inputs did not all arrive.
+
+    A missing avatar clip does not make the render fail; it makes it produce a
+    different, wrong video. Checking the declared list first is the only way to
+    tell those two apart. The runner renders and nothing else -- it never
+    orders an avatar clip, synthesises speech or generates an image.
+    """
+    from btcedu.core.remote_render import verify_job_completeness
+
+    verify_job_completeness(episode_dir, job)
+    scene_job = (job or {}).get("scene_render") or {}
+    if scene_job:
+        print(
+            f"Scene render: {scene_job.get('scene_count', 0)} scenes, "
+            f"plan {str(scene_job.get('scene_plan_hash') or '')[:12]}..., "
+            f"{len(scene_job.get('studio_assets') or [])} studio assets",
+            flush=True,
+        )
 
 
 def _verify_content_hash(session, settings: Settings, job: dict) -> None:
@@ -212,6 +237,7 @@ def main() -> int:
     try:
         _seed_episode(session, job)
         _place_assets(workdir, job)
+        _verify_scene_inputs(episode_dir, job)
         _verify_font(settings, job)
         _verify_content_hash(session, settings, job)
         print(

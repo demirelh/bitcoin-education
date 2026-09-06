@@ -65,6 +65,23 @@ _WORKDIR_MAX_AGE_SECONDS = 6 * 3600
 # Shipping them would waste ~850 MB of upload for no benefit.
 _JOB_EXCLUDED = ("render/segments", "render/draft.mp4", "render/draft_subtitled.mp4")
 
+# Names that must never leave this machine, wherever they turn up. The episode
+# directory is not supposed to contain any of them, which is exactly why the
+# filter is cheap insurance rather than a workaround: a runner is a third party.
+_SECRET_NAMES = frozenset(
+    {
+        ".env",
+        ".env.local",
+        ".netrc",
+        "client_secret.json",
+        "token.json",
+        "credentials.json",
+        "service_account.json",
+        "failover_token",
+    }
+)
+_SECRET_SUFFIXES = (".pem", ".key", ".p12", ".pfx", ".keystore")
+
 # What the runner sends back.
 _RESULT_PATHS = ("render", "provenance/render_provenance.json")
 
@@ -209,6 +226,12 @@ def resolve_repo(settings: Settings, repo_root: Path | None = None) -> str:
     return slug
 
 
+def is_secret_name(name: str) -> bool:
+    """Would shipping a file with this name hand a credential to a third party?"""
+    lowered = Path(name).name.lower()
+    return lowered in _SECRET_NAMES or lowered.endswith(_SECRET_SUFFIXES)
+
+
 def _job_filter(episode_dir: Path):
     excluded = {(episode_dir / rel).resolve() for rel in _JOB_EXCLUDED}
     root = episode_dir.resolve()
@@ -218,6 +241,14 @@ def _job_filter(episode_dir: Path):
         rel = info.name.split("/", 1)[1] if "/" in info.name else ""
         candidate = (root / rel).resolve() if rel else root
         if candidate in excluded or any(parent in excluded for parent in candidate.parents):
+            return None
+        # A symlink would be followed on the runner and could point anywhere,
+        # so it is dropped rather than resolved.
+        if info.issym() or info.islnk():
+            logger.warning("Dropping link %s from the render job package", info.name)
+            return None
+        if is_secret_name(info.name):
+            logger.warning("Refusing to ship %s to a remote runner", info.name)
             return None
         return info
 
@@ -292,6 +323,126 @@ def _expected_content_hash(session: Session, episode_id: str, settings: Settings
         return ""
 
 
+def _studio_assets(settings: Settings, episode) -> list[str]:
+    """Studio files the runner needs, as repository-relative paths.
+
+    Only what the manifest actually names is shipped. The studio package may
+    eventually hold rejected takes, layered sources and reference stills; none
+    of that is render input, and a runner has no business receiving it.
+    """
+    try:
+        from btcedu.core.scene_renderer import studio_directory
+        from btcedu.core.studio_manifest import load_studio_manifest
+    except Exception:  # noqa: BLE001 - a studio hint must never break packing
+        return []
+
+    asset_dir = studio_directory(settings, episode)
+    if not asset_dir or Path(asset_dir).is_absolute():
+        return []
+    manifest_path = Path(asset_dir) / "manifest.json"
+    if not manifest_path.is_file():
+        return []
+    try:
+        manifest = load_studio_manifest(manifest_path)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Studio manifest %s is unusable, not shipping it: %s", manifest_path, exc)
+        return []
+
+    files = [str(manifest_path)]
+    for asset in manifest.assets():
+        candidate = manifest.asset_path(asset)
+        if candidate.is_file():
+            files.append(str(Path(asset_dir) / asset.path))
+    return sorted(dict.fromkeys(files))
+
+
+def scene_job_requirements(episode_dir: Path, settings: Settings, episode) -> dict:
+    """What a scene-based render needs to exist, listed before it is shipped.
+
+    Returned even when a file is missing: the point is to let both sides check
+    the same list and fail closed on the same names, rather than to discover
+    halfway through a fifteen-minute render that a clip never arrived.
+    """
+    plan_path = Path(episode_dir) / "scene_plan.json"
+    if not plan_path.is_file():
+        return {}
+
+    try:
+        from btcedu.core.scene_planner import scenes_from_plan
+    except Exception:  # noqa: BLE001
+        return {}
+
+    try:
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        scenes = scenes_from_plan(plan)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Scene plan is unreadable, not declaring scene requirements: %s", exc)
+        return {}
+
+    anchor_path = Path(episode_dir) / "anchor" / "manifest.json"
+    anchor: dict = {}
+    if anchor_path.is_file():
+        try:
+            anchor = json.loads(anchor_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            anchor = {}
+
+    required: list[str] = ["scene_plan.json"]
+    if anchor:
+        required.append("anchor/manifest.json")
+    for entry in anchor.get("scenes", []):
+        rel = str(entry.get("video_path") or "")
+        if rel and not Path(rel).is_absolute() and ".." not in Path(rel).parts:
+            required.append(rel)
+    for scene in scenes:
+        for rel in (scene.audio_file, scene.background_asset):
+            if rel and not Path(rel).is_absolute() and ".." not in Path(rel).parts:
+                required.append(str(rel))
+
+    return {
+        "scene_plan_hash": str(plan.get("content_hash") or ""),
+        "presenter_look_id": str(plan.get("presenter_look_id") or ""),
+        "scene_count": len(scenes),
+        "anchor_schema_version": str(anchor.get("schema_version") or ""),
+        "studio_dir": studio_directory_for(settings, episode),
+        "studio_assets": _studio_assets(settings, episode),
+        "episode_files": sorted(dict.fromkeys(required)),
+    }
+
+
+def studio_directory_for(settings: Settings, episode) -> str:
+    try:
+        from btcedu.core.scene_renderer import studio_directory
+
+        return studio_directory(settings, episode)
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def verify_job_completeness(episode_dir: Path, job: dict, workdir: Path | None = None) -> None:
+    """Fail closed when a declared render input did not survive the trip.
+
+    Run on the runner before a single frame is encoded. A render that starts
+    without its avatar clips does not fail -- it silently produces the wrong
+    video, which is far worse.
+    """
+    scene_job = (job or {}).get("scene_render") or {}
+    if not scene_job:
+        return
+
+    root = Path(episode_dir)
+    missing = [rel for rel in scene_job.get("episode_files", []) if not (root / rel).is_file()]
+    asset_root = Path(workdir) if workdir else Path.cwd()
+    missing += [
+        rel for rel in scene_job.get("studio_assets", []) if not (asset_root / rel).is_file()
+    ]
+    if missing:
+        raise RuntimeError(
+            "Render job is incomplete; refusing to render a partial episode. Missing: "
+            + ", ".join(sorted(missing))
+        )
+
+
 def build_job_package(
     session: Session,
     episode_id: str,
@@ -324,6 +475,10 @@ def build_job_package(
         "settings": render_settings_snapshot(settings),
         "expected_font_file": _expected_font_file(settings, episode),
         "assets": _profile_assets(settings, episode),
+        # Scene artefacts live inside the episode directory and travel with it.
+        # The studio does not, so it is declared and shipped like profile audio,
+        # and both sides check the same list before anything is encoded.
+        "scene_render": scene_job_requirements(episode_dir, settings, episode),
         # The runner recomputes this. Any drift in settings, profile, assets or
         # episode metadata changes it, and a mismatch means the result would be
         # rejected by render_is_current -- i.e. the Pi would re-render for ever.
@@ -338,10 +493,13 @@ def build_job_package(
 
     # compresslevel=1: the payload is mostly PNG/MP3, already compressed, and
     # the Pi's CPU is the scarce resource here.
+    shipped = list(job["assets"]) + list((job["scene_render"] or {}).get("studio_assets") or [])
     with tarfile.open(archive_path, "w:gz", compresslevel=1) as tar:
         tar.add(job_json, arcname="job.json")
         tar.add(episode_dir, arcname="episode", filter=_job_filter(episode_dir))
-        for rel in job["assets"]:
+        for rel in dict.fromkeys(shipped):
+            if is_secret_name(rel):
+                raise RuntimeError(f"Refusing to ship {rel} to a remote runner")
             tar.add(rel, arcname=f"assets/{rel}")
     job_json.unlink(missing_ok=True)
 

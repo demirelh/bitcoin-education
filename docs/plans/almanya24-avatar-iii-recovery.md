@@ -135,17 +135,19 @@ Am 6. September 2026 in dieser Wiederherstellungssitzung ergänzt (WP-1):
   `_STAGE_WORKFLOW_KEY`-Kommentar in `web/api.py:826` nennt die Hilfsstufen noch
   ohne `sceneplan`, und `STAGE_PROVIDER_MAP` kennt die kostenfreie Stufe nicht.
   Kosmetisch, kein Funktionsfehler.
-- [~] **Renderer-Statuskette**: `renderer.py` und `remote_render.py` akzeptieren
-  `SCENE_PLANNED`, konsumieren `scene_plan.json` aber noch nicht. Der Renderer
-  baut seine Blöcke weiterhin selbst.
+- [x] **Renderer-Statuskette**: `renderer.py` und `remote_render.py` konsumieren
+  `scene_plan.json` jetzt szenenweise (WP-4). Ohne Plan bleibt der Kapitelpfad
+  unverändert.
 - [~] **Anchor-Stage**: Der Scene-Pfad ist umgesetzt (WP-2). Offen bleiben
   Parallelität/Backoff und das Operator-Kommando `btcedu avatar-reconcile`.
 - [~] **Kostenprüfung Avatar**: Der Scene-Pfad prüft szenenweise gegen
   `max_cost_usd` und `episode_avatar_cost()`. Der Kapitelpfad kennt weiterhin
   nur Kapitel — bewusst unverändert, damit D-ID nicht betroffen ist.
-- [~] **WebM**: Der Compositor legt jetzt Alpha-WebM über das Studio (WP-3).
-  Offen bleibt die Renderer-Integration (WP-4) und das echte Studio-Artwork aus
-  Phase 1 — bis dahin ist die Bereitschaftsprüfung bewusst rot.
+- [~] **WebM**: Der Compositor legt Alpha-WebM über das Studio (WP-3) und der
+  Renderer ruft ihn szenenweise auf (WP-4). Offen bleibt allein das echte
+  Studio-Artwork aus Phase 1 — bis dahin ist die Bereitschaftsprüfung bewusst
+  rot. Ungeprüft ist außerdem, ob das ffmpeg des Pi Alpha aus einem echten
+  HeyGen-VP9-WebM *dekodieren* kann; das ist eine Betriebsfrage, kein Blocker.
 
 ## Noch offen
 
@@ -298,29 +300,87 @@ dekodieren, aber nicht *enkodieren* — `-pix_fmt yuva420p` fällt still auf
 einer MOV-Datei. Für die Produktion ist das unkritisch, weil Alpha von HeyGen
 kommt und nur gelesen wird.
 
-### WP-4 — Renderer auf den Scene-Plan umstellen *(nächstes Paket)*
+### WP-4 — Renderer und Remote-Render auf Szenenebene (6. September 2026)
 
-- [ ] `render_video()` schneidet nach `scene_plan.json` statt nach eigener
-      Blockaufteilung; Original-TTS bleibt die Audioquelle (Anforderung 9).
-- [ ] Anchor-Szenen → `composite_studio_scene()`; Reporter-Szenen → bestehender
-      Vollbild-/B-Roll-Pfad; Wetter → bestehender Wetterrenderer;
-      Opening/Closing → Studiotemplates.
-- [ ] Kapitel-, Overlay-, Timeline-, Untertitel- und YouTube-Kapitelmechanismen
-      unverändert erhalten; der Kapitelpfad ohne `scene_plan.json` bleibt, wie
-      er ist, ebenso D-ID und `bitcoin_podcast`.
-- [ ] `segments: []` im Anchor-Manifest erst ablösen, wenn der neue Renderer
-      einen dokumentierten Vertrag hat.
-- [ ] `render_settings`-Hash um Plan-, Studio- und Compositing-Hash erweitern.
-- [ ] Remote-Render-Paket: Plan, Studio-Assets und Szenenartefakte übertragen
-      oder deterministisch referenzieren, ohne große Medien zu duplizieren.
+Neu: `btcedu/core/scene_renderer.py`. Geändert: `btcedu/core/renderer.py`,
+`btcedu/core/remote_render.py`, `scripts/render_job.py`.
 
-### WP-5 — Betriebswerkzeuge und Gates
+**Timingvertrag** (im Modul-Docstring von `scene_renderer.py` dokumentiert):
+
+1. Die Kapitel-MP3 ist die alleinige Autorität für die Kapitellänge.
+2. Szenengewichte stammen aus den gemessenen `speaker_parts`; geplante Dauern
+   sind nur der Rückfall für ältere Episoden.
+3. Die Gewichte werden auf die gemessene Kapitellänge skaliert; die
+   Rundungsdifferenz landet deterministisch **ausschließlich** auf der letzten
+   Szene.
+4. Sprecherpausen stecken bereits in der Kapitel-MP3 und werden nie erneut
+   eingefügt — geschnitten wird nur das Bild.
+5. Szenen werden **stumm** gerendert, verbunden, danach legt
+   `replace_audio_track()` die unveränderte Kapitel-MP3 als einzige Tonspur
+   auf. Ein stummes Zwischenprodukt kann kein HeyGen-Audio in den Master lassen.
+6. Die letzte Szene erhält `SCENE_TAIL_HEADROOM_SECONDS = 0.15`, damit kein
+   letztes Wort abgeschnitten wird.
+7. `_verify_chapter_output()` prüft per ffprobe die Dauer gegen
+   `DURATION_TOLERANCE_SECONDS = 0.35` und genau eine Audiospur.
+
+- [x] `render_video()` schneidet nach `scene_plan.json`; der `use_scenes`-Zweig
+      steht vor `use_beats`. Ohne Plan ist der Kapitelpfad Byte-für-Byte
+      derselbe, weil `scene_hash_inputs()` ohne Plan `None` liefert und der
+      Schlüssel `"scenes"` dann gar nicht erst in den Content-Hash kommt.
+- [x] Anchor-Szenen → `composite_studio_scene()` in zwei Durchgängen: erst das
+      Studio (Alpha, Monitor, Desk), dann der bestehende `create_video_segment()`
+      für Overlays, Ticker und Fades. Das verhindert eine zweite Renderpipeline.
+- [x] Reporter-Szenen → bestehender Vollbild-/B-Roll-Pfad (`create_segment()`
+      beziehungsweise `create_video_segment()`), kein Avatar, kein Studio, keine
+      zusätzliche Mediengenerierung.
+- [x] Wetterkapitel werden über `_weather_chapter_ids(image_manifest)` vom
+      Szenenpfad ausgenommen; der deterministische Wetterrenderer bleibt
+      unberührt. `studio_weather_handover` ist weiterhin eine Anchor-Szene
+      *innerhalb* eines Nachrichtenkapitels und wird normal komponiert.
+- [x] Template → Platte: `studio_opening_wide` → `intro_asset`;
+      `studio_closing` und `studio_weather_handover` → `loop_asset`;
+      `studio_anchor_medium`/`studio_anchor_return` → Standardhintergrund.
+- [x] Fail-closed in `resolve_avatar_clip()`: fehlender Manifesteintrag, Status
+      in `{failed, reserved, reconcile_required, ""}`, abweichende Look-ID,
+      Pfad außerhalb des Episodenverzeichnisses, fehlende Datei. Der Renderer
+      beauftragt **niemals** einen Clip.
+- [x] Wiederverwendung pro Szene über eine `<shot>.hash`-Datei neben
+      `<shot>.mp4`; verlangt wird passender Hash **und** erfolgreiches
+      `probe_media`, eine beschädigte Szene wird einzeln neu gerendert.
+- [x] Kapitel-, Overlay-, Timeline-, Untertitel- und YouTube-Kapitelmarken
+      unverändert: pro Kapitel entsteht weiterhin genau ein Segment und genau
+      eine Kapitelmarke — Sprecherwechsel erzeugen keine neuen Marken.
+- [x] `render_settings`-Hash um Plan-, Anchor-, Studio-, Themenmedium- und
+      Compositing-Hash erweitert. Beide Aufrufstellen benutzen denselben Helfer
+      `_scene_hash_block()`, damit Pi und GitHub-Runner nicht auseinanderlaufen.
+- [x] Remote-Render: Studio-Assets werden deklariert und wie Profilaudio unter
+      `assets/<rel>` mitgeschickt; `scene_job_requirements()` und
+      `verify_job_completeness()` prüfen vor dem Rendern auf Vollständigkeit.
+      Secrets und Symlinks werden gefiltert (`is_secret_name()`), unreferenzierte
+      Assets nicht mitgesendet. Ohne Szenenplan ist das Paket unverändert.
+- [ ] `segments: []` im Anchor-Manifest bleibt bewusst leer; der Vertrag ist
+      jetzt dokumentiert, die Ablösung gehört aber nicht mehr in dieses Paket.
+
+Tests: `tests/test_scene_renderer.py` (56), `tests/test_scene_remote_render.py`
+(27), `tests/test_renderer_scene_integration.py` (13). Die Bestandssuiten
+`test_renderer.py`, `test_remote_render.py`, `test_render_job_script.py` und
+`test_render_subtitles.py` laufen unverändert (102 Tests).
+
+Fixture-Hinweis: `speaker_parts` benutzen den Schlüssel `"file"` mit bloßem
+Dateinamen unter `tts/parts/`, nicht `file_path`. `OverlaySpec` kennt kein
+`duration`-Argument. Beides hat beim Schreiben der Fixtures Zeit gekostet.
+
+### WP-5 — Betriebswerkzeuge und Gates *(nächstes Paket)*
 
 - [ ] `btcedu anchor-readiness` (im Profil bereits erwähnt, existiert nicht):
       lehnt Platzhalter-Look-IDs, doppelte IDs, fehlende Rechte und
       nicht-positive Kostenrate ab.
+- [ ] `btcedu avatar-reconcile` als Operator-Kommando um `resolve_job()`.
 - [ ] Dashboard-Vorschau und Review-Gate für Avatar-Szenen.
+- [ ] Parallelität (`max_concurrent_jobs`) mit Backoff bei 429/5xx.
 - [ ] Fail-closed-Verhalten beziehungsweise sichtbarer Voice-over-Fallback.
+- [ ] Kosmetik aus "Teilweise umgesetzt": `sceneplan` in
+      `_STAGE_WORKFLOW_KEY`-Kommentar und `STAGE_PROVIDER_MAP` nachziehen.
 
 ### Extern blockiert
 
@@ -389,3 +449,5 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-06 | WP-2 | Anchor-Stage auf Scene-Plan und Register, 22 Tests, Ruff grün |
 | 2026-09-06 | Checkpoint | Lokaler Commit `684d639` (WP-2), nicht gepusht |
 | 2026-09-06 | WP-3 | Studio-Manifest, Compositor, Medienauflösung, 130 Tests, Ruff grün; Suite 3017 grün / 2 Baselinefehler |
+| 2026-09-06 | Checkpoint | Lokaler Commit `e9efd04` (WP-3), nicht gepusht |
+| 2026-09-06 | WP-4 | Szenenrenderer, Remote-Vertrag, 96 neue Tests, Ruff grün; Suite 3114 grün / 2 Baselinefehler |

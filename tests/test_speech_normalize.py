@@ -267,24 +267,57 @@ class TestFoundInRealEpisodes:
         assert normalize_speech("2010 yılında") == "iki bin on yılında"
 
 
+# Narration shapes taken from real bulletins and rewritten so the corpus can
+# live in the repository. Every one of them is a case the normalizer has been
+# wrong about at least once, which is why they are here rather than in a
+# machine-local archive nobody else can reproduce.
+CORPUS = [
+    "Nepal'de sel felaketi 2.700 kişiyi evinden etti.",
+    "Kurtarma ekipleri 4. gün de bölgede çalışıyor.",
+    "Yetkililer 150-200 çocuğun kayıp olduğunu bildirdi.",
+    "Baba, 'Anneme gitmek istiyorum' diyor, dedi.",
+    'Bakan, "Yardımlar 20.00 itibarıyla ulaştı" açıklamasını yaptı.',
+    "Tırmanış ekibi 700 km uzaktaki kampa 2,5 günde vardı.",
+    "2-3 Ağustos gecesi yağış 40 cm'yi buldu.",
+    "Enflasyon %70'e, kur ise 2,75 milyona dayandı.",
+    "Bitcoin'in fiyatı 2010 yılından bu yana yüzde 12 arttı.",
+    "Almanya'nın Bundeswehr birlikleri 17. sırada yer aldı.",
+    "Öğrenciler 100 MW gücündeki santralin 3 m derinliğindeki havuzunu gezdi.",
+    "Görgü tanığı, 'Her akşam annesini arıyor' ifadesini kullandı.",
+]
+
+
 class TestTheLastTenEpisodes:
-    """Replay every real bulletin on disk through the normalizer.
+    """Replay real bulletin shapes, and the machine's archive when it has one.
 
     A rule that works on invented examples and fails on the archive is not
-    working. This asserts the property that matters -- no digit reaches the
-    engine unspoken -- rather than a fixed expected string per episode.
+    working. The checks assert properties of the *transformation* -- no digit
+    reaches the engine unspoken, no marker survives, the stored text is
+    untouched -- rather than a fixed expected string per episode, so they hold
+    for any narration rather than for the ten bulletins that happen to be on
+    one Pi.
+
+    The archive part of this was a data- and time-dependent audit: it picked
+    episodes by modification time, and its apostrophe rule flagged the quotation
+    marks in ``ve 'Anneme gitmek istiyorum' diyor`` -- punctuation the source
+    already contained and the normalizer never touched. Selection is now by
+    episode id, and the rule compares the output against its own input, which
+    is the only way to tell an orphan the normalizer created from a quotation
+    the editor wrote.
     """
 
     @staticmethod
-    def _episodes():
+    def _corpus():
+        return [("corpus", [{"narration": {"text": text}} for text in CORPUS])]
+
+    @staticmethod
+    def _archive():
         import json
         import pathlib
 
-        paths = sorted(
-            pathlib.Path("data/outputs").glob("*/chapters.json"),
-            key=lambda p: p.stat().st_mtime,
-            reverse=True,
-        )
+        # By id, not by mtime: the id carries the broadcast date, and a file
+        # touched by a backup must not change which episodes are examined.
+        paths = sorted(pathlib.Path("data/outputs").glob("*/chapters.json"), reverse=True)
         found = []
         for path in paths:
             try:
@@ -296,12 +329,14 @@ class TestTheLastTenEpisodes:
                 found.append((path.parent.name, chapters))
         return found[:10]
 
+    @classmethod
+    def _episodes(cls):
+        return cls._corpus() + cls._archive()
+
     def test_no_digit_reaches_the_engine_unspoken(self):
         import re
 
         episodes = self._episodes()
-        if not episodes:
-            pytest.skip("no rendered episodes on this machine")
 
         # A digit still attached to letters is a protected name, not a leftover.
         protected = re.compile(r"[A-Za-zÇĞİÖŞÜçğıöşü]\d|\d[A-Za-zÇĞİÖŞÜçğıöşü]")
@@ -317,24 +352,27 @@ class TestTheLastTenEpisodes:
     def test_no_markers_or_orphaned_apostrophes_are_left_behind(self):
         import re
 
-        episodes = self._episodes()
-        if not episodes:
-            pytest.skip("no rendered episodes on this machine")
-
-        for _name, chapters in episodes:
+        loose = re.compile(r"\s['’]|['’]\s")
+        for name, chapters in self._episodes():
             for chapter in chapters:
-                spoken = normalize_speech((chapter.get("narration") or {}).get("text", ""))
-                assert "\x00" not in spoken
-                assert not re.search(r"\s['’]|['’]\s", spoken)
+                original = (chapter.get("narration") or {}).get("text", "")
+                spoken = normalize_speech(original)
+                # The placeholder the normalizer uses while it works must never
+                # survive into what the engine is asked to read.
+                assert "\x00" not in spoken, name
+                # A Turkish suffix is stripped with its apostrophe ("Bitcoin'in"
+                # -> "Bitcoin"); an apostrophe left standing on its own means a
+                # word was eaten around it. A quotation the editor wrote is not
+                # that, so the output is judged against its own input rather
+                # than against an absolute rule.
+                assert len(loose.findall(spoken)) <= len(loose.findall(original)), (
+                    f"{name}: normalization introduced a loose apostrophe"
+                )
 
     def test_the_stored_narration_is_never_modified(self):
         # The display side must keep its digits: chapter titles, topic cards
         # and lower thirds are read with the eyes.
-        episodes = self._episodes()
-        if not episodes:
-            pytest.skip("no rendered episodes on this machine")
-
-        for _name, chapters in episodes:
+        for _name, chapters in self._episodes():
             for chapter in chapters:
                 original = (chapter.get("narration") or {}).get("text", "")
                 before = original

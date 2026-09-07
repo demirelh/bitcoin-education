@@ -837,12 +837,83 @@ Studio ist über `studio_hash` und die Paket-Vollständigkeitsprüfung abgesiche
 Themenbilder über den Render-Content-Hash; ein getauschtes Studio-PNG bei
 gleichem Manifest fällt erst im finalen Review auf.
 
+**Weiterhin offen für WP-8**: Diese Lücke bleibt nach WP-7 unverändert
+bestehen. Bytehashes der übrigen Renderinputs — Studio-Plates, Themenmedien,
+Overlays — sind ausdrücklich **nicht** erledigt.
+
+### WP-7 — Dashboard-Bedienung, Reconciliation und Voice-over-Override (7. September 2026)
+
+**Neu**: `tests/test_web_avatar_operations.py` (54 Tests), Testklasse
+`TestTheBulletinWithoutThePresenter` in `tests/test_almanya24_e2e.py` (6 Tests),
+`docs/avatar-dashboard.md`.
+
+- [x] Runtimeanzeige: Provider, Engine, Studio-Modus, Readiness,
+      Circuit-Breaker-Status mit Grund, letztem Fehler, Cooldown und letztem
+      Erfolg; Parallelitätsgrenze, laufende Jobs, freie Slots, wartende
+      Submits, Polling/Download/Validierung/Retry/Klärungsfälle, nächster
+      Pollzeitpunkt, Retryanzahl, Fehlerkategorie.
+- [x] Kostenblock: gebucht, reserviert, ungeklärt, gebunden, Stufenlimit,
+      Rest und Warnung vor erwarteter Überschreitung. Ungeklärte Beträge
+      mindern das Restbudget — ein Job mit unbekanntem Ausgang kann berechnet
+      worden sein.
+- [x] Reconciliation im Dashboard bildet exakt die fünf CLI-Entscheidungen ab
+      und ruft dieselbe `resolve_job()`. Der Weblayer hat **keine** eigene
+      Zustandslogik; er sammelt Begründung und Digest.
+- [x] Zweistufig: `prepare` verändert nichts, `confirm` ist an Status, Kosten,
+      Versuchszähler **und die letzte Auditzeile** gebunden. Ohne die
+      Auditbindung ließ sich `unresolved` — eine Entscheidung, die keine Spalte
+      ändert — konkurrierend doppelt anwenden; genau das deckte
+      `test_a_competing_decision_on_another_state_is_refused` auf.
+- [x] Doppelklick liefert `already_applied` (200) statt einer zweiten
+      Entscheidung, veralteter Digest 409, abgeschlossener Job 422.
+- [x] Circuit-Breaker-Reset auditiert; Provider-Job-ID anhängen; optionaler
+      Online-Inspect ausschließlich lesend. Kein Submit aus einem Webrequest.
+- [x] Voice-over-Override als Prepare/Confirm/Revoke in
+      `core/anchor_fallback.py`: Digest über Szenenplan, Anchor-Manifest
+      (inklusive Bytehashes) und Jobzustand, Pflicht zu Begründung und
+      Kenntnisnahme, idempotente Bestätigung, Auditzeile, Invalidierung der
+      Anchor-/Renderfreigaben, `render/.stale`.
+- [x] Nach bestätigtem Override lehnt `anchor_generator` jeden Submit dieser
+      Episode ab. Kosten werden nicht storniert, laufende Jobs nicht
+      abgebrochen, nichts neu synthetisiert.
+- [x] Widerruf vor der Veröffentlichung möglich und auditiert; danach 422. Die
+      Historie bleibt in jedem Fall erhalten.
+- [x] Fallback-Render: `shows_presenter()` entscheidet je Szene, Anchor-Szenen
+      laufen unter Override wie Reporterszenen mit dem bereits zugeordneten
+      Themenmedium, TTS, Kapitelreihenfolge und Wetterpfad unverändert,
+      fehlendes Fallbackasset blockiert fail-closed.
+- [x] `presentation_mode` (`avatar` / `voice_over_override`) steckt im
+      Szenen-Content-Hash, in `scene_hash_inputs`, im Render-Manifest und im
+      Remote-Render-Job; der Runner zieht die Entscheidung in seiner
+      Wegwerfdatenbank nach. Ein Moduswechsel schneidet jeden Shot neu — sonst
+      würde ein alter Studio-Shot wiederverwendet und die Moderatorin doch
+      gesendet.
+- [x] UI-Kosmetik im vorhandenen Bereich: deutsche Statuslabels, getrennte
+      Blöcke, Status mit Text **und** Farbe, gekürzte IDs, Leer-/Lade-/
+      Fehlerzustände, Bestätigungsdialoge, kein Autoplay, keine automatischen
+      Videodownloads, `sr-only`-Labels, mobiles Tabellenscrolling.
+- [x] Zustandsändernde Avatarrouten verlangen `application/json` und lehnen
+      fremde `Origin`-Header ab. Das Dashboard hat keinen Login; das ist die
+      Absicherung, die zur vorhandenen Architektur passt, kein Ersatz für
+      Authentifizierung.
+
+**Zwei echte Fehler gefunden und behoben** (keine Testkosmetik):
+`avatar_runtime.runtime_snapshot()` griff auf ein `AvatarJob.updated_at` zu, das
+es nicht gibt — sobald zwei Jobs einen `last_error_type` trugen, wäre die
+Runtimeanzeige in Produktion mit `AttributeError` abgestürzt. Und der Renderer
+verlangte auch unter Override eine gültige Anchor-Freigabe, womit der
+Notfallpfad genau dann unbenutzbar war, wenn die Clips kaputt sind.
+
+**Bewusst nicht getan**: kein allgemeines Dashboard-Redesign, keine
+Kostenstornierung, keine automatische Wahl des Fallbacks, keine öffentliche
+Kennzeichnung erfunden — der Produktionsmodus steht in Manifest und Provenienz,
+die redaktionelle Policy bleibt unverändert.
+
 ### Offene Kosmetik
 
 - [ ] `sceneplan` im `_STAGE_WORKFLOW_KEY`-Kommentar und in `STAGE_PROVIDER_MAP`
       nachziehen.
-- [ ] Sichtbare Bedienung des Voice-over-Overrides (Policy, Datenmodell und Gate
-      stehen seit WP-5A, bewusst weiterhin ohne Bedienoberfläche).
+- [x] Sichtbare Bedienung des Voice-over-Overrides — mit WP-7 erledigt.
 
 ### Extern blockiert
 
@@ -999,3 +1070,4 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-07 | WP-6 | Synthetischer E2E-Trockenlauf, CLI `smoke-test-almanya24`, 56 neue Tests, zwei echte Produktfehler gefunden und behoben, Ruff grün |
 | 2026-09-07 | Checkpoint | Lokaler Commit `dda8972` (WP-6), nicht gepusht |
 | 2026-09-07 | WP-6A | Bytegebundene Clipintegrität über sieben Vertrauensgrenzen, Migration 020, 28 neue Tests, Ruff grün |
+| 2026-09-07 | WP-7 | Dashboard-Runtimeanzeige, Reconciliation-Bedienung, Voice-over-Override mit Fallback-Render, 60 neue Tests, `docs/avatar-dashboard.md`, Ruff grün |

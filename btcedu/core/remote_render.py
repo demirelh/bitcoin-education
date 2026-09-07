@@ -31,6 +31,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
+from btcedu.core.anchor_fallback import PRESENTATION_AVATAR, PRESENTATION_VOICE_OVER
 from btcedu.core.avatar_integrity import (
     hash_file,
     manifest_clip_entries,
@@ -361,7 +362,9 @@ def _studio_assets(settings: Settings, episode) -> list[str]:
     return sorted(dict.fromkeys(files))
 
 
-def scene_job_requirements(episode_dir: Path, settings: Settings, episode) -> dict:
+def scene_job_requirements(
+    episode_dir: Path, settings: Settings, episode, *, session=None
+) -> dict:
     """What a scene-based render needs to exist, listed before it is shipped.
 
     Returned even when a file is missing: the point is to let both sides check
@@ -413,7 +416,22 @@ def scene_job_requirements(episode_dir: Path, settings: Settings, episode) -> di
         if rel and recorded
     }
 
+    # The operator's decision travels with the job. Without it the runner would
+    # seed a database that has never heard of the override and would happily
+    # render the presenter back into a bulletin she was taken out of.
+    mode = PRESENTATION_AVATAR
+    if session is not None:
+        from btcedu.core.anchor_fallback import presentation_mode
+
+        mode = presentation_mode(session, str(getattr(episode, "episode_id", "") or ""))
+    if mode == PRESENTATION_VOICE_OVER:
+        # Her clips are not shipped and not required: the render is happening
+        # precisely because they cannot be used.
+        clip_digests = {}
+        required = [rel for rel in required if not rel.startswith("anchor/")]
+
     return {
+        "presentation_mode": mode,
         "clip_digests": clip_digests,
         "scene_plan_hash": str(plan.get("content_hash") or ""),
         "presenter_look_id": str(plan.get("presenter_look_id") or ""),
@@ -511,7 +529,9 @@ def build_job_package(
         # Scene artefacts live inside the episode directory and travel with it.
         # The studio does not, so it is declared and shipped like profile audio,
         # and both sides check the same list before anything is encoded.
-        "scene_render": scene_job_requirements(episode_dir, settings, episode),
+        "scene_render": scene_job_requirements(
+            episode_dir, settings, episode, session=session
+        ),
         # The runner recomputes this. Any drift in settings, profile, assets or
         # episode metadata changes it, and a mismatch means the result would be
         # rejected by render_is_current -- i.e. the Pi would re-render for ever.
@@ -522,7 +542,10 @@ def build_job_package(
     # Nothing leaves this machine that the reviewer did not see. Packing a clip
     # that has drifted would ship the drift to a runner which cannot detect it.
     anchor_manifest_file = episode_dir / "anchor" / "manifest.json"
-    if anchor_manifest_file.is_file():
+    overridden = (job["scene_render"] or {}).get(
+        "presentation_mode"
+    ) == PRESENTATION_VOICE_OVER
+    if anchor_manifest_file.is_file() and not overridden:
         try:
             packed_manifest = json.loads(anchor_manifest_file.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:

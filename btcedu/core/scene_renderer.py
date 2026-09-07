@@ -41,6 +41,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from btcedu.config import Settings
+from btcedu.core.anchor_fallback import PRESENTATION_AVATAR, PRESENTATION_VOICE_OVER
 from btcedu.core.avatar_integrity import require_intact
 from btcedu.core.scene_planner import (
     ROLE_ANCHOR,
@@ -154,6 +155,9 @@ class SceneRenderContext:
     studio_hash: str = ""
     studio_problems: list = field(default_factory=list)
     manifests: dict = field(default_factory=dict)
+    #: ``avatar`` or ``voice_over_override``. Not a renderer preference: it is
+    #: read from the operator's recorded decision and only ever reported.
+    presentation_mode: str = PRESENTATION_AVATAR
 
     def scenes_for(self, chapter_id: str) -> list[Scene]:
         selected = [s for s in self.scenes if s.chapter_id == chapter_id]
@@ -189,6 +193,7 @@ def load_scene_context(
     episode,
     *,
     manifests: dict | None = None,
+    session=None,
 ) -> SceneRenderContext | None:
     """Assemble the scene context, or ``None`` when this episode has no plan.
 
@@ -219,18 +224,26 @@ def load_scene_context(
         except json.JSONDecodeError:
             logger.warning("Anchor manifest %s is unreadable", anchor_path)
 
-    # Last check before the bytes become a broadcast. The review looked at
-    # specific footage; between that signature and this encode the files sat on
-    # a disk that other processes can write to, so they are measured once more
-    # here — for the local render and, since the runner calls the same
-    # function, for the remote one as well.
-    require_intact(anchor_manifest, base_dir=base_dir, context="scene render")
+    mode = _presentation_mode(session, episode)
 
-    clips = {
-        str(entry.get("scene_id")): entry
-        for entry in anchor_manifest.get("scenes", [])
-        if entry.get("scene_id")
-    }
+    if mode == PRESENTATION_VOICE_OVER:
+        # The presenter is not in this bulletin, so her clips are neither
+        # measured nor carried: a corrupt clip must not block the very render
+        # that was chosen because the clips were unusable.
+        clips: dict = {}
+    else:
+        # Last check before the bytes become a broadcast. The review looked at
+        # specific footage; between that signature and this encode the files sat
+        # on a disk that other processes can write to, so they are measured once
+        # more here — for the local render and, since the runner calls the same
+        # function, for the remote one as well.
+        require_intact(anchor_manifest, base_dir=base_dir, context="scene render")
+
+        clips = {
+            str(entry.get("scene_id")): entry
+            for entry in anchor_manifest.get("scenes", [])
+            if entry.get("scene_id")
+        }
 
     studio, studio_hash, problems = _load_studio(settings, episode)
 
@@ -247,7 +260,31 @@ def load_scene_context(
         studio_hash=studio_hash,
         studio_problems=problems,
         manifests=manifests or {},
+        presentation_mode=mode,
     )
+
+
+def _presentation_mode(session, episode) -> str:
+    """How this episode is presented, according to the operator's record.
+
+    The session is optional because the renderer is also driven by tooling that
+    holds no ORM session; without one the answer is the normal avatar path,
+    which is the fail-closed direction — an override is an exception that has to
+    be found, never assumed.
+    """
+    from sqlalchemy.orm import object_session
+
+    from btcedu.core.anchor_fallback import presentation_mode
+
+    session = session or object_session(episode) if episode is not None else session
+    episode_id = str(getattr(episode, "episode_id", "") or "")
+    if session is None or not episode_id:
+        return PRESENTATION_AVATAR
+    try:
+        return presentation_mode(session, episode_id)
+    except Exception as exc:  # noqa: BLE001 - an unreadable record is not an override
+        logger.warning("Could not read the presentation mode of %s: %s", episode_id, exc)
+        return PRESENTATION_AVATAR
 
 
 def _load_studio(settings: Settings, episode) -> tuple[StudioManifest | None, str, list]:
@@ -313,6 +350,16 @@ def template_background(manifest: StudioManifest, template_id: str) -> str | Non
 
 def is_studio_scene(scene: Scene) -> bool:
     return scene.visual_mode == VISUAL_MODE_STUDIO and scene.template_id in _STUDIO_TEMPLATES
+
+
+def shows_presenter(ctx: SceneRenderContext, scene: Scene) -> bool:
+    """Is this shot the presenter in her studio, or a full-frame medium?
+
+    One place decides it. Under a voice-over override every scene — including
+    the presenter's — is cut like a reporter scene: the same narration over the
+    editorial medium that was already assigned to it.
+    """
+    return ctx.presentation_mode != PRESENTATION_VOICE_OVER and is_studio_scene(scene)
 
 
 def resolve_avatar_clip(ctx: SceneRenderContext, scene: Scene) -> tuple[Path, str]:
@@ -398,6 +445,7 @@ def scene_content_hash(
             "fit_mode": scene.display_fit_mode,
             "focus_point": scene.focus_point,
             "overlays": overlay_fingerprint,
+            "presentation_mode": ctx.presentation_mode,
         },
         renderer_version=SCENE_RENDERER_VERSION,
     )
@@ -420,6 +468,7 @@ def scene_hash_inputs(ctx: SceneRenderContext | None) -> dict | None:
         "anchor_schema_version": ctx.anchor_schema_version,
         "studio_content_hash": ctx.studio_hash,
         "studio_version": ctx.studio.studio_version if ctx.studio else "",
+        "presentation_mode": ctx.presentation_mode,
         "clips": sorted(
             (
                 str(entry.get("scene_id")),
@@ -529,7 +578,7 @@ def render_scene_chapter(
         look_id = ""
         avatar_clip_hash = ""
         studio: StudioManifest | None = None
-        if is_studio_scene(scene):
+        if shows_presenter(ctx, scene):
             studio = require_studio(ctx)
             avatar_clip, look_id = resolve_avatar_clip(ctx, scene)
             avatar_clip_hash = str(
@@ -663,7 +712,11 @@ def _relative(base_dir: Path, path: Path | None) -> str:
 
 def _resolve_display_media(ctx: SceneRenderContext, scene: Scene):
     """The editorial medium for a scene, or ``None`` when there cannot be one."""
-    if ctx.studio is None and scene.speaker_role == ROLE_ANCHOR:
+    if (
+        ctx.studio is None
+        and scene.speaker_role == ROLE_ANCHOR
+        and ctx.presentation_mode != PRESENTATION_VOICE_OVER
+    ):
         return None
     try:
         return resolve_scene_media(
@@ -874,6 +927,7 @@ def scene_manifest_block(ctx: SceneRenderContext, entries: list[SceneRenderEntry
         "studio_version": ctx.studio.studio_version if ctx.studio else "",
         "studio_content_hash": ctx.studio_hash,
         "scene_renderer_version": SCENE_RENDERER_VERSION,
+        "presentation_mode": ctx.presentation_mode,
         "scenes": [asdict(entry) for entry in entries],
     }
 

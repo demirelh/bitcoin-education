@@ -31,6 +31,10 @@ from btcedu.core.scene_planner import (
 )
 from btcedu.db import Base
 from btcedu.models.avatar_job import AvatarJobStatus
+
+# AvatarJobAudit is imported for its side effect: without it the audit table is
+# missing from Base.metadata and every route that reads an operator decision fails.
+from btcedu.models.avatar_job_audit import AvatarJobAudit  # noqa: F401
 from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.models.media_asset import Base as MediaBase
 from btcedu.models.presenter_assignment import PresenterAssignment

@@ -1,8 +1,10 @@
 # Avatar-Betrieb: Parallelität, Retries, Recovery
 
 Betriebsdokumentation für die HeyGen-Avatarstufe von ALMANYA24 (WP-5C).
-Ergänzt `docs/plans/almanya24-avatar-iii-recovery.md` (Fortschritt) und
-`docs/runbooks/` (Failover). Zielgruppe ist der Betreiber, nicht der Compiler.
+Ergänzt `docs/plans/almanya24-avatar-iii-recovery.md` (Fortschritt),
+`docs/avatar-dashboard.md` (Bedienung im Dashboard, Klärungsfälle,
+Voice-over-Notfallpfad) und `docs/runbooks/` (Failover). Zielgruppe ist der
+Betreiber, nicht der Compiler.
 
 Der Leitsatz der gesamten Stufe: **ein Clip wird höchstens einmal gekauft.**
 Alles Weitere — Parallelität, Backoff, Circuit Breaker — existiert nur, damit

@@ -2824,3 +2824,42 @@ body {
 .failover-mode.is-unavailable .failover-mode-label {
   color: var(--text-dim);
 }
+
+/* ---------------------------------------------------------------------------
+   Avatar operations panel (WP-7)
+   Status is never carried by colour alone: every badge also carries a word or
+   a symbol, because a colour is exactly the thing a colour-blind operator or a
+   sunlit Pi screen loses first.
+   --------------------------------------------------------------------------- */
+.sev-ok { background: #263; color: #cfc; }
+.sev-warning { background: #a63; color: #fff; }
+
+/* Visible to a screen reader, not to the eye. Used for the labels of the
+   compact reconciliation controls, which are explained by their column. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+#avatar-panel h5 {
+  margin: 14px 0 4px;
+  border-top: 1px solid #333;
+  padding-top: 10px;
+}
+
+#avatar-panel select,
+#avatar-panel button { min-height: 32px; }
+
+@media (max-width: 700px) {
+  /* The runtime and reconciliation tables are wide by nature; scrolling them
+     horizontally keeps the numbers readable instead of wrapping them into
+     unreadable columns. */
+  #avatar-panel table { display: block; overflow-x: auto; white-space: nowrap; }
+}

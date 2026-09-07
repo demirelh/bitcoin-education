@@ -486,3 +486,79 @@ def _validate_delivered(job: AvatarJob, output_path: str, outputs_dir: str | Pat
     if absolute.stat().st_size == 0:
         raise ReconciliationError(f"The clip at {candidate} is empty")
     return candidate
+
+
+def _last_touched(job: AvatarJob) -> str:
+    """The most recent timestamp this row carries.
+
+    ``AvatarJob`` has no ``updated_at``: every transition writes its own
+    column, which is more honest but means the newest of them has to be picked
+    explicitly.
+    """
+    stamps = [
+        job.completed_at,
+        job.submitted_at,
+        job.next_poll_at,
+        job.reserved_at,
+    ]
+    from datetime import UTC as _UTC
+
+    moments = [
+        stamp.replace(tzinfo=_UTC) if stamp.tzinfo is None else stamp
+        for stamp in stamps
+        if stamp is not None
+    ]
+    latest = max(moments, default=None, key=lambda value: value.timestamp())
+    return latest.isoformat() if latest else ""
+
+
+def decision_digest(session: Session, job: AvatarJob) -> str:
+    """Fingerprint of the row an operator is deciding about.
+
+    The dashboard shows a job, the operator thinks, and only then clicks. In
+    between, a pipeline run may have moved that very row. Binding the
+    confirmation to this digest turns that race into a refusal instead of a
+    decision applied to a different state.
+
+    The audit trail is part of the fingerprint, and deliberately so. Recording
+    "the provider cannot identify this job" changes no column at all, so a
+    digest built from the row alone would still match afterwards and a second
+    operator's contradicting decision would land unnoticed on top of the first.
+    """
+    import hashlib
+
+    last = last_decision(session, int(job.id))
+    payload = "|".join(
+        str(part)
+        for part in (
+            job.id,
+            job.status,
+            job.provider_job_id or "",
+            round(float(job.cost_usd or 0.0), 6),
+            int(job.attempt_count or 0),
+            _last_touched(job),
+            last.id if last else 0,
+        )
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def last_decision(session: Session, job_id: int) -> AvatarJobAudit | None:
+    """The most recent operator decision about this job, if there is one."""
+    return (
+        session.query(AvatarJobAudit)
+        .filter(AvatarJobAudit.job_id == int(job_id))
+        .order_by(AvatarJobAudit.created_at.desc(), AvatarJobAudit.id.desc())
+        .first()
+    )
+
+
+#: Which audit action each decision leaves behind. Used to recognise a repeated
+#: confirmation — a double-click has to be one decision, not two.
+DECISION_AUDIT_ACTION = {
+    DECISION_RUNNING: AvatarAuditAction.CONFIRM_RUNNING.value,
+    DECISION_DELIVERED: AvatarAuditAction.CONFIRM_DELIVERED.value,
+    DECISION_NOT_BILLED: AvatarAuditAction.CONFIRM_NOT_BILLED.value,
+    DECISION_UNRESOLVED: AvatarAuditAction.UNRESOLVED.value,
+    DECISION_ABANDON: AvatarAuditAction.ABANDONED.value,
+}

@@ -182,7 +182,37 @@ def _seed_episode(session, job: dict) -> str:
         episode.source = info["source"]
     session.add(episode)
     session.commit()
+    _seed_presentation_mode(session, job, episode.episode_id)
     return episode.episode_id
+
+
+def _seed_presentation_mode(session, job: dict, episode_id: str) -> None:
+    """Reproduce the operator's decision in the runner's throwaway database.
+
+    The renderer reads the presentation mode from the audit trail, and this
+    database was created seconds ago. Without this row a voice-over episode
+    would be rendered with the presenter after all -- the one thing an operator
+    explicitly decided against.
+    """
+    scene_job = (job or {}).get("scene_render") or {}
+    if scene_job.get("presentation_mode") != "voice_over_override":
+        return
+    from btcedu.models.avatar_job_audit import AvatarAuditAction, AvatarJobAudit
+
+    session.add(
+        AvatarJobAudit(
+            episode_id=episode_id,
+            job_id=None,
+            scene_id="",
+            action=AvatarAuditAction.VOICE_OVER_OVERRIDE.value,
+            from_status="anchor",
+            to_status="voice_over",
+            operator_ref="remote-render",
+            note="Presentation mode shipped with the render job",
+        )
+    )
+    session.commit()
+    print("Presentation mode: voice-over override (no presenter)", flush=True)
 
 
 def _pack_result(episode_dir: Path, out_path: Path) -> None:

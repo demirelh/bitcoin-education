@@ -43,6 +43,9 @@ class AvatarAuditAction(str, enum.Enum):
     VOICE_OVER_OVERRIDE = "voice_over_override"
     # A provider-wide circuit breaker was closed by hand.
     BREAKER_RESET = "breaker_reset"
+    # A voice-over override was withdrawn before the episode went out. The
+    # override itself stays in the history; this only ends its effect.
+    VOICE_OVER_REVOKED = "voice_over_revoked"
 
 
 class AvatarJobAudit(Base):

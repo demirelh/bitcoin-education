@@ -535,6 +535,26 @@ def _refuse_unless_permitted(episode_id: str, settings: Settings, config: Anchor
         )
 
 
+def _refuse_if_overridden(session, episode_id: str) -> None:
+    """An episode an operator took off the avatar path buys no more clips.
+
+    The override is what makes the bulletin renderable without a presenter; if
+    the stage kept submitting afterwards it would spend money on footage the
+    render is now guaranteed to ignore.
+    """
+    from btcedu.core.anchor_fallback import active_voice_over_override
+
+    override = active_voice_over_override(session, episode_id)
+    if override is None:
+        return
+    raise PipelineError(
+        f"Episode {episode_id} carries a voice-over override recorded by "
+        f"{override.operator_ref}; no further presenter clips are ordered. "
+        "Withdraw the override to return to the avatar path.",
+        category=ErrorCategory.PERMANENT_CONTENT,
+    )
+
+
 def _billable_units(
     scenes: list,
     tts_manifest: dict,
@@ -721,6 +741,7 @@ def _generate_anchors_from_plan(
         )
 
     _refuse_unless_permitted(episode_id, settings, config)
+    _refuse_if_overridden(session, episode_id)
 
     look_id = _resolve_look(session, episode_id, config, plan, settings.outputs_dir)
     # A confirmed regeneration is the only thing that makes an already paid

@@ -4802,17 +4802,70 @@ def get_avatar_state(episode_id: str):
         return error
 
     payload = state.to_dict()
+    session = _get_session()
+    payload["presentation"] = _presentation_block(session, episode_id)
     config = _anchor_config_for(episode_id)
     if config is not None:
+        from btcedu.core.anchor_readiness import resolve_studio_mode
         from btcedu.core.avatar_runtime import runtime_snapshot
 
         payload["runtime"] = runtime_snapshot(
-            _get_session(),
+            session,
             episode_id,
             provider=config.provider,
             max_concurrent_jobs=config.max_concurrent_jobs,
+            engine=getattr(config, "engine", "") or "",
+            studio_mode=resolve_studio_mode(config, None),
+            max_cost_usd=float(getattr(config, "max_cost_usd", 0.0) or 0.0),
         )
+        payload["runtime"]["readiness"] = _readiness_block(episode_id)
     return jsonify(payload)
+
+
+def _presentation_block(session, episode_id: str) -> dict:
+    """Whether this episode still shows the presenter, and why not."""
+    from btcedu.core.anchor_fallback import (
+        PRESENTATION_VOICE_OVER,
+        active_voice_over_override,
+        presentation_mode,
+    )
+
+    override = active_voice_over_override(session, episode_id)
+    mode = presentation_mode(session, episode_id)
+    return {
+        "mode": mode,
+        "voice_over_override": override.to_dict() if override else None,
+        "label": (
+            "Voice-over-Notfallpfad (ohne Moderatorin)"
+            if mode == PRESENTATION_VOICE_OVER
+            else "Moderatorin im Studio"
+        ),
+    }
+
+
+def _readiness_block(episode_id: str) -> dict:
+    """A short, offline readiness verdict. Never a provider call, never a key."""
+    from btcedu.core.anchor_readiness import evaluate_readiness
+
+    session = _get_session()
+    settings = _get_settings()
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    profile = getattr(episode, "content_profile", "") or settings.default_content_profile
+    try:
+        report = evaluate_readiness(profile, settings, online=False, session=session)
+    except Exception as exc:  # noqa: BLE001 - readiness is a status line, not a gate
+        logger.warning("Readiness unavailable for %s: %s", episode_id, exc)
+        return {"available": False, "ready": False, "problems": []}
+    problems = [f"{item.area}: {item.check_id}" for item in report.blocked]
+    return {
+        "available": True,
+        "ready": not report.blocked,
+        "warning_count": len(report.warnings),
+        "problem_count": len(problems),
+        # Trimmed on purpose: a readiness problem names a profile or an asset,
+        # and there is no reason for the browser to receive more than that.
+        "problems": problems[:10],
+    }
 
 
 @api_bp.route("/episodes/<episode_id>/avatar/scenes/<scene_id>/preview")
@@ -5107,3 +5160,366 @@ def change_avatar_look(episode_id: str):
 
     state = collect_state(session, episode_id, settings)
     return jsonify({"status": "reassigned", "avatar": state.to_dict()})
+
+
+# ---------------------------------------------------------------------------
+# Reconciliation from the dashboard.
+#
+# Every route here is a thin presentation of `btcedu.core.avatar_reconcile`.
+# The web layer decides nothing: it collects a reason, binds the confirmation
+# to the row the operator actually saw, and hands both to the same domain
+# function the CLI calls. No provider is contacted from a web request.
+# ---------------------------------------------------------------------------
+
+
+def _reject_cross_site():
+    """A cheap, honest CSRF barrier for the state-changing avatar routes.
+
+    The dashboard has no login: it is reachable only through the reverse proxy,
+    and every caller is already an operator. What it does need protecting from
+    is a page in another tab posting here on the operator's behalf. A browser
+    cannot send ``application/json`` cross-origin without a preflight the
+    dashboard never answers, so requiring it is the barrier — and the ``Origin``
+    header is checked as well when the browser sent one.
+
+    Returns an error response, or ``None`` when the request may proceed.
+    """
+    if not request.is_json:
+        return jsonify({"error": "This endpoint expects application/json"}), 400
+    origin = request.headers.get("Origin")
+    if origin and origin.rstrip("/") != request.host_url.rstrip("/"):
+        return jsonify({"error": "Cross-origin requests are not accepted"}), 403
+    return None
+
+
+@api_bp.route("/avatar/reconcile")
+def list_avatar_reconciliation():
+    """Every job waiting for a human, across episodes or for one of them."""
+    from btcedu.core import avatar_reconcile
+
+    session = _get_session()
+    episode_id = secure_filename(str(request.args.get("episode_id") or ""))
+    views = avatar_reconcile.list_jobs(session, episode_id=episode_id, unresolved_only=True)
+    return jsonify(
+        {
+            "schema_version": 1,
+            "jobs": [view.to_dict() for view in views],
+            "count": len(views),
+            "decisions": [
+                {"value": key, "help": help_text}
+                for key, help_text in avatar_reconcile.DECISION_HELP.items()
+            ],
+        }
+    )
+
+
+@api_bp.route("/avatar/reconcile/<int:job_id>")
+def get_avatar_reconciliation(job_id: int):
+    """Everything locally known about one held job, plus its audit trail."""
+    from btcedu.core import avatar_reconcile
+
+    session = _get_session()
+    settings = _get_settings()
+    try:
+        detail = avatar_reconcile.inspect_job(session, job_id, outputs_dir=settings.outputs_dir)
+        job = avatar_reconcile.get_job_by_id(session, job_id)
+    except avatar_reconcile.ReconciliationError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    detail["digest"] = avatar_reconcile.decision_digest(session, job)
+    detail["integrity"] = _job_integrity(job, settings)
+    return jsonify(detail)
+
+
+def _job_integrity(job, settings) -> dict:
+    """Whether the clip on disk is still the clip that was recorded."""
+    from btcedu.core.avatar_integrity import verify_clip
+
+    if not job.output_path:
+        return {"status": "unrecorded", "detail": "No file has been collected yet."}
+    base = Path(settings.outputs_dir) / job.episode_id
+    relative = job.output_path
+    if Path(relative).is_absolute():
+        try:
+            relative = str(Path(relative).relative_to(base))
+        except ValueError:
+            return {"status": "unsafe", "detail": "The clip lies outside the episode."}
+    result = verify_clip(
+        job.scene_id, relative, job.file_sha256 or "", base_dir=base
+    )
+    return {"status": result.status, "detail": result.remedy or ""}
+
+
+@api_bp.route("/avatar/reconcile/<int:job_id>/resolve", methods=["POST"])
+def resolve_avatar_reconciliation(job_id: int):
+    """Prepare or confirm one reconciliation decision.
+
+    ``prepare`` is read-only and returns the digest of the row as it stands.
+    ``confirm`` is refused with 409 unless that digest still matches, so a
+    decision can never land on a state the operator never saw. Repeating the
+    same confirmation is answered from the audit trail rather than applied
+    twice — a double-click must not become two decisions.
+    """
+    from btcedu.core import avatar_reconcile
+
+    blocked = _reject_cross_site()
+    if blocked is not None:
+        return blocked
+
+    session = _get_session()
+    settings = _get_settings()
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action") or "prepare").strip()
+    decision = str(payload.get("decision") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+
+    try:
+        job = avatar_reconcile.get_job_by_id(session, job_id)
+    except avatar_reconcile.ReconciliationError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    if decision and decision not in avatar_reconcile.DECISIONS:
+        return jsonify({"error": f"Unknown decision {decision!r}"}), 400
+
+    if action == "prepare":
+        if not decision:
+            return jsonify({"error": "A decision is required"}), 400
+        return jsonify(
+            {
+                "status": "prepared",
+                "job_id": job_id,
+                "decision": decision,
+                "digest": avatar_reconcile.decision_digest(session, job),
+                "current_status": job.status,
+                "cost_usd": round(float(job.cost_usd or 0.0), 6),
+                "help": avatar_reconcile.DECISION_HELP.get(decision, ""),
+                "next_safe_action": avatar_reconcile.next_safe_action(job),
+                "integrity": _job_integrity(job, settings),
+            }
+        )
+
+    if action != "confirm":
+        return jsonify({"error": f"Unknown action {action!r}"}), 400
+
+    if not decision:
+        return jsonify({"error": "A decision is required"}), 400
+    if not reason:
+        return jsonify({"error": "Every manual resolution requires a reason"}), 400
+
+    digest = str(payload.get("digest") or "")
+    current = avatar_reconcile.decision_digest(session, job)
+    if digest != current:
+        expected_action = avatar_reconcile.DECISION_AUDIT_ACTION.get(decision)
+        last = avatar_reconcile.last_decision(session, job_id)
+        if last is not None and expected_action and last.action == expected_action:
+            # The row moved because this very decision was already applied.
+            return jsonify(
+                {
+                    "status": "already_applied",
+                    "job_id": job_id,
+                    "decision": decision,
+                    "current_status": job.status,
+                }
+            )
+        return (
+            jsonify(
+                {
+                    "error": (
+                        "This job changed after it was prepared. Reload it and decide again."
+                    ),
+                    "digest": current,
+                    "current_status": job.status,
+                }
+            ),
+            409,
+        )
+
+    try:
+        updated = avatar_reconcile.resolve(
+            session,
+            job_id,
+            decision=decision,
+            note=reason,
+            operator_ref=_operator_ref(),
+            output_path=str(payload.get("output_path") or ""),
+            duration_seconds=float(payload.get("duration_seconds") or 0.0),
+            provider_job_id=str(payload.get("provider_job_id") or ""),
+            outputs_dir=settings.outputs_dir,
+        )
+    except avatar_reconcile.ReconciliationError as exc:
+        session.rollback()
+        return jsonify({"error": str(exc)}), 422
+    except (TypeError, ValueError) as exc:
+        session.rollback()
+        return jsonify({"error": f"Invalid input: {exc}"}), 400
+
+    return jsonify(
+        {
+            "status": "resolved",
+            "job_id": job_id,
+            "decision": decision,
+            "current_status": updated.status,
+            "cost_usd": round(float(updated.cost_usd or 0.0), 6),
+        }
+    )
+
+
+@api_bp.route("/avatar/reconcile/<int:job_id>/attach", methods=["POST"])
+def attach_avatar_provider_job(job_id: int):
+    """Bind a provider job id an operator found by hand to a held row."""
+    from btcedu.core import avatar_reconcile
+
+    blocked = _reject_cross_site()
+    if blocked is not None:
+        return blocked
+
+    session = _get_session()
+    payload = request.get_json(silent=True) or {}
+    provider_job_id = str(payload.get("provider_job_id") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+
+    try:
+        avatar_reconcile.get_job_by_id(session, job_id)
+    except avatar_reconcile.ReconciliationError as exc:
+        return jsonify({"error": str(exc)}), 404
+
+    try:
+        job = avatar_reconcile.attach_provider_job_id(
+            session,
+            job_id,
+            provider_job_id=provider_job_id,
+            operator_ref=_operator_ref(),
+            note=reason,
+            confirm=bool(payload.get("confirm")),
+        )
+    except avatar_reconcile.ReconciliationError as exc:
+        session.rollback()
+        return jsonify({"error": str(exc)}), 422
+
+    return jsonify(
+        {
+            "status": "attached",
+            "job_id": job_id,
+            "provider_job_id": job.provider_job_id or "",
+            "current_status": job.status,
+        }
+    )
+
+
+@api_bp.route("/avatar/breaker/<provider>/reset", methods=["POST"])
+def reset_avatar_breaker(provider: str):
+    """Close the provider-wide breaker by hand, with a reason on the record."""
+    from btcedu.core import avatar_breaker
+
+    blocked = _reject_cross_site()
+    if blocked is not None:
+        return blocked
+
+    session = _get_session()
+    payload = request.get_json(silent=True) or {}
+    reason = str(payload.get("reason") or "").strip()
+    provider = str(provider or "").strip()[:64]
+    if not provider:
+        return jsonify({"error": "A provider is required"}), 400
+
+    try:
+        view = avatar_breaker.reset(
+            session, provider, operator_ref=_operator_ref(), note=reason
+        )
+    except ValueError as exc:
+        session.rollback()
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify({"status": "closed", "circuit_breaker": view.to_dict()})
+
+
+# ---------------------------------------------------------------------------
+# The voice-over emergency path.
+#
+# Manual, per episode, never suggested and never automatic. Preparing shows the
+# consequences and changes nothing; confirming records the decision, invalidates
+# the approvals it contradicts and stops there. No provider call, no cancelled
+# job, no refunded cost, no regenerated speech.
+# ---------------------------------------------------------------------------
+
+
+@api_bp.route("/episodes/<episode_id>/avatar/voice-over", methods=["GET", "POST"])
+def avatar_voice_over_override(episode_id: str):
+    """Prepare, confirm or withdraw the voice-over fallback for one episode."""
+    from btcedu.core.anchor_fallback import (
+        AnchorPolicyError,
+        StaleOverrideError,
+        confirm_override,
+        prepare_override,
+        revoke_override,
+    )
+
+    episode_id = secure_filename(episode_id)
+    if not episode_id:
+        return jsonify({"error": "Invalid episode ID"}), 400
+
+    session = _get_session()
+    settings = _get_settings()
+    episode = session.query(Episode).filter(Episode.episode_id == episode_id).first()
+    if episode is None:
+        return jsonify({"error": "Episode not found"}), 404
+
+    if request.method == "GET":
+        preparation = prepare_override(session, episode_id, settings)
+        return jsonify({"status": "prepared", "override": preparation.to_dict()})
+
+    blocked = _reject_cross_site()
+    if blocked is not None:
+        return blocked
+
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action") or "prepare").strip()
+    reason = str(payload.get("reason") or "").strip()
+
+    if action == "prepare":
+        preparation = prepare_override(session, episode_id, settings)
+        return jsonify({"status": "prepared", "override": preparation.to_dict()})
+
+    if action == "confirm":
+        if not reason:
+            return jsonify({"error": "A voice-over override requires a reason"}), 400
+        try:
+            override = confirm_override(
+                session,
+                episode_id,
+                settings,
+                operator_ref=_operator_ref(),
+                reason=reason,
+                digest=str(payload.get("digest") or ""),
+                acknowledged=bool(payload.get("acknowledged")),
+            )
+        except StaleOverrideError as exc:
+            session.rollback()
+            return jsonify({"error": str(exc)}), 409
+        except AnchorPolicyError as exc:
+            session.rollback()
+            return jsonify({"error": str(exc)}), 422
+        return jsonify({"status": "confirmed", "override": override.to_dict()})
+
+    if action == "revoke":
+        if not reason:
+            return jsonify({"error": "Withdrawing an override requires a reason"}), 400
+        try:
+            revoke_override(
+                session,
+                episode_id,
+                settings,
+                operator_ref=_operator_ref(),
+                reason=reason,
+            )
+        except AnchorPolicyError as exc:
+            session.rollback()
+            return jsonify({"error": str(exc)}), 422
+        return jsonify(
+            {
+                "status": "revoked",
+                "presentation": _presentation_block(session, episode_id),
+            }
+        )
+
+    return jsonify({"error": f"Unknown action {action!r}"}), 400

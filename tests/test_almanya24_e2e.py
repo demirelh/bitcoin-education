@@ -999,3 +999,120 @@ class TestTheFixturesAreObviouslySynthetic:
         assert sections[-1].purpose == "closing"
         assert any(section.is_weather for section in sections)
         assert replace(sections[0], title="x").title == "x"
+
+
+# ---------------------------------------------------------------------------
+# The voice-over emergency path, end to end
+# ---------------------------------------------------------------------------
+
+
+class TestTheBulletinWithoutThePresenter:
+    """What the audience gets when an operator takes the presenter out.
+
+    Not a degraded avatar path: the same narration, the same order, the same
+    editorial media the reporter scenes already use, cut full frame. The one
+    thing that must never happen is the presenter appearing anyway because a
+    shot from the previous render was reused.
+    """
+
+    @pytest.fixture
+    def overridden(self, tmp_path):
+        from btcedu.core.anchor_fallback import record_voice_over_override
+
+        world = build_world(tmp_path / "voiceover", real_media=True)
+        with Patcher() as patcher:
+            install_fake_providers(patcher, world)
+            run_stage(world, "sceneplan")
+            record_voice_over_override(
+                world.session,
+                world.episode_id,
+                operator_ref="dashboard",
+                reason="provider outage twenty minutes before the broadcast",
+            )
+            yield world
+        world.close()
+
+    def test_no_presenter_clip_is_ordered_afterwards(self, overridden):
+        from btcedu.services.errors import PipelineError
+
+        world = overridden
+        with Patcher() as patcher:
+            doubles = install_fake_providers(patcher, world)
+            stage = run_stage(world, "anchorgen")
+
+        assert stage.status == "failed"
+        assert "voice-over override" in (stage.error or "")
+        assert doubles["heygen"].orders == []
+
+        # And the refusal is the domain's, not a coincidence of the stage.
+        from btcedu.core.anchor_generator import _refuse_if_overridden
+
+        with pytest.raises(PipelineError):
+            _refuse_if_overridden(world.session, world.episode_id)
+
+    def test_the_render_shows_the_topic_media_instead(self, overridden):
+        world = overridden
+        with Patcher() as patcher:
+            install_fake_providers(patcher, world)
+            stage = run_stage(world, "render")
+
+        assert stage.status in {"success", "skipped"}, stage.error
+        draft = world.episode_dir / "render" / "draft.mp4"
+        assert draft.is_file() and draft.stat().st_size > 0
+
+    def test_the_manifest_names_the_production_mode(self, overridden):
+        world = overridden
+        with Patcher() as patcher:
+            install_fake_providers(patcher, world)
+            run_stage(world, "render")
+
+        manifest = json.loads(
+            (world.episode_dir / "render" / "render_manifest.json").read_text(encoding="utf-8")
+        )
+        assert manifest.get("presentation_mode") == "voice_over_override"
+
+    def test_the_narration_is_the_untouched_original(self, overridden):
+        """No speech is regenerated: the fallback is a picture decision."""
+        world = overridden
+        parts = sorted((world.episode_dir / "tts" / "parts").glob("*"))
+        before = {path.name: path.read_bytes() for path in parts}
+
+        with Patcher() as patcher:
+            doubles = install_fake_providers(patcher, world)
+            run_stage(world, "render")
+
+        after = {
+            path.name: path.read_bytes()
+            for path in sorted((world.episode_dir / "tts" / "parts").glob("*"))
+        }
+        assert after == before
+        # And nothing was ordered from the avatar provider either: a fallback
+        # render buys nothing at all.
+        assert doubles["heygen"].orders == []
+
+    def test_the_scene_order_is_unchanged(self, overridden):
+        world = overridden
+        planned_order = [scene["scene_id"] for scene in world.scene_plan["scenes"]]
+
+        with Patcher() as patcher:
+            install_fake_providers(patcher, world)
+            run_stage(world, "render")
+
+        manifest = json.loads(
+            (world.episode_dir / "render" / "render_manifest.json").read_text(encoding="utf-8")
+        )
+        rendered = [entry["scene_id"] for entry in manifest["scenes"]]
+        assert rendered == [sid for sid in planned_order if sid in set(rendered)]
+
+    def test_the_final_review_has_to_be_given_again(self, overridden):
+        """The approval that exists was given to a different programme."""
+        world = overridden
+        from btcedu.core.reviewer import has_approved_review
+
+        with Patcher() as patcher:
+            install_fake_providers(patcher, world)
+            run_stage(world, "render")
+            stage = run_stage(world, "review_gate_3")
+
+        assert not has_approved_review(world.session, world.episode_id, "render")
+        assert stage.status in {"review_pending", "failed"}

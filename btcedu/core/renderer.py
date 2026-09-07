@@ -137,7 +137,23 @@ def _require_anchor_approval(session: Session, episode_id: str, settings: Settin
     fallback to the old full-frame voice-over. The renderer never chooses a
     fallback itself — that stays an explicit, audited operator decision.
     """
+    from btcedu.core.anchor_fallback import (
+        PRESENTATION_VOICE_OVER,
+        presentation_mode,
+    )
     from btcedu.core.anchor_review import collect_state, has_current_approval
+
+    if presentation_mode(session, episode_id) == PRESENTATION_VOICE_OVER:
+        # The presenter is not in this programme. Demanding a signature for
+        # clips that will not be shown would make the override unusable in the
+        # very situation it exists for — the clips being unusable. The finished
+        # video still has to pass the final review, which is where the change
+        # of presentation is actually judged.
+        logger.warning(
+            "Rendering %s without the presenter: an operator recorded a voice-over override",
+            episode_id,
+        )
+        return
 
     try:
         state = collect_state(session, episode_id, settings)

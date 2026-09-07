@@ -56,6 +56,10 @@ def runtime_snapshot(
     *,
     provider: str,
     max_concurrent_jobs: int = 1,
+    engine: str = "",
+    studio_mode: str = "",
+    max_cost_usd: float | None = None,
+    planned_cost_usd: float | None = None,
     now: Callable[[], datetime] = _utcnow,
 ) -> dict:
     """Summarise the live avatar state of one episode.
@@ -82,19 +86,44 @@ def runtime_snapshot(
 
     # The most recent complaint, not an aggregate: an operator wants to know
     # what the provider said last, not a histogram of a bad afternoon.
+    # AvatarJob writes a column per transition rather than a single
+    # ``updated_at``; the most recent of them is what "last" means here.
+    def _touched(job) -> float:
+        stamps = [job.completed_at, job.submitted_at, job.next_poll_at, job.reserved_at]
+        moments = [
+            stamp.replace(tzinfo=UTC) if stamp.tzinfo is None else stamp
+            for stamp in stamps
+            if stamp is not None
+        ]
+        return max((moment.timestamp() for moment in moments), default=0.0)
+
     latest_error = None
     for job in jobs:
         if not job.last_error_type:
             continue
-        if latest_error is None or (job.updated_at or job.created_at) >= (
-            latest_error.updated_at or latest_error.created_at
-        ):
+        if latest_error is None or _touched(job) >= _touched(latest_error):
             latest_error = job
 
     breaker = avatar_breaker.status(session, provider, now=now)
 
+    cost_reserved = sum(job.cost_usd or 0.0 for job in jobs if job.status in RESERVED_STATUSES)
+    cost_actual = sum(job.cost_usd or 0.0 for job in jobs if job.status in SPENT_STATUSES)
+    cost_unresolved = sum(job.cost_usd or 0.0 for job in unresolved)
+    # Committed, not merely spent: an unresolved job may still turn out to have
+    # been billed, so the operator's remaining room has to assume it was.
+    committed = round(cost_actual + cost_reserved + cost_unresolved, 6)
+    budget_remaining = (
+        None if max_cost_usd is None else round(max(0.0, float(max_cost_usd) - committed), 6)
+    )
+    projected = committed + float(planned_cost_usd or 0.0)
+    over_budget = (
+        None if max_cost_usd is None else bool(projected > float(max_cost_usd) + 1e-9)
+    )
+
     return {
         "provider": provider,
+        "engine": engine,
+        "studio_mode": studio_mode,
         "max_concurrent_jobs": max_concurrent_jobs,
         "active_jobs": len(active),
         "available_slots": max(0, max_concurrent_jobs - len(active)),
@@ -105,14 +134,31 @@ def runtime_snapshot(
         "last_status_code": latest_error.last_status_code if latest_error else None,
         "retry_after_seconds": latest_error.retry_after_seconds if latest_error else None,
         "circuit_breaker": breaker.to_dict(),
-        "cost_reserved_usd": round(
-            sum(job.cost_usd or 0.0 for job in jobs if job.status in RESERVED_STATUSES), 6
+        "cost_reserved_usd": round(cost_reserved, 6),
+        "cost_actual_usd": round(cost_actual, 6),
+        "cost_unresolved_usd": round(cost_unresolved, 6),
+        "cost_committed_usd": committed,
+        "cost_planned_usd": (
+            None if planned_cost_usd is None else round(float(planned_cost_usd), 6)
         ),
-        "cost_actual_usd": round(
-            sum(job.cost_usd or 0.0 for job in jobs if job.status in SPENT_STATUSES), 6
-        ),
-        "cost_unresolved_usd": round(sum(job.cost_usd or 0.0 for job in unresolved), 6),
+        "max_cost_usd": None if max_cost_usd is None else round(float(max_cost_usd), 6),
+        "budget_remaining_usd": budget_remaining,
+        "budget_exceeded_expected": over_budget,
         "unresolved_jobs": len(unresolved),
+        "polling_jobs": len(active),
+        "downloading_jobs": sum(
+            1
+            for job in jobs
+            if job.status == AvatarJobStatus.COMPLETED.value and not job.output_path
+        ),
+        "validating_jobs": sum(
+            1
+            for job in jobs
+            if job.status == AvatarJobStatus.COMPLETED.value
+            and job.output_path
+            and job.validation_status == "pending"
+        ),
+        "retrying_jobs": sum(1 for job in jobs if (job.retry_count or 0) > 0),
         "validation": {
             "pending": sum(1 for job in jobs if job.validation_status == "pending"),
             "validated": sum(1 for job in jobs if job.validation_status == "validated"),

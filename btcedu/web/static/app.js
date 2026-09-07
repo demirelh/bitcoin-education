@@ -1442,6 +1442,7 @@
 
     const canApprove = data.approvable && data.review_status !== 'approved';
     host.innerHTML = `
+      ${avatarPresentationBanner(data.presentation)}
       <h4>Moderatorin — Avatarprüfung</h4>
       <div class="tts-summary">
         ${esc(data.look_name || 'kein Outfit zugewiesen')} &middot;
@@ -1477,7 +1478,259 @@
                 onclick="avatarDecide('reject', '${esc(data.review_hash)}')">ablehnen</button>
         <p class="muted">Danach folgt weiterhin die finale Sendungsfreigabe
         nach dem vollständigen Render.</p>
+      </div>
+
+      ${avatarRuntimeSection(data.runtime)}
+      ${avatarCostSection(data.runtime)}
+      <div id="avatar-reconcile-section"></div>
+      ${avatarOverrideSection(data)}`;
+
+    loadAvatarReconcile();
+  }
+
+  // ---- Runtime, costs, reconciliation and the emergency path ---------------
+  // Presentation only: every number below is read from the same domain
+  // snapshot the CLI prints, and every button posts to the same domain
+  // function the CLI calls.
+
+  const BREAKER_LABEL = {
+    closed: "geschlossen — Aufträge erlaubt",
+    open: "offen — keine Aufträge",
+    half_open: "halb offen — ein Testauftrag",
+  };
+
+  const JOB_STATUS_LABEL = {
+    reserved: "reserviert (Ausgang unbekannt)",
+    submitted: "beim Provider",
+    completed: "fertig",
+    failed: "abgelehnt (nicht berechnet)",
+    reconcile_required: "Klärung nötig",
+    abandoned: "aufgegeben",
+  };
+
+  const NL = String.fromCharCode(10);
+
+  function fmtTime(value) {
+    if (!value) return "—";
+    try {
+      return new Date(value).toLocaleString("de-DE", { dateStyle: "short", timeStyle: "short" });
+    } catch (err) {
+      return String(value);
+    }
+  }
+
+  function shortId(value) {
+    const text = String(value || "");
+    return text.length > 12 ? text.slice(0, 12) + "…" : text;
+  }
+
+  function usd(value) {
+    return "$" + Number(value || 0).toFixed(4);
+  }
+
+  function avatarPresentationBanner(presentation) {
+    if (!presentation || presentation.mode !== "voice_over_override") return "";
+    const o = presentation.voice_over_override || {};
+    return `
+      <div class="sev sev-critical" role="status" aria-live="polite"
+           style="display:block;padding:.6rem;margin-bottom:.6rem">
+        ⚠ Voice-over-Notfallpfad: Diese Episode wird <strong>ohne Moderatorin</strong> gerendert.
+        Entschieden von ${esc(o.operator_ref || "?")} am ${fmtTime(o.decided_at)}.<br>
+        <span class="muted">Grund: ${esc(o.reason || "—")} — die fertige Sendung muss erneut
+        freigegeben werden.</span>
       </div>`;
+  }
+
+  function avatarRuntimeSection(rt) {
+    if (!rt) return "";
+    const b = rt.circuit_breaker || {};
+    const readiness = rt.readiness || {};
+    const breakerClass = b.state === "closed" ? "sev-ok" : "sev-critical";
+    const readyText = readiness.available
+      ? (readiness.ready ? "✓ bereit" : `✗ ${readiness.problem_count} Blocker`)
+      : "unbekannt";
+    const resetBtn = b.state === "closed"
+      ? ""
+      : `<button class="btn btn-sm btn-danger" onclick="avatarBreakerReset('${esc(rt.provider)}')">
+           Circuit Breaker zurücksetzen</button>`;
+    return `
+      <h5>Providerbetrieb</h5>
+      <div class="tts-summary">
+        ${esc(rt.provider)} &middot; Engine ${esc(rt.engine || "—")} &middot;
+        Studio ${esc(rt.studio_mode || "—")} &middot; Readiness: ${esc(readyText)}<br>
+        Circuit Breaker: <span class="sev ${breakerClass}">${esc(BREAKER_LABEL[b.state] || b.state || "—")}</span>
+        ${b.reason ? "&middot; Grund: " + esc(b.reason) : ""}
+        ${b.last_failure_at ? "&middot; letzter Fehler " + fmtTime(b.last_failure_at) : ""}
+        ${b.cooldown_until ? "&middot; frühester Auftrag " + fmtTime(b.cooldown_until) : ""}
+        ${b.last_success_at ? "&middot; letzter Erfolg " + fmtTime(b.last_success_at) : ""}
+        ${resetBtn}
+      </div>
+      <table class="broadcast-table">
+        <thead><tr>
+          <th>Parallel erlaubt</th><th>laufend</th><th>freie Slots</th><th>wartend</th>
+          <th>Polling</th><th>Download</th><th>Validierung</th><th>Retry</th>
+          <th>Klärung nötig</th><th>nächster Poll</th>
+        </tr></thead>
+        <tbody><tr>
+          <td>${rt.max_concurrent_jobs}</td>
+          <td>${rt.active_jobs}</td>
+          <td>${rt.available_slots}</td>
+          <td>${rt.waiting_submits}</td>
+          <td>${rt.polling_jobs}</td>
+          <td>${rt.downloading_jobs}</td>
+          <td>${rt.validating_jobs}</td>
+          <td>${rt.retrying_jobs} (${rt.retry_count} Versuche)</td>
+          <td>${rt.unresolved_jobs}</td>
+          <td>${fmtTime(rt.next_poll_at)}</td>
+        </tr></tbody>
+      </table>
+      ${rt.last_error_type
+        ? `<p class="muted">Letzte Fehlerkategorie: ${esc(rt.last_error_type)}
+           ${rt.last_status_code ? "(HTTP " + rt.last_status_code + ")" : ""}
+           ${rt.retry_after_seconds ? "&middot; Retry-After " + rt.retry_after_seconds + " s" : ""}</p>`
+        : ""}`;
+  }
+
+  function avatarCostSection(rt) {
+    if (!rt) return "";
+    const warn = rt.budget_exceeded_expected
+      ? '<span class="sev sev-critical">⚠ Überschreitung erwartet</span>'
+      : '<span class="sev sev-ok">✓ im Rahmen</span>';
+    return `
+      <h5>Kosten</h5>
+      <div class="tts-summary">
+        gebucht ${usd(rt.cost_actual_usd)} &middot;
+        reserviert ${usd(rt.cost_reserved_usd)} &middot;
+        ungeklärt ${usd(rt.cost_unresolved_usd)} &middot;
+        gebunden ${usd(rt.cost_committed_usd)}<br>
+        Stufenlimit ${rt.max_cost_usd === null ? "—" : usd(rt.max_cost_usd)} &middot;
+        verbleibend ${rt.budget_remaining_usd === null ? "—" : usd(rt.budget_remaining_usd)}
+        &middot; ${warn}
+      </div>`;
+  }
+
+  async function loadAvatarReconcile() {
+    const host = document.getElementById("avatar-reconcile-section");
+    if (!host || !selected) return;
+    host.innerHTML = '<h5>Klärungsfälle</h5><p class="muted">wird geladen …</p>';
+    let data;
+    try {
+      data = await GET(`/avatar/reconcile?episode_id=${encodeURIComponent(selected.episode_id)}`);
+    } catch (err) {
+      host.innerHTML = '<h5>Klärungsfälle</h5><p class="muted">nicht abrufbar.</p>';
+      return;
+    }
+    if (!data.jobs || !data.jobs.length) {
+      host.innerHTML = '<h5>Klärungsfälle</h5><p class="muted">Keine offenen Klärungsfälle.</p>';
+      return;
+    }
+    const options = (data.decisions || []).map(d =>
+      `<option value="${esc(d.value)}" title="${esc(d.help)}">${esc(d.value)}</option>`).join('');
+    const rows = data.jobs.map(job => `
+      <tr>
+        <td>${esc(job.scene_id)}<br><span class="muted">${esc(job.chapter_id)}</span></td>
+        <td>${esc(JOB_STATUS_LABEL[job.status] || job.status)}</td>
+        <td><code title="${esc(job.provider_job_id)}">${esc(shortId(job.provider_job_id) || "—")}</code></td>
+        <td>${usd(job.reserved_cost_usd)}</td>
+        <td>${job.age_hours.toFixed(1)} h</td>
+        <td>
+          <label class="sr-only" for="rec-dec-${job.job_id}">Entscheidung</label>
+          <select id="rec-dec-${job.job_id}">${options}</select>
+          <button class="btn btn-sm" onclick="avatarResolve(${job.job_id})">entscheiden</button>
+        </td>
+      </tr>`).join('');
+    host.innerHTML = `
+      <h5>Klärungsfälle</h5>
+      <p class="muted">Eine Entscheidung braucht immer eine Begründung. Ein 404 beim Provider
+      ist <strong>kein</strong> Beweis dafür, dass nichts berechnet wurde.</p>
+      <table class="broadcast-table">
+        <thead><tr><th>Szene</th><th>Status</th><th>Provider-Job</th><th>Kosten</th>
+        <th>Alter</th><th>Aktion</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  async function avatarResolve(jobId) {
+    const select = document.getElementById(`rec-dec-${jobId}`);
+    const decision = select ? select.value : "";
+    if (!decision) return;
+    const reason = prompt(`Begründung für die Entscheidung "${decision}"?`);
+    if (!reason || !reason.trim()) {
+      alert("Eine Entscheidung ohne Begründung wird nicht gespeichert.");
+      return;
+    }
+    const prepared = await POST(`/avatar/reconcile/${jobId}/resolve`,
+      { action: "prepare", decision });
+    if (prepared.error) { alert(prepared.error); return; }
+    const ok = confirm(
+      `Job ${jobId}: ${decision}` + NL +
+      `Status jetzt: ${prepared.current_status}` + NL +
+      `Kosten: ${usd(prepared.cost_usd)}` + NL + NL +
+      `${prepared.help}` + NL + NL +
+      "Entscheidung festhalten?"
+    );
+    if (!ok) return;
+    const done = await POST(`/avatar/reconcile/${jobId}/resolve`,
+      { action: "confirm", decision, reason, digest: prepared.digest });
+    if (done.error) alert(done.error);
+    loadAvatarPanel();
+  }
+
+  async function avatarBreakerReset(provider) {
+    const reason = prompt("Warum darf wieder beauftragt werden?");
+    if (!reason || !reason.trim()) return;
+    const done = await POST(`/avatar/breaker/${encodeURIComponent(provider)}/reset`, { reason });
+    if (done.error) alert(done.error);
+    loadAvatarPanel();
+  }
+
+  function avatarOverrideSection(data) {
+    const active = data.presentation && data.presentation.mode === "voice_over_override";
+    if (active) {
+      return `
+        <h5>Voice-over-Notfallpfad</h5>
+        <p class="muted">Aktiv. Die Anchor-Szenen werden mit den vorhandenen Themenmedien
+        gerendert, der Originalton bleibt unverändert.</p>
+        <button class="btn btn-sm" onclick="avatarOverrideRevoke()">Notfallpfad widerrufen</button>`;
+    }
+    return `
+      <h5>Voice-over-Notfallpfad</h5>
+      <p class="muted">Nur für den Ausnahmefall, immer nur für diese eine Episode und niemals
+      automatisch. Es werden keine Kosten storniert und keine Aufträge abgebrochen.</p>
+      <button class="btn btn-sm btn-danger" onclick="avatarOverridePrepare()">
+        Notfallpfad prüfen …</button>`;
+  }
+
+  async function avatarOverridePrepare() {
+    const prep = await POST(`/episodes/${selected.episode_id}/avatar/voice-over`,
+      { action: "prepare" });
+    if (prep.error) { alert(prep.error); return; }
+    const o = prep.override;
+    const scenes = (o.anchor_scenes || []).map(s => `  • ${s.scene_id} (${s.job_status})`).join(NL);
+    const reason = prompt(
+      "Voice-over-Notfallpfad für " + o.episode_id + NL + NL +
+      "Betroffene Anchor-Szenen:" + NL + (scenes || "  —") + NL + NL +
+      "Blocker: " + ((o.blockers || []).join(", ") || "—") + NL +
+      "Kosten: gebucht " + usd(o.cost_actual_usd) + ", reserviert " + usd(o.cost_reserved_usd) +
+      ", ungeklärt " + usd(o.cost_unresolved_usd) + NL + NL +
+      (o.consequences || []).map(c => "- " + c).join(NL) + NL + NL +
+      "Begründung eingeben, um zu bestätigen:"
+    );
+    if (!reason || !reason.trim()) return;
+    if (!confirm("In dieser Sendung erscheint KEINE Moderatorin. Wirklich bestätigen?")) return;
+    const done = await POST(`/episodes/${selected.episode_id}/avatar/voice-over`,
+      { action: "confirm", reason, digest: o.digest, acknowledged: true });
+    if (done.error) alert(done.error);
+    loadAvatarPanel();
+  }
+
+  async function avatarOverrideRevoke() {
+    const reason = prompt("Warum wird der Notfallpfad widerrufen?");
+    if (!reason || !reason.trim()) return;
+    const done = await POST(`/episodes/${selected.episode_id}/avatar/voice-over`,
+      { action: "revoke", reason });
+    if (done.error) alert(done.error);
+    loadAvatarPanel();
   }
 
   function avatarPreview(sceneId) {
@@ -1543,6 +1796,10 @@
   window.avatarFlag = avatarFlag;
   window.avatarRegenerate = avatarRegenerate;
   window.avatarDecide = avatarDecide;
+  window.avatarResolve = avatarResolve;
+  window.avatarBreakerReset = avatarBreakerReset;
+  window.avatarOverridePrepare = avatarOverridePrepare;
+  window.avatarOverrideRevoke = avatarOverrideRevoke;
 
   async function loadTTSPanel() {
     if (!selected) return;

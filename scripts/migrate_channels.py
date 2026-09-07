@@ -7,6 +7,7 @@ Run this after updating to the new version with multi-channel support.
 """
 
 import logging
+
 from sqlalchemy import text
 
 from btcedu.config import get_settings

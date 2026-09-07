@@ -6,7 +6,7 @@ something we already bought.
 """
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,6 +25,7 @@ from btcedu.core.scene_planner import (
     TEMPLATE_WEATHER,
     VISUAL_MODE_FULLSCREEN,
     VISUAL_MODE_STUDIO,
+    VISUAL_MODE_WEATHER,
     Scene,
     write_scene_plan,
 )
@@ -64,8 +65,40 @@ def session(engine):
 
 
 @pytest.fixture
-def settings(tmp_path):
+def profiles_dir(tmp_path):
+    """A copy of the production profile whose studio actually exists.
+
+    `anchor_generator` refuses to buy a clip for an episode whose studio cannot
+    be loaded — clips that can never be composited are wasted money. The
+    production profile points at the Phase-1 artwork, which is not in the
+    repository, so these ordering tests get a copy of the profile pointing at a
+    small generated studio instead. Nothing about the ordering logic changes.
+    """
+    import yaml
+
+    from btcedu.core.almanya24_smoke import build_studio
+
+    studio_dir = tmp_path / "studio"
+    build_studio(studio_dir, real_media=False)
+
+    target = tmp_path / "profiles"
+    target.mkdir()
+    source = Path("btcedu/profiles")
+    for profile_file in source.glob("*.yaml"):
+        data = yaml.safe_load(profile_file.read_text(encoding="utf-8"))
+        anchor = (data.get("stage_config") or {}).get("anchor")
+        if isinstance(anchor, dict) and isinstance(anchor.get("studio"), dict):
+            anchor["studio"]["asset_dir"] = str(studio_dir)
+        (target / profile_file.name).write_text(
+            yaml.safe_dump(data, allow_unicode=True), encoding="utf-8"
+        )
+    return target
+
+
+@pytest.fixture
+def settings(tmp_path, profiles_dir):
     return Settings(
+        profiles_dir=str(profiles_dir),
         outputs_dir=str(tmp_path / "outputs"),
         transcripts_dir=str(tmp_path / "transcripts"),
         anchor_enabled=True,
@@ -318,7 +351,34 @@ class TestOnlyThePresenterIsOrdered:
         assert "sc_002" not in scene_ids
         assert all(entry["speaker_role"] == ROLE_ANCHOR for entry in _manifest(settings)["scenes"])
 
-    def test_weather_handover_is_never_animated(self, session, settings, episode):
+    def test_the_weather_card_itself_is_never_animated(self, session, settings, episode):
+        """A scene the weather renderer draws must not also get a presenter."""
+        scenes = _default_scenes()
+        weather = _scene(
+            "sc_004", "ch_03", 4, ROLE_ANCHOR, [0], template=TEMPLATE_WEATHER
+        )
+        weather = replace(weather, visual_mode=VISUAL_MODE_WEATHER)
+        scenes.append(weather)
+        _write_episode_files(settings, scenes)
+        service = FakeAnchorService(Path(settings.outputs_dir), LOOK_ID)
+
+        _run(session, settings, service)
+
+        assert "sc_004" not in service.submissions
+        reasons = {e["scene_id"]: e["reason"] for e in _manifest(settings)["excluded_scenes"]}
+        assert reasons["sc_004"] == "weather_is_rendered"
+
+    def test_the_weather_handover_is_animated_like_any_studio_shot(
+        self, session, settings, episode
+    ):
+        """The presenter announcing the forecast is on camera in the studio.
+
+        Her handover is a normal composited studio shot: the shot list marks it
+        ``needs_avatar``, and both the review gate and the renderer refuse to
+        continue without her clip. Excluding it by template — as this stage once
+        did — left every bulletin with a weather block unrenderable *and*
+        unapprovable, which is what the end-to-end run surfaced.
+        """
         scenes = _default_scenes()
         scenes.append(
             _scene("sc_004", "ch_03", 4, ROLE_ANCHOR, [0], template=TEMPLATE_WEATHER)
@@ -328,9 +388,9 @@ class TestOnlyThePresenterIsOrdered:
 
         _run(session, settings, service)
 
-        assert "sc_004" not in service.submissions
-        reasons = {e["scene_id"]: e["reason"] for e in _manifest(settings)["excluded_scenes"]}
-        assert reasons["sc_004"] == "weather_is_rendered"
+        assert "sc_004" in service.submissions
+        excluded = {e["scene_id"] for e in _manifest(settings)["excluded_scenes"]}
+        assert "sc_004" not in excluded
 
 
 class TestOneOutfitPerEpisode:

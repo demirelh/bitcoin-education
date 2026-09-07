@@ -481,6 +481,57 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _refuse_unless_permitted(episode_id: str, settings: Settings, config: AnchorConfig) -> None:
+    """Stop before the first paid call if this presenter may not be generated.
+
+    The review gate already refuses to *show* clips made without a valid consent
+    record or a loadable studio, but by then the provider has been paid for them
+    and — worse — a likeness has been synthesised that nobody was permitted to
+    synthesise. Consent is the one condition where a late refusal is worthless,
+    so it is checked once more here, against the configuration this episode
+    actually resolved.
+
+    Deliberately narrow: only what the profile itself declares. A profile that
+    names no release record and no studio directory is not silently blocked;
+    that decision belongs to `btcedu anchor-readiness` and to the review gate,
+    not to a stage that would otherwise refuse every existing installation.
+    """
+    from btcedu.core.anchor_rights import load_rights_record, rights_problems
+    from btcedu.core.studio_manifest import load_studio_manifest
+
+    problems: list[str] = []
+
+    if config.rights.revoked:
+        problems.append("the profile marks the presenter release as revoked")
+    if config.rights.record_file:
+        try:
+            record = load_rights_record(config.rights.record_file)
+        except Exception as exc:  # noqa: BLE001 - an unreadable release is a refusal
+            problems.append(f"release record {config.rights.record_file!r} unusable: {exc}")
+        else:
+            problems.extend(
+                rights_problems(
+                    record,
+                    channel=config.rights.channel,
+                    territory=config.rights.territory,
+                )
+            )
+
+    if config.studio.asset_dir:
+        manifest_path = Path(config.studio.asset_dir) / config.studio.manifest
+        try:
+            load_studio_manifest(manifest_path)
+        except Exception as exc:  # noqa: BLE001 - an unusable studio is a refusal
+            problems.append(f"studio manifest {manifest_path} unusable: {exc}")
+
+    if problems:
+        raise PipelineError(
+            f"Presenter generation for {episode_id} refused before any provider call: "
+            + "; ".join(problems),
+            category=ErrorCategory.PERMANENT_CONTENT,
+        )
+
+
 def _billable_units(
     scenes: list,
     tts_manifest: dict,
@@ -490,12 +541,20 @@ def _billable_units(
 
     Everything the avatar must never animate is dropped here, with a reason, so
     the manifest can show what was left out instead of leaving it unexplained.
-    The reporter is excluded by ``anchor_scenes`` already; the weather handover
-    is excluded here, because its picture is rendered deterministically and a
-    generated presenter over it is exactly what the weather subsystem exists to
-    prevent.
+    The reporter is excluded by ``anchor_scenes`` already; what is excluded here
+    is any scene whose picture is produced deterministically by the weather
+    renderer, because a generated presenter drawn over a weather card is exactly
+    what the weather subsystem exists to prevent.
+
+    The test is the *visual mode*, not the template. The weather handover is a
+    normal studio shot of the presenter announcing the forecast — she is
+    composited into the studio like every other anchor scene, the shot list
+    marks it ``needs_avatar``, and both the review gate and the renderer refuse
+    to proceed without her clip. Excluding it by template left a bulletin with a
+    weather block unrenderable and unapprovable; only the weather block itself,
+    which the reporter speaks over a rendered card, must stay unanimated.
     """
-    from btcedu.core.scene_planner import TEMPLATE_WEATHER, scene_audio_parts
+    from btcedu.core.scene_planner import VISUAL_MODE_WEATHER, scene_audio_parts
 
     audio_entries = {
         str(entry.get("chapter_id")): entry for entry in tts_manifest.get("segments", [])
@@ -505,7 +564,7 @@ def _billable_units(
     excluded: list[dict] = []
 
     for scene in scenes:
-        if scene.template_id == TEMPLATE_WEATHER:
+        if scene.visual_mode == VISUAL_MODE_WEATHER:
             excluded.append({"scene_id": scene.scene_id, "reason": "weather_is_rendered"})
             continue
 
@@ -657,6 +716,8 @@ def _generate_anchors_from_plan(
             provenance_path=provenance_path,
             skipped=True,
         )
+
+    _refuse_unless_permitted(episode_id, settings, config)
 
     look_id = _resolve_look(session, episode_id, config, plan, settings.outputs_dir)
     # A confirmed regeneration is the only thing that makes an already paid

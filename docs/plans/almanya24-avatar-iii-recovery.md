@@ -696,6 +696,98 @@ Kein Test wurde zur Erzeugung eines grünen Ergebnisses gelockert.
 **Dokumentation**: `docs/avatar-operations.md` (Konfiguration, Matrix,
 Idempotenz, Polling, Breaker, Beobachtbarkeit, Störungstabelle).
 
+### WP-6 — Vollständiger Ende-zu-Ende-Trockenlauf (7. September 2026)
+
+**Neu**: `btcedu/core/almanya24_smoke.py` (synthetische Welt und Treiber),
+`tests/test_almanya24_e2e.py` (56 Tests), CLI-Befehl
+`btcedu smoke-test-almanya24 [--keep] [--dir]`, `docs/almanya24-e2e-dry-run.md`.
+
+- [x] Deterministische, vollständig lokale Testepisode mit 11 Abschnitten:
+      Opening, Schlagzeilenblock, mehrere Meldungen, `anchor → reporter`,
+      `anchor → reporter → anchor`, reine Reporterfortsetzung, Wetterübergabe,
+      deterministischer Wetterblock, Closing.
+- [x] Synthetische Phase-1-Fixtures: Studiohintergrund, Displayzone,
+      Themenbilder und -video, opaker Presenterclip, Desk-Layer, Logo,
+      TTS-Parts, Kapitel-MP3s, Intro/Outro, Studio-Manifest, Rechtefixture,
+      Look-Pool. Alle als `SMOKE` markiert und vom echten Readiness-Befehl
+      nicht akzeptiert.
+- [x] Happy Path über die echte Verdrahtung: 16 Szenen, 10 Anchorclips,
+      ein Look, $0.2505 simuliert, beide Gates halten an, Render 11 Segmente
+      / 43,1 s, genau ein simulierter privater Upload.
+- [x] Fail-closed: fehlende Phase-1-Assets, ungültiges Studio-Manifest,
+      fehlende Rechtefreigabe, Platzhalter-Look, abweichender Look, fehlender
+      und beschädigter Clip, opaker Clip im Alphamodus, MP4-Fallback ohne
+      sichere Displayzone, `reserved`, `reconcile_required`, Budget über 7 USD,
+      fehlendes und veraltetes Anchor-Review, fehlendes Finalreview,
+      `auto_publish=false`, falsches Ziel, Reporter, Rendereraufruf.
+- [x] Restart/Recovery: nach Look-Zuweisung, nach Reservierung, nach
+      persistierter Job-ID, nach teilweise fertigen Clips, nach Anchor-Freigabe,
+      nach Render vor Finalfreigabe, nach simulierter Uploadannahme.
+- [x] Wiederholbarkeit: zweiter Lauf wählt keinen Look neu, beauftragt nichts,
+      erzeugt keine Kosten und keinen zweiten Upload; Content-Hashes identisch.
+- [x] Remote-Render: Paketinhalt geprüft (nur referenzierte Artefakte, keine
+      `.env`, keine Schlüssel, keine signierten URLs, keine Symlinks),
+      Vollständigkeitsprüfung und Fail-closed bei fehlendem Asset.
+- [x] Medienprüfung per FFprobe: 320×180 (bewusst verkleinerte Fixture),
+      25 fps, h264, genau eine Audiospur, keine HeyGen-Tonspur, Dauer in
+      Toleranz, keine Nullbyte-Datei, Presenter sichtbar, Themenmonitor nicht
+      leer, Reportermedium vollflächig, Schlussframe nicht leer.
+- [x] Artefakt- und Provenienzprüfung über alle 13 geforderten Objekte.
+
+**Zwei echte Produktfehler, die erst der E2E-Lauf sichtbar gemacht hat**
+
+1. **Wetterübergabe war unrenderbar** (behoben). Der Szenenplaner markiert die
+   Wetterübergabe der Moderatorin als `needs_avatar`, Review-Gate und Renderer
+   verlangen dafür einen Clip — `_billable_units` schloss sie aber über
+   `template_id == TEMPLATE_WEATHER` aus. Jede Sendung mit Wetter war damit
+   dauerhaft blockiert. Ausschluss erfolgt jetzt über
+   `visual_mode == VISUAL_MODE_WEATHER`, also über die Wetterkarte selbst.
+   `test_weather_handover_is_never_animated` wurde in zwei Tests aufgeteilt,
+   die die korrigierte Absicht abbilden.
+2. **Kein Rechte-/Studio-Preflight vor der ersten Bezahlung** (behoben).
+   `anchor_generator` bestellte Clips auch ohne ladbares Studio-Manifest und
+   ohne gültigen Consent-Datensatz; erst das Review-Gate verweigerte — nach der
+   Abrechnung und nach der Synthese einer Likeness, für die keine Freigabe
+   vorlag. `_refuse_unless_permitted()` prüft jetzt vor jedem Auftrag die
+   Readiness-Bereiche `configuration`, `rights` und `studio`.
+
+**Baselinefehler nach WP-6 (unverändert, nicht abgeschwächt)**
+
+1. `tests/test_cross_profile.py::test_tts_profile_config_values` —
+   `AssertionError: assert 0.0 > 0.0` auf `tts_cfg.get("style", 0.0) > 0.0`.
+   Deterministisch, auf jedem Stand reproduzierbar, CI wäre dadurch rot.
+   Ursache ist eine **absichtliche** Profiländerung: `tagesschau_tr` setzt seit
+   `d1b4676` für beide Stimmen `style: 0.0` mit ausführlicher Begründung im
+   Profil (bei `style: 0.3` betonten die ElevenLabs-Varianten unterschiedliche
+   Wörter, was einzelne Sendungen falsch klingen ließ). Der Test bildet die
+   frühere, verworfene Abstimmung ab.
+   **Empfehlung**: die Zusicherung in einem eigenen, ausschließlich damit
+   befassten Commit auf `style == 0.0` umstellen und den Grund im Test
+   festhalten — nicht nebenbei in einem Avatar-Arbeitspaket, weil es eine
+   Aussage über die Tonabstimmung ist und nicht über den Avatarpfad.
+2. `tests/test_speech_normalize.py::TestTheLastTenEpisodes::test_no_markers_or_orphaned_apostrophes_are_left_behind`
+   — findet ein verwaistes Apostroph in `Himalayalar'daki`. Liest die real
+   gerenderten Episoden *dieser* Maschine, ist also daten- und
+   maschinenabhängig; auf einem CI-Runner ohne diese Episoden läuft er nicht in
+   denselben Fehler. Kein Zusammenhang mit dem Avatarpfad.
+3. Bekannter Flake, keine Regression:
+   `tests/test_web.py::TestJobsAndLogs::test_run_all_nothing_to_do_on_published`
+   (Timing des JobManager-Threads, einzeln grün).
+
+**Suite nach WP-6**: 3522 grün, die zwei dokumentierten Baselinefehler und der
+bekannte Flake. Ruff über `btcedu/` und `tests/` grün.
+
+**Restlücke (bewusst dokumentiert)**: Eine Anchor-Freigabe hängt am Digest, der
+das Manifest hasht. Werden Clipbytes *hinter* dem Manifest her verändert, ohne
+das Manifest anzufassen, bleibt die Freigabe gültig. Realistische Änderungen
+laufen über eine bestätigte Regeneration und invalidieren korrekt.
+
+**Grenze dieser Maschine**: ffmpeg kann hier kein WebM mit von ffprobe
+gemeldetem Alphakanal erzeugen. Die synthetische Welt läuft daher opak
+(`studio_mode: baked`, `output_format: mp4`); der transparente Pfad ist nur über
+seine Verweigerungen und strukturelle Tests abgedeckt. Dass die WebM-Route Ende
+zu Ende trägt, kann erst der echte Pilot zeigen.
+
 ### Offene Kosmetik
 
 - [ ] `sceneplan` im `_STAGE_WORKFLOW_KEY`-Kommentar und in `STAGE_PROVIDER_MAP`
@@ -854,3 +946,5 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-06 | WP-5B | Avatar-Review-Gate, Digest-Bindung, Regenerationsmodell, Dashboard-API, Vorschau und Oberfläche, 104 neue Tests, Ruff grün; Suite 3398 grün / 2 Baselinefehler (Labelzähler nachgezogen) |
 | 2026-09-06 | Checkpoint | Lokaler Commit `f177b88` (WP-5B), nicht gepusht |
 | 2026-09-06 | WP-5C | Coordinator mit begrenzter Parallelität, Retry-Matrix, Idempotenzfenster, Audioasset-Register, Circuit Breaker, Streamingdownload mit FFprobe, Beobachtbarkeit und CLI, Migration 019, 66 neue Tests, Ruff grün; Suite 3466 grün / 2 Baselinefehler |
+| 2026-09-06 | Checkpoint | Lokaler Commit `17c06d5` (WP-5C), nicht gepusht |
+| 2026-09-07 | WP-6 | Synthetischer E2E-Trockenlauf, CLI `smoke-test-almanya24`, 56 neue Tests, zwei echte Produktfehler gefunden und behoben, Ruff grün |

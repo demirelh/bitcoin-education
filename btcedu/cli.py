@@ -3402,3 +3402,67 @@ def avatar_breaker_reset(ctx: click.Context, provider: str, operator_ref: str, n
         raise click.ClickException(str(exc)) from exc
     finally:
         session.close()
+
+
+@cli.command(name="smoke-test-almanya24")
+@click.option("--keep", is_flag=True, default=False,
+              help="Keep the generated artifacts instead of deleting them.")
+@click.option("--dir", "target_dir", default="",
+              help="Where to build the run (default: a temporary directory).")
+def smoke_test_almanya24(keep: bool, target_dir: str) -> None:
+    """Run one whole synthetic ALMANYA24 episode, offline and for free.
+
+    Builds a complete throwaway episode — studio, media, narration, look pool,
+    consent record and profile — and drives it through the real pipeline from
+    the shot list to a simulated private upload. HeyGen and YouTube are local
+    doubles: no network, no credentials, no production database, no cost, and
+    no video is published anywhere.
+
+    Everything it can prove is structural: ordering, hashes, ledger entries,
+    review stops and refusals. Nothing it produces says anything about how the
+    real presenter will look; only the HeyGen pilot can show that.
+    """
+    import shutil as _shutil
+    import tempfile
+
+    from btcedu.core.almanya24_smoke import SMOKE_MARKER, SmokeError, build_world, run_dry_run
+
+    root = Path(target_dir) if target_dir else Path(tempfile.mkdtemp(prefix="almanya24-smoke-"))
+    root.mkdir(parents=True, exist_ok=True)
+    click.echo(f"[{SMOKE_MARKER}] synthetic ALMANYA24 dry run in {root}")
+    click.echo(f"[{SMOKE_MARKER}] no provider is contacted and nothing is published")
+
+    world = None
+    try:
+        world = build_world(root, real_media=True)
+        result = run_dry_run(world, echo=lambda message: click.echo(f"  {message}"))
+    except SmokeError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        if world is not None:
+            world.close()
+
+    click.echo("")
+    for phase in result.phases:
+        click.echo(f"  {'[OK]  ' if phase.ok else '[FAIL]'} {phase.name}: {phase.detail}")
+
+    click.echo("")
+    click.echo(f"  presenter clips ordered : {result.anchor_orders}")
+    click.echo(f"  simulated avatar cost   : ${result.anchor_cost_usd:.4f} (not billed)")
+    click.echo(f"  simulated uploads       : {len(result.uploads)}")
+    for upload in result.uploads:
+        click.echo(f"    -> {upload['title']} [{upload['privacy_status']}]")
+
+    if keep and result.video_path:
+        click.echo("")
+        click.echo(f"  test video: {result.video_path}")
+        click.echo("  SYNTHETIC FIXTURE — not broadcast material")
+    elif not keep:
+        _shutil.rmtree(root, ignore_errors=True)
+        click.echo("")
+        click.echo("  artifacts removed (use --keep to inspect them)")
+
+    if not result.ok:
+        raise click.ClickException("the synthetic dry run did not complete")
+    click.echo("")
+    click.echo(f"[{SMOKE_MARKER}] dry run complete")

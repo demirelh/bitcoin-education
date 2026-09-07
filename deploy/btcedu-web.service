@@ -13,6 +13,10 @@ ExecStart=/home/pi/AI-Startup-Lab/bitcoin-education/.venv/bin/gunicorn \
     --timeout 300 \
     "btcedu.web.app:create_app()"
 EnvironmentFile=/home/pi/AI-Startup-Lab/bitcoin-education/.env
+# The app fails closed when it is unauthenticated and not bound to loopback.
+# Keep this in step with the -b flag above; it is the only way the process can
+# know what it is actually reachable on.
+Environment=WEB_BIND_HOST=127.0.0.1
 Restart=on-failure
 RestartSec=5
 StandardOutput=journal

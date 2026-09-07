@@ -837,9 +837,9 @@ Studio ist über `studio_hash` und die Paket-Vollständigkeitsprüfung abgesiche
 Themenbilder über den Render-Content-Hash; ein getauschtes Studio-PNG bei
 gleichem Manifest fällt erst im finalen Review auf.
 
-**Weiterhin offen für WP-8**: Diese Lücke bleibt nach WP-7 unverändert
-bestehen. Bytehashes der übrigen Renderinputs — Studio-Plates, Themenmedien,
-Overlays — sind ausdrücklich **nicht** erledigt.
+**Weiterhin offen für WP-8B**: Diese Lücke bleibt nach WP-7 und WP-8A
+unverändert bestehen. Bytehashes der übrigen Renderinputs — Studio-Plates,
+Themenmedien, Overlays — sind ausdrücklich **nicht** erledigt.
 
 ### WP-7 — Dashboard-Bedienung, Reconciliation und Voice-over-Override (7. September 2026)
 
@@ -908,6 +908,75 @@ Notfallpfad genau dann unbenutzbar war, wenn die Clips kaputt sind.
 Kostenstornierung, keine automatische Wahl des Fallbacks, keine öffentliche
 Kennzeichnung erfunden — der Produktionsmodus steht in Manifest und Provenienz,
 die redaktionelle Policy bleibt unverändert.
+
+### WP-8A — Dashboard-Authentifizierung, CSRF und Operatoridentität (7. September 2026)
+
+**Neu**: `btcedu/web/auth.py`, `btcedu/web/auth_routes.py`,
+`btcedu/core/operator_identity.py`, `btcedu/web/templates/login.html`,
+`tests/test_web_auth.py` (103 Tests), `docs/dashboard-auth.md`.
+
+- [x] Flask-Login und Flask-WTF (`CSRFProtect`) als gepflegte Komponenten unter
+      dem vorhandenen `web`-Extra; Passworthashing über `werkzeug.security`
+      (scrypt, gesalzen). Keine eigene Kryptografie, kein eigener Sessionkeks.
+- [x] Alles ist geschützt, außer vier bewusst öffentlichen Endpunkten:
+      `auth.login`, `auth.logout`, `static`, `api.health`. Ein Test läuft über
+      **jede** registrierte Route und besteht darauf, dass sie entweder
+      geschützt oder eine Zeile in `PUBLIC_ENDPOINTS` ist — die Zusicherung
+      überlebt damit den nächsten Endpunkt, den jemand hinzufügt.
+- [x] Healthcheck auf `{"status", "time"}` reduziert. Version und Commit
+      verrieten einem anonymen Aufrufer, welchen Code diese Maschine fährt;
+      beide gibt es jetzt nur noch mit Session.
+- [x] Browserseite ohne Login → `/login`; `/api/...` ohne Login → JSON **401**
+      mit `code: unauthenticated`, nie ein HTML-Redirect. Eine existierende und
+      eine erfundene Episode antworten identisch.
+- [x] Fail-closed beim Start: fehlende Zugangsdaten **oder** ein nicht-Loopback
+      `WEB_BIND_HOST` ohne Authentifizierung brechen `create_app()` ab. Die
+      Meldung nennt nur Variablennamen — sie landet bei jedem Neustartversuch
+      im Journal.
+- [x] Login/Logout nur per POST, generische Fehlermeldung, Session-Fixation
+      durch `session.clear()` vor `login_user()`, `HttpOnly`,
+      `SameSite=Strict`, `Secure` per Vorgabe, kein offener Redirect über
+      `next`, keine Zugangsdaten in Log oder URL.
+- [x] Sperre nach Fehlversuchen ohne blockierenden Sleep, mit verdoppeltem und
+      gedeckeltem Cooldown. Bewusst am **Benutzernamen**, nicht an der
+      Client-Adresse: ein Header, den der Proxy schreibt, darf keine
+      Sicherheitsentscheidung tragen — sonst ist die Sperre durch Variieren
+      eines Headers umgehbar und sieht nur noch aus wie eine.
+- [x] CSRF für POST/PUT/PATCH/DELETE, Token an die Session gebunden, im Header
+      `X-CSRFToken` beziehungsweise als Feld im Loginformular. Fehlendes oder
+      fremdes Token → **403** ohne Tokenwert und ohne Stacktrace. Die
+      Origin-Prüfung aus WP-7 bleibt als zweite Schicht.
+- [x] Authentifizierung wird **vor** CSRF geprüft, damit ein anonymer POST ein
+      401 („anmelden“) ist und kein 403 („dein Token ist falsch“) — die zweite
+      Antwort ist unbrauchbarer und verrät zugleich etwas über die Tür.
+- [x] `operator_ref` stammt ausschließlich aus der Session. Ein im Body
+      mitgeschicktes `operator_ref` und ein `X-Forwarded-User`-Header sind
+      keine Ausweise mehr. Referenzen tragen ihre Herkunft: `web:`, `cli:`,
+      `system:`; Altzeilen bleiben ausdrücklich `unknown` statt nachträglich
+      eingeordnet.
+- [x] Der Doppelpunkt im Präfix wird von der Grammatik in
+      `core/anchor_rights.py` abgelehnt — eine Rechtefreigabe ist eine
+      rechtliche Aussage über eine benannte Person und darf nie durch eine
+      Dashboardsitzung erfüllbar sein. Ein Test hält das fest.
+- [x] `btcedu generate-password-hash`: verdeckte Eingabe über `getpass`, mit
+      Bestätigung, Mindestlänge, ohne Shell-History, ohne Klartextausgabe und
+      **ohne** eine Konfigurationsdatei zu schreiben.
+- [x] UI: Loginseite im vorhandenen Stil mit Labels, Fokusring, `autocomplete`
+      und mobiler Breite; sichtbares Abmelden; abgelaufene Session führt genau
+      **einmal** zum Login, ohne kostenrelevante Aktion nachträglich zu
+      wiederholen.
+- [x] `.env.example`, `deploy/btcedu-web.service` (`WEB_BIND_HOST`) und
+      `docs/dashboard-auth.md` einschließlich Zurücksetzen des Zugangs.
+
+**Eine bewusste Kopplung**: `WTF_CSRF_ENABLED` folgt der Authentifizierung.
+Ohne Session gibt es nichts mitzureiten, und zwei getrennte Schalter könnten
+auseinanderdriften und Produktion halb abgedeckt zurücklassen.
+
+**Eine bewusste Testentscheidung**: `tests/conftest.py` schaltet die
+Authentifizierung für die übrigen vierzehn App-Fixtures an *einer* sichtbaren
+Stelle ab. Die Alternative wäre ein Login in Tests über Rendermodi und
+QA-Findings gewesen, und der erste unbequeme davon wäre ohnehin lokal
+„repariert“ worden. Die Absicherung liefert stattdessen der Routentabellentest.
 
 ### Offene Kosmetik
 
@@ -1008,6 +1077,10 @@ Durchgeführt am 6. September 2026:
 - Volle Suite gegen einen sauberen `HEAD`-Worktree (nur zum Vergleich angelegt
   und wieder entfernt, das Arbeitsverzeichnis blieb unangetastet):
   **2788 passed, 1 failed**.
+- Volle Suite im Arbeitsverzeichnis nach WP-8A: **3716 passed, 2 failed** —
+  ausschließlich die beiden unten dokumentierten Baselineprobleme (59 min).
+  Der JobManager-Flake wurde anschließend 3× einzeln wiederholt und war
+  jedes Mal grün; er wurde nicht durch längere Wartezeiten kaschiert.
 - `.venv/bin/ruff check btcedu/ tests/` → All checks passed.
 
 ### Vorbestehende Baselineprobleme (getrennt dokumentiert, nicht abgeschwächt)
@@ -1070,4 +1143,8 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-07 | WP-6 | Synthetischer E2E-Trockenlauf, CLI `smoke-test-almanya24`, 56 neue Tests, zwei echte Produktfehler gefunden und behoben, Ruff grün |
 | 2026-09-07 | Checkpoint | Lokaler Commit `dda8972` (WP-6), nicht gepusht |
 | 2026-09-07 | WP-6A | Bytegebundene Clipintegrität über sieben Vertrauensgrenzen, Migration 020, 28 neue Tests, Ruff grün |
+| 2026-09-07 | Checkpoint | Lokaler Commit `e1d95f2` (WP-6A), nicht gepusht |
 | 2026-09-07 | WP-7 | Dashboard-Runtimeanzeige, Reconciliation-Bedienung, Voice-over-Override mit Fallback-Render, 60 neue Tests, `docs/avatar-dashboard.md`, Ruff grün |
+| 2026-09-07 | Checkpoint | Lokaler Commit `8356ca2` (WP-7), nicht gepusht |
+| 2026-09-07 | WP-8A | Flask-Login/Flask-WTF, Fail-closed-Start, vertrauenswürdige Operatoridentität, `generate-password-hash`, 103 neue Tests, `docs/dashboard-auth.md`, Ruff grün; Suite 3716 grün / 2 Baselinefehler |
+| 2026-09-07 | Checkpoint | Lokaler Checkpoint-Commit (WP-8A), SHA im Bericht, nicht gepusht |

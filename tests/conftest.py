@@ -31,6 +31,28 @@ def _no_real_recogniser_in_tests(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _dashboard_auth_off_unless_a_test_asks_for_it(monkeypatch):
+    """Dashboard authentication defaults to ON; tests opt out here, once.
+
+    The alternative — logging in inside every one of the fourteen fixtures that
+    build the app — would put a login into tests about render modes and QA
+    findings, and the first awkward one would be "fixed" by disabling auth
+    locally anyway. Switching it off in exactly one visible place is honest
+    about what the other tests exercise.
+
+    The guarantee that no route is left unprotected does not come from those
+    tests: `tests/test_web_auth.py` enumerates every registered route and
+    asserts each one is either protected or on the documented public list, so a
+    new endpoint is covered the moment it is written.
+
+    A test that wants authentication passes `web_auth_enabled=True` to
+    `Settings` explicitly, which still wins.
+    """
+    monkeypatch.setenv("WEB_AUTH_ENABLED", "false")
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _dry_run_is_decided_by_the_test(monkeypatch):
     """Never let the surrounding machine decide whether a stage does its work.
 

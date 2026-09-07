@@ -332,6 +332,23 @@ class Settings(BaseSettings):
     reports_dir: str = "data/reports"
     logs_dir: str = "data/logs"
 
+    # Dashboard authentication. Defaults are the safe ones: the app refuses to
+    # start unauthenticated unless it is explicitly bound to loopback, and it
+    # refuses to start authenticated without a credential. Both failures are
+    # louder than a dashboard that silently serves the whole pipeline to anyone
+    # who guesses the URL.
+    web_auth_enabled: bool = True
+    web_bind_host: str = "127.0.0.1"  # what the WSGI server actually binds
+    web_session_secret: str = ""
+    web_operator_username: str = ""
+    web_operator_password_hash: str = ""  # `btcedu generate-password-hash`
+    web_operator_display_name: str = ""  # cosmetic only, never the audit identity
+    web_session_lifetime_minutes: int = 720
+    web_cookie_secure: bool = True  # HTTPS-only cookie; false only for local http
+    web_login_max_attempts: int = 5
+    web_login_cooldown_seconds: int = 60  # doubles per further failure
+    web_login_cooldown_max_seconds: int = 900
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
     def __repr_args__(self):

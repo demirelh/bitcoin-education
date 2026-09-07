@@ -46,6 +46,13 @@ def create_app(settings=None) -> Flask:
     Path(logs_dir).mkdir(parents=True, exist_ok=True)
     app.config["job_manager"] = JobManager(logs_dir)
 
+    # Authentication and CSRF are wired before any blueprint so a route cannot
+    # be registered into an unprotected app by accident. This raises and stops
+    # the service when the configuration is unsafe.
+    from btcedu.web.auth import init_auth
+
+    init_auth(app, settings)
+
     app.register_blueprint(api_bp, url_prefix="/api")
 
     @app.route("/")

@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anmelden · btcedu</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <h1 class="login-title">btcedu</h1>
+    <p class="login-subtitle">Betreiberzugang zum ALMANYA24-Dashboard</p>
+
+    {% if error %}
+    <p class="login-error" role="alert" aria-live="assertive">{{ error }}</p>
+    {% endif %}
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% if messages %}
+        {% for category, message in messages %}
+        <p class="login-notice" role="status">{{ message }}</p>
+        {% endfor %}
+      {% endif %}
+    {% endwith %}
+
+    <form method="post" action="{{ url_for('auth.login') }}" autocomplete="on">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token_value }}">
+      <input type="hidden" name="next" value="{{ next or '' }}">
+
+      <label class="login-label" for="username">Benutzername</label>
+      <input class="login-input" id="username" name="username" type="text"
+             autocomplete="username" autocapitalize="none" spellcheck="false"
+             required autofocus>
+
+      <label class="login-label" for="password">Passwort</label>
+      <input class="login-input" id="password" name="password" type="password"
+             autocomplete="current-password" required>
+
+      <button class="btn btn-primary login-submit" type="submit">Anmelden</button>
+    </form>
+
+    <p class="login-hint">
+      Zugangsdaten werden ausschließlich als Umgebungsvariablen gesetzt.
+      Ein neuer Passwort-Hash entsteht mit <code>btcedu generate-password-hash</code>.
+    </p>
+  </main>
+</body>
+</html>

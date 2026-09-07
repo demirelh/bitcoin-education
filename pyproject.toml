@@ -38,6 +38,11 @@ dependencies = [
 web = [
     "flask>=3.0.0",
     "gunicorn>=22.0.0",
+    # Dashboard authentication and CSRF. Both are maintained Flask extensions;
+    # nothing here implements a session mechanism or a password hash by hand.
+    # Password hashing itself comes from werkzeug, which flask already pulls in.
+    "flask-login>=0.6.3",
+    "flask-wtf>=1.2.1",
 ]
 youtube = [
     "google-api-python-client>=2.0.0",

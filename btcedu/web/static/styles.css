@@ -2863,3 +2863,107 @@ body {
      unreadable columns. */
   #avatar-panel table { display: block; overflow-x: auto; white-space: nowrap; }
 }
+
+/* ── Login page ───────────────────────────────────────────────
+   Deliberately the same palette as the dashboard and nothing more: a login
+   screen is a door, not a landing page. */
+.login-body {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  margin: 0;
+  padding: 1rem;
+}
+.login-card {
+  width: 100%;
+  max-width: 22rem;
+  padding: 1.75rem;
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  background: var(--panel, #1b1b1b);
+}
+.login-title {
+  margin: 0 0 0.25rem;
+  font-size: 1.5rem;
+}
+.login-subtitle {
+  margin: 0 0 1.25rem;
+  font-size: 0.9rem;
+  opacity: 0.75;
+}
+.login-label {
+  display: block;
+  margin: 0.9rem 0 0.3rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.login-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.6rem 0.7rem;
+  font-size: 1rem;
+  border: 1px solid var(--border, #333);
+  border-radius: 5px;
+  background: var(--bg, #111);
+  color: inherit;
+}
+.login-input:focus,
+.login-submit:focus,
+.logout-form button:focus {
+  outline: 2px solid #4da3ff;
+  outline-offset: 2px;
+}
+.login-submit {
+  width: 100%;
+  margin-top: 1.25rem;
+  padding: 0.65rem;
+  font-size: 1rem;
+}
+.login-error,
+.login-notice {
+  margin: 0 0 0.5rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: 5px;
+  font-size: 0.9rem;
+}
+/* Colour is never the only signal: the border weight and the wording differ
+   too, so the message reads the same without colour perception. */
+.login-error {
+  border: 1px solid #a33;
+  background: rgba(170, 51, 51, 0.15);
+}
+.login-notice {
+  border: 1px solid #4a7;
+  background: rgba(68, 170, 119, 0.12);
+}
+.login-hint {
+  margin: 1.25rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  opacity: 0.65;
+}
+.login-hint code {
+  font-size: 0.75rem;
+}
+
+/* ── Logged-in operator / logout ─────────────────────────────── */
+.logout-form {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0;
+}
+.operator-name {
+  font-size: 0.8rem;
+  opacity: 0.75;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .operator-name {
+    max-width: 5rem;
+  }
+}

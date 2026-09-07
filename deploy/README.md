@@ -37,6 +37,35 @@ For detailed instructions, see: [docs/SERVER_DEPLOYMENT_GUIDE.md](../docs/SERVER
 
 ---
 
+## Dashboard access (required since WP-8A)
+
+`btcedu-web.service` **refuses to start** without a configured operator. Set
+these before the first restart, otherwise the unit fails and the journal
+explains which variable is missing:
+
+```bash
+# One-off, into .env:
+python -c "import secrets; print(secrets.token_urlsafe(48))"   # WEB_SESSION_SECRET
+btcedu generate-password-hash                                  # WEB_OPERATOR_PASSWORD_HASH
+# plus WEB_OPERATOR_USERNAME and WEB_AUTH_ENABLED=true
+sudo systemctl restart btcedu-web
+```
+
+The password is entered interactively and never appears in the shell history,
+the process list or `.env`. Only the hash is stored.
+
+`WEB_BIND_HOST` in the unit must match the `-b` flag: the process cannot
+otherwise know what it is reachable on, and that is the value that decides
+whether running unauthenticated is allowed at all. Keep gunicorn on
+`127.0.0.1` and keep Caddy in front for TLS; `WEB_COOKIE_SECURE=true` means the
+session cookie never travels over plain http.
+
+The Caddy basicauth block in `Caddyfile.dashboard` may stay — it is now a second
+door rather than the only one. Full description, including how to reset access
+when nobody can log in: [docs/dashboard-auth.md](../docs/dashboard-auth.md).
+
+---
+
 ## Files in This Directory
 
 ### Systemd Service Units

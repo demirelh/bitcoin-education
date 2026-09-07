@@ -2981,6 +2981,42 @@ def notify_test(ctx: click.Context, message: str | None) -> None:
         )
 
 
+@cli.command(name="generate-password-hash")
+def generate_password_hash_command() -> None:
+    """Create the dashboard operator password hash for WEB_OPERATOR_PASSWORD_HASH.
+
+    The password is never an argument and never a prompt that echoes, so it does
+    not reach the shell history, the process list or the terminal scrollback.
+    Only the hash is printed; no configuration file is touched, because writing
+    into `.env` from a helper is exactly how a credential ends up committed.
+    """
+    import getpass
+
+    from werkzeug.security import generate_password_hash
+
+    try:
+        password = getpass.getpass("Passwort: ")
+        confirmation = getpass.getpass("Passwort wiederholen: ")
+    except (EOFError, KeyboardInterrupt) as exc:
+        raise click.ClickException("Abgebrochen.") from exc
+
+    if not password:
+        raise click.ClickException("Kein Passwort eingegeben.")
+    if password != confirmation:
+        raise click.ClickException("Die beiden Eingaben stimmen nicht überein.")
+    if len(password) < 12:
+        raise click.ClickException(
+            "Das Passwort muss mindestens 12 Zeichen haben. Es schützt jede "
+            "Freigabe, jeden Provideraufruf und jede Kostenentscheidung."
+        )
+
+    click.echo("")
+    click.echo("WEB_OPERATOR_PASSWORD_HASH=" + generate_password_hash(password))
+    click.echo("")
+    click.echo("Diese Zeile in .env beziehungsweise die systemd-EnvironmentFile eintragen.")
+    click.echo("Das Klartextpasswort nirgends speichern.")
+
+
 @cli.command(name="anchor-readiness")
 @click.option(
     "--profile",
@@ -3199,6 +3235,7 @@ def avatar_reconcile_attach(
 ) -> None:
     """Bind a manually identified provider job id to a held job."""
     from btcedu.core.avatar_reconcile import ReconciliationError, attach_provider_job_id
+    from btcedu.core.operator_identity import cli_operator
 
     session = ctx.obj["session_factory"]()
     try:
@@ -3206,7 +3243,7 @@ def avatar_reconcile_attach(
             session,
             job_id,
             provider_job_id=provider_job_id,
-            operator_ref=operator_ref,
+            operator_ref=cli_operator(operator_ref),
             note=note,
             confirm=confirm,
         )
@@ -3252,6 +3289,7 @@ def avatar_reconcile_resolve(
     that it was free. Use 'unresolved' or 'abandon' instead.
     """
     from btcedu.core.avatar_reconcile import ReconciliationError, resolve
+    from btcedu.core.operator_identity import cli_operator
 
     settings = ctx.obj["settings"]
     session = ctx.obj["session_factory"]()
@@ -3261,7 +3299,7 @@ def avatar_reconcile_resolve(
             job_id,
             decision=decision.lower(),
             note=note,
-            operator_ref=operator_ref,
+            operator_ref=cli_operator(operator_ref),
             output_path=output_path,
             duration_seconds=duration_seconds,
             cost_usd=cost_usd,
@@ -3396,8 +3434,11 @@ def avatar_breaker_reset(ctx: click.Context, provider: str, operator_ref: str, n
 
     session = ctx.obj["session_factory"]()
     try:
-        view = breaker_module.reset(session, provider, operator_ref=operator_ref, note=note)
-        click.echo(f"[OK] breaker for {provider} reset to {view.state} by {operator_ref}")
+        from btcedu.core.operator_identity import cli_operator
+
+        ref = cli_operator(operator_ref)
+        view = breaker_module.reset(session, provider, operator_ref=ref, note=note)
+        click.echo(f"[OK] breaker for {provider} reset to {view.state} by {ref}")
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
     finally:

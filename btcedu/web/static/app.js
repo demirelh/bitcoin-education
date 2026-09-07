@@ -46,14 +46,60 @@
   // ── API helpers ──────────────────────────────────────────────
   // Use relative URL so requests stay within the reverse-proxy prefix
   // (e.g. /dashboard/api/... when served behind Caddy at /dashboard/).
+  // The CSRF token is rendered into the page once and sent back on every
+  // state-changing request. Being logged in is not consent: a foreign page can
+  // make this browser POST, and only a token it cannot read stops that.
+  function csrfToken() {
+    const meta = document.querySelector('meta[name="csrf-token"]');
+    return meta ? meta.getAttribute("content") : "";
+  }
+  window.csrfToken = csrfToken;
+
+  function csrfHeaders(extra) {
+    const headers = Object.assign({}, extra || {});
+    headers["X-CSRFToken"] = csrfToken();
+    return headers;
+  }
+  window.csrfHeaders = csrfHeaders;
+
+  // An expired session must end at the login page, once. Retrying would spin
+  // the poller against a redirect forever, and silently repeating a cost-
+  // relevant POST after a fresh login would spend money nobody asked for.
+  let sessionEnded = false;
+  function handleSessionEnd() {
+    if (sessionEnded) return true;
+    sessionEnded = true;
+    clearInterval(pollTimer);
+    clearInterval(logPollTimer);
+    toast("Sitzung abgelaufen - bitte neu anmelden.", false);
+    setTimeout(function () {
+      window.location.href = "login";
+    }, 1500);
+    return true;
+  }
+  window.handleSessionEnd = handleSessionEnd;
+
   async function api(method, path, body) {
+    if (sessionEnded) {
+      // Every caller past this point is a poller or a retry. Repeating a
+      // cost-relevant POST once the operator logs back in is exactly what must
+      // not happen, so nothing is queued for later either.
+      return { error: "Sitzung abgelaufen. Bitte neu anmelden.", unauthenticated: true };
+    }
     const opts = { method, headers: {} };
+    if (method !== "GET" && method !== "HEAD") {
+      opts.headers = csrfHeaders(opts.headers);
+    }
     if (body) {
       opts.headers["Content-Type"] = "application/json";
       opts.body = JSON.stringify(body);
     }
     const endpoint = "api" + path;
     const res = await fetch(endpoint, opts);
+    if (res.status === 401) {
+      handleSessionEnd();
+      return { error: "Sitzung abgelaufen. Bitte neu anmelden.", unauthenticated: true };
+    }
     if (!res.ok) {
       // Handle non-JSON error responses (e.g. 401 from proxy)
       const ct = res.headers.get("content-type") || "";
@@ -62,6 +108,9 @@
       }
     }
     const data = await res.json();
+    if (res.status === 403 && data.code === "csrf_failed") {
+      toast(data.error || "Sicherheits-Token abgelaufen. Bitte neu laden.", false);
+    }
     if (!res.ok && !data.error) data.error = `HTTP ${res.status}`;
     return data;
   }
@@ -2945,7 +2994,7 @@
 
   async function deleteIntroAudio() {
     if (!window.confirm("Intro-MP3 wirklich löschen?")) return;
-    const response = await fetch("api/intro-audio", { method: "DELETE" });
+    const response = await fetch("api/intro-audio", { method: "DELETE", headers: csrfHeaders() });
     const data = await response.json();
     if (!response.ok || data.error) {
       toast(data.error || "Löschen fehlgeschlagen", false);
@@ -4047,6 +4096,7 @@
       try {
         const response = await fetch("api/intro-audio", {
           method: "POST",
+          headers: csrfHeaders(),
           body: formData,
         });
         const data = await response.json();
@@ -4289,7 +4339,7 @@ async function setRenderMode(useGithub) {
   try {
     const response = await fetch("api/render-mode", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: csrfHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ mode }),
     });
     const data = await response.json();
@@ -4400,7 +4450,7 @@ async function setFailoverMode(mode) {
   try {
     const response = await fetch("api/failover/mode", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: csrfHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify({ mode }),
     });
     const data = await response.json();

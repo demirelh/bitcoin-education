@@ -279,17 +279,22 @@ def set_failover_mode_endpoint():
 
 @api_bp.route("/health")
 def health():
-    """Health check for monitoring and proxy verification."""
-    from btcedu.version import get_git_commit
+    """Liveness for systemd and the proxy — the only unauthenticated route.
 
-    return jsonify(
-        {
-            "status": "ok",
-            "time": datetime.now(UTC).isoformat(),
-            "version": "0.1.0",
-            "git_commit": get_git_commit(),
-        }
-    )
+    Deliberately almost empty. A health check exists so a supervisor can tell
+    whether the process answers, and it is reachable by anyone who can reach the
+    port. Version and commit told an anonymous caller which code this machine
+    runs and therefore which advisories apply to it; both now require a session.
+    """
+    from flask_login import current_user
+
+    payload = {"status": "ok", "time": datetime.now(UTC).isoformat()}
+    if current_user.is_authenticated or not current_app.config["auth_policy"].enabled:
+        from btcedu.version import get_git_commit
+
+        payload["version"] = "0.1.0"
+        payload["git_commit"] = get_git_commit()
+    return jsonify(payload)
 
 
 @api_bp.route("/whatsapp/status")
@@ -4778,16 +4783,18 @@ def _anchor_config_for(episode_id: str):
 
 
 def _operator_ref() -> str:
-    """A non-confidential handle for the audit trail.
+    """The audit identity of the logged-in operator.
 
-    The dashboard has no login — it sits behind the reverse proxy — so the best
-    available reference is whatever the proxy forwarded plus a caller-supplied
-    label. Never an address, never a credential.
+    Previously this read a label out of the request body, which meant the
+    dashboard recorded whatever the caller claimed to be — including a
+    convincing name that belonged to somebody else. The identity now comes from
+    the authenticated session and nowhere else; a client-sent ``operator_ref``
+    field is ignored, and an ``X-Forwarded-User`` header is not trusted, because
+    a header is only as trustworthy as every hop that could have written it.
     """
-    payload = request.get_json(silent=True) or {}
-    label = str(payload.get("operator_ref") or "").strip()[:64]
-    forwarded = str(request.headers.get("X-Forwarded-User") or "").strip()[:64]
-    return label or forwarded or "dashboard"
+    from btcedu.web.auth import operator_ref as session_operator_ref
+
+    return session_operator_ref()
 
 
 @api_bp.route("/episodes/<episode_id>/avatar")

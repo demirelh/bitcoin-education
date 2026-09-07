@@ -40,6 +40,10 @@ def test_settings(tmp_path):
             "outputs_dir": str(tmp_path / "outputs"),
             "reports_dir": str(tmp_path / "reports"),
             "logs_dir": str(tmp_path / "logs"),
+            # A stub must say what it is: an unauthenticated loopback app. The
+            # factory now fails closed when it cannot tell, which is the point.
+            "web_auth_enabled": False,
+            "web_bind_host": "127.0.0.1",
         },
     )()
 

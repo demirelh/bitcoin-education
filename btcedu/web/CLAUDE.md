@@ -48,9 +48,20 @@ current OpenAI balance baseline used for the two-episode warning popup)
   work obeys the same failover lease as CLI/timer runs
 - Pipeline progress aggregates retries: earliest start, latest completion,
   summed duration/cost and `attempt_count`; timestamps are normalized to UTC
-- Health check: `GET /api/health` -> `{"status": "ok", ...}`
+- Health check: `GET /api/health` -> `{"status": "ok", "time": ...}` — the only
+  unauthenticated API route, and deliberately minimal; version and commit are
+  added only for a logged-in operator
+- Authentication (`web/auth.py`, WP-8A): everything except `auth.login`,
+  `auth.logout`, `static` and `api.health` requires a session. Browser pages
+  redirect to `/login`, `/api/*` answers JSON 401. `create_app()` raises
+  `AuthConfigError` when the configuration would be unsafe
+- CSRF: `CSRFProtect` on every POST/PUT/PATCH/DELETE, token via `X-CSRFToken`;
+  authentication is checked first so an anonymous POST is a 401, not a 403
+- `_operator_ref()` reads the session only. Never a request field, never a
+  header. Audit refs are prefixed `web:` / `cli:` / `system:`
 - Production: gunicorn with gthread worker, behind Caddy reverse proxy
-- Dashboard served at `/dashboard/*` path via Caddy with basic auth
+- Dashboard served at `/dashboard/*` path via Caddy with basic auth (now a
+  second door, not the only one)
 - Templates use relative URLs (`api/...`, `whatsapp`) so the `/dashboard/` prefix keeps working
 
 <!--

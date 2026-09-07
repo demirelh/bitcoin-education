@@ -156,7 +156,78 @@ Providerpayloads, signierte Download-URLs.
 | Clip `quarantined` | heruntergeladen, aber technisch unbrauchbar | Datei in `anchor/quarantine/` prüfen, Szene ggf. bewusst regenerieren |
 | `avatar-status` zeigt ungeklärte Kosten | Geld ist nicht zugeordnet | Reconciliation, bevor die Episode veröffentlicht wird |
 
-## 9. Was bewusst *nicht* passiert
+## 9. Integritätsvertrag der Avatarclips
+
+Ein Avatarclip ist teuer, nicht rekonstruierbar und wird als Aussage eines
+Menschen gesendet. Deshalb genügt es nicht zu wissen, dass *eine* Datei an dem
+Pfad liegt, den das Manifest nennt — es zählen die Bytes.
+
+**Identität**: Beim Download berechnet `avatar_download.stream_to_file` einen
+streamingbasierten SHA-256 über genau die Bytes, die auf die Platte gehen. Er
+landet in `avatar_jobs.file_sha256` und als `file_sha256` in jedem Szeneneintrag
+des Anchor-Manifests. Größe, mtime und Pfad sind kein Ersatz und werden nirgends
+als solcher verwendet.
+
+**Vertrauensgrenzen**: Die Bytes werden neu gemessen
+
+1. nach Download und technischer Validierung (`avatar_download`),
+2. beim Wiederverwenden eines bereits bezahlten Clips (`avatar_coordinator`),
+3. beim Bilden des Anchor-Review-Digests — der Digest enthält den *gemessenen*
+   Hash, nicht den erinnerten,
+4. unmittelbar vor jeder Freigabe (`approval_blockers`),
+5. unmittelbar vor dem lokalen Render (`scene_renderer.load_scene_context`),
+6. beim Packen des Remote-Render-Pakets (`remote_render.build_job_package`),
+7. nach dem Entpacken auf dem Runner (`verify_job_completeness` gegen die
+   mitgelieferten `clip_digests`).
+
+Weil der Runner dieselbe `load_scene_context` aufruft, prüft er zusätzlich
+dieselbe Grenze wie der Pi.
+
+**Bei Abweichung**: Die Freigabe wird ungültig, Render, Remote-Render und
+Publish blockieren, der Clip erhält einen Integritätsstatus (`mismatch`,
+`missing`, `unrecorded`, `unsafe`) mit konkreter Handlungsempfehlung, und es
+wird **kein** neuer HeyGen-Auftrag erzeugt. Die Kosten bleiben im Ledger stehen:
+Der Clip wurde bezahlt, unabhängig davon, was jemand später mit der Datei
+gemacht hat. Weiter geht es nur über `btcedu avatar-reconcile` oder eine
+bestätigte Regeneration.
+
+**Zwei Manipulationsfälle**:
+
+* Bytes geändert, Manifest unverändert → der gemessene Hash weicht ab, Digest
+  ändert sich, Freigabe ist stale.
+* Bytes und Manifest gemeinsam geändert → intern konsistent, aber der Digest,
+  den ein Mensch unterschrieben hat, beschrieb anderes Material; die Freigabe
+  gilt nicht mehr (`has_current_approval` ist falsch).
+
+Eine alte Freigabe wird niemals allein wegen gleicher Scene-ID oder gleichem
+Pfad akzeptiert.
+
+**Altbestand**: Ein Clip ohne gespeicherten Hash gilt als `unrecorded` — nicht
+als vertrauenswürdig und nicht als beschädigt. Er blockiert die Freigabe, bis
+`anchorgen` den Digest nachträgt und ein Mensch erneut freigibt. Rückwirkendes
+Nachtragen beim Migrieren wäre eine Behauptung, die niemand geprüft hat, deshalb
+bleibt die Spalte für Altzeilen NULL (Migration 020). Der chapterbasierte
+D-ID-Pfad hat kein `scenes`-Feld und bleibt unberührt.
+
+**Verbleibendes Zeitfenster**: Zwischen der Messung an einer Grenze und der
+Verwendung dahinter liegt ein kurzes Fenster, in dem ein zweiter Prozess die
+Datei ersetzen könnte. Es wird nicht durch Locking geschlossen, sondern klein
+gehalten: Downloads landen atomisch (`.part` + `rename`), jede Grenze misst neu
+statt sich auf die vorige zu verlassen, und der Renderer misst unmittelbar vor
+dem Aufbau des Szenenkontexts. Ein Angreifer mit Schreibrechten im
+Episodenverzeichnis *während* eines Renders ist damit nicht ausgeschlossen — wer
+das kann, kann auch das fertige Video austauschen; dagegen hilft nur
+Dateisystemberechtigung, keine Anwendungslogik.
+
+**Nicht abgedeckt**: Studio-Plates und Themenmedien haben *keine* Bytehashes.
+Das Studio wird über `studio_hash` (Manifestinhalt) und die
+Vollständigkeitsprüfung des Remote-Pakets abgesichert, Themenbilder über den
+Render-Content-Hash. Ein Austausch eines Studio-PNGs bei gleichem Manifest fällt
+erst im finalen Review auf. Das ist bewusst so belassen: ein zweites
+Content-Addressed-System für Standbilder wäre für ein Risiko, das der finale
+Sichtprüfungsschritt ohnehin abdeckt, unverhältnismäßig.
+
+## 10. Was bewusst *nicht* passiert
 
 * **Kein automatischer Voice-over-Fallback.** Eine fehlende Moderatorinnen-Szene
   blockiert. Ein manueller, episodenbezogener Override bleibt auditiert und

@@ -50,6 +50,7 @@ from btcedu.core.avatar_download import (
     ValidationError,
     download_and_validate,
 )
+from btcedu.core.avatar_integrity import ClipIntegrityError, hash_file
 from btcedu.core.avatar_retry import (
     OP_CREATE_VIDEO,
     OP_DOWNLOAD_RESULT,
@@ -132,6 +133,9 @@ class SceneOutcome:
     cost_usd: float
     output_format: str
     mime_type: str
+    #: SHA-256 of the file as it was written. Empty only for a legacy clip that
+    #: was downloaded before this was recorded.
+    file_sha256: str = ""
     warnings: list[str] = field(default_factory=list)
 
 
@@ -309,6 +313,23 @@ class AvatarCoordinator:
         path = self.outputs_dir / job.output_path
         if not path.exists():
             return None
+        # Reuse is the cheapest path in the stage and the easiest one to abuse:
+        # nothing here talks to the provider, so a clip that was swapped since
+        # it was paid for would otherwise walk straight into the render. The
+        # file is measured again and has to match what was recorded.
+        measured = hash_file(path)
+        if job.file_sha256 and job.file_sha256 != measured:
+            raise ClipIntegrityError(
+                f"scene {work.request.scene_id}: the clip on disk is not the clip that was "
+                f"bought (recorded {job.file_sha256[:8]}…, found {measured[:8]}…); "
+                "reconcile or confirm a regeneration"
+            )
+        if not job.file_sha256:
+            # A clip from before byte provenance existed. Recording the digest
+            # now says 'unchanged from here on', never 'this is the original',
+            # which is why the review still has to be given again.
+            job.file_sha256 = measured
+            self.session.commit()
         mime = "video/webm" if self.output_format == "webm" else "video/mp4"
         return SceneOutcome(
             scene_id=work.request.scene_id,
@@ -323,6 +344,7 @@ class AvatarCoordinator:
             cost_usd=0.0,
             output_format=self.output_format,
             mime_type=mime,
+            file_sha256=measured,
         )
 
     def request_shutdown(self) -> None:
@@ -594,6 +616,7 @@ class AvatarCoordinator:
             cost_usd=cost,
             output_format=self.output_format,
             mime_type=mime,
+            file_sha256=downloaded.sha256,
             warnings=list(downloaded.warnings),
         )
 
@@ -851,6 +874,7 @@ class AvatarCoordinator:
                 duration_seconds=value.duration_seconds,
                 cost_usd=value.cost_usd,
             )
+            job.file_sha256 = value.file_sha256 or None
             job.validation_status = VALIDATION_VALID
             job.validation_error = None
             job.next_poll_at = None

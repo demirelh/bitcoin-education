@@ -82,6 +82,9 @@ class SceneAnchorEntry:
     cost_usd: float
     output_format: str
     mime_type: str
+    #: SHA-256 of the clip's bytes. The manifest names a path; this says which
+    #: file that path has to be, and every later gate compares against it.
+    file_sha256: str = ""
 
 
 @dataclass
@@ -935,6 +938,7 @@ def _generate_anchors_from_plan(
                     cost_usd=outcome.cost_usd,
                     output_format=outcome.output_format,
                     mime_type=outcome.mime_type,
+                    file_sha256=outcome.file_sha256,
                 )
             )
             if outcome.action == "reuse":

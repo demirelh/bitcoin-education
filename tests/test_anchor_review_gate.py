@@ -5,6 +5,7 @@ presenter never reaches a rendered bulletin, and an approval never travels
 from one set of clips to another.
 """
 
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -151,7 +152,8 @@ def _seed(session, settings, *, scenes=None, anchor_ids=("sc_001", "sc_003")):
     entries = []
     for scene_id in anchor_ids:
         clip = anchor_dir / f"{scene_id}.webm"
-        clip.write_bytes(b"\x1a\x45\xdf\xa3" + b"\x00" * 64)
+        payload = b"\x1a\x45\xdf\xa3" + b"\x00" * 64
+        clip.write_bytes(payload)
         entries.append(
             {
                 "scene_id": scene_id,
@@ -168,6 +170,7 @@ def _seed(session, settings, *, scenes=None, anchor_ids=("sc_001", "sc_003")):
                 "duration_seconds": 6.0,
                 "cost_usd": 0.1002,
                 "mime_type": "video/webm",
+                "file_sha256": hashlib.sha256(payload).hexdigest(),
             }
         )
         job = reserve_scene(

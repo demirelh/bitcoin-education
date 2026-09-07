@@ -6,6 +6,7 @@ to it. Everything below is one of those two, plus the rule that an approval
 belongs to the clips it was given, not to the episode in general.
 """
 
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -175,7 +176,14 @@ def _entry(scene_id, chapter_id, *, suffix="webm", look_id=LOOK_ID):
         "cost_usd": 0.1002,
         "output_format": suffix,
         "mime_type": "video/webm" if suffix == "webm" else "video/mp4",
+        # `_seed` writes exactly these bytes; a manifest without the digest
+        # would be a legacy one, which the gate refuses on purpose.
+        "file_sha256": CLIP_SHA256,
     }
+
+
+CLIP_BYTES = b"\x1a\x45\xdf\xa3" + b"\x00" * 512
+CLIP_SHA256 = hashlib.sha256(CLIP_BYTES).hexdigest()
 
 
 def _seed(session, settings, *, entries=None, suffix="webm", with_jobs=True):
@@ -201,7 +209,7 @@ def _seed(session, settings, *, entries=None, suffix="webm", with_jobs=True):
     for entry in entries:
         clip = outputs / entry["video_path"]
         clip.parent.mkdir(parents=True, exist_ok=True)
-        clip.write_bytes(b"\x1a\x45\xdf\xa3" + b"\x00" * 512)
+        clip.write_bytes(CLIP_BYTES)
     (anchor_dir / "manifest.json").write_text(
         json.dumps(
             {

@@ -9,6 +9,7 @@ happens to a job whose outcome nobody knows.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from datetime import UTC, datetime, timedelta
@@ -184,9 +185,16 @@ def fake_download(recorder: list[str]):
     def _download(url, destination, expectation, **kwargs):
         recorder.append(url)
         Path(destination).parent.mkdir(parents=True, exist_ok=True)
-        Path(destination).write_bytes(b"clip-bytes")
+        payload = b"clip-bytes"
+        Path(destination).write_bytes(payload)
+        # The real downloader hashes what it writes. A double that reports some
+        # other digest would let the integrity checks pass on a lie.
         return DownloadResult(
-            path=Path(destination), size_bytes=10, sha256="deadbeef", probe=None, warnings=[]
+            path=Path(destination),
+            size_bytes=len(payload),
+            sha256=hashlib.sha256(payload).hexdigest(),
+            probe=None,
+            warnings=[],
         )
 
     return _download

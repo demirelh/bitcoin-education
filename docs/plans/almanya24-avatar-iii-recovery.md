@@ -788,6 +788,55 @@ gemeldetem Alphakanal erzeugen. Die synthetische Welt läuft daher opak
 seine Verweigerungen und strukturelle Tests abgedeckt. Dass die WebM-Route Ende
 zu Ende trägt, kann erst der echte Pilot zeigen.
 
+### WP-6A — Bytegebundene Integrität von Avatarclips (7. September 2026)
+
+**Neu**: `btcedu/core/avatar_integrity.py`, Migration `020_avatar_clip_hash`,
+`tests/test_avatar_integrity.py` (14 Tests), Testklasse
+`TestTheApprovedBytesAreTheRenderedBytes` in `tests/test_almanya24_e2e.py`
+(14 Tests), Abschnitt 9 in `docs/avatar-operations.md`.
+
+- [x] Kanonischer SHA-256 der tatsächlichen Clipbytes, streamingbasiert beim
+      Download berechnet, in `avatar_jobs.file_sha256` und im Manifestfeld
+      `file_sha256` persistiert. Größe, mtime und Pfad sind nirgends Ersatz.
+- [x] Der Anchor-Review-Digest enthält den **gemessenen**, nicht den
+      erinnerten Hash. Damit fällt eine Freigabe, sobald sich die Bytes ändern,
+      ohne dass jemand das Manifest anfassen müsste.
+- [x] Sieben Vertrauensgrenzen prüfen neu: Download, Wiederverwendung eines
+      bezahlten Clips, Digestbildung, Freigabe, lokaler Render, Remote-Paket,
+      Remote-Runner (`clip_digests` im Job).
+- [x] Bei Abweichung: Freigabe ungültig, Render/Remote/Publish blockiert,
+      Integritätsstatus mit Handlungsempfehlung, **kein** automatischer neuer
+      HeyGen-Auftrag, Kosten bleiben im Ledger.
+- [x] Beide Manipulationsfälle abgedeckt — Bytes allein geändert und Bytes plus
+      Manifest gemeinsam geändert; im zweiten Fall ist alles intern konsistent
+      und `has_current_approval` trotzdem falsch.
+- [x] Pfadtraversal und Symlinks aus dem Episodenverzeichnis heraus werden als
+      `unsafe` abgelehnt.
+- [x] Rückwärtskompatibel: Clips ohne Hash sind `unrecorded` — weder
+      vertrauenswürdig noch verurteilt; sie blockieren die Freigabe, bis der
+      Digest nachgetragen und erneut freigegeben wurde. Migration 020 füllt
+      Altzeilen bewusst **nicht** zurück. Der D-ID-Kapitelpfad bleibt unberührt.
+- [x] Streaming ist getestet, nicht behauptet: der Test zählt die Lesegrößen
+      und schlägt fehl, sobald jemand auf `read_bytes()` umstellt.
+
+**Angepasste Bestandsfixtures** (Vertrag erweitert, keine Abschwächung):
+`tests/test_anchor_review.py`, `tests/test_anchor_review_gate.py` schreiben nun
+`file_sha256` zu den Clips, die sie selbst erzeugen; das Download-Double in
+`tests/test_avatar_concurrency.py` meldet den Hash der Bytes, die es schreibt,
+statt `"deadbeef"` — ein Double, das über den eigenen Inhalt falsch aussagt,
+hätte jede Integritätsprüfung auf einer Lüge bestehen lassen.
+
+**Verbleibendes Zeitfenster (dokumentiert, nicht geschlossen)**: Zwischen
+Messung und Verwendung liegt ein kurzes TOCTOU-Fenster. Es wird klein gehalten
+(atomischer Download, Neumessung an jeder Grenze statt Vertrauen auf die
+vorige), nicht durch Locking beseitigt: Wer während eines Renders in das
+Episodenverzeichnis schreiben kann, kann auch das fertige Video austauschen.
+
+**Bewusst offen**: Studio-Plates und Themenmedien haben keine Bytehashes. Das
+Studio ist über `studio_hash` und die Paket-Vollständigkeitsprüfung abgesichert,
+Themenbilder über den Render-Content-Hash; ein getauschtes Studio-PNG bei
+gleichem Manifest fällt erst im finalen Review auf.
+
 ### Offene Kosmetik
 
 - [ ] `sceneplan` im `_STAGE_WORKFLOW_KEY`-Kommentar und in `STAGE_PROVIDER_MAP`
@@ -948,3 +997,5 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-06 | WP-5C | Coordinator mit begrenzter Parallelität, Retry-Matrix, Idempotenzfenster, Audioasset-Register, Circuit Breaker, Streamingdownload mit FFprobe, Beobachtbarkeit und CLI, Migration 019, 66 neue Tests, Ruff grün; Suite 3466 grün / 2 Baselinefehler |
 | 2026-09-06 | Checkpoint | Lokaler Commit `17c06d5` (WP-5C), nicht gepusht |
 | 2026-09-07 | WP-6 | Synthetischer E2E-Trockenlauf, CLI `smoke-test-almanya24`, 56 neue Tests, zwei echte Produktfehler gefunden und behoben, Ruff grün |
+| 2026-09-07 | Checkpoint | Lokaler Commit `dda8972` (WP-6), nicht gepusht |
+| 2026-09-07 | WP-6A | Bytegebundene Clipintegrität über sieben Vertrauensgrenzen, Migration 020, 28 neue Tests, Ruff grün |

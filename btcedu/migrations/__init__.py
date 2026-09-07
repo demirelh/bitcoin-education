@@ -1234,6 +1234,49 @@ class AddAvatarConcurrencyStateMigration(Migration):
 
 
 # Registry of all available migrations
+class AddAvatarClipHashMigration(Migration):
+    """Migration 020: Record the bytes of every presenter clip.
+
+    Until now an approval was bound to the manifest, and the manifest to a
+    path. Anything that rewrote the file underneath kept the approval alive.
+    The column added here holds the digest measured during download, so the
+    review, the render and the remote runner can each ask whether the clip in
+    front of them is the clip a person approved.
+
+    Rows that predate the column stay NULL rather than being back-filled: a
+    hash computed today would only prove that the file has not changed since
+    today, which is precisely the claim that must not be made. They surface as
+    `unrecorded` and need one regeneration of the digest and a fresh approval.
+    """
+
+    @property
+    def version(self) -> str:
+        return "020_avatar_clip_hash"
+
+    @property
+    def description(self) -> str:
+        return "Add avatar_jobs.file_sha256 for byte-level clip provenance"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        if "avatar_jobs" not in {row[0] for row in result.fetchall()}:
+            logger.info("avatar_jobs table absent, nothing to migrate")
+            self.mark_applied(session)
+            return
+
+        result = session.execute(text("PRAGMA table_info(avatar_jobs)"))
+        columns = {row[1] for row in result.fetchall()}
+        if "file_sha256" not in columns:
+            session.execute(text("ALTER TABLE avatar_jobs ADD COLUMN file_sha256 VARCHAR(64)"))
+            session.commit()
+            logger.info("Added avatar_jobs.file_sha256")
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1254,6 +1297,7 @@ MIGRATIONS = [
     CreateAvatarJobAuditTableMigration(),
     CreateAvatarRegenerationTableMigration(),
     AddAvatarConcurrencyStateMigration(),
+    AddAvatarClipHashMigration(),
 ]
 
 

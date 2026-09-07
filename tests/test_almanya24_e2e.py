@@ -24,6 +24,7 @@ from btcedu.core.almanya24_smoke import (
     HEIGHT,
     WIDTH,
     Patcher,
+    approve_anchor_gate,
     build_world,
     bulletin_sections,
     install_fake_providers,
@@ -762,6 +763,189 @@ class TestTheRemoteRenderPackage:
 
         with tarfile.open(cls._archive(job)) as tar:
             return tar.getnames()
+
+
+# ---------------------------------------------------------------------------
+# Byte-level integrity (WP-6A)
+# ---------------------------------------------------------------------------
+
+
+class TestTheApprovedBytesAreTheRenderedBytes:
+    """A signature belongs to footage, not to a path.
+
+    Each test here tampers with a finished episode and then asks a different
+    part of the system whether it notices. The episode is rebuilt per test
+    because tampering is destructive; that is slower than sharing the module
+    fixture and it is the only honest way to run these.
+    """
+
+    @staticmethod
+    def _tamper(world, scene_index: int = 0) -> Path:
+        entry = world.anchor_manifest["scenes"][scene_index]
+        clip = world.episode_dir / entry["video_path"]
+        clip.write_bytes(clip.read_bytes() + b"\x00tampered")
+        return clip
+
+    @pytest.fixture
+    def approved(self, tmp_path):
+        """An episode whose anchor clips are generated and approved."""
+        from btcedu.core import anchor_review
+
+        world = build_world(tmp_path / "integrity", real_media=True)
+        with Patcher() as patcher:
+            install_fake_providers(patcher, world)
+            run_stage(world, "sceneplan")
+            run_stage(world, "anchorgen")
+            approve_anchor_gate(world)
+            yield world, anchor_review
+        world.close()
+
+    def test_the_manifest_records_the_bytes_of_every_clip(self, approved):
+        world, _ = approved
+        import hashlib
+
+        for entry in world.anchor_manifest["scenes"]:
+            recorded = entry.get("file_sha256") or ""
+            assert len(recorded) == 64
+            clip = world.episode_dir / entry["video_path"]
+            assert recorded == hashlib.sha256(clip.read_bytes()).hexdigest()
+
+    def test_the_ledger_records_the_same_bytes(self, approved):
+        world, _ = approved
+        from btcedu.core.avatar_jobs import episode_jobs
+
+        recorded = {
+            entry["scene_id"]: entry["file_sha256"] for entry in world.anchor_manifest["scenes"]
+        }
+        for job in episode_jobs(world.session, world.episode_id):
+            if job.scene_id in recorded:
+                assert job.file_sha256 == recorded[job.scene_id]
+
+    def test_an_untouched_episode_keeps_its_approval(self, approved):
+        world, review = approved
+        assert review.approval_blockers(world.session, world.episode_id, world.settings) == []
+
+    def test_a_changed_clip_makes_the_approval_stale(self, approved):
+        world, review = approved
+        before = review.review_hash(world.session, world.episode_id, world.settings)
+        self._tamper(world)
+        after = review.review_hash(world.session, world.episode_id, world.settings)
+        assert after != before
+
+    def test_a_changed_clip_blocks_a_new_approval(self, approved):
+        world, review = approved
+        self._tamper(world)
+        blockers = review.approval_blockers(world.session, world.episode_id, world.settings)
+        assert any("changed on disk" in blocker for blocker in blockers)
+        assert any("regeneration" in blocker for blocker in blockers)
+
+    def test_a_changed_manifest_alone_also_invalidates_it(self, approved):
+        world, review = approved
+        before = review.review_hash(world.session, world.episode_id, world.settings)
+        manifest_file = world.episode_dir / "anchor" / "manifest.json"
+        data = json.loads(manifest_file.read_text(encoding="utf-8"))
+        data["scenes"][0]["content_hash"] = "rewritten-by-hand"
+        manifest_file.write_text(json.dumps(data), encoding="utf-8")
+        assert review.review_hash(world.session, world.episode_id, world.settings) != before
+
+    def test_clip_and_manifest_changed_together_still_do_not_pass(self, approved):
+        """The classic forgery: rewrite the file *and* the digest beside it."""
+        world, review = approved
+        import hashlib
+
+        clip_path = self._tamper(world)
+        manifest_file = world.episode_dir / "anchor" / "manifest.json"
+        data = json.loads(manifest_file.read_text(encoding="utf-8"))
+        data["scenes"][0]["file_sha256"] = hashlib.sha256(clip_path.read_bytes()).hexdigest()
+        manifest_file.write_text(json.dumps(data), encoding="utf-8")
+
+        # The bytes and the manifest agree again, so nothing is *broken* — and
+        # that is exactly the forgery this has to survive. The approval was
+        # given to a digest describing the old footage, so it must no longer
+        # count, even though every internal cross-check is consistent.
+        assert review.approval_blockers(world.session, world.episode_id, world.settings) == []
+        assert not review.has_current_approval(
+            world.session, world.episode_id, world.settings
+        )
+
+    def test_a_changed_clip_blocks_the_local_render(self, approved):
+        from btcedu.core.avatar_integrity import ClipIntegrityError
+        from btcedu.core.scene_renderer import load_scene_context
+
+        world, _ = approved
+        self._tamper(world)
+        with pytest.raises(ClipIntegrityError):
+            load_scene_context(world.episode_dir, world.settings, world.episode)
+
+    def test_a_changed_clip_blocks_the_remote_package(self, approved, tmp_path):
+        from btcedu.core.avatar_integrity import ClipIntegrityError
+        from btcedu.core.remote_render import build_job_package
+
+        world, _ = approved
+        self._tamper(world)
+        with pytest.raises(ClipIntegrityError):
+            build_job_package(
+                world.session, world.episode_id, world.settings, tmp_path / "pkg", False
+            )
+
+    def test_the_remote_runner_notices_bytes_that_changed_in_transit(self, approved):
+        from btcedu.core.remote_render import scene_job_requirements, verify_job_completeness
+
+        world, _ = approved
+        job = {
+            "scene_render": scene_job_requirements(
+                world.episode_dir, world.settings, world.episode
+            )
+        }
+        assert job["scene_render"]["clip_digests"]
+        verify_job_completeness(world.episode_dir, job)
+
+        self._tamper(world)
+        with pytest.raises(RuntimeError) as excinfo:
+            verify_job_completeness(world.episode_dir, job)
+        assert "do not match the digests" in str(excinfo.value)
+
+    def test_a_changed_clip_never_causes_a_new_order(self, approved):
+        world, _ = approved
+        self._tamper(world)
+        with Patcher() as patcher:
+            doubles = install_fake_providers(patcher, world)
+            result = run_stage(world, "anchorgen", force=True)
+        assert doubles["heygen"].orders == []
+        assert result.status == "failed"
+
+    def test_the_money_stays_on_the_ledger(self, approved):
+        """A broken clip is a problem to resolve, not a purchase to forget."""
+        world, _ = approved
+        from btcedu.core.avatar_jobs import episode_jobs
+
+        before = sum(job.cost_usd for job in episode_jobs(world.session, world.episode_id))
+        self._tamper(world)
+        with Patcher() as patcher:
+            install_fake_providers(patcher, world)
+            run_stage(world, "anchorgen", force=True)
+        after = sum(job.cost_usd for job in episode_jobs(world.session, world.episode_id))
+        assert after == pytest.approx(before)
+
+    def test_publish_stays_blocked_while_a_clip_is_broken(self, approved):
+        world, _ = approved
+        self._tamper(world)
+        with Patcher() as patcher:
+            doubles = install_fake_providers(patcher, world)
+            run_stage(world, "render")
+            result = run_stage(world, "publish")
+        assert doubles["youtube"].uploads == []
+        assert result.status == "failed"
+
+    def test_the_dashboard_is_told_what_is_wrong_and_no_more(self, approved):
+        world, review = approved
+        self._tamper(world)
+        state = review.collect_state(world.session, world.episode_id, world.settings)
+        payload = json.dumps(state.to_dict())
+        assert "changed on disk" in payload
+        for secret in (str(world.settings.heygen_api_key), "Bearer", "client_secret"):
+            if secret:
+                assert secret not in payload
 
 
 # ---------------------------------------------------------------------------

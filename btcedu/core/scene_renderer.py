@@ -41,6 +41,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from btcedu.config import Settings
+from btcedu.core.avatar_integrity import require_intact
 from btcedu.core.scene_planner import (
     ROLE_ANCHOR,
     SCENE_PLAN_FILENAME,
@@ -217,6 +218,13 @@ def load_scene_context(
             anchor_manifest = json.loads(anchor_path.read_text(encoding="utf-8"))
         except json.JSONDecodeError:
             logger.warning("Anchor manifest %s is unreadable", anchor_path)
+
+    # Last check before the bytes become a broadcast. The review looked at
+    # specific footage; between that signature and this encode the files sat on
+    # a disk that other processes can write to, so they are measured once more
+    # here — for the local render and, since the runner calls the same
+    # function, for the remote one as well.
+    require_intact(anchor_manifest, base_dir=base_dir, context="scene render")
 
     clips = {
         str(entry.get("scene_id")): entry

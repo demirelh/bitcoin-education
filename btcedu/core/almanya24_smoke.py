@@ -181,6 +181,15 @@ class SmokeWorld:
         return json.loads((self.episode_dir / relative).read_text(encoding="utf-8"))
 
     @property
+    def episode(self):
+        """The episode row, freshly read — callers pass it to real functions."""
+        from btcedu.models.episode import Episode
+
+        return (
+            self.session.query(Episode).filter(Episode.episode_id == self.episode_id).first()
+        )
+
+    @property
     def scene_plan(self) -> dict:
         return self.read_json("scene_plan.json")
 

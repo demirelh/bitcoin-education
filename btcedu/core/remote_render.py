@@ -31,6 +31,11 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
+from btcedu.core.avatar_integrity import (
+    hash_file,
+    manifest_clip_entries,
+    require_intact,
+)
 from btcedu.models.app_setting import get_setting, set_setting
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, PipelineStage, RunStatus
@@ -399,7 +404,17 @@ def scene_job_requirements(episode_dir: Path, settings: Settings, episode) -> di
             if rel and not Path(rel).is_absolute() and ".." not in Path(rel).parts:
                 required.append(str(rel))
 
+    # The digests travel with the job so the runner can prove that the clips it
+    # unpacked are the clips the Pi packed. Without them the completeness check
+    # only shows that *a* file arrived at each path.
+    clip_digests = {
+        rel: recorded
+        for _, rel, recorded in manifest_clip_entries(anchor)
+        if rel and recorded
+    }
+
     return {
+        "clip_digests": clip_digests,
         "scene_plan_hash": str(plan.get("content_hash") or ""),
         "presenter_look_id": str(plan.get("presenter_look_id") or ""),
         "scene_count": len(scenes),
@@ -440,6 +455,24 @@ def verify_job_completeness(episode_dir: Path, job: dict, workdir: Path | None =
         raise RuntimeError(
             "Render job is incomplete; refusing to render a partial episode. Missing: "
             + ", ".join(sorted(missing))
+        )
+
+    # Present is not the same as correct. A clip that was rewritten between
+    # packing and unpacking arrives at the right path with the wrong content,
+    # and the runner has no reviewer to notice.
+    changed = []
+    for rel, expected in (scene_job.get("clip_digests") or {}).items():
+        target = root / rel
+        if not target.is_file():
+            changed.append(f"{rel} (missing)")
+            continue
+        actual = hash_file(target)
+        if actual != expected:
+            changed.append(f"{rel} (expected {expected[:8]}…, found {actual[:8]}…)")
+    if changed:
+        raise RuntimeError(
+            "Render job clips do not match the digests they were packed with; "
+            "refusing to render: " + ", ".join(sorted(changed))
         )
 
 
@@ -485,6 +518,16 @@ def build_job_package(
         "expected_content_hash": _expected_content_hash(session, episode_id, settings),
         "force": bool(force),
     }
+
+    # Nothing leaves this machine that the reviewer did not see. Packing a clip
+    # that has drifted would ship the drift to a runner which cannot detect it.
+    anchor_manifest_file = episode_dir / "anchor" / "manifest.json"
+    if anchor_manifest_file.is_file():
+        try:
+            packed_manifest = json.loads(anchor_manifest_file.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Anchor manifest is unreadable: {exc}") from exc
+        require_intact(packed_manifest, base_dir=episode_dir, context="remote render package")
 
     dest_dir.mkdir(parents=True, exist_ok=True)
     archive_path = dest_dir / JOB_ARCHIVE_NAME

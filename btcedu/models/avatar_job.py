@@ -129,6 +129,12 @@ class AvatarJob(Base):
     validation_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     validation_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    #: SHA-256 of the accepted clip's bytes, taken while it was streamed to
+    #: disk. The path says where the clip lives; only this says which clip it
+    #: is, and every later boundary compares against it rather than against a
+    #: size or a timestamp.
+    file_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     def __repr__(self) -> str:
         return (
             f"<AvatarJob(episode_id='{self.episode_id}', scene_id='{self.scene_id}', "

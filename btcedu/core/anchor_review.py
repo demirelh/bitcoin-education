@@ -33,6 +33,11 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
+from btcedu.core.avatar_integrity import (
+    INTEGRITY_MISSING,
+    verify_manifest,
+)
+from btcedu.core.avatar_integrity import problems as integrity_problems
 from btcedu.models.avatar_job import AvatarJob, AvatarJobStatus
 from btcedu.models.review import ReviewStatus, ReviewTask
 
@@ -273,17 +278,31 @@ def build_digest(
     manifest = _read_json(manifest_path(settings, episode_id))
     assignment = get_assignment(session, episode_id)
 
+    # The measured bytes, not the remembered ones. Folding the manifest's own
+    # `file_sha256` into the digest would prove only that the manifest still
+    # says what it said; hashing the file makes an approval fall the moment the
+    # footage behind it changes, which is the whole point of the exercise.
+    measured = {
+        result.scene_id: result
+        for result in verify_manifest(manifest, base_dir=Path(settings.outputs_dir) / episode_id)
+    }
+
     scenes = []
     for entry in manifest.get("scenes", []) or []:
+        scene_id = entry.get("scene_id", "")
+        integrity = measured.get(scene_id)
         scenes.append(
             {
-                "scene_id": entry.get("scene_id", ""),
+                "scene_id": scene_id,
                 "chapter_id": entry.get("chapter_id", ""),
                 "look_id": entry.get("avatar_look_id", ""),
                 "audio_hash": entry.get("audio_hash", ""),
                 "content_hash": entry.get("content_hash", ""),
                 "status": entry.get("status", ""),
                 "duration_seconds": round(float(entry.get("duration_seconds") or 0.0), 3),
+                "file_sha256": str(entry.get("file_sha256") or ""),
+                "clip_bytes": integrity.actual if integrity else "",
+                "clip_integrity": integrity.status if integrity else INTEGRITY_MISSING,
             }
         )
     scenes.sort(key=lambda item: item["scene_id"])
@@ -650,10 +669,28 @@ def approval_blockers(
         )
 
     del config
+    blockers.extend(_integrity_blockers(episode_id, settings))
     blockers.extend(_rights_and_readiness_blockers(state, settings))
     # Same reason twice helps nobody; order is preserved so the first cause
     # stays first.
     return list(dict.fromkeys(blockers))
+
+
+def _integrity_blockers(episode_id: str, settings: Settings) -> list[str]:
+    """Refuse to let a signature be given to bytes nobody measured.
+
+    This runs immediately before an approval is offered, and again whenever the
+    gate re-checks, so the window between 'an operator looked at it' and 'the
+    renderer used it' is covered from both ends.
+    """
+    manifest = _read_json(manifest_path(settings, episode_id))
+    if not manifest.get("scenes"):
+        return []
+    base_dir = Path(settings.outputs_dir) / episode_id
+    return [
+        f"{item.detail} — {item.remedy}"
+        for item in integrity_problems(verify_manifest(manifest, base_dir=base_dir))
+    ]
 
 
 def _rights_and_readiness_blockers(state: AnchorReviewState, settings: Settings) -> list[str]:

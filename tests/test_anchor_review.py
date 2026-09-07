@@ -6,6 +6,7 @@ second is carrying an old approval forward onto clips that have since changed â€
 which looks exactly like a review from the outside and is worth nothing.
 """
 
+import hashlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -158,6 +159,10 @@ def _write_plan(settings, scenes=None):
     return outputs
 
 
+CLIP_BYTES = b"\x1a\x45\xdf\xa3" + b"\x00" * 64
+CLIP_SHA256 = hashlib.sha256(CLIP_BYTES).hexdigest()
+
+
 def _manifest_entry(scene_id, chapter_id, *, look_id=LOOK_ID, audio_hash="a1", status="completed"):
     return {
         "scene_id": scene_id,
@@ -179,6 +184,9 @@ def _manifest_entry(scene_id, chapter_id, *, look_id=LOOK_ID, audio_hash="a1", s
         "cost_usd": 0.1002,
         "output_format": "webm",
         "mime_type": "video/webm",
+        # Byte-level provenance: `_write_manifest` writes exactly these bytes,
+        # so a manifest built here is one the integrity check accepts.
+        "file_sha256": CLIP_SHA256,
     }
 
 
@@ -189,7 +197,7 @@ def _write_manifest(settings, entries, *, look_id=LOOK_ID):
     for entry in entries:
         clip = outputs / entry["video_path"]
         clip.parent.mkdir(parents=True, exist_ok=True)
-        clip.write_bytes(b"\x1a\x45\xdf\xa3" + b"\x00" * 64)
+        clip.write_bytes(CLIP_BYTES)
     (anchor_dir / "manifest.json").write_text(
         json.dumps(
             {

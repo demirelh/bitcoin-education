@@ -1509,6 +1509,35 @@ def _run_stage(
             _final_review_blocked = False
             _final_review_detail = ""
             _final_review_error = ""
+
+            # WP-8B: the video is only reviewable if it is still made of the
+            # files it was rendered from. A picture or a narration take that
+            # changed after the render means the draft on disk and the inputs
+            # on disk describe two different broadcasts, and the reviewer would
+            # be approving a video whose sources no longer exist.
+            try:
+                from btcedu.core.render_input_collector import require_episode_inputs_intact
+                from btcedu.core.render_inputs import RenderInputError
+
+                require_episode_inputs_intact(
+                    episode.episode_id, settings, episode, context="final review"
+                )
+            except RenderInputError as exc:
+                _final_review_blocked = True
+                _final_review_detail = "render inputs changed since the render"
+                _final_review_error = f"[integrity] {exc}"
+                logger.warning(
+                    "Final review blocked for %s: %s", episode.episode_id, exc
+                )
+            except Exception as exc:  # noqa: BLE001 - fail closed on a checker crash
+                _final_review_blocked = True
+                _final_review_detail = f"render input verification crashed: {exc}"
+                _final_review_error = f"[unknown] render input verification crashed: {exc}"
+                logger.error(
+                    "Render input verification crashed for %s (fail-closed): %s",
+                    episode.episode_id,
+                    exc,
+                )
             _fr_output = (
                 Path(settings.outputs_dir)
                 / episode.episode_id

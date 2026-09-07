@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
 from btcedu.core import loudness
+from btcedu.core.render_inputs import RENDER_INPUTS_KEY
 from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
@@ -398,12 +399,21 @@ def render_video(
     _scene_hash_inputs = _scene_hash_block(
         Path(settings.outputs_dir) / episode_id, settings, episode, image_manifest, tts_manifest
     )
+    _input_block = render_inputs_block(
+        Path(settings.outputs_dir) / episode_id,
+        settings,
+        episode,
+        image_manifest,
+        tts_manifest,
+        _render_cfg,
+    )
     content_hash = _compute_render_content_hash(
         chapters_doc,
         image_manifest,
         tts_manifest,
         _enh_hash_data if _enh_hash_data else None,
         scene_context=_scene_hash_inputs,
+        input_digest=(_input_block or {}).get("digest"),
     )
 
     # Idempotency check
@@ -1117,6 +1127,12 @@ def render_video(
             from btcedu.core.scene_renderer import scene_manifest_block
 
             manifest_data.update(scene_manifest_block(scene_ctx, scene_entries))
+        if _input_block:
+            # The byte identity of every local file this video was made of.
+            # Written into the manifest so the review, the approval and the
+            # publish can each re-measure the same set rather than trusting
+            # that nothing moved between them.
+            manifest_data[RENDER_INPUTS_KEY] = _input_block
         manifest_path.write_text(
             json.dumps(manifest_data, indent=2, ensure_ascii=False), encoding="utf-8"
         )
@@ -1130,6 +1146,8 @@ def render_video(
             "ffmpeg_version": ffmpeg_version,
             "input_files": [str(chapters_path), str(image_manifest_path), str(tts_manifest_path)],
             "input_content_hash": content_hash,
+            "input_digest": (_input_block or {}).get("digest", ""),
+            RENDER_INPUTS_KEY: _input_block or {},
             "output_files": [str(manifest_path), str(draft_path)],
             "segment_count": len(segment_entries),
             "total_duration_seconds": total_duration,
@@ -1280,6 +1298,7 @@ def _compute_render_content_hash(
     tts_manifest: dict,
     enhancement_settings: dict | None = None,
     scene_context: dict | None = None,
+    input_digest: str | None = None,
 ) -> str:
     """Compute SHA-256 hash of all render inputs.
 
@@ -1288,6 +1307,15 @@ def _compute_render_content_hash(
     - Image file paths and generation methods
     - TTS file paths and durations
     - Video enhancement settings (if any enabled)
+    - The byte digest of every local input file (WP-8B)
+
+    The last one is the reason this hash finally means what its name says.
+    Until it existed, an image and a narration take were identified by their
+    path and by a hash of the *text that asked for them*, so replacing either
+    file left this number untouched and the renderer reported itself current
+    while the video no longer matched what anyone had reviewed. Folding the
+    measured bytes in invalidates every render produced before WP-8B exactly
+    once, which is the price of the hash having been wrong until then.
     """
     relevant_data = {
         "chapters": [
@@ -1339,6 +1367,8 @@ def _compute_render_content_hash(
     # rendered before this existed keeps exactly the hash it already had.
     if scene_context:
         relevant_data["scenes"] = scene_context
+    if input_digest:
+        relevant_data["input_digest"] = input_digest
     content_str = json.dumps(relevant_data, sort_keys=True, ensure_ascii=False, default=str)
     return hashlib.sha256(content_str.encode("utf-8")).hexdigest()
 
@@ -1494,6 +1524,12 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
         tts_manifest,
         _enh_hash_data if _enh_hash_data else None,
         scene_context=_scene_hash_block(base, settings, episode, image_manifest, tts_manifest),
+        input_digest=(
+            render_inputs_block(
+                base, settings, episode, image_manifest, tts_manifest, _render_cfg
+            )
+            or {}
+        ).get("digest"),
     )
 
 
@@ -1736,6 +1772,93 @@ def _resolve_chapter_media(
 
 
 _BEAT_TAIL_HEADROOM_SECONDS = 0.2
+
+
+def render_inputs_block(
+    base_dir,
+    settings: Settings,
+    episode,
+    image_manifest: dict,
+    tts_manifest: dict,
+    render_cfg: dict | None = None,
+) -> dict | None:
+    """Measure every local file this episode's video is made of.
+
+    Shared by the render, the publisher's re-check and the remote runner for
+    the same reason ``_scene_hash_block`` is: three places that must arrive at
+    the same number should read the same code.
+
+    Returns ``None`` when the set cannot be built at all. That is deliberately
+    not an error here — an episode with no manifests has nothing to bind, and a
+    render that refuses because the *measurement* failed would be a new way to
+    lose an episode rather than a way to protect one.
+    """
+    try:
+        from btcedu.core.render_input_collector import build_roots, collect_render_inputs
+        from btcedu.core.render_inputs import inputs_block
+
+        base = Path(base_dir)
+        cfg = render_cfg or {}
+
+        def _cfg(key: str, default=""):
+            value = cfg.get(key)
+            return default if value is None else value
+
+        def _side_manifest(*parts: str) -> dict:
+            path = base.joinpath(*parts)
+            if not path.exists():
+                return {}
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                return {}
+
+        anchor_manifest = _side_manifest("anchor", "manifest.json")
+        # ``studio_media`` falls back through videos and weather cards when a
+        # scene names no background, so both belong in the measured set.
+        video_manifest = _side_manifest("video", "manifest.json")
+        weather_manifest = _side_manifest("weather", "manifest.json")
+
+        studio = None
+        studio_dir = ""
+        try:
+            from btcedu.core.scene_renderer import studio_directory
+            from btcedu.core.studio_manifest import load_studio_manifest, studio_manifest_path
+
+            studio_dir = studio_directory(settings, episode)
+            if studio_dir:
+                manifest_file = studio_manifest_path(studio_dir)
+                if manifest_file.exists():
+                    studio = load_studio_manifest(manifest_file)
+        except Exception as exc:  # noqa: BLE001 - a broken studio is reported elsewhere
+            logger.debug("No studio contribution to the render inputs: %s", exc)
+
+        intro_audio = str(_cfg("intro_audio") or "")
+        roots = build_roots(base, studio_dir=studio_dir or None)
+        inputs, missing = collect_render_inputs(
+            roots=roots,
+            image_manifest=image_manifest,
+            tts_manifest=tts_manifest,
+            anchor_manifest=anchor_manifest,
+            video_manifest=video_manifest,
+            weather_manifest=weather_manifest,
+            studio=studio,
+            intro_audio=intro_audio,
+            topic_intro_audio=str(_cfg("topic_intro_audio", intro_audio) or ""),
+            outro_audio=str(_cfg("outro_audio", intro_audio) or ""),
+            music_bed=str(_cfg("music_bed", getattr(settings, "render_music_bed", "")) or ""),
+            font_name=str(_cfg("font", getattr(settings, "render_font", "")) or ""),
+        )
+        block = inputs_block(inputs)
+        if missing:
+            # Recorded rather than raised: the render's own checks decide what
+            # a missing picture means for a given profile, and this set exists
+            # to describe reality, including the parts of it that are wrong.
+            block["missing"] = sorted(missing)
+        return block
+    except Exception as exc:  # noqa: BLE001 - a measurement must never break a render
+        logger.warning("Could not measure the render inputs: %s", exc)
+        return None
 
 
 def _scene_hash_block(base_dir, settings: Settings, episode, image_manifest, tts_manifest):

@@ -319,6 +319,31 @@ def _expected_font_file(settings: Settings, episode) -> str:
         return ""
 
 
+def _shipped_render_inputs(
+    session: Session, episode_id: str, settings: Settings, episode
+) -> dict | None:
+    """The byte-bound set the package is about to ship, or ``None``."""
+    try:
+        from btcedu.core.renderer import (
+            _load_image_manifest,
+            _load_tts_manifest,
+            render_inputs_block,
+        )
+
+        base = Path(settings.outputs_dir) / episode_id
+        return render_inputs_block(
+            base,
+            settings,
+            episode,
+            _load_image_manifest(base / "images" / "manifest.json"),
+            _load_tts_manifest(base / "tts" / "manifest.json"),
+            _profile_render_config(settings, episode),
+        )
+    except Exception as exc:  # noqa: BLE001 - a measurement must not break packing
+        logger.warning("Could not measure the shipped render inputs: %s", exc)
+        return None
+
+
 def _expected_content_hash(session: Session, episode_id: str, settings: Settings) -> str:
     """The idempotency hash the Pi will check the returned render against."""
     try:
@@ -552,6 +577,19 @@ def build_job_package(
             raise RuntimeError(f"Anchor manifest is unreadable: {exc}") from exc
         require_intact(packed_manifest, base_dir=episode_dir, context="remote render package")
 
+    # Nor does anything leave with a hole in it. The runner cannot tell a
+    # missing picture from a picture it was never meant to have, so a package
+    # that is already incomplete must not be built: the render would come back
+    # looking successful.
+    _packed_inputs = _shipped_render_inputs(session, episode_id, settings, episode)
+    if _packed_inputs is not None:
+        _missing = _packed_inputs.get("missing") or []
+        if _missing:
+            raise RuntimeError(
+                "Refusing to package an incomplete render: " + "; ".join(sorted(_missing)[:5])
+            )
+        job["expected_input_digest"] = _packed_inputs.get("digest", "")
+
     dest_dir.mkdir(parents=True, exist_ok=True)
     archive_path = dest_dir / JOB_ARCHIVE_NAME
     job_json = dest_dir / "job.json"
@@ -628,6 +666,96 @@ def _safe_extract(tar: tarfile.TarFile, dest: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _verify_returned_inputs(
+    settings: Settings, episode: Episode, episode_dir: Path, manifest: dict, manifest_path: Path
+) -> None:
+    """Check that the runner rendered from the files this machine sent it.
+
+    The returned manifest names the byte identity of every input the runner
+    used. Those files came out of the package, so they must still measure the
+    same here — a disagreement means the video was assembled from something
+    this machine never shipped, and no amount of a matching content hash makes
+    that safe to keep.
+
+    The one exception is the runner's own system font, which is an Ubuntu
+    package and not the Pi's. Its recorded entry is moved aside under
+    ``remote_system_inputs`` rather than deleted (the runner's font is a fact
+    about how the video was drawn and belongs in the provenance) and replaced
+    by this machine's measurement, so every later boundary compares local files
+    against local files.
+    """
+    from btcedu.core.render_input_collector import build_roots
+    from btcedu.core.render_inputs import (
+        RENDER_INPUTS_KEY,
+        ROOT_SYSTEM,
+        block_entries,
+        is_recorded,
+        require_inputs_intact,
+    )
+
+    block = manifest.get(RENDER_INPUTS_KEY)
+    if not is_recorded(block):
+        # A runner from before this contract. The content hash still had to
+        # match, so the render is not unverified, only less finely verified.
+        logger.info("Remote render returned no byte-bound input set for %s", episode.episode_id)
+        return
+
+    studio_dir = ""
+    try:
+        from btcedu.core.scene_renderer import studio_directory
+
+        studio_dir = studio_directory(settings, episode)
+    except Exception as exc:  # noqa: BLE001 - a missing studio is not a root
+        logger.debug("No studio root while taking back a remote render: %s", exc)
+
+    roots = build_roots(episode_dir, studio_dir=studio_dir or None)
+    require_inputs_intact(
+        block,
+        roots=roots,
+        context="remote render take-back",
+        skip_roots={ROOT_SYSTEM},
+    )
+
+    remote_system = [e for e in block_entries(block) if str(e.get("root")) == ROOT_SYSTEM]
+    if not remote_system:
+        return
+
+    local_block = _local_render_inputs(settings, episode, episode_dir)
+    local_system = [
+        e for e in block_entries(local_block) if str(e.get("root")) == ROOT_SYSTEM
+    ]
+    block["entries"] = [
+        e for e in block_entries(block) if str(e.get("root")) != ROOT_SYSTEM
+    ] + local_system
+    block["count"] = len(block["entries"])
+    block["remote_system_inputs"] = remote_system
+    manifest[RENDER_INPUTS_KEY] = block
+    manifest_path.write_text(
+        json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _local_render_inputs(settings: Settings, episode: Episode, episode_dir: Path) -> dict | None:
+    try:
+        from btcedu.core.renderer import (
+            _load_image_manifest,
+            _load_tts_manifest,
+            render_inputs_block,
+        )
+
+        return render_inputs_block(
+            episode_dir,
+            settings,
+            episode,
+            _load_image_manifest(episode_dir / "images" / "manifest.json"),
+            _load_tts_manifest(episode_dir / "tts" / "manifest.json"),
+            _profile_render_config(settings, episode),
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Could not re-measure local render inputs: %s", exc)
+        return None
+
+
 def _finalize(
     session: Session,
     episode: Episode,
@@ -649,6 +777,7 @@ def _finalize(
         raise RuntimeError(f"Remote render returned no manifest at {manifest_path}")
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    _verify_returned_inputs(settings, episode, episode_dir, manifest, manifest_path)
     segments = manifest.get("segments", [])
     total_duration = float(manifest.get("total_duration_seconds", 0.0))
     total_size = int(manifest.get("total_size_bytes", 0))

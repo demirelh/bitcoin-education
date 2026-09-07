@@ -156,13 +156,21 @@ def _mark_output_stale(task: ReviewTask) -> None:
 
 
 def _compute_artifact_hash(paths: list[str]) -> str:
-    """Compute SHA-256 hash over file contents of all artifact paths."""
+    """Compute SHA-256 hash over file contents of all artifact paths.
+
+    Streamed in chunks: the render review's artifacts include ``draft.mp4``, and
+    hashing it by reading it whole allocated the entire video on a Raspberry Pi.
+    The digest is byte-for-byte the same, so hashes recorded before this change
+    still compare equal.
+    """
     h = hashlib.sha256()
     for path_str in sorted(paths):
         path = Path(path_str)
         if not path.is_file():
             raise ValueError(f"Review artifact is missing or not a file: {path}")
-        h.update(path.read_bytes())
+        with path.open("rb") as handle:
+            for block in iter(lambda handle=handle: handle.read(1024 * 1024), b""):
+                h.update(block)
     return h.hexdigest()
 
 

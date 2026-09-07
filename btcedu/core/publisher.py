@@ -66,12 +66,22 @@ class PublishReconciliationRequired(RuntimeError):
 
 
 def _compute_hash_over_paths(paths: list[str]) -> str:
-    """SHA-256 over sorted file contents (mirrors reviewer._compute_artifact_hash)."""
+    """SHA-256 over sorted file contents (mirrors reviewer._compute_artifact_hash).
+
+    Read in chunks rather than whole. One of these paths is ``draft.mp4``, which
+    is hundreds of megabytes; loading it into memory to hash it made this check
+    the largest allocation in the publish, on a machine that has 8 GB and is
+    usually encoding video with most of it. The digest is unchanged — the same
+    bytes in the same order — so an artifact hash recorded before this still
+    matches.
+    """
     h = hashlib.sha256()
     for path_str in sorted(paths):
         p = Path(path_str)
         if p.exists():
-            h.update(p.read_bytes())
+            with p.open("rb") as handle:
+                for block in iter(lambda handle=handle: handle.read(1024 * 1024), b""):
+                    h.update(block)
     return h.hexdigest()
 
 
@@ -416,6 +426,45 @@ def _check_render_valid(session: Session, episode: Episode, settings: Settings) 
     return SafetyCheck("render_valid", True, "Render draft exists, non-empty and validated")
 
 
+def _check_render_inputs(session: Session, episode: Episode, settings: Settings) -> SafetyCheck:
+    """Check 8b: every file this video was made of is still the file it was made of.
+
+    ``_check_artifact_integrity`` binds the *output*: the draft, the chapters,
+    the metadata. That is necessary and not sufficient. An mp4 whose bytes are
+    untouched can still have been assembled from a picture that has since been
+    replaced, and nothing downstream would notice — the approval is a signature
+    on a video, and the question here is whether the video is still made of
+    what a reviewer believed it was made of.
+
+    A render from before WP-8B recorded no set. It passes, and says so: there
+    is nothing to compare, and refusing would strand every finished episode.
+    """
+    try:
+        from btcedu.core.render_input_collector import verify_episode_inputs
+        from btcedu.core.render_inputs import is_recorded, problems
+
+        block, results = verify_episode_inputs(episode.episode_id, settings, episode)
+        if not is_recorded(block):
+            return SafetyCheck(
+                "render_inputs",
+                True,
+                "Render predates byte-bound inputs; nothing recorded to verify",
+            )
+        broken = problems(results)
+        if broken:
+            return SafetyCheck(
+                "render_inputs",
+                False,
+                "Render inputs changed since the render: "
+                + "; ".join(item.detail for item in broken[:5]),
+            )
+    except Exception as exc:  # noqa: BLE001 - fail closed on a checker crash
+        return SafetyCheck("render_inputs", False, f"Render input verification failed: {exc}")
+    return SafetyCheck(
+        "render_inputs", True, f"All {len(results)} render inputs match their recorded bytes"
+    )
+
+
 def _check_profile_publish_permitted(episode: Episode, settings: Settings) -> SafetyCheck:
     """Check 9: The profile permits publishing (not explicitly disabled)."""
     try:
@@ -527,6 +576,7 @@ def _run_all_safety_checks(
         _check_no_critical_findings(settings, episode),
         _check_narration_current(session, settings, episode),
         _check_render_valid(session, episode, settings),
+        _check_render_inputs(session, episode, settings),
         _check_profile_publish_permitted(episode, settings),
         _check_branding(episode, settings),
     ]

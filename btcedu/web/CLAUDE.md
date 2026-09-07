@@ -52,7 +52,8 @@ current OpenAI balance baseline used for the two-episode warning popup)
   unauthenticated API route, and deliberately minimal; version and commit are
   added only for a logged-in operator
 - Authentication (`web/auth.py`, WP-8A): everything except `auth.login`,
-  `auth.logout`, `static` and `api.health` requires a session. Browser pages
+  `static` and `api.health` requires a session (`auth.logout` was public until
+  WP-8B and now needs a session and a token like every other POST). Browser pages
   redirect to `/login`, `/api/*` answers JSON 401. `create_app()` raises
   `AuthConfigError` when the configuration would be unsafe
 - CSRF: `CSRFProtect` on every POST/PUT/PATCH/DELETE, token via `X-CSRFToken`;

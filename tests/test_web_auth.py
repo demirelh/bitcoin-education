@@ -313,6 +313,34 @@ class TestLoggingIn:
         assert operator.post("/logout").status_code == 403
         assert operator.get("/").status_code == 200
 
+    def test_an_anonymous_logout_is_refused(self, client):
+        """Logging someone else out is a state change, so it needs a session."""
+        response = client.post("/logout")
+        assert response.status_code in (302, 401)
+        if response.status_code == 302:
+            assert "/login" in response.headers["Location"]
+
+    def test_an_anonymous_json_logout_is_a_401_not_a_csrf_error(self, client):
+        response = client.post("/logout", headers={"Accept": "application/json"})
+        assert response.status_code == 401
+        assert response.get_json()["code"] == "unauthenticated"
+
+    def test_a_logout_with_another_sessions_token_is_refused(self, app, operator):
+        """The token has to belong to the session that sends it."""
+        stranger = app.test_client()
+        foreign = _csrf(stranger)
+        assert operator.post("/logout", data={"csrf_token": foreign}).status_code == 403
+        assert operator.get("/").status_code == 200
+
+    def test_logout_is_never_reachable_by_get(self, app, operator):
+        """No GET route may exist at all, planted link or not."""
+        methods = set()
+        for rule in app.url_map.iter_rules():
+            if rule.endpoint == "auth.logout":
+                methods |= set(rule.methods)
+        assert "GET" not in methods
+        assert "POST" in methods
+
     def test_an_expired_session_leads_back_to_the_login(self, tmp_path, db):
         _engine, factory = db
         application = create_app(
@@ -491,9 +519,10 @@ class TestNothingIsReachableWithoutASession:
     def test_the_public_list_is_the_documented_one(self):
         from btcedu.web.auth import PUBLIC_ENDPOINTS
 
-        assert PUBLIC_ENDPOINTS == frozenset(
-            {"auth.login", "auth.logout", "static", "api.health"}
-        )
+        assert PUBLIC_ENDPOINTS == frozenset({"auth.login", "static", "api.health"})
+        # WP-8B: the logout POST used to be here. A public state-changing
+        # endpoint is one an attacker can aim at the operator.
+        assert "auth.logout" not in PUBLIC_ENDPOINTS
 
 
 class TestTheHealthCheck:

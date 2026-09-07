@@ -62,14 +62,18 @@ csrf = CSRFProtect()
 # deliberate line in this list.
 #
 # * the login page and its POST, or nobody could ever log in
-# * the logout POST, which is harmless and must work on an expired session
 # * the static files: stylesheet and script, no dynamic data of any kind
 # * a minimal health check for systemd and the proxy, stripped of everything
 #   that would tell an anonymous caller what this machine does
+#
+# The logout POST is deliberately *not* here. It was, on the reasoning that a
+# logout is harmless and should still work on an expired session, but that is
+# wrong on both halves: a public state-changing endpoint is one an attacker can
+# aim at the operator mid-task, and an expired session has nothing left to log
+# out of. It now needs a session and a token like every other POST.
 PUBLIC_ENDPOINTS = frozenset(
     {
         "auth.login",
-        "auth.logout",
         "static",
         "api.health",
     }

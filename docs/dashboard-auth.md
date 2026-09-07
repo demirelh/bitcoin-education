@@ -134,9 +134,16 @@ Endpunkt ist damit in dem Moment abgesichert, in dem er geschrieben wird.
 | Endpunkt | Warum |
 | --- | --- |
 | `GET/POST /login` | Sonst könnte sich niemand anmelden. |
-| `POST /logout` | Muss auch auf einer abgelaufenen Session funktionieren. |
 | `/static/*` | Stylesheet und Skript, keinerlei dynamische Daten. |
 | `GET /api/health` | Damit systemd und der Proxy den Prozess prüfen können. |
+
+`POST /logout` stand hier ursprünglich mit der Begründung, ein Logout sei
+harmlos und müsse auch auf einer abgelaufenen Session funktionieren. Beides
+trifft nicht zu: ein öffentlicher zustandsändernder Endpunkt ist einer, den ein
+Angreifer mitten in einer Prüfung auf den Betreiber richten kann, und eine
+abgelaufene Session hat nichts mehr abzumelden. Seit WP-8B verlangt das Logout
+Session **und** Token wie jedes andere POST; anonym antwortet es mit 401
+beziehungsweise einer Weiterleitung auf `/login`.
 
 Der Healthcheck ist absichtlich fast leer: `{"status": "ok", "time": ...}`.
 Version und Commit verrieten einem anonymen Aufrufer, welchen Code diese

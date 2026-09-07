@@ -73,7 +73,13 @@ def login():
 
 @auth_bp.route("/logout", methods=["POST"])
 def logout():
-    """POST only: a logout reachable by GET is a link anyone can plant."""
+    """POST only, session only, token only.
+
+    A logout reachable by GET is a link anyone can plant; a logout reachable
+    without a session or a token is a request an attacker can aim at an operator
+    in the middle of a review. It is a state change like any other and is
+    treated like one.
+    """
     if current_user.is_authenticated:
         logger.info("Dashboard logout: %s", current_user.operator_ref)
     end_session()

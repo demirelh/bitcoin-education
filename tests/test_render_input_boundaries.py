@@ -460,15 +460,23 @@ class TestRemoteRenderBoundaries:
             for entry in rewritten["entries"]
         )
 
-    def test_a_runner_from_before_the_contract_is_accepted(self, db_session, settings):
+    def test_a_result_without_an_input_set_is_refused(self, db_session, settings):
+        """Tightened in WP-8C: see tests/test_render_input_legacy.py.
+
+        A runner that returns nothing measurable, for files this machine can
+        measure, is the one remaining way to launder a render past the
+        contract by downgrading the worker.
+        """
         from btcedu.core.remote_render import _verify_returned_inputs
+        from btcedu.core.render_inputs import RenderInputError
 
         episode, base = _render(db_session, settings)
         manifest = _manifest(base)
         manifest.pop(RENDER_INPUTS_KEY)
-        _verify_returned_inputs(
-            settings, episode, base, manifest, base / "render" / "render_manifest.json"
-        )
+        with pytest.raises(RenderInputError, match="no byte-bound input set"):
+            _verify_returned_inputs(
+                settings, episode, base, manifest, base / "render" / "render_manifest.json"
+            )
 
 
 class TestScopedInvalidation:

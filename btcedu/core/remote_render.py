@@ -688,6 +688,7 @@ def _verify_returned_inputs(
     from btcedu.core.render_inputs import (
         RENDER_INPUTS_KEY,
         ROOT_SYSTEM,
+        RenderInputError,
         block_entries,
         is_recorded,
         require_inputs_intact,
@@ -695,8 +696,17 @@ def _verify_returned_inputs(
 
     block = manifest.get(RENDER_INPUTS_KEY)
     if not is_recorded(block):
-        # A runner from before this contract. The content hash still had to
-        # match, so the render is not unverified, only less finely verified.
+        # The runner ran this repository's own code against the files this
+        # machine packed for it. If the set is measurable here, it was
+        # measurable there, and a result that arrives without one is not an
+        # old worker being tolerated -- it is the one way left to launder a
+        # render past the contract, by downgrading the machine that produces
+        # it. Refuse, unless there was genuinely nothing to measure.
+        if is_recorded(_local_render_inputs(settings, episode, episode_dir)):
+            raise RenderInputError(
+                "Remote render take-back refused: the result carries no byte-bound "
+                f"input set, but this machine can measure one for {episode.episode_id}"
+            )
         logger.info("Remote render returned no byte-bound input set for %s", episode.episode_id)
         return
 

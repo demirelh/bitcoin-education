@@ -234,11 +234,17 @@ def test_accent_color_from_profile():
 
 
 def test_tts_profile_config_values():
-    """Tagesschau profile declares tuned TTS voice settings.
+    """Tagesschau declares an even, unhurried news voice — for every role.
 
-    The news voice was retuned for a livelier, less monotone delivery
-    (lower stability + some style + slightly faster speed), so it no longer
-    uses the very high stability that produced a flat, tiring narration.
+    An earlier tuning asked for "some style"; d1b4676 took the style back to
+    zero across all three declarations because the variants ElevenLabs produced
+    at style 0.2-0.25 stressed different words from one take to the next, which
+    is how some evenings came out sounding wrong while others were fine. The
+    assertion below was the one place that kept asking for the old value, and
+    it has been failing ever since. It now asks for what the profile actually
+    means, and it asks it of the per-role voices too: a retune that only
+    reaches the top-level block leaves the anchor untouched, because a role
+    with its own value never reads the fallback.
     """
     reset_registry()
     settings = Settings(profiles_dir="btcedu/profiles", pipeline_version=2)
@@ -247,16 +253,22 @@ def test_tts_profile_config_values():
     ts = registry.get("tagesschau_tr")
     tts_cfg = ts.stage_config.get("tts", {})
 
-    assert tts_cfg.get("voice_id")  # explicit news voice (Irem)
-    assert "stability" in tts_cfg
-    # High stability keeps the emphasis even from one take to the next. At 0.45
-    # the variants ElevenLabs produced stressed different words, which is how
-    # some evenings came out sounding wrong while others were fine.
-    assert 0.5 <= tts_cfg["stability"] <= 0.8
-    assert tts_cfg.get("style", 0.0) > 0.0  # some expressiveness
-    # Not faster than normal. An anchor lands the sentence and leaves a beat;
-    # at speed 1.08 the sentences ran into each other and sounded rushed.
-    assert tts_cfg.get("speed", 1.0) <= 1.0
+    voices = tts_cfg.get("voices", {})
+    assert set(voices) >= {"anchor_female", "reporter_male"}
+    assert voices["anchor_female"]["voice_id"] != voices["reporter_male"]["voice_id"]
+
+    blocks = [("tts", tts_cfg)] + [(f"voices.{name}", cfg) for name, cfg in voices.items()]
+    for name, cfg in blocks:
+        assert cfg.get("voice_id"), f"{name} declares no voice"
+        # High stability keeps the emphasis even from one take to the next. At
+        # 0.45 the variants stressed different words.
+        assert 0.5 <= cfg["stability"] <= 0.8, name
+        # Style is what made those variants disagree; it stays off.
+        assert cfg.get("style", 0.0) == 0.0, name
+        # Not faster than normal. An anchor lands the sentence and leaves a
+        # beat; at speed 1.08 the sentences ran into each other.
+        assert cfg.get("speed", 1.0) <= 1.0, name
+        assert 0.0 <= cfg.get("similarity_boost", 0.0) <= 1.0, name
 
 
 def test_bitcoin_profile_has_tts_voice():

@@ -832,14 +832,15 @@ Messung und Verwendung liegt ein kurzes TOCTOU-Fenster. Es wird klein gehalten
 vorige), nicht durch Locking beseitigt: Wer während eines Renders in das
 Episodenverzeichnis schreiben kann, kann auch das fertige Video austauschen.
 
-**Bewusst offen**: Studio-Plates und Themenmedien haben keine Bytehashes. Das
-Studio ist über `studio_hash` und die Paket-Vollständigkeitsprüfung abgesichert,
-Themenbilder über den Render-Content-Hash; ein getauschtes Studio-PNG bei
-gleichem Manifest fällt erst im finalen Review auf.
+**Damals bewusst offen**: Studio-Plates und Themenmedien hatten keine
+Bytehashes. Das Studio war über `studio_hash` und die
+Paket-Vollständigkeitsprüfung abgesichert, Themenbilder über den
+Render-Content-Hash; ein getauschtes Studio-PNG bei gleichem Manifest fiel erst
+im finalen Review auf.
 
-**Weiterhin offen für WP-8B**: Diese Lücke bleibt nach WP-7 und WP-8A
-unverändert bestehen. Bytehashes der übrigen Renderinputs — Studio-Plates,
-Themenmedien, Overlays — sind ausdrücklich **nicht** erledigt.
+**Mit WP-8B geschlossen**: `btcedu/core/render_inputs.py` und
+`render_input_collector.py` messen jeden lokalen Renderinput byteweise; siehe
+den WP-8B-Block weiter unten und `docs/render-input-integrity.md`.
 
 ### WP-7 — Dashboard-Bedienung, Reconciliation und Voice-over-Override (7. September 2026)
 
@@ -978,6 +979,79 @@ Stelle ab. Die Alternative wäre ein Login in Tests über Rendermodi und
 QA-Findings gewesen, und der erste unbequeme davon wäre ohnehin lokal
 „repariert“ worden. Die Absicherung liefert stattdessen der Routentabellentest.
 
+### WP-8B — Bytehashes aller Renderinputs und Baselinebereinigung (7. September 2026)
+
+**Neu**: `btcedu/core/render_inputs.py`, `btcedu/core/render_input_collector.py`,
+`tests/test_render_inputs.py` (55 Tests), `tests/test_render_input_boundaries.py`
+(28 Tests), `docs/render-input-integrity.md`.
+
+- [x] Logout abgesichert: Die Route war bereits POST-only, stand aber in
+      `PUBLIC_ENDPOINTS` und war damit anonym erreichbar. Sie ist jetzt
+      authentifiziert und CSRF-pflichtig; ein anonymer Aufruf endet in 302
+      beziehungsweise JSON 401, ein Token aus fremder Sitzung in 403. Eine
+      GET-Variante existiert nicht. (Commit `4ab7718`.)
+- [x] Jeder lokale Renderinput ist byteweise gebunden: Studio-Plates und
+      -Layer, Opening-/Closing-/Themenkarten, Themenbilder, Videoclips,
+      Wetterkarten, Kapitelnarration, Sprecherteile, Avatarclips, Intro-/
+      Themen-/Outro-Stings, Musikbett und die Overlay-Schrift. Templates,
+      Untertitel und Override-Fallbackmedien sind über `collect_extra_files`
+      angebunden.
+- [x] Pro Eintrag: gestreamter SHA-256 (1-MiB-Blöcke), `size_bytes`,
+      `media_type`, `kind`, Root, relativer Pfad und Provenienz. Wo ein
+      Manifest selbst einen Digest *behauptet* (Studio-Assets, Avatarclips),
+      wird die Behauptung als `declared_sha256` mitgeführt und verglichen,
+      niemals geglaubt.
+- [x] Pfade sind auf benannte Roots normalisiert (`episode`, `studio`,
+      `assets`, `system`). `safe_resolve()` weist absolute Pfade, `..` und
+      alles zurück, was über einen Symlink aus seinem Root herausführt.
+- [x] Grenzen: lokaler Render (Staleness über den Content-Hash),
+      Remote-Paketierung, Remote-Rücknahme, `review_gate_3` und `publish`.
+      Alle fünf sind fail-closed und werden einzeln mit einem manipulierten
+      Byte nachgewiesen.
+- [x] Invalidierung ist gebunden, nicht global: Eine geänderte Datei
+      invalidiert genau ihre Episode, eine unbeteiligte Episode mit gleichem
+      Inhalt bleibt gültig, ein Rewrite mit identischen Bytes kostet nichts,
+      und **kein** Providerjob entsteht — Avatarclips hängen an ihrem eigenen
+      Vertrag in `core/avatar_integrity.py`.
+- [x] Altmanifeste: Ein Manifest **ohne** Block passiert jede Grenze mit
+      Vermerk (es gibt nichts zu vergleichen, und ein Nein würde fertige
+      Episoden stranden lassen). Ein Block, der **existiert, aber unvollständig
+      ist**, wird abgelehnt — ein halb geschriebener Vertrag ist ein Fehler,
+      keine Geschichte.
+- [x] `publisher._compute_hash_over_paths` und `reviewer._compute_artifact_hash`
+      streamen statt `read_bytes()`. Digestgleich, aber `draft.mp4` liegt nicht
+      mehr vollständig im Speicher eines Pi.
+- [x] Beide Baselinefehler behoben (siehe Abschnitt oben), jeder in einem
+      eigenen Commit, keiner abgeschwächt.
+- [x] Ruff repo-weit sauber, einschließlich des seit `3de9170` offenen
+      `I001` in `scripts/migrate_channels.py`.
+
+**Systemschriften bleiben aus dem gemeinsamen Digest ausgeschlossen.** Der
+Digest fließt in den Render-Content-Hash, den der GitHub-Runner nachrechnet;
+dessen `fonts-noto` ist nicht das des Pi. Ein gemeinsamer Fonthash würde jeden
+Remote-Render per Konstruktion verwerfen. Die Schrift wird trotzdem gemessen,
+aufgezeichnet und maschinenlokal geprüft; über Maschinengrenzen bleibt der
+Namensvergleich `_expected_font_file` die Absicherung. Bei der Rücknahme wandert
+der Fonteintrag des Runners nach `render_inputs.remote_system_inputs` und wird
+durch die lokale Messung ersetzt, damit alle späteren Grenzen lokale Dateien mit
+lokalen Dateien vergleichen.
+
+**Eine bewusste einmalige Invalidierung**: Der Eingabedigest ist Teil von
+`_compute_render_content_hash`, also wird jeder vor WP-8B erzeugte Render genau
+einmal stale. Das ist der Preis dafür, dass der Hash bis dahin falsch war.
+Renders kosten extern nichts.
+
+**Verbleibendes TOCTOU-Fenster**: Geprüft wird zum Zeitpunkt der Prüfung. Eine
+Datei, die zwischen der Publish-Prüfung und ffmpegs Lesevorgang getauscht wird,
+liegt außerhalb dessen, was ein Hash im Prozess abdecken kann; die Gegenmaßnahme
+sind Dateisystemrechte, nicht ein zweiter Hash.
+
+**Teststand nach WP-8B**: Vollständige Suite **3805 passed, 0 failed** (52 min)
+— erstmals ohne Baselinefehler. Web-Gruppe 450 grün, ALMANYA24-E2E 76 grün,
+Render-/Remote-/Publish-/Review-Regression 256 grün. Der JobManager-Flake und
+die neuen Dateien wurden je 3× wiederholt und waren jedes Mal grün; es wurde
+keine Wartezeit verlängert.
+
 ### Offene Kosmetik
 
 - [ ] `sceneplan` im `_STAGE_WORKFLOW_KEY`-Kommentar und in `STAGE_PROVIDER_MAP`
@@ -1083,19 +1157,32 @@ Durchgeführt am 6. September 2026:
   jedes Mal grün; er wurde nicht durch längere Wartezeiten kaschiert.
 - `.venv/bin/ruff check btcedu/ tests/` → All checks passed.
 
-### Vorbestehende Baselineprobleme (getrennt dokumentiert, nicht abgeschwächt)
+### Vorbestehende Baselineprobleme — mit WP-8B bereinigt
 
-Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
+Von WP-1 bis WP-8A wurde keiner dieser Tests angefasst, entschärft oder
+übersprungen. WP-8B hat beide untersucht und behoben; keiner wurde gelockert,
+beide prüfen jetzt mehr als vorher.
 
-1. `tests/test_cross_profile.py::test_tts_profile_config_values`
-   Der Test erwartet `style > 0`; das committete Profil steht auf `style: 0.0`.
-   Schlägt auf einem sauberen `HEAD`-Worktree genauso fehl. Entweder ist der
-   Profilwert falsch oder die Erwartung veraltet — das ist eine TTS-Frage und
-   gehört in ein eigenes Ticket, nicht in die Avatar-Arbeit.
+1. `tests/test_cross_profile.py::test_tts_profile_config_values` — **veraltete
+   Erwartung, kein Konfigurationsfehler.** `d1b4676` hat `style` in allen drei
+   Tagesschau-TTS-Deklarationen von 0,25 auf 0,0 gesetzt, weil die Varianten
+   bei diesem Wert unterschiedliche Wörter betonten; die Begründung steht im
+   Profil und sogar in den Nachbarkommentaren des Tests. Nur die eine
+   Zusicherung blieb stehen. Der Test fragt jetzt nach der tatsächlich
+   deklarierten Abstimmung — **und zusätzlich nach den Rollenstimmen**, denn
+   eine Umstellung, die nur den Top-Level-Block erreicht, lässt die Moderatorin
+   unberührt.
 2. `tests/test_speech_normalize.py::TestTheLastTenEpisodes::test_no_markers_or_orphaned_apostrophes_are_left_behind`
-   Liest echte gerenderte Episoden aus `data/outputs` dieser Maschine und ist
-   damit maschinenabhängig; im sauberen Worktree wird er übersprungen. Kein
-   Codepfad dieser Arbeit berührt die Narration.
+   — **daten- und zeitabhängiger Audit-Test mit falsch formulierter
+   Eigenschaft.** Er wählte Episoden nach `mtime` und verbot jedes Apostroph
+   mit Leerzeichen daneben. Eine Sendung zitierte ein Kind
+   (`ve 'Anneme gitmek istiyorum' diyor`) — Interpunktion, die die Redaktion
+   geschrieben hat und der Normalizer nie anfasst. Gemeint war ein *verwaistes*
+   Apostroph aus der Suffixentfernung. Die Prüfung vergleicht die Ausgabe
+   deshalb jetzt mit ihrer eigenen Eingabe, die Auswahl erfolgt nach Episode-ID
+   statt nach Änderungszeit, und ein kleiner committeter Korpus realer
+   Satzformen sorgt dafür, dass die Klasse auf einem frischen Checkout nicht
+   mehr übersprungen wird.
 
 ### Bekannter Flake (keine Regression)
 
@@ -1148,3 +1235,5 @@ Keiner dieser Tests wurde angefasst, entschärft oder übersprungen.
 | 2026-09-07 | Checkpoint | Lokaler Commit `8356ca2` (WP-7), nicht gepusht |
 | 2026-09-07 | WP-8A | Flask-Login/Flask-WTF, Fail-closed-Start, vertrauenswürdige Operatoridentität, `generate-password-hash`, 103 neue Tests, `docs/dashboard-auth.md`, Ruff grün; Suite 3716 grün / 2 Baselinefehler |
 | 2026-09-07 | Checkpoint | Lokaler Checkpoint-Commit (WP-8A), SHA im Bericht, nicht gepusht |
+| 2026-09-07 | WP-8B | Logout authentifiziert und CSRF-pflichtig; alle Renderinputs bytegebunden über fünf Grenzen; beide Baselinefehler behoben; Ruff repo-weit sauber; 83 neue Tests, `docs/render-input-integrity.md`; Suite **3805 grün / 0 Fehler** |
+| 2026-09-07 | Checkpoints | Lokale Commits `4ab7718`, `aae390a`, `516801e`, `6fedb06`, `86b954c` — nicht gepusht |

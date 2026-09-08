@@ -126,21 +126,34 @@ class AddChannelsSupportMigration(Migration):
             elif settings.podcast_youtube_channel_id:
                 feed_url = f"https://www.youtube.com/feeds/videos.xml?channel_id={settings.podcast_youtube_channel_id}"
 
+            # On a fresh installation the CLI runs create_all before the
+            # migrations, so `channels` already carries every column the model
+            # declares -- including content_profile, which migration 011 adds
+            # to an older database and which is NOT NULL. Naming only the
+            # original columns here made `btcedu migrate` fail on the very
+            # first migration of a brand-new install.
+            result = session.execute(text("PRAGMA table_info(channels)"))
+            channel_columns = [row[1] for row in result.fetchall()]
+            profile_column = ", content_profile" if "content_profile" in channel_columns else ""
+            profile_value = ", :content_profile" if "content_profile" in channel_columns else ""
+            params = {
+                "channel_id": "default",
+                "name": "Bitcoin Podcast",
+                "youtube_channel_id": settings.podcast_youtube_channel_id or None,
+                "rss_url": feed_url,
+                "now": datetime.now(UTC),
+            }
+            if profile_column:
+                params["content_profile"] = "bitcoin_podcast"
             session.execute(
-                text("""
+                text(f"""
                     INSERT INTO channels
                     (channel_id, name, youtube_channel_id, rss_url,
-                     is_active, created_at, updated_at)
+                     is_active, created_at, updated_at{profile_column})
                     VALUES (:channel_id, :name, :youtube_channel_id,
-                            :rss_url, 1, :now, :now)
+                            :rss_url, 1, :now, :now{profile_value})
                 """),
-                {
-                    "channel_id": "default",
-                    "name": "Bitcoin Podcast",
-                    "youtube_channel_id": settings.podcast_youtube_channel_id or None,
-                    "rss_url": feed_url,
-                    "now": datetime.now(UTC),
-                },
+                params,
             )
             session.commit()
             logger.info("✓ Created default channel")

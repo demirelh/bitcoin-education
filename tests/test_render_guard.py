@@ -12,6 +12,7 @@ import pytest
 from btcedu.core import render_guard
 from btcedu.core.render_guard import (
     UnknownRenderInputError,
+    admit_generated_input,
     arm,
     arm_now,
     command_file_inputs,
@@ -100,6 +101,15 @@ class TestWhatTheGuardAllows:
         segment = _file(tmp_path, "render/segments/seg01.mp4")
         with arm(inventory=[], work_roots=[tmp_path / "render"]):
             inspect(["ffmpeg", "-i", str(segment), "out.mp4"])
+
+    def test_an_explicitly_admitted_generated_input_passes(self, tmp_path):
+        weather_video = _file(tmp_path, "images/ch05_weather.mp4")
+        stranger = _file(tmp_path, "images/unmeasured.mp4")
+        with arm(inventory=[], work_roots=[tmp_path / "render"]):
+            admit_generated_input(weather_video)
+            inspect(["ffmpeg", "-i", str(weather_video), "out.mp4"])
+            with pytest.raises(UnknownRenderInputError):
+                inspect(["ffmpeg", "-i", str(stranger), "out.mp4"])
 
     def test_a_declared_system_input_passes_and_is_recorded(self, tmp_path):
         font = _file(tmp_path, "sys/fonts/DejaVu.ttf")

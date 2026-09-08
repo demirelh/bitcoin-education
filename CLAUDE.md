@@ -69,6 +69,9 @@ was never written.
 detects them, extracts claims deterministically from the approved narration
 (`allow_external_weather_data: false`) and renders an HTML/SVG card via
 headless Chromium (Pillow fallback if no Chromium binary is available).
+Animated weather videos are deferred until render so their scene plan uses the
+actual TTS duration. The render guard admits only the exact successfully
+generated video path; `images/` as a whole remains inventory-bound.
 Per-city temperatures from Open-Meteo/DWD ICON
 (`services/meteo_service.py`) are attributed context data only and are excluded
 from claim validation.

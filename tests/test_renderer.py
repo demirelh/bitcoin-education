@@ -793,6 +793,9 @@ def test_render_weather_video_uses_actual_tts_duration(db_session, settings, tmp
         return _mock_segment_result(output_path, duration=duration)
 
     def mock_create_video_segment(video_path, audio_path, output_path, duration, **kwargs):
+        from btcedu.core.render_guard import inspect
+
+        inspect(["ffmpeg", "-i", str(video_path), str(output_path)])
         captured["video_path"] = video_path
         return _mock_segment_result(output_path, duration=duration)
 

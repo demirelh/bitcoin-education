@@ -95,8 +95,9 @@ throwaway SQLite database with a single episode row and calls
   would reject — which would put it in an endless re-render loop.
 - **Idempotency**: an already-current draft is detected *before* anything is
   uploaded.
-- **Weather chapters** need no Chromium on the runner: `imagegen` has already
-  rendered them into `images/chNN_weather.mp4`.
+- **Weather chapters** need Chromium on the runner when animation is enabled:
+  `imagegen` supplies the static weather card and structured data, then render
+  creates `images/chNN_weather.mp4` from the actual TTS duration.
 
 ### Cleanup
 

@@ -28,19 +28,23 @@ spans, and unsupported claims block the weather asset.
 
 ## Data flow and artifacts
 
-For a weather chapter named `ch12`, image generation writes:
+For a weather chapter named `ch12`, the pipeline writes:
 
 - `images/ch12_weather.json`: versioned structured weather data
 - `images/ch12_weather_detection.json`: confidence and evidence
 - `images/ch12_weather_validation.json`: grounding findings
-- `images/ch12_weather_scenes.json`: narration-duration scene plan
+- `images/ch12_weather_scenes.json`: narration-duration scene plan, refreshed
+  during render from the actual TTS duration
 - `images/ch12_weather.png`: validated static fallback/full card
-- `images/ch12_weather.mp4`: timed scene video when animation is enabled
+- `images/ch12_weather.mp4`: timed scene video generated during render when
+  animation is enabled
 - matching `.provenance.json` files and the normal image manifest entry
 
 The video contains no audio. The existing renderer loops or trims it to the
 actual TTS duration and adds the approved TTS audio, overlays, transitions, and
-ticker.
+ticker. Because the video does not exist when render inputs are measured, the
+render guard admits that exact generated path after successful creation; the
+rest of `images/` remains inventory-bound.
 
 ## Schema and grounding
 

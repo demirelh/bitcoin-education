@@ -14,11 +14,13 @@ _run_ffmpeg`, and that function is where the command can be read back and every
 file it opens compared against the inventory. An input nobody recorded stops
 the render.
 
-Three things are allowed, and only three:
+Four things are allowed, and only four:
 
 * a file in the measured inventory;
 * a file under the render's own working directory — an intermediate this render
   produced a moment ago, whose provenance is the render itself;
+* an exact path explicitly admitted after this render generated it outside the
+  working directory, such as a timed weather video beside its static card;
 * a file under a declared system root, which is the documented machine-local
   class (fonts, codec data) that cannot be shared across machines and is
   recorded rather than digested.
@@ -152,6 +154,17 @@ def arm_now(
 
 def disarm_now() -> None:
     _state.armed = None
+
+
+def admit_generated_input(path: str | Path) -> None:
+    """Admit one file that the active render just generated.
+
+    This is intentionally exact-path admission rather than another work root:
+    reviewed inputs beside the generated file must remain inventory-bound.
+    """
+    armed = _current()
+    if armed is not None:
+        armed.inventory.add(_resolve(path))
 
 
 @contextmanager

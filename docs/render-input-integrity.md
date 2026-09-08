@@ -127,13 +127,18 @@ in the render path goes through one function,
 there and compared against the inventory before the process starts. No global
 monkeypatching is involved; the single execution point is the abstraction.
 
-Three classes are allowed and only three:
+Four classes are allowed and only four:
 
 1. a file in the measured inventory;
 2. a file under the render's own `<episode>/render/` working directory — an
    intermediate this render produced (levelled stings, built segments, the
    concat list), whose provenance is the render itself;
-3. a file under a declared system root (`DEFAULT_SYSTEM_ROOTS`: fonts, codec
+3. one exact path admitted with `admit_generated_input()` after the active
+   render successfully generated it outside that directory. Timed weather
+   videos use this because they are written beside their static cards only
+   after the actual TTS duration is known; admitting the entire `images/`
+   directory would weaken the inventory boundary;
+4. a file under a declared system root (`DEFAULT_SYSTEM_ROOTS`: fonts, codec
    data), the documented machine-local class that cannot join a cross-machine
    digest. These are recorded in `system_inputs_seen()` rather than refused.
 
@@ -155,9 +160,10 @@ Details worth knowing:
   unexplained one. The smoke test, the weather stage and TTS levelling are
   untouched.
 * **`disarmed()`** exists for probing an output the render just wrote.
-* The weather renderer calls `subprocess.run` directly and is deliberately
-  outside the guard: weather cards are produced in the imagegen stage, and it
-  is their *result* that enters the protected render as topic media.
+* The weather renderer calls `subprocess.run` directly. Static cards are
+  produced in imagegen; animated weather videos are produced during render
+  from the actual TTS duration and their exact output path is admitted before
+  ffmpeg consumes it as topic media.
 
 Covered by `tests/test_render_guard.py`.
 

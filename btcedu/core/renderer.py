@@ -476,7 +476,8 @@ def render_video(
 
         # From here until the finally below, ffmpeg may only open files this
         # episode's measured set knows about, intermediates this render itself
-        # writes under render/, or the declared machine-local system inputs.
+        # writes under render/ or explicitly admits after generation, or the
+        # declared machine-local system inputs.
         # The inventory says what should be used; the guard says what was.
         _arm_render_guard(
             _input_block, Path(settings.outputs_dir) / episode_id, episode_id, settings, episode
@@ -664,6 +665,9 @@ def render_video(
                         title=weather_branding.get("title") or "Hava Durumu",
                     )
                     if weather_video_result.success and weather_video_path.exists():
+                        from btcedu.core.render_guard import admit_generated_input
+
+                        admit_generated_input(weather_video_path)
                         media_path = weather_video_path
                         asset_type = "video"
                     else:

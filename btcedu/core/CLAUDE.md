@@ -45,7 +45,10 @@ Each v2 stage module follows the same pattern:
 - `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro
   cards, ticker. A studio scene plan is ignored while `anchor_enabled=false`,
   preserving the chapter renderer without requiring studio or avatar artifacts;
-  reporter-only scene plans remain valid.
+  reporter-only scene plans remain valid. Animated weather videos are generated
+  during render from the actual TTS duration and must be admitted to the render
+  guard by exact path after successful creation; never widen the guard to all of
+  `images/`.
 - `frame_editor.py` — Gemini 2.0 Flash frame editing for tagesschau episodes (translates German text overlays to Turkish)
 - `tts.py` — fresh per-part ElevenLabs synthesis (no reusable take cache),
   750-character provider chunks, −15 LUFS normalization before quality checks,

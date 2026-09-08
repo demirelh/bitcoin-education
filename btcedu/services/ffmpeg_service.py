@@ -2256,6 +2256,14 @@ def _run_ffmpeg(cmd: list[str], timeout: int) -> tuple[int, str]:
     Returns:
         Tuple of (returncode, stderr)
     """
+    # Every ffmpeg invocation in the render path passes through here, which
+    # makes it the one place where the files a render actually opens can be
+    # held against the set that was measured. Outside a protected render the
+    # guard is not armed and this costs a function call.
+    from btcedu.core.render_guard import inspect as _guard_inspect
+
+    _guard_inspect(cmd)
+
     try:
         result = subprocess.run(
             cmd,

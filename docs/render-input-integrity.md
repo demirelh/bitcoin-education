@@ -52,7 +52,7 @@ the existing font *name* comparison.
 | --- | --- | --- |
 | Render / staleness | `renderer.render_is_current` via the content hash | changed bytes make the render stale |
 | Remote pack | `remote_render.build_job_package` | refuses to ship an incomplete set |
-| Remote take-back | `remote_render._verify_returned_inputs` | refuses a result built from other bytes |
+| Remote take-back | `remote_render._verify_returned_inputs` | refuses a result built from other bytes, and refuses a result carrying no set at all |
 | Review gate 3 | `pipeline._run_stage("review_gate_3")` | fail-closed before the weather checks |
 | Publish | `publisher._check_render_inputs` | a safety check like any other |
 
@@ -63,9 +63,21 @@ compares local files against local files.
 
 ## Old manifests
 
-* **No `render_inputs` block at all** — the render predates the contract. Every
-  boundary passes and says so. There is nothing to compare, and refusing would
-  strand finished episodes for a fault they cannot have committed.
+* **No `render_inputs` block at all** — the render predates the contract. The
+  per-boundary *input check* passes and says so: there is nothing to compare,
+  and failing it would report a fault the episode cannot have committed.
+  That leniency is never the last word (WP-8C). Because the input digest is
+  folded into the render content hash, a legacy render is always stale against a
+  current measurement, `render_is_current` reports *render inputs changed since
+  last render*, `publisher._check_render_valid` fails and `publish_video`
+  raises. A legacy render therefore cannot be published; it must be re-rendered
+  under the contract and re-approved, and an old approval does not carry over.
+  Deleting the block from a *current* manifest is not a bypass either — the
+  content hash is recomputed from the files, not from the block.
+  Proved by `tests/test_render_input_legacy.py`.
+* **A remote result with no block** — refused. The runner executes our own code
+  on the files we packed, so if this machine can measure a set, so could it.
+  Only when the local measurement is also empty is the result accepted.
 * **A block that exists but is incomplete** (an entry without `sha256`) —
   status `unrecorded`, and the boundary **refuses**. A half-written contract is
   a bug, not history.
@@ -91,9 +103,9 @@ having been wrong until then. It is scoped:
   file swapped between the publish check and ffmpeg's read is outside what any
   in-process hash can cover; the window is short and the mitigation is
   filesystem permissions, not a second hash.
-* **The set is only as complete as the manifests.** A stage that starts writing
-  a new kind of render input without recording it in a manifest will not be
-  measured. `collect_extra_files` is the deliberate escape hatch for
+* **The set is only as complete as the manifests** — mitigated by the guard
+  below, which turns a silent gap into a stopped render.
+  `collect_extra_files` remains the deliberate escape hatch for
   mode-dependent inputs.
 * **`system` inputs are machine-local.** A font upgrade on the Pi is detected
   locally; a font difference between the Pi and a runner is caught only by
@@ -101,3 +113,50 @@ having been wrong until then. It is scoped:
 * **ffmpeg's own behaviour is not bound.** A different ffmpeg build can draw
   the same inputs differently; the binary is not a render input in this sense
   and is covered by the deployment, not by the manifest.
+
+## The guard: what the render actually opened (WP-8C)
+
+The inventory above records what the pipeline *believes* it will use. Belief
+and behaviour can drift — a stage learns to draw a new overlay, a filter grows
+a `movie=` source, a config value points outside the episode — and none of that
+would be visible in a digest of the files nobody thought to list.
+
+`btcedu/core/render_guard.py` asks the other question. Every ffmpeg invocation
+in the render path goes through one function,
+`btcedu.services.ffmpeg_service._run_ffmpeg`, so the command can be read back
+there and compared against the inventory before the process starts. No global
+monkeypatching is involved; the single execution point is the abstraction.
+
+Three classes are allowed and only three:
+
+1. a file in the measured inventory;
+2. a file under the render's own `<episode>/render/` working directory — an
+   intermediate this render produced (levelled stings, built segments, the
+   concat list), whose provenance is the render itself;
+3. a file under a declared system root (`DEFAULT_SYSTEM_ROOTS`: fonts, codec
+   data), the documented machine-local class that cannot join a cross-machine
+   digest. These are recorded in `system_inputs_seen()` rather than refused.
+
+Anything else raises `UnknownRenderInputError` and the render stops.
+
+Details worth knowing:
+
+* **Files are recognised by asking the filesystem, not by syntax.** `-i` also
+  takes lavfi descriptors (`anullsrc=`, `color=`), devices and `concat:`
+  pseudo-paths; only `Path.is_file()` tells them apart. A path that does not
+  exist is ffmpeg's error to report, not the guard's.
+* **Indirect sources are followed**: concat/ffconcat lists are read and the
+  files they name are checked too, and `fontfile=`, `movie=`, `amovie=` and
+  `textfile=` are extracted from filter arguments with ffmpeg's `\:` escaping.
+* **Arming is explicit and thread-local.** Only `render_video` arms it (the job
+  manager renders in threads), and only when a measured set exists — an episode
+  whose inputs could not be measured at all is already reported through the
+  `missing` list, and refusing it here would turn a diagnosable state into an
+  unexplained one. The smoke test, the weather stage and TTS levelling are
+  untouched.
+* **`disarmed()`** exists for probing an output the render just wrote.
+* The weather renderer calls `subprocess.run` directly and is deliberately
+  outside the guard: weather cards are produced in the imagegen stage, and it
+  is their *result* that enters the protected render as topic media.
+
+Covered by `tests/test_render_guard.py`.

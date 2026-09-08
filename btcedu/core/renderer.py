@@ -469,6 +469,14 @@ def render_video(
         ffmpeg_version = get_ffmpeg_version()
         logger.info("Using %s", ffmpeg_version)
 
+        # From here until the finally below, ffmpeg may only open files this
+        # episode's measured set knows about, intermediates this render itself
+        # writes under render/, or the declared machine-local system inputs.
+        # The inventory says what should be used; the guard says what was.
+        _arm_render_guard(
+            _input_block, Path(settings.outputs_dir) / episode_id, episode_id, settings, episode
+        )
+
         # Create render directories
         segments_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1231,6 +1239,50 @@ def render_video(
         )
         logger.error("Render failed for %s: %s", episode_id, e)
         raise
+    finally:
+        from btcedu.core.render_guard import disarm_now
+
+        disarm_now()
+
+
+def _arm_render_guard(
+    input_block: dict | None, base_dir: Path, episode_id: str, settings, episode
+) -> None:
+    """Hold the render to the files it declared, for the profiles that ask.
+
+    Armed only when there is a measured set to be held to. An episode whose
+    inputs could not be measured at all is already reported through the
+    ``missing`` list and the boundaries; refusing to render it here as well
+    would turn a diagnosable state into an unexplained one.
+    """
+    from btcedu.core.render_guard import arm_now
+    from btcedu.core.render_input_collector import roots_for_episode
+    from btcedu.core.render_inputs import ROOT_SYSTEM, block_entries, is_recorded
+
+    if not is_recorded(input_block):
+        return
+    # Entries are recorded relative to a named root so the set means the same
+    # on the Pi and on a runner; the absolute paths belong to this machine and
+    # are resolved here rather than stored.
+    roots = roots_for_episode(episode_id, settings, episode)
+    inventory: list[str] = []
+    for entry in block_entries(input_block):
+        root = str(entry.get("root") or "")
+        relative = str(entry.get("path") or "")
+        if root == ROOT_SYSTEM:
+            inventory.append(relative)
+            continue
+        resolved = roots.resolve(root, relative)
+        if resolved is not None:
+            inventory.append(str(resolved))
+    render_dir = base_dir / "render"
+    arm_now(
+        inventory=inventory,
+        # The render's own scratch space: levelled stings, built segments, the
+        # concat list. Their provenance is this render, a few seconds old.
+        work_roots=[render_dir],
+        episode_id=episode_id,
+    )
 
 
 def _apply_branding_guard(

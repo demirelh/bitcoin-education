@@ -469,6 +469,11 @@ def render_video(
         ffmpeg_version = get_ffmpeg_version()
         logger.info("Using %s", ffmpeg_version)
 
+        from btcedu.core.render_environment import describe as _describe_environment
+        from btcedu.core.render_guard import system_inputs_seen as _system_inputs_seen
+
+        _render_environment = _describe_environment(_eff_font or "")
+
         # From here until the finally below, ffmpeg may only open files this
         # episode's measured set knows about, intermediates this render itself
         # writes under render/, or the declared machine-local system inputs.
@@ -1121,6 +1126,10 @@ def render_video(
             "subtitled_video": subtitled_video,
             "output_path": "render/draft.mp4",
             "ffmpeg_version": ffmpeg_version,
+            # The machine that drew the video. Deliberately outside the content
+            # hash (see render_environment) — evidence for the review, not an
+            # identity for the artefact.
+            "render_environment": _render_environment,
             "codec": {
                 "video": "libx264",
                 "audio": "aac",
@@ -1152,6 +1161,8 @@ def render_video(
             "timestamp": _utcnow().isoformat(),
             "model": "ffmpeg",
             "ffmpeg_version": ffmpeg_version,
+            "render_environment": _render_environment,
+            "system_inputs_seen": _system_inputs_seen(),
             "input_files": [str(chapters_path), str(image_manifest_path), str(tts_manifest_path)],
             "input_content_hash": content_hash,
             "input_digest": (_input_block or {}).get("digest", ""),

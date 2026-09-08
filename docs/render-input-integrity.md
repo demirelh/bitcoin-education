@@ -160,3 +160,47 @@ Details worth knowing:
   is their *result* that enters the protected render as topic media.
 
 Covered by `tests/test_render_guard.py`.
+
+## System inputs and reproducibility (WP-8C)
+
+Not everything that shapes a video is a file the pipeline owns. Which ffmpeg
+built the frames, which encoder it picked, and which font file the name
+`NotoSans-Bold` actually resolved to are properties of the *machine*, and two
+runs from byte-identical inputs can differ in all of them.
+
+`btcedu/core/render_environment.py` records them. Every render writes a
+`render_environment` block into `render_manifest.json` and into the render
+provenance:
+
+| Field | Why |
+| --- | --- |
+| `renderer_version` | which build of this repository drew the video |
+| `ffmpeg_version`, `ffprobe_version` | the tools that made and measured it |
+| `filters`, `encoders`, `decoders` | only the names the render relies on — a full listing would be kilobytes of churn |
+| `font` | `name`, `resolved` and whether it resolved to a **file** or was left to **fontconfig**; a bare name is resolved by whichever machine draws the frame |
+| `platform` | `system`, `machine`, `python` only — no hostname, no user, no home directory |
+
+The provenance additionally carries `system_inputs_seen`: the machine-local
+files the render guard actually observed being opened.
+
+**This is deliberately outside the content hash.** The hash has to mean the same
+thing on the Pi and on a GitHub runner; folding the ffmpeg build into it would
+make every remote render permanently stale, which is the opposite of what the
+remote path exists for. The environment is evidence for the final review, not
+an identity for the artefact. `tests/test_render_environment.py` asserts that
+`_compute_render_content_hash` never learns about it.
+
+### A remote result stays recognisable as remote
+
+Taking a remote result back rebases its paths onto this machine. Without a
+counter-measure the artefact would then be indistinguishable from a local
+render. `remote_render._record_remote_origin` therefore:
+
+* relabels the runner's own description as `origin: "remote"` and keeps it;
+* adds this machine's description as `local_render_environment`;
+* writes `render_environment_differences` — the reviewer is told what was
+  different about the machine rather than being left to assume it was this one;
+* sets `render_origin: "remote"` in both the manifest and the provenance.
+
+A result that carries no description at all is still marked remote; it is never
+allowed to read as local.

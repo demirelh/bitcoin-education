@@ -745,6 +745,51 @@ def _verify_returned_inputs(
     )
 
 
+def _record_remote_origin(manifest: dict, manifest_path: Path, provenance_path: Path) -> None:
+    """Keep it visible that this video was drawn somewhere else.
+
+    Taking a remote result back rebases its paths onto this machine, and after
+    that the artefact would be indistinguishable from a local render. The
+    runner described its own system inputs while rendering; that description is
+    relabelled as remote and kept, this machine's is added beside it, and the
+    differences a reviewer would otherwise have to guess at are spelled out.
+
+    Deliberately not part of the content hash: the hash has to agree across the
+    two machines or the remote path could never produce a current render.
+    """
+    from btcedu.core.render_environment import describe, differences
+
+    remote_env = manifest.get("render_environment")
+    if isinstance(remote_env, dict):
+        remote_env = dict(remote_env)
+        remote_env["origin"] = "remote"
+    local_env = describe(
+        ((manifest.get("render_environment") or {}).get("font") or {}).get("name") or "",
+        origin="local",
+    )
+    manifest["render_environment"] = remote_env or {"origin": "remote"}
+    manifest["local_render_environment"] = local_env
+    manifest["render_environment_differences"] = differences(remote_env, local_env)
+    manifest["render_origin"] = "remote"
+    manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    if not provenance_path.exists():
+        return
+    try:
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(provenance, dict):
+        return
+    provenance["render_origin"] = "remote"
+    provenance["render_environment"] = manifest["render_environment"]
+    provenance["local_render_environment"] = local_env
+    provenance["render_environment_differences"] = manifest["render_environment_differences"]
+    provenance_path.write_text(
+        json.dumps(provenance, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+
 def _local_render_inputs(settings: Settings, episode: Episode, episode_dir: Path) -> dict | None:
     try:
         from btcedu.core.renderer import (
@@ -788,6 +833,7 @@ def _finalize(
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     _verify_returned_inputs(settings, episode, episode_dir, manifest, manifest_path)
+    _record_remote_origin(manifest, manifest_path, provenance_path)
     segments = manifest.get("segments", [])
     total_duration = float(manifest.get("total_duration_seconds", 0.0))
     total_size = int(manifest.get("total_size_bytes", 0))

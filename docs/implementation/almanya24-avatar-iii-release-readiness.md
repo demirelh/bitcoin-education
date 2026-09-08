@@ -232,8 +232,28 @@ operator action · **D** not required, with reason.
 
 ## 10. Test numbers
 
-Filled in from the final verification run; see the session report for the exact
-figures and timings.
+Final verification run, 2026-09-08, `pytest -p no:randomly`:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| Full suite | **3876 passed, 0 failed** | 58:05 |
+| Render / manifest / review / publish battery | 341 passed | 6:52 |
+| Render regression after the environment change | 266 passed | 6:55 |
+| ALMANYA24 end-to-end | 76 passed | 28:51 |
+| Web auth + avatar operations | 163 passed | 1:55 |
+| Migrations (all three files) | 29 passed | 0:08 |
+| Render guard (new) | 27 passed | 0:01 |
+| Render environment (new) | 14 passed | 0:12 |
+| Migration Phase-1 evidence (new) | 14 passed | 0:07 |
+| Known flaky web job test, repeated | 3 × passed | – |
+| `ruff check .` repo-wide | clean | – |
+| `btcedu smoke-test-almanya24` | complete, $0 billed | – |
+
+The suite grew from 3805 (WP-8B) to 3876; the 71 new tests are the render
+guard, the render environment, the Phase-1 migration evidence and the legacy
+render audit.
+
+No real provider call, no upload, no external wait.
 
 ## 11. Residual risks
 

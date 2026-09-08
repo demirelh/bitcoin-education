@@ -1290,6 +1290,86 @@ class AddAvatarClipHashMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class RepairEpisodeChannelByProfileMigration(Migration):
+    """Migration 021: File each episode under the channel its profile names.
+
+    Episodes ingested from the local recorder had their channel resolved from
+    the *global* podcast settings, which name exactly one channel. Every
+    tagesschau broadcast taken off disk was therefore filed under the Bitcoin
+    podcast, and the dashboard's channel filter -- which is correct, and
+    filters on `channel_id` -- showed one of ten.
+
+    The repair is deliberately narrow. A row is only moved when its
+    `content_profile` names a channel *and* the channel it currently sits on
+    declares a different profile. An episode whose channel already declares the
+    same profile is left exactly where it is -- two channels may serve one
+    profile, and that assignment carries information this migration does not
+    have. Nothing is deleted and no other column is touched.
+    """
+
+    @property
+    def version(self) -> str:
+        return "021_repair_episode_channel_by_profile"
+
+    @property
+    def description(self) -> str:
+        return "Move episodes onto the channel matching their content profile"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+
+        result = session.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
+        tables = {row[0] for row in result.fetchall()}
+        if not {"episodes", "channels"} <= tables:
+            logger.info("episodes/channels table absent, nothing to migrate")
+            self.mark_applied(session)
+            return
+
+        episode_columns = {
+            row[1] for row in session.execute(text("PRAGMA table_info(episodes)")).fetchall()
+        }
+        channel_columns = {
+            row[1] for row in session.execute(text("PRAGMA table_info(channels)")).fetchall()
+        }
+        if "content_profile" not in episode_columns or "content_profile" not in channel_columns:
+            logger.info("content_profile column absent, nothing to migrate")
+            self.mark_applied(session)
+            return
+
+        # Only the lowest channel id per profile, so a duplicate profile cannot
+        # make the target ambiguous.
+        result = session.execute(
+            text(
+                """
+                UPDATE episodes
+                SET channel_id = (
+                    SELECT c.channel_id FROM channels c
+                    WHERE c.content_profile = episodes.content_profile
+                    ORDER BY c.id LIMIT 1
+                )
+                WHERE episodes.content_profile IS NOT NULL
+                  AND EXISTS (
+                      SELECT 1 FROM channels c
+                      WHERE c.content_profile = episodes.content_profile
+                  )
+                  AND EXISTS (
+                      SELECT 1 FROM channels cur
+                      WHERE cur.channel_id = episodes.channel_id
+                        AND cur.content_profile IS NOT NULL
+                        AND cur.content_profile != episodes.content_profile
+                  )
+                """
+            )
+        )
+        session.commit()
+        moved = result.rowcount if result.rowcount is not None else 0
+        if moved:
+            logger.info("Moved %d episode(s) onto the channel matching their profile", moved)
+
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1311,6 +1391,7 @@ MIGRATIONS = [
     CreateAvatarRegenerationTableMigration(),
     AddAvatarConcurrencyStateMigration(),
     AddAvatarClipHashMigration(),
+    RepairEpisodeChannelByProfileMigration(),
 ]
 
 

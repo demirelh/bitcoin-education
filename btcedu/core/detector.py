@@ -95,20 +95,42 @@ def _broadcast_day_from_title(title: str) -> date | None:
 
 
 def _resolve_channel_id(
-    session: Session, settings: Settings, explicit_channel_id: str | None = None
+    session: Session,
+    settings: Settings,
+    explicit_channel_id: str | None = None,
+    profile_name: str | None = None,
 ) -> str | None:
     """Resolve the channel_id for new episodes.
 
     Priority:
     1. Explicitly passed channel_id
-    2. Look up Channel by youtube_channel_id matching settings
-    3. Look up Channel by rss_url matching settings
-    4. None (no channel assigned)
+    2. Channel configured for this content profile
+    3. Look up Channel by youtube_channel_id matching settings
+    4. Look up Channel by rss_url matching settings
+    5. None (no channel assigned)
+
+    Step 2 exists because steps 3 and 4 read the *global* podcast settings,
+    which name exactly one channel. Every episode detected outside the
+    per-channel path therefore landed on that one channel regardless of which
+    profile produced it -- the local recorder's tagesschau broadcasts were
+    filed under the Bitcoin podcast, and the dashboard's channel filter then
+    showed one of ten. The profile is the more specific fact whenever it is
+    known, so it is asked first.
     """
     if explicit_channel_id:
         return explicit_channel_id
 
     from btcedu.models.channel import Channel
+
+    if profile_name:
+        ch = (
+            session.query(Channel)
+            .filter(Channel.content_profile == profile_name)
+            .order_by(Channel.id)
+            .first()
+        )
+        if ch:
+            return ch.channel_id
 
     if settings.podcast_youtube_channel_id:
         ch = (
@@ -518,7 +540,9 @@ def detect_local_recordings(
             if skipped:
                 logger.info("Skipped %d local recording(s) already ingested from the feed", skipped)
 
-    resolved_channel_id = _resolve_channel_id(session, settings, channel_id)
+    resolved_channel_id = _resolve_channel_id(
+        session, settings, channel_id, profile_name=profile_name
+    )
     existing_ids = {row[0] for row in session.query(Episode.episode_id).all()}
     by_slug = {rec.slug: rec for rec in recordings}
 

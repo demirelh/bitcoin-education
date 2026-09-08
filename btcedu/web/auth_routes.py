@@ -28,6 +28,22 @@ auth_bp = Blueprint("auth", __name__)
 _GENERIC_ERROR = "Benutzername oder Passwort ist falsch."
 
 
+def _within_mount(path: str) -> str:
+    """Point a validated internal path at this app's mount, not the site root.
+
+    ``safe_next`` guarantees the target is app-internal, but "internal" is
+    expressed without the sub-path a reverse proxy strips. Redirecting to it
+    verbatim from behind ``/dashboard`` sends the browser to the site root
+    instead -- which on the production host is a different application.
+    """
+    if not path:
+        return ""
+    root = request.script_root or ""
+    if not root or path == root or path.startswith(root + "/"):
+        return path
+    return root + path
+
+
 @auth_bp.route("/login", methods=["GET", "POST"])
 def login():
     policy = current_app.config["auth_policy"]
@@ -68,7 +84,7 @@ def login():
     throttle.record_success(username)
     start_session(operator)
     logger.info("Dashboard login: %s", operator.operator_ref)
-    return redirect(target or url_for("index"))
+    return redirect(_within_mount(target) or url_for("index"))
 
 
 @auth_bp.route("/logout", methods=["POST"])

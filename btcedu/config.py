@@ -348,6 +348,14 @@ class Settings(BaseSettings):
     web_login_max_attempts: int = 5
     web_login_cooldown_seconds: int = 60  # doubles per further failure
     web_login_cooldown_max_seconds: int = 900
+    # Mount point when a reverse proxy serves the dashboard under a sub-path and
+    # strips it (Caddy `handle_path /dashboard/*`). Without this the app builds
+    # root-relative URLs, so the login form posts outside its own mount and the
+    # stylesheet 404s. Empty means "not mounted under a prefix", and then the
+    # `X-Forwarded-Prefix` header is discarded rather than believed: only the
+    # value configured here is ever honoured, so a client cannot relocate the
+    # app by sending the header itself.
+    web_forwarded_prefix: str = ""
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

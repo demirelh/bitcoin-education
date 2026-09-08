@@ -310,6 +310,8 @@ WEB_SESSION_SECRET=<the token above>
 WEB_OPERATOR_USERNAME=<name>
 WEB_OPERATOR_PASSWORD_HASH=<the hash above>
 WEB_COOKIE_SECURE=true
+# Only when the proxy serves the dashboard under a stripped sub-path:
+WEB_FORWARDED_PREFIX=/dashboard
 ```
 
 * **Gunicorn binds loopback only.** Caddy terminates TLS and proxies to it. If
@@ -317,6 +319,26 @@ WEB_COOKIE_SECURE=true
   configuration error and the service will not start.
 * `WEB_COOKIE_SECURE=true` means the session cookie never travels over plain
   HTTP — so the Caddy site must be HTTPS.
+* **If the dashboard is not at the site root**, the proxy strips the prefix and
+  the app cannot see its own mount, so every URL it builds — the login form's
+  action, the stylesheet, the post-login redirect — comes out rooted at `/`.
+  On this host that pointed the login POST at a path Caddy guards with its own
+  basic auth, so the dashboard was unreachable through the proxy while working
+  perfectly on the loopback port. Set `WEB_FORWARDED_PREFIX` to the mount and
+  have the proxy state it on every request:
+
+  ```
+  handle_path /dashboard/* {
+      reverse_proxy 127.0.0.1:8091 {
+          header_up X-Forwarded-Prefix /dashboard
+      }
+  }
+  ```
+
+  `header_up` **replaces** any value the client sent. The app additionally
+  discards a prefix that is not exactly `WEB_FORWARDED_PREFIX`, so the header
+  can only ever confirm the known mount, never introduce a new one. No other
+  forwarded header is trusted.
 * Test: open the dashboard, confirm you are redirected to the login, log in,
   confirm **Logout is a POST** (it is a form button, not a link) and that it
   ends the session.

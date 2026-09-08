@@ -8,6 +8,7 @@ from pathlib import Path
 
 from flask import Flask, g, jsonify, render_template, request
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from btcedu.config import get_settings
 from btcedu.db import get_session_factory, init_db
@@ -15,6 +16,38 @@ from btcedu.web.api import api_bp
 from btcedu.web.jobs import JobManager
 
 logger = logging.getLogger(__name__)
+
+
+class _ConfiguredPrefixOnly:
+    """Discard ``X-Forwarded-Prefix`` unless it is the mount the operator set.
+
+    ``ProxyFix`` believes whichever prefix arrives, which is correct only as
+    long as something in front rewrites the header on every request. That is
+    one Caddy line away from not being true, and the failure is silent: a
+    request carrying its own prefix would make the app hand out login and
+    static URLs pointing somewhere else entirely. Comparing against the
+    configured value first means the header can only ever confirm the mount
+    that is already known, never introduce a new one.
+    """
+
+    def __init__(self, app, allowed_prefix: str):
+        self.app = app
+        self.allowed_prefix = allowed_prefix
+
+    def __call__(self, environ, start_response):
+        if environ.get("HTTP_X_FORWARDED_PREFIX") != self.allowed_prefix:
+            environ.pop("HTTP_X_FORWARDED_PREFIX", None)
+        return self.app(environ, start_response)
+
+
+def _normalize_prefix(raw: str) -> str:
+    """Return a mount point as ``/dashboard``: leading slash, no trailing one."""
+    prefix = (raw or "").strip()
+    if not prefix or prefix == "/":
+        return ""
+    if not prefix.startswith("/"):
+        prefix = "/" + prefix
+    return prefix.rstrip("/")
 
 
 def create_app(settings=None) -> Flask:
@@ -32,6 +65,19 @@ def create_app(settings=None) -> Flask:
         settings = get_settings()
 
     app.config["settings"] = settings
+
+    # Served under a stripped sub-path by the reverse proxy: teach the app its
+    # mount so `url_for` builds `/dashboard/login` rather than `/login`. Only
+    # the prefix is taken from the proxy — the client address, scheme, host and
+    # port stay whatever the WSGI server reports, because nothing here needs
+    # them and every trusted header is one more thing to get wrong.
+    forwarded_prefix = _normalize_prefix(getattr(settings, "web_forwarded_prefix", ""))
+    app.config["FORWARDED_PREFIX"] = forwarded_prefix
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app, x_for=0, x_proto=0, x_host=0, x_port=0, x_prefix=1
+    )
+    app.wsgi_app = _ConfiguredPrefixOnly(app.wsgi_app, forwarded_prefix)
+
     # The dashboard runs as its own service and writes its own log; the same
     # third-party error texts reach it as reach the CLI.
     from btcedu.utils.secrets import install_log_redaction

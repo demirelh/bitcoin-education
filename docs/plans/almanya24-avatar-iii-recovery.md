@@ -1237,3 +1237,53 @@ beide prüfen jetzt mehr als vorher.
 | 2026-09-07 | Checkpoint | Lokaler Checkpoint-Commit (WP-8A), SHA im Bericht, nicht gepusht |
 | 2026-09-07 | WP-8B | Logout authentifiziert und CSRF-pflichtig; alle Renderinputs bytegebunden über fünf Grenzen; beide Baselinefehler behoben; Ruff repo-weit sauber; 83 neue Tests, `docs/render-input-integrity.md`; Suite **3805 grün / 0 Fehler** |
 | 2026-09-07 | Checkpoints | Lokale Commits `4ab7718`, `aae390a`, `516801e`, `6fedb06`, `86b954c` — nicht gepusht |
+| 2026-09-08 | WP-8C | Gesamtaudit: Legacy-Manifeste können nicht veröffentlicht werden (16 Beweistests); Remote-Ergebnis ohne Integritätsvertrag abgelehnt; zentraler Renderinput-Guard über `_run_ffmpeg`; Systeminput-Provenienz mit transparenter Remote-Herkunft; Migrationsnachweis frisch/Upgrade/idempotent/Teilfehler; Preisvertrag geprüft; Secret-Scan sauber; Phase-1-Runbook und Release-Readiness-Bericht |
+| 2026-09-08 | WP-8C Fund | `btcedu migrate` scheiterte auf einer **frischen** Datenbank an Migration 001 (`channels.content_profile` NOT NULL) — Aktivierungsschritt 4 war blockiert; behoben und getestet |
+| 2026-09-08 | WP-8C Fund | `tests/test_renderer.py` war importreihenfolgenabhängig und allein nie grün; behoben |
+| 2026-09-08 | Checkpoints | Lokale Commits `e31bfb5`, `e64b2d7`, `2818443`, `cce82bd`, `2551a45` und der Dokumentationscommit — nicht gepusht |
+
+## WP-8C — Gesamtaudit, Phase-1-Handoff, Release-Readiness
+
+**Vollständig umgesetzt**
+
+- Git-/Arbeitszustand geprüft: sauber, 0 Commits hinter und 11 vor `origin/main`,
+  keine Divergenz.
+- Alte Render-Manifeste: bewiesen, dass ein Legacy-Render zuverlässig stale ist,
+  `render_valid` scheitert, `publish_video` wirft, `review_gate_3` nicht
+  freigibt, eine alte Freigabe nicht übernommen wird und das Löschen des Blocks
+  aus einem aktuellen Manifest kein Bypass ist.
+- Lücke geschlossen: ein Remote-Ergebnis ohne `render_inputs` wird abgelehnt,
+  sofern diese Maschine einen Satz messen kann.
+- Renderinput-Inventar: alle 18 ffmpeg-Aufrufe laufen über `_run_ffmpeg`; dort
+  sitzt jetzt `render_guard.inspect`. Drei erlaubte Klassen, alles andere
+  stoppt den Render. Keine globale Monkeypatch-Lösung.
+- Systeminputs: `render_environment` in Manifest und Provenienz; bewusst
+  **außerhalb** des Content-Hashes, mit Test darauf. Remote-Ergebnisse werden
+  als `render_origin: remote` gekennzeichnet, die Runner-Beschreibung bleibt
+  erhalten, Abweichungen werden ausgeschrieben.
+- Secret-Audit über alle lokalen Commits: keine Schlüssel, Tokens, Hashes,
+  signierten URLs, Medien, Datenbanken oder privaten absoluten Pfade.
+  `.env.example` enthält nur leere Platzhalter.
+- Migrationen: frische DB, Upgrade vom Vor-Avatar-Zustand, dreifache
+  Idempotenz, Teilfehler — 14 neue Tests.
+- Preis-/Konfigurationsvertrag geprüft: `heygen` / `avatar_iii` /
+  `digital_twin` / `1080p` / `0.0167` / `7.0` / `3` / `review_required: true` /
+  `auto_publish: false` / `publish_target: test → private`; `anchor_enabled`
+  bleibt `false`. Preisquelle und Prüfdatum stehen im Profil.
+- `docs/runbooks/almanya24-phase1-activation.md`: HeyGen, Studioassets gegen das
+  **reale** Manifestschema, Hashing, Rechte gegen die **realen** Profilfelder,
+  Dashboardauth, YouTube, 26-stufige Aktivierungsreihenfolge, bezahlte
+  10-Sekunden-Abnahme, visuelle Pilotcheckliste, Rollback.
+- `docs/implementation/almanya24-avatar-iii-release-readiness.md`: Umfang,
+  Architektur, Sicherheits- und Kostenmodell, Testnachweise, Anforderungsmatrix,
+  Restrisiken, Go/No-Go.
+
+**Bewusst blockiert bis Betreiberaktion**
+
+- Zehn echte Look-IDs, HeyGen-Konto, Digital Twin, Studioassets, Rechte und die
+  bezahlte 10-Sekunden-Abnahme. `anchor-readiness` blockiert auf jedem davon.
+
+**Urteil**
+
+`CODE READY — PRODUCTION BLOCKED UNTIL PHASE 1.`
+

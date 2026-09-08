@@ -21,6 +21,13 @@ from btcedu.core.renderer import (
     title_card_texts,
 )
 from btcedu.db import Base
+from btcedu.models import (  # noqa: F401 - register tables render_video reads
+    avatar_audio_asset,
+    avatar_job,
+    avatar_job_audit,
+    avatar_provider_breaker,
+    avatar_regeneration,
+)
 from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun

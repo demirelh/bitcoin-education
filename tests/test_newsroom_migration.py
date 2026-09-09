@@ -8,6 +8,7 @@ from btcedu.migrations import (
     CreateNewsroomCoreTablesMigration,
     CreateNewsroomEvidenceTablesMigration,
     CreateNewsroomMediaRightsTablesMigration,
+    CreateNewsroomPublicationTablesMigration,
     get_pending_migrations,
     run_migrations,
 )
@@ -41,6 +42,10 @@ NEWSROOM_TABLES = {
     "news_article_paragraphs",
     "news_article_paragraph_claims",
     "news_editorial_decisions",
+    "news_publications",
+    "news_publication_versions",
+    "news_correction_notices",
+    "news_site_releases",
 }
 
 
@@ -67,6 +72,7 @@ def test_existing_database_adds_newsroom_tables_without_touching_episode(tmp_pat
         CreateNewsroomEvidenceTablesMigration().version,
         CreateNewsroomMediaRightsTablesMigration().version,
         CreateNewsroomArticleTablesMigration().version,
+        CreateNewsroomPublicationTablesMigration().version,
     }
     for migration in MIGRATIONS:
         if migration.version not in targets:
@@ -221,3 +227,47 @@ def test_article_revisions_separate_versions_by_every_reviewed_hash(tmp_path):
         }
 
     assert {"content_hash", "evidence_hash", "media_hash"} <= columns
+
+
+PUBLICATION_TABLES = {
+    "news_publications",
+    "news_publication_versions",
+    "news_correction_notices",
+    "news_site_releases",
+}
+
+
+def test_n4_database_can_upgrade_only_the_publication_tables(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'n4-upgrade.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    for table in PUBLICATION_TABLES:
+        session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    target = CreateNewsroomPublicationTablesMigration().version
+    for migration in MIGRATIONS:
+        if migration.version != target:
+            session.add(SchemaMigration(version=migration.version))
+    session.commit()
+
+    run_migrations(session)
+
+    assert PUBLICATION_TABLES <= set(inspect(engine).get_table_names())
+    assert get_pending_migrations(session) == []
+
+
+def test_one_topic_can_only_hold_one_public_address(tmp_path):
+    """A second slug for the same topic would split a correction into two articles."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'publication-identity.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    run_migrations(session)
+
+    indexes = session.execute(text("PRAGMA index_list('news_publications')")).fetchall()
+    unique_columns = {
+        row[2]
+        for name, is_unique in ((row[1], row[2]) for row in indexes)
+        if is_unique
+        for row in session.execute(text(f"PRAGMA index_info('{name}')"))
+    }
+
+    assert {"topic_id", "slug"} <= unique_columns

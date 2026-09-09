@@ -34,6 +34,19 @@ from btcedu.core.editorial.media import (
     revoke_media_decision,
     select_media_for_revision,
 )
+from btcedu.core.editorial.public import (
+    PublicArticle,
+    PublicationBlocked,
+    PublicationError,
+    PublicMedia,
+    PublicParagraph,
+    PublicSource,
+    build_public_article,
+    export_blockers,
+    publish_article,
+    slugify,
+    withdraw_publication,
+)
 from btcedu.core.editorial.research import (
     DataOnlyClaimExtractor,
     DataOnlyEvidenceEvaluator,
@@ -41,6 +54,15 @@ from btcedu.core.editorial.research import (
     ResearchOutcome,
     research_claim,
     research_revision,
+)
+from btcedu.core.editorial.site_export import (
+    BuildResult,
+    SiteBuildError,
+    SiteConfig,
+    build_site,
+    live_release,
+    reconcile_releases,
+    switch_release,
 )
 
 __all__ = [
@@ -54,7 +76,24 @@ __all__ = [
     "ImportedStory",
     "LicensePolicy",
     "MediaBlobStore",
+    "BuildResult",
     "MediaRequirement",
+    "PublicArticle",
+    "PublicMedia",
+    "PublicParagraph",
+    "PublicSource",
+    "PublicationBlocked",
+    "PublicationError",
+    "SiteBuildError",
+    "SiteConfig",
+    "build_public_article",
+    "build_site",
+    "export_blockers",
+    "publish_article",
+    "reconcile_releases",
+    "slugify",
+    "switch_release",
+    "withdraw_publication",
     "MediaSelection",
     "DataOnlyClaimExtractor",
     "DataOnlyEvidenceEvaluator",
@@ -72,6 +111,7 @@ __all__ = [
     "evaluate_license",
     "generate_article_revision",
     "import_story",
+    "live_release",
     "reject_article_revision",
     "research_claim",
     "research_revision",

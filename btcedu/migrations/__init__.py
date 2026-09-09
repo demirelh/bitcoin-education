@@ -1516,6 +1516,34 @@ class CreateNewsroomArticleTablesMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateNewsroomPublicationTablesMigration(Migration):
+    """Migration 026: Create public identity, release and correction tables."""
+
+    @property
+    def version(self) -> str:
+        return "026_create_newsroom_publication_tables"
+
+    @property
+    def description(self) -> str:
+        return "Create newsroom publication, version, correction notice and release tables"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+        from btcedu.models.publication import (
+            CorrectionNotice,
+            Publication,
+            PublicationVersion,
+            SiteRelease,
+        )
+
+        bind = session.get_bind()
+        for model in (Publication, PublicationVersion, CorrectionNotice, SiteRelease):
+            model.__table__.create(bind, checkfirst=True)
+        session.commit()
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1542,6 +1570,7 @@ MIGRATIONS = [
     CreateNewsroomEvidenceTablesMigration(),
     CreateNewsroomMediaRightsTablesMigration(),
     CreateNewsroomArticleTablesMigration(),
+    CreateNewsroomPublicationTablesMigration(),
 ]
 
 

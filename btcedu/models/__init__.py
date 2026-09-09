@@ -46,5 +46,14 @@ from btcedu.models.media_rights import (  # noqa: F401
     RevisionMedia,
 )
 from btcedu.models.prompt_version import PromptVersion  # noqa: F401
+from btcedu.models.publication import (  # noqa: F401
+    CorrectionKind,
+    CorrectionNotice,
+    Publication,
+    PublicationStatus,
+    PublicationVersion,
+    ReleaseStatus,
+    SiteRelease,
+)
 from btcedu.models.publish_job import PublishJob, PublishJobStatus  # noqa: F401
 from btcedu.models.review import ReviewDecision, ReviewTask  # noqa: F401

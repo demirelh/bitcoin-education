@@ -27,6 +27,11 @@ class TestSettings:
         assert settings.newsroom_research_max_cost_usd == 0.75
         assert settings.newsroom_media_provider == "disabled"
         assert settings.newsroom_media_max_candidates == 8
+        # The public site is never live by accident: no real domain, and no
+        # invented imprint or privacy text.
+        assert settings.newsroom_site_base_url == "https://example.invalid"
+        assert settings.newsroom_site_imprint == ""
+        assert settings.newsroom_site_privacy == ""
 
     def test_source_type_default(self):
         settings = Settings()

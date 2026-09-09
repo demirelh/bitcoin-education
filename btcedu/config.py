@@ -344,6 +344,13 @@ class Settings(BaseSettings):
     newsroom_fetch_cache_ttl_seconds: int = 6 * 3600
     newsroom_media_provider: Literal["disabled", "wikimedia_commons"] = "disabled"
     newsroom_media_max_candidates: int = 8
+    newsroom_site_dir: str = "data/newsroom/site"
+    newsroom_site_name: str = "ALMANYA24"
+    newsroom_site_base_url: str = "https://example.invalid"
+    newsroom_site_imprint: str = ""
+    newsroom_site_privacy: str = ""
+    newsroom_site_contact: str = ""
+    newsroom_site_usage_rights: str = ""
 
     @model_validator(mode="after")
     def _keep_newsroom_data_outside_episode_outputs(self) -> "Settings":

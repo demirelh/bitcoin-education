@@ -3507,3 +3507,142 @@ def smoke_test_almanya24(keep: bool, target_dir: str) -> None:
         raise click.ClickException("the synthetic dry run did not complete")
     click.echo("")
     click.echo(f"[{SMOKE_MARKER}] dry run complete")
+
+
+@cli.group(name="site")
+def site_group() -> None:
+    """Public ALMANYA24 website: publish, build, switch, reconcile.
+
+    Every command here is manual on purpose. Nothing in the pipeline may put an
+    article in front of readers on its own.
+    """
+
+
+@site_group.command(name="publish")
+@click.argument("article_revision_id")
+@click.option("--section", default="haber", help="Public section for this topic.")
+@click.option("--operator", required=True, help="Who is publishing.")
+@click.option("--correction", default="", help="Reader-visible reason for a replacement.")
+@click.pass_context
+def site_publish(
+    ctx: click.Context,
+    article_revision_id: str,
+    section: str,
+    operator: str,
+    correction: str,
+) -> None:
+    """Offer an approved article revision under its public address."""
+    from btcedu.core.editorial.public import PublicationBlocked, publish_article
+    from btcedu.models.article import ArticleRevision
+
+    session = ctx.obj["session_factory"]()
+    try:
+        article = (
+            session.query(ArticleRevision)
+            .filter_by(article_revision_id=article_revision_id)
+            .one_or_none()
+        )
+        if article is None:
+            raise click.ClickException(f"Unknown article revision {article_revision_id}")
+        try:
+            publication = publish_article(
+                session,
+                article,
+                operator_ref=f"cli:{operator}",
+                section=section,
+                correction_summary=correction,
+            )
+        except PublicationBlocked as exc:
+            raise click.ClickException(f"Not publishable: {exc}") from exc
+        click.echo(f"[OK] /{publication.section}/{publication.slug}/ ({publication.status})")
+    finally:
+        session.close()
+
+
+@site_group.command(name="withdraw")
+@click.argument("slug")
+@click.option("--operator", required=True, help="Who is withdrawing.")
+@click.option("--reason", required=True, help="Reader-visible reason.")
+@click.pass_context
+def site_withdraw(ctx: click.Context, slug: str, operator: str, reason: str) -> None:
+    """Take an article back and leave a tombstone in its place."""
+    from btcedu.core.editorial.public import withdraw_publication
+    from btcedu.models.publication import Publication
+
+    session = ctx.obj["session_factory"]()
+    try:
+        publication = session.query(Publication).filter_by(slug=slug).one_or_none()
+        if publication is None:
+            raise click.ClickException(f"Unknown publication {slug}")
+        withdraw_publication(
+            session, publication, operator_ref=f"cli:{operator}", summary=reason
+        )
+        click.echo(f"[OK] withdrawn: /{publication.section}/{publication.slug}/")
+    finally:
+        session.close()
+
+
+@site_group.command(name="build")
+@click.option("--operator", default="", help="Who triggered the build.")
+@click.option("--switch/--no-switch", default=False, help="Point 'current' at the result.")
+@click.pass_context
+def site_build(ctx: click.Context, operator: str, switch: bool) -> None:
+    """Render the public site into a fresh release directory."""
+    from btcedu.core.editorial.site_export import SiteConfig, build_site, switch_release
+
+    settings = ctx.obj["settings"]
+    root = Path(settings.newsroom_site_dir)
+    session = ctx.obj["session_factory"]()
+    try:
+        result = build_site(
+            session,
+            root=root,
+            config=SiteConfig.from_settings(settings),
+            operator_ref=f"cli:{operator}" if operator else "",
+        )
+        click.echo(
+            f"[OK] release {result.release_id}: {result.article_count} articles, "
+            f"{result.withdrawn_count} tombstones -> {result.directory}"
+        )
+        for slug, reasons in result.skipped:
+            click.echo(f"[SKIP] {slug}: {'; '.join(reasons)}")
+        if switch:
+            pointer = switch_release(session, root=root, release_id=result.release_id)
+            click.echo(f"[OK] live: {pointer}")
+    finally:
+        session.close()
+
+
+@site_group.command(name="switch")
+@click.argument("release_id")
+@click.pass_context
+def site_switch(ctx: click.Context, release_id: str) -> None:
+    """Point the public directory at a finished release."""
+    from btcedu.core.editorial.site_export import switch_release
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        pointer = switch_release(
+            session, root=Path(settings.newsroom_site_dir), release_id=release_id
+        )
+        click.echo(f"[OK] live: {pointer}")
+    finally:
+        session.close()
+
+
+@site_group.command(name="reconcile")
+@click.pass_context
+def site_reconcile(ctx: click.Context) -> None:
+    """Clean up unreferenced builds after a crash; never touch what is served."""
+    from btcedu.core.editorial.site_export import live_release, reconcile_releases
+
+    settings = ctx.obj["settings"]
+    session = ctx.obj["session_factory"]()
+    try:
+        removed = reconcile_releases(session, root=Path(settings.newsroom_site_dir))
+        live = live_release(session)
+        click.echo(f"[OK] removed {len(removed)} unreferenced build(s)")
+        click.echo(f"[OK] live release: {live.release_id if live else 'none'}")
+    finally:
+        session.close()

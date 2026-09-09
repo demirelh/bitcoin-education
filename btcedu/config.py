@@ -342,6 +342,8 @@ class Settings(BaseSettings):
     newsroom_fetch_max_redirects: int = 3
     newsroom_fetch_max_bytes: int = 2 * 1024 * 1024
     newsroom_fetch_cache_ttl_seconds: int = 6 * 3600
+    newsroom_media_provider: Literal["disabled", "wikimedia_commons"] = "disabled"
+    newsroom_media_max_candidates: int = 8
 
     @model_validator(mode="after")
     def _keep_newsroom_data_outside_episode_outputs(self) -> "Settings":

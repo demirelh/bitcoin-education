@@ -1448,6 +1448,41 @@ class CreateNewsroomEvidenceTablesMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateNewsroomMediaRightsTablesMigration(Migration):
+    """Migration 024: Create durable media asset, licence and use decision tables."""
+
+    @property
+    def version(self) -> str:
+        return "024_create_newsroom_media_rights_tables"
+
+    @property
+    def description(self) -> str:
+        return "Create newsroom media asset, source offer, licence and use decision tables"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+        from btcedu.models.media_rights import (
+            LicenseEvidence,
+            MediaSourceOffer,
+            MediaUseDecision,
+            NewsroomMediaAsset,
+            RevisionMedia,
+        )
+
+        bind = session.get_bind()
+        for model in (
+            NewsroomMediaAsset,
+            MediaSourceOffer,
+            LicenseEvidence,
+            MediaUseDecision,
+            RevisionMedia,
+        ):
+            model.__table__.create(bind, checkfirst=True)
+        session.commit()
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1472,6 +1507,7 @@ MIGRATIONS = [
     RepairEpisodeChannelByProfileMigration(),
     CreateNewsroomCoreTablesMigration(),
     CreateNewsroomEvidenceTablesMigration(),
+    CreateNewsroomMediaRightsTablesMigration(),
 ]
 
 

@@ -77,6 +77,16 @@ class FetchedDocument:
     body_path: str | None = None
 
 
+@dataclass(frozen=True)
+class FetchedBinary:
+    requested_url: str
+    final_url: str
+    content_type: str
+    body: bytes
+    content_hash: str
+    retrieved_at: datetime
+
+
 Resolver = Callable[[str, int], list[str]]
 Transport = Callable[[str, str, float, float, int], RawDocumentResponse]
 
@@ -197,6 +207,63 @@ class DocumentFetcher:
         if cached is not None:
             return cached
 
+        final_url, response = self._load(requested_url, now=now)
+        content_type = _content_type(response)
+        if content_type not in ALLOWED_CONTENT_TYPES:
+            raise UnsupportedDocument(
+                f"Unsupported document content type: {content_type or 'missing'}"
+            )
+        text, title = _extract_text(response.body, content_type)
+        document = FetchedDocument(
+            requested_url=requested_url,
+            final_url=final_url,
+            content_type=content_type,
+            body=response.body,
+            text=text,
+            title=title,
+            content_hash=hashlib.sha256(response.body).hexdigest(),
+            retrieved_at=now,
+        )
+        return self.store.store(document)
+
+    def fetch_binary(
+        self,
+        url: str,
+        *,
+        allowed_content_types: frozenset[str],
+        max_bytes: int | None = None,
+    ) -> FetchedBinary:
+        """Load a non-text resource through the same validated request path.
+
+        Media downloads must not get their own transport: a second code path
+        would be a second chance to lose the redirect re-validation that keeps
+        a public URL from turning into an internal one.
+        """
+        requested_url = _canonical_url(url)
+        now = self.now()
+        final_url, response = self._load(requested_url, now=now, max_bytes=max_bytes)
+        content_type = _content_type(response)
+        if content_type not in allowed_content_types:
+            raise UnsupportedDocument(
+                f"Unsupported media content type: {content_type or 'missing'}"
+            )
+        return FetchedBinary(
+            requested_url=requested_url,
+            final_url=final_url,
+            content_type=content_type,
+            body=response.body,
+            content_hash=hashlib.sha256(response.body).hexdigest(),
+            retrieved_at=now,
+        )
+
+    def _load(
+        self,
+        requested_url: str,
+        *,
+        now: datetime,
+        max_bytes: int | None = None,
+    ) -> tuple[str, RawDocumentResponse]:
+        limit = self.max_bytes if max_bytes is None else max_bytes
         current_url = requested_url
         for redirect_count in range(self.max_redirects + 1):
             parsed = _validated_url(current_url)
@@ -208,7 +275,7 @@ class DocumentFetcher:
                 address,
                 self.connect_timeout_seconds,
                 self.read_timeout_seconds,
-                self.max_bytes,
+                limit,
             )
 
             if response.status_code in REDIRECT_STATUSES:
@@ -224,31 +291,11 @@ class DocumentFetcher:
                     "Document source rate limited the request",
                     _retry_after_seconds(_header(response.headers, "retry-after"), now),
                 )
-            if response.status_code >= 500:
-                raise DocumentHTTPError(response.status_code)
             if response.status_code >= 400:
                 raise DocumentHTTPError(response.status_code)
-            if len(response.body) > self.max_bytes:
-                raise DocumentTooLarge(f"Document exceeds {self.max_bytes} bytes")
-
-            content_type = (_header(response.headers, "content-type") or "").split(";", 1)[0]
-            content_type = content_type.strip().lower()
-            if content_type not in ALLOWED_CONTENT_TYPES:
-                raise UnsupportedDocument(
-                    f"Unsupported document content type: {content_type or 'missing'}"
-                )
-            text, title = _extract_text(response.body, content_type)
-            document = FetchedDocument(
-                requested_url=requested_url,
-                final_url=current_url,
-                content_type=content_type,
-                body=response.body,
-                text=text,
-                title=title,
-                content_hash=hashlib.sha256(response.body).hexdigest(),
-                retrieved_at=now,
-            )
-            return self.store.store(document)
+            if len(response.body) > limit:
+                raise DocumentTooLarge(f"Document exceeds {limit} bytes")
+            return current_url, response
 
         raise DocumentFetchError("Redirect handling terminated unexpectedly")
 
@@ -405,6 +452,11 @@ def _retry_after_seconds(value: str | None, now: datetime) -> float | None:
         if retry_at.tzinfo is None:
             retry_at = retry_at.replace(tzinfo=UTC)
         return max(0.0, (retry_at - now).total_seconds())
+
+
+def _content_type(response: RawDocumentResponse) -> str:
+    raw = (_header(response.headers, "content-type") or "").split(";", 1)[0]
+    return raw.strip().lower()
 
 
 def _header(headers: Mapping[str, str], name: str) -> str | None:

@@ -31,6 +31,13 @@ from btcedu.models.editorial import (  # noqa: F401
 )
 from btcedu.models.episode import Episode, PipelineRun  # noqa: F401
 from btcedu.models.media_asset import MediaAsset, MediaAssetType  # noqa: F401
+from btcedu.models.media_rights import (  # noqa: F401
+    LicenseEvidence,
+    MediaSourceOffer,
+    MediaUseDecision,
+    NewsroomMediaAsset,
+    RevisionMedia,
+)
 from btcedu.models.prompt_version import PromptVersion  # noqa: F401
 from btcedu.models.publish_job import PublishJob, PublishJobStatus  # noqa: F401
 from btcedu.models.review import ReviewDecision, ReviewTask  # noqa: F401

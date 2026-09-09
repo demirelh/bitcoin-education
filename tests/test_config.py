@@ -25,6 +25,8 @@ class TestSettings:
         assert settings.newsroom_research_max_queries == 20
         assert settings.newsroom_research_max_documents == 10
         assert settings.newsroom_research_max_cost_usd == 0.75
+        assert settings.newsroom_media_provider == "disabled"
+        assert settings.newsroom_media_max_candidates == 8
 
     def test_source_type_default(self):
         settings = Settings()

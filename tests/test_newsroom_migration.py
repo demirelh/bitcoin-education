@@ -6,6 +6,7 @@ from btcedu.migrations import (
     MIGRATIONS,
     CreateNewsroomCoreTablesMigration,
     CreateNewsroomEvidenceTablesMigration,
+    CreateNewsroomMediaRightsTablesMigration,
     get_pending_migrations,
     run_migrations,
 )
@@ -30,6 +31,11 @@ NEWSROOM_TABLES = {
     "news_source_observations",
     "news_evidence_links",
     "news_claim_assessments",
+    "news_media_assets",
+    "news_media_source_offers",
+    "news_license_evidence",
+    "news_media_use_decisions",
+    "news_revision_media",
 }
 
 
@@ -54,6 +60,7 @@ def test_existing_database_adds_newsroom_tables_without_touching_episode(tmp_pat
     targets = {
         CreateNewsroomCoreTablesMigration().version,
         CreateNewsroomEvidenceTablesMigration().version,
+        CreateNewsroomMediaRightsTablesMigration().version,
     }
     for migration in MIGRATIONS:
         if migration.version not in targets:
@@ -105,4 +112,47 @@ def test_n1_database_can_upgrade_only_the_evidence_tables(tmp_path):
     run_migrations(session)
 
     assert evidence_tables <= set(inspect(engine).get_table_names())
+    assert get_pending_migrations(session) == []
+
+
+def test_media_rights_tables_do_not_adopt_existing_pipeline_assets(tmp_path):
+    """The rights ledger starts empty even where the pipeline already has images.
+
+    Existing Pexels or frame assets were never rights-checked, so migrating
+    them in would present unverified pictures as cleared for publication.
+    """
+    from btcedu.models.media_asset import Base as MediaBase
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'media-upgrade.db'}")
+    Base.metadata.create_all(engine)
+    MediaBase.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    session.execute(
+        text(
+            "INSERT INTO media_assets "
+            "(episode_id, asset_type, file_path, mime_type, size_bytes, created_at) "
+            "VALUES ('episode-1', 'IMAGE', 'outputs/e1/images/c1.png', "
+            "'image/png', 10, '2026-09-09 00:00:00')"
+        )
+    )
+    media_tables = {
+        "news_media_assets",
+        "news_media_source_offers",
+        "news_license_evidence",
+        "news_media_use_decisions",
+        "news_revision_media",
+    }
+    for table in media_tables:
+        session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    target = CreateNewsroomMediaRightsTablesMigration().version
+    for migration in MIGRATIONS:
+        if migration.version != target:
+            session.add(SchemaMigration(version=migration.version))
+    session.commit()
+
+    run_migrations(session)
+
+    assert media_tables <= set(inspect(engine).get_table_names())
+    assert session.execute(text("SELECT COUNT(*) FROM news_media_assets")).scalar() == 0
+    assert session.execute(text("SELECT COUNT(*) FROM media_assets")).scalar() == 1
     assert get_pending_migrations(session) == []

@@ -33,7 +33,7 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | N3 Commons und Rechte | Erledigt | `8ca3146` | Assetbezogene Rechteentscheidung, Lizenzbelege, Dublettenspeicher, Widerruf; keine Altassetübernahme |
 | N4 Interner Artikel-MVP | Erledigt | `5a48f8d` | Dreifachhashbindung von Text, Belegen und Medien; private Reviewfläche, benannte Freigabe |
 | N5 Öffentliche Website | Erledigt | `80ccc0c` | Allowlist-DTO, atomarer Releaseswitch, Korrektur/Rücknahme; lokal gebaut, nicht veröffentlicht |
-| N6 Themenlebenszyklus | Offen | – | Nach N5 |
+| N6 Themenlebenszyklus | Erledigt | `814f918` | Vorschläge statt Verknüpfungen, revidierbare Zusammenführung, gebündelte Neuprüfung nach Quellenänderung |
 | N7 Gemeinsamer Videopfad | Offen | – | Keine Avataraktivierung |
 | N8 Bedarfsgerechter Ausbau | Offen | – | Nur konkret durch Befunde begründete Teilpakete |
 | N9 Technischer Namensalias | Offen | – | Optionaler kompatibler CLI-/Metadatenumfang, keine Dienstmigration |
@@ -55,6 +55,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | 2026-09-09 | N4 Grenzen | 191 Migrations-, Auth- und Dashboardtests sowie 83 Retention-, Remoterender- und Prefixtests bestanden; Ruff sauber |
 | 2026-09-09 | N5 gezielt | 161 Newsroomtests inklusive 28 Public-/Release-Tests bestanden |
 | 2026-09-09 | N5 Grenzen | 31 Migrations-, CLI- und Retentiontests bestanden; Ruff über `btcedu/` und `tests/` sauber |
+| 2026-09-09 | N6 gezielt | 217 Newsroomtests bestanden, davon 33 zu Themengraph, Neuprüfung und Operator-CLI |
+| 2026-09-09 | N6 Grenzen | 264 Tests zu Migrationen, Retention, Remote-Render, Weblogin, Dashboard und Pipeline-CLI bestanden; Ruff sauber |
 
 ## Entscheidungen und Plananpassungen
 
@@ -132,18 +134,42 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 24. Bauen und Veröffentlichen sind manuelle CLI-Befehle. Standardbasis-URL ist
     ungültig, Impressums-, Datenschutz- und Rechtetexte bleiben leer statt
     erfunden.
+25. Eine wiederkehrende Sendung erzeugt einen Vorschlag, keine Verknüpfung.
+    Verlangt sind eine Stichwortüberschneidung und ein zweites unabhängiges
+    Signal; Datum oder Beteiligte allein genügen nie.
+26. Der Themenname selbst zählt nicht doppelt: Entitätsbegriffe werden aus der
+    Stichwortmenge abgezogen, sonst bestätigte ein Ortsname sich selbst.
+27. Eine Zusammenführung löscht kein Thema. Welche Quellenverknüpfungen sie
+    angelegt hat, steht ausdrücklich im Merge-Datensatz, damit eine Rücknahme
+    genau diese entfernt und später von Hand ergänzte stehen lässt.
+28. Veröffentlichte Artikel führen ihre Abhängigkeiten mit. Eine geänderte
+    Quelle, Bewertung oder Mediendatei stößt eine begrenzte Neuprüfung an;
+    die Fan-out-Grenze verhindert, dass eine Massenänderung die Redaktion
+    unter Aufgaben begräbt.
+29. Eine Neuprüfung kann nur `clear`, `review_requested` oder `blocked`
+    melden. Sie kann nichts freigeben und nichts zurückziehen: Freigabe und
+    öffentliche Rücknahme bleiben benannte Entscheidungen eines Menschen.
+    Ein Test liest den Quelltext, um die Abwesenheit eines solchen Pfades zu
+    belegen.
+30. Der Belegcache löst zuerst die Datei, dann den Datenbankverweis. Ein
+    Absturz dazwischen hinterlässt einen Cachefehltreffer statt eines
+    Datensatzes, der auf fehlende Bytes zeigt.
 
 ## Wiederaufnahme
 
 Nächster konkreter Schritt:
 
-1. N6: Themenbündelung, Aktualisierung und dauerhafte Korrekturen. Mehrere
-   Sendungen und Quellen zu einem fortlaufenden Thema zusammenführen.
-2. Voraussetzung ist die bereits funktionsfähige Einzelkorrektur aus N5;
-   eine Bündelung darf keine bestehende öffentliche Adresse brechen.
+1. N7: Videos aus derselben redaktionellen Revision, aus der der Artikel
+   entsteht. Text und Video dürfen nicht auseinanderlaufen; Grundlage ist die
+   freigegebene Fassung, nicht ein zweiter Generierungslauf.
+2. Avatar-Aktivierung bleibt ausdrücklich außerhalb des Umfangs.
+   Kostenpflichtige Anbieteraufrufe, Deployment und Push bleiben untersagt.
 3. Offen aus N5, falls später gebraucht: clientseitige TR-Suche über
    `arama/index.json`, Related-Links und responsive Bildvarianten. Die
    Datenfelder dafür bestehen bereits.
-4. Fortschritt nach Abschluss von N6 hier eintragen.
+4. Offen aus N6, falls später gebraucht: eine Weboberfläche für Vorschläge,
+   Zusammenführungen und die Problemliste. Bedienbar ist beides bereits über
+   `btcedu topics` und `btcedu recheck`.
+5. Fortschritt nach Abschluss von N7 hier eintragen.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

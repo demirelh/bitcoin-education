@@ -35,7 +35,7 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | N5 Öffentliche Website | Erledigt | `80ccc0c` | Allowlist-DTO, atomarer Releaseswitch, Korrektur/Rücknahme; lokal gebaut, nicht veröffentlicht |
 | N6 Themenlebenszyklus | Erledigt | `814f918` | Vorschläge statt Verknüpfungen, revidierbare Zusammenführung, gebündelte Neuprüfung nach Quellenänderung |
 | N7 Gemeinsamer Videopfad | Erledigt | `ee10d12` | Adapter ohne Modellaufruf, getrennte Skript-/Videofreigabe, rechtekonforme Renderpakete; Avatar unberührt |
-| N8 Bedarfsgerechter Ausbau | Offen | – | Nur konkret durch Befunde begründete Teilpakete |
+| N8 Bedarfsgerechter Ausbau | Teilweise erledigt | `16224c2` | Profilvalidierung (A8) und Quellen-/Betriebsreport umgesetzt; Anbieteradapter warten auf Vertrag und Budget |
 | N9 Technischer Namensalias | Offen | – | Optionaler kompatibler CLI-/Metadatenumfang, keine Dienstmigration |
 
 ## Verifikationsjournal
@@ -56,6 +56,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | 2026-09-09 | N5 gezielt | 161 Newsroomtests inklusive 28 Public-/Release-Tests bestanden |
 | 2026-09-09 | N5 Grenzen | 31 Migrations-, CLI- und Retentiontests bestanden; Ruff über `btcedu/` und `tests/` sauber |
 | 2026-09-09 | N6 gezielt | 217 Newsroomtests bestanden, davon 33 zu Themengraph, Neuprüfung und Operator-CLI |
+| 2026-09-09 | N8 gezielt | 300 Newsroomtests bestanden, davon 17 zur Profilvalidierung und 12 zum Report |
+| 2026-09-09 | N8 Grenzen | 327 Tests zu Migrationen, Retention, Remote-Render, Weblogin, Dashboard, Pipeline, Pipeline-CLI und tagesschau-Fluss bestanden; Ruff sauber |
 | 2026-09-09 | N7 gezielt | 271 Newsroomtests bestanden, davon 29 zu Videoedition, Rechtehinweisen und Freigaben |
 | 2026-09-09 | N7 Grenzen | 320 Tests zu Migrationen, Retention, Remote-Render, Weblogin, Dashboard, Pipeline und Pipeline-CLI bestanden; Ruff sauber |
 | 2026-09-09 | N6 Grenzen | 264 Tests zu Migrationen, Retention, Remote-Render, Weblogin, Dashboard und Pipeline-CLI bestanden; Ruff sauber |
@@ -176,11 +178,29 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
     `stage_config.editorial_video.enabled` einschaltet. Bestehende
     Produktionsprofile adaptieren weiterhin die Originalsendung.
 
+37. Ein v2-Lauf bricht vor der ersten Stufe ab, wenn sein Profil fehlt,
+    falsch geschrieben oder strukturell unbrauchbar ist. Der bisherige stille
+    Standardplan erzeugte ein fertiges Video, das niemand angefordert hatte.
+    Legacy-v1-Folgen bleiben ausgenommen; sie sind älter als das Profilrouting.
+38. Nicht ladbare Profildateien werden in `ProfileRegistry.load_errors`
+    festgehalten. Eine still fehlschlagende Datei ist sonst nicht von einer
+    nie geschriebenen zu unterscheiden.
+39. Unbekannte `stage_config`-Abschnitte gelten als Fehler. Ein Tippfehler im
+    Schlüssel ist der übliche Weg, auf dem ein Profil unbemerkt wirkungslos
+    wird; ein Test hält die bekannte Liste an den ausgelieferten Profilen fest.
+40. Der Report ruft nichts ab, er zählt vorhandene Zeilen. Seine einzige
+    Wertung betrifft Unabhängigkeit: Belege aus derselben Provenienzfamilie
+    sind eine Quelle, gleich wie viele URLs sie trug — sonst sieht eine
+    Agenturmeldung wie Übereinstimmung mehrerer Zeugen aus.
+41. Die in N8 ebenfalls genannten Anbieteradapter (z. B. Openverse, EU AV)
+    bleiben offen. Sie verlangen Vertrag und Kostenfreigabe; ohne beides wäre
+    jede Anbindung eine unbeauftragte Ausgabe.
+
 ## Wiederaufnahme
 
 Nächster konkreter Schritt:
 
-1. N8: Quellen-, Medien- und Betriebsqualität erweitern.
+1. N9: Technische Namen schrittweise migrieren.
 2. Offen aus N7, falls später gebraucht: ein synthetischer, kostenfreier
    Video-Smoke-Test über den Editionspfad und die Anbindung der Edition an
    eine konkrete Episode (`VideoEdition.episode_id` ist vorgesehen, wird
@@ -191,6 +211,9 @@ Nächster konkreter Schritt:
 4. Offen aus N6, falls später gebraucht: eine Weboberfläche für Vorschläge,
    Zusammenführungen und die Problemliste. Bedienbar ist beides bereits über
    `btcedu topics` und `btcedu recheck`.
-5. Fortschritt nach Abschluss von N8 hier eintragen.
+5. Offen aus N8: je ein Anbieteradapter pro Folgepaket, erst nach Vertrag
+   und Budgetfreigabe; ausserdem Qualitätsauswertung anhand annotierter
+   Fehlklassifikationen, sobald echte Betriebsfälle vorliegen.
+6. Fortschritt nach Abschluss von N9 hier eintragen.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

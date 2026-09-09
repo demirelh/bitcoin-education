@@ -29,8 +29,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | N0a Importidentität | Erledigt | `9c89cd2` | Stream-/Editionsschlüssel, kein NULL-Kanal-Backfill, korrektes Backfillprofil |
 | N0b Retention-Holds | Erledigt | `de85f64` | Gründe für Pipeline/Avatar/Upload, Dry-Run und dauerhafte Providerledger |
 | N1 Redaktionelle Basis | Erledigt | `bba044e` | Immutable Quellen-/Claimrevisionen, Migration 022, atomare Budgetreservation |
-| N2 Automatische Belege | In Arbeit | – | Fixtures vollständig; Onlinepilot ohne Zugangsdaten offen |
-| N3 Commons und Rechte | Offen | – | Vertragstests ohne echte Käufe |
+| N2 Automatische Belege | Erledigt | `97052f8` | Dokumentgebundene Belege, sechs Status, Provenienzfamilien, kontrollierter Fetcher, Budget/Deadline-Stopp |
+| N3 Commons und Rechte | In Arbeit | – | Vertragstests ohne echte Käufe |
 | N4 Interner Artikel-MVP | Offen | – | Abschluss des funktionalen MVP |
 | N5 Öffentliche Website | Offen | – | Lokal bauen; nicht veröffentlichen |
 | N6 Themenlebenszyklus | Offen | – | Nach N5 |
@@ -48,6 +48,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | 2026-09-09 | N0b gezielt | 12 Retentiontests sowie 128 Retention-/Importintegrationstests bestanden; Ruff sauber |
 | 2026-09-09 | N1 gezielt/kompatibel | 233 Editorial-/Migration-/Config-/Retention-/Remote-Render-/Pipeline-/Webtests bestanden; Ruff sauber |
 | 2026-09-09 | Vollsuite nach N1 | Nach mehr als 20 Minuten bei 1 % kontrolliert beendet; bis dahin kein Fehler, aber kein vollständiger Nachweis |
+| 2026-09-09 | N2 gezielt | 88 Recherche-/Fetcher-/Such-/Editorial-/Migrations-/Configtests bestanden |
+| 2026-09-09 | N2 gemeinsame Grenzen | 68 Migrations-, Retention- und Remote-Render-Tests bestanden; Ruff für alle berührten Dateien sauber |
 
 ## Entscheidungen und Plananpassungen
 
@@ -73,16 +75,27 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
    praktikabel gewesen. Sie wird am nächsten größeren Integrationsmeilenstein
    erneut gestartet; gezielte gemeinsame Grenzen werden weiterhin pro Paket
    vollständig geprüft.
+7. N2 trennt Fund und Beleg. Ein Suchtreffer ist reine Entdeckung; belegend
+   ist ausschließlich eine Passage aus einer selbst geladenen Seite, die die
+   Anker des Claims unverändert enthält. Damit kann kein Snippet allein zu
+   `supported` führen.
+8. Syndizierte Kopien teilen eine Provenienzfamilie. Mehrere Abdrucke
+   derselben Agenturmeldung bleiben ein Beleg.
+9. Nicht wahrheitsprüfbare Claimtypen (Zitat als Wortlaut, Meinung, Prognose,
+   ASR-Verdacht) lösen keine Suche aus und werden als `unverifiable`
+   festgehalten, statt Budget für scheinbare Prüfungen auszugeben.
+10. Ein Budget- oder Deadlinestopp beendet den Lauf mit Status `blocked`.
+    Bereits dauerhafte Bewertungen bleiben erhalten, die übrigen Claims
+    bleiben unbewertet und gelten ausdrücklich nicht als geprüft.
 
 ## Wiederaufnahme
 
 Nächster konkreter Schritt:
 
-1. N2: additive `SourceObservation`-/`EvidenceLink`-Modelle und Migration
-   ergänzen.
-2. Austauschbaren Fixture-Suchadapter und zentralen, SSRF-sicheren
-   Dokument-Fetcher ohne reale Providerzugänge implementieren.
-3. Deterministische Claimstatus- und Herkunftsfamilienlogik mit sechs
-   Ergebnissen, Gegenbelegen, Resume und Budgetgrenzen testen.
+1. N3: assetbezogene Rechteentscheidung für Commons-Medien beginnen —
+   Lizenz-/Attributionsmodell und dauerhafte Rechteentscheidung je Asset.
+2. Vertragstests gegen lokale Fixtures; keine echten Käufe und keine
+   Providerzugänge.
+3. Fortschritt nach Abschluss von N3 hier eintragen.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

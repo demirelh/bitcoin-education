@@ -296,6 +296,34 @@ def test_transcript_to_existing_pipeline_real_synthetic_video(db_session, tmp_pa
     )
     require_final(db_session, episode, settings)
     assert _run_stage(db_session, episode, settings, "review_gate_3").status == "success"
+    from btcedu.core.publisher import (
+        _run_all_safety_checks,
+        publish_video,
+        request_publish_review,
+    )
+    from btcedu.core.reviewer import approve_review
+
+    metadata = _build_youtube_metadata(episode, settings, db_session)
+    checks = _run_all_safety_checks(db_session, episode, settings, *metadata)
+    assert {check.name for check in checks if not check.passed} == {
+        "profile_publish_permitted",
+        "manual_publish_approval",
+    }
+    # Only this in-memory profile permits the separate, fake publish step.
+    monkeypatch.setitem(profile.youtube, "publish_enabled", True)
+    publish_settings = settings.model_copy(update={"dry_run": True})
+    with pytest.raises(ValueError, match="manual_publish_approval"):
+        publish_video(db_session, episode.episode_id, publish_settings, privacy="private")
+    publish_review = request_publish_review(
+        db_session,
+        episode.episode_id,
+        publish_settings,
+        privacy="private",
+    )
+    approve_review(db_session, publish_review.id, notes="fixture:explicit-upload-editor")
+    result = publish_video(db_session, episode.episode_id, publish_settings, privacy="private")
+    assert result.dry_run and result.youtube_video_id == "DRY_RUN"
+    assert episode.status.value == "approved"
     original_audio = (root / "tts/ch01.mp3").read_bytes()
     (root / "tts/ch01.mp3").write_bytes(original_audio + b"changed")
     with pytest.raises(StaleEditionApproval):

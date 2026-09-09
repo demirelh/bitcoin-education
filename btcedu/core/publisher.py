@@ -568,13 +568,8 @@ def _run_all_safety_checks(
     final-publish approval so an intermediate render approval can never publish.
     """
     checks = [
-        _check_approval_gate(session, episode),
-        _check_artifact_integrity(session, episode, settings),
         _check_metadata_completeness(title, description, tags),
         _check_cost_sanity(session, episode, settings),
-        _check_qa_gate(session, episode, settings),
-        _check_no_critical_findings(settings, episode),
-        _check_narration_current(session, settings, episode),
         _check_render_valid(session, episode, settings),
         _check_render_inputs(session, episode, settings),
         _check_profile_publish_permitted(episode, settings),
@@ -584,12 +579,26 @@ def _run_all_safety_checks(
         from btcedu.core.editorial.production import require_final
         from btcedu.core.editorial.video import EditionError
 
+        checks.insert(0, SafetyCheck(
+            "approval_gate", episode.status == EpisodeStatus.APPROVED,
+            "Editorial pipeline must pass its separate final-video gate",
+        ))
         try:
             require_final(session, episode, settings)
         except (EditionError, OSError, ValueError) as exc:
             checks.append(SafetyCheck("editorial_final", False, str(exc)))
         else:
             checks.append(SafetyCheck("editorial_final", True, "Edition decision is current"))
+    else:
+        checks = [
+            _check_approval_gate(session, episode),
+            _check_artifact_integrity(session, episode, settings),
+            *checks[:2],
+            _check_qa_gate(session, episode, settings),
+            _check_no_critical_findings(settings, episode),
+            _check_narration_current(session, settings, episode),
+            *checks[2:],
+        ]
     if _requires_manual_publish_review(episode, settings):
         checks.append(_check_manual_publish_approval(session, episode, settings))
     for c in checks:

@@ -61,6 +61,12 @@ anschließend **77 Tests bestanden** (118,47 s) für die letzten
 Änderungshooks/Videoverträge. Zwei neue Tests für Wiederholungsmeldung
 und echten Operatoreinstieg mit automatisch gebildeten Suchqueries bestanden
 ebenfalls. Nächster Schritt ist jetzt die abschließende Vollsuite.
+Der erste Vollsuite-Anlauf auf `f615960` wurde bei der synthetischen
+Bestands-Bulletinprüfung (2 %) gezielt beendet, weil beim weiteren
+Schnittstellenabgleich noch die Zuordnung der neuen Finalfreigabe zum
+manuellen Publisher korrigiert werden musste. Das war kein Ressourcenfehler.
+Danach bestanden **93 Integration-/Publisher-/Bestandsgatetests** (95,52 s).
+Die abschließende Vollsuite wird auf dem korrigierten Commit neu begonnen.
 Die neue `test_editorial_integration.py` führt den realen Renderer aus,
 prüft sichtbare Pixel der eingebrannten Credits, unveränderte TTS,
 bytegebundene Finalfreigabe sowie öffentliche und Remote-Allowlists.

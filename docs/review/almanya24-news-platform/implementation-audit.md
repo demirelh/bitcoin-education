@@ -36,6 +36,12 @@ behaupteten Stand. Die Korrekturen und Nachweise werden darunter fortgeschrieben
    keine Budgetreservation für Extraktion/Bewertung.
 6. **P2:** N8-Planvalidierung geschah erst nach stiller Defaultplanung.
    N9-Nachweise behaupteten gemeinsame Locks, ohne Konkurrenz tatsächlich zu prüfen.
+7. **P1, bei der letzten Schnittstellenprüfung behoben:** Der bestehende
+   Publisher verlangte alte Render-/Translation-QA-Dateien, die eine
+   redaktionelle Edition bewusst nicht erzeugt. Für Editionsfolgen ersetzt jetzt
+   deren aktueller, bytegebundener Finalentscheid diese alten fachlichen Gates.
+   Renderintegrität, Metadaten, Budget, Profilfreigabe und eine **zusätzliche**
+   manuelle Publishentscheidung bleiben zwingend. Bestandsfolgen unverändert.
 
 ## Laufende Korrektur
 
@@ -89,6 +95,10 @@ war keine optionale Erweiterung, sondern verhinderte die vereinbarte Integration
   Der Sinuston ist **kein** Beweis für Aussprache oder menschliche Videoqualität.
   Anbieter und Sprachqualitätsmessung werden simuliert; Datenbank, Orchestrierung,
   Dateimanifeste, Websiteausgabe, Rendern und Freigabegates laufen tatsächlich.
+  Auch der bestehende manuelle Publishpfad wird inzwischen durchlaufen:
+  zuerst sperren Profil und fehlende Publishentscheidung, danach ausschließlich
+  `DryRunYouTubeService` mit einem nur im Test freigeschalteten Profil.
+  Kein Upload, kein OAuthzugriff und keine tatsächliche Veröffentlichung.
 - Quelle, Claim, Beleg, Lizenz, Rolle, Titel, Leitsatz und Absatz werden in
   Negativfällen verändert. Alte Website-Releases und Videoskripte blockieren.
   Veränderungen an Original-TTS oder Finalvideo entwerten die Finalentscheidung.

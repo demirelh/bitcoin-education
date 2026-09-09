@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import re
 from datetime import UTC, date, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -586,6 +587,28 @@ class TestBackfillEpisodes:
         assert db_session.query(Episode).count() == 2
 
     @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
+    def test_sets_profile_and_pipeline_version(self, mock_fetch, db_session):
+        mock_fetch.return_value = [
+            EpisodeInfo(
+                episode_id="news001",
+                title="tagesschau 20:00 Uhr, 14.07.2026",
+                published_at=datetime(2026, 7, 14, tzinfo=UTC),
+                url="https://youtube.com/watch?v=news001",
+                source="youtube_backfill",
+            )
+        ]
+        settings = _make_backfill_settings(
+            default_content_profile="tagesschau_tr",
+            pipeline_version=2,
+        )
+
+        backfill_episodes(db_session, settings)
+
+        episode = db_session.query(Episode).one()
+        assert episode.content_profile == "tagesschau_tr"
+        assert episode.pipeline_version == 2
+
+    @patch("btcedu.core.detector.fetch_channel_videos_ytdlp")
     def test_idempotent(self, mock_fetch, db_session):
         eps = [
             EpisodeInfo(
@@ -1043,3 +1066,141 @@ class TestFeedReDeliversAnOldBroadcast:
             result = detect_episodes(db_session, self._settings("bitcoin_podcast"))
 
         assert result.new == 2
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_dated_foreign_profile_does_not_claim_the_broadcast(
+        self, mock_fetch, db_session
+    ):
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        db_session.add(
+            Episode(
+                episode_id="podcast",
+                source="youtube_rss",
+                title="Podcast 08.09.2026 um 20:00 Uhr",
+                url="https://example.com/podcast",
+                published_at=datetime(2026, 9, 8, tzinfo=UTC),
+                content_profile="bitcoin_podcast",
+            )
+        )
+        db_session.commit()
+        mock_fetch.return_value = self._feed(
+            [("news", "tagesschau 20:00 Uhr, 08.09.2026", "2026-09-08T18:30:00+00:00")]
+        )
+
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = detect_episodes(db_session, self._settings())
+
+        assert result.new == 1
+        assert {episode.episode_id for episode in db_session.query(Episode)} == {
+            "podcast",
+            "news",
+        }
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_two_explicit_editions_on_one_day_are_kept(
+        self, mock_fetch, db_session, reverse
+    ):
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        entries = [
+            (
+                "short",
+                "tagesschau in 100 Sekunden, 08.09.2026",
+                "2026-09-08T12:00:00+00:00",
+            ),
+            (
+                "main",
+                "tagesschau 20:00 Uhr, 08.09.2026",
+                "2026-09-08T18:30:00+00:00",
+            ),
+        ]
+        mock_fetch.return_value = self._feed(list(reversed(entries)) if reverse else entries)
+
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            result = detect_episodes(db_session, self._settings())
+
+        assert result.new == 2
+        assert {episode.episode_id for episode in db_session.query(Episode)} == {
+            "short",
+            "main",
+        }
+
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_unknown_editions_are_not_merged_by_date(self, mock_fetch, db_session):
+        from btcedu.core.detector import detect_episodes
+        from btcedu.profiles import reset_registry
+
+        reset_registry()
+        mock_fetch.return_value = self._feed(
+            [
+                (
+                    "unknown-a",
+                    "tagesschau Sondersendung, 08.09.2026",
+                    "2026-09-08T12:00:00+00:00",
+                ),
+                (
+                    "unknown-b",
+                    "tagesschau Sondersendung, 08.09.2026",
+                    "2026-09-08T18:30:00+00:00",
+                ),
+            ]
+        )
+
+        with (
+            patch(
+                "btcedu.core.detector._resolve_title_filter",
+                return_value=re.compile("tagesschau"),
+            ),
+            patch("btcedu.core.retention.retention_cutoff", return_value=None),
+        ):
+            result = detect_episodes(db_session, self._settings())
+
+        assert result.new == 2
+
+
+class TestDetectDoesNotRewriteExistingChannels:
+    @patch("btcedu.core.detector.fetch_feed")
+    def test_empty_feed_leaves_unassigned_foreign_episode_unchanged(
+        self, mock_fetch, db_session
+    ):
+        from btcedu.config import Settings
+        from btcedu.core.detector import detect_episodes
+        from btcedu.models.channel import Channel
+
+        db_session.add_all(
+            [
+                Channel(
+                    channel_id="tagesschau",
+                    name="Tagesschau",
+                    content_profile="tagesschau_tr",
+                    rss_url="https://example.com/news.xml",
+                ),
+                Episode(
+                    episode_id="podcast-orphan",
+                    channel_id=None,
+                    source="youtube_rss",
+                    title="Bitcoin Podcast",
+                    url="https://example.com/podcast",
+                    content_profile="bitcoin_podcast",
+                ),
+            ]
+        )
+        db_session.commit()
+        mock_fetch.return_value = (
+            '<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+        )
+        settings = Settings(
+            podcast_rss_url="https://example.com/news.xml",
+            default_content_profile="tagesschau_tr",
+        )
+
+        with patch("btcedu.core.retention.retention_cutoff", return_value=None):
+            detect_episodes(db_session, settings)
+
+        assert db_session.query(Episode).one().channel_id is None

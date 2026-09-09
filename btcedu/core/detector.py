@@ -94,6 +94,31 @@ def _broadcast_day_from_title(title: str) -> date | None:
         return None
 
 
+def _broadcast_edition_from_title(title: str) -> str | None:
+    """Return a stable edition identifier only when the title states one."""
+    match = re.search(r"(\d{1,2})[:.](\d{2})\s*Uhr", title or "", re.IGNORECASE)
+    if match:
+        return f"{int(match.group(1)):02d}{int(match.group(2)):02d}"
+    if re.search(r"\b100\s+Sekunden\b", title or "", re.IGNORECASE):
+        return "100s"
+    return None
+
+
+def _broadcast_edition_from_slug(slug: str) -> str | None:
+    """Recover an explicit HHMM edition from a recorder slug."""
+    match = re.search(r"_(\d{4})$", slug or "")
+    return match.group(1) if match else None
+
+
+def _broadcast_key(episode_id: str, title: str) -> tuple[date, str] | None:
+    """Identify one edition without guessing from its upload timestamp."""
+    day = _broadcast_day_from_slug(episode_id) or _broadcast_day_from_title(title)
+    edition = _broadcast_edition_from_slug(episode_id) or _broadcast_edition_from_title(title)
+    if day is None or edition is None:
+        return None
+    return day, edition
+
+
 def _resolve_channel_id(
     session: Session,
     settings: Settings,
@@ -203,17 +228,13 @@ def detect_episodes(
             retention.blocked,
         )
 
-    resolved_channel_id = _resolve_channel_id(session, settings, channel_id)
-
-    # Backfill channel_id on existing episodes that have NULL channel_id
-    if resolved_channel_id:
-        orphan_count = (
-            session.query(Episode)
-            .filter(Episode.channel_id.is_(None))
-            .update({Episode.channel_id: resolved_channel_id})
-        )
-        if orphan_count:
-            logger.info("Backfilled channel_id on %d existing episodes", orphan_count)
+    profile_name = settings.default_content_profile
+    resolved_channel_id = _resolve_channel_id(
+        session,
+        settings,
+        channel_id,
+        profile_name=profile_name,
+    )
 
     feed_content = fetch_feed(feed_url)
     episodes = parse_feed(feed_content, settings.source_type)
@@ -240,52 +261,32 @@ def detect_episodes(
         if skipped:
             logger.info("Title filter skipped %d/%d episodes", skipped, before)
 
-    # A broadcast that is already stored must not be ingested again under a new
-    # video id. The feed re-delivers older editions - on 2026-08-08 it served
-    # the 4 and 5 August broadcasts a second time - and the id check further
-    # down cannot notice, because the id really is new. Only the date in the
-    # title identifies the broadcast itself.
-    #
-    # Gated on a configured title filter, which is the operator declaring this
-    # feed to be one recurring broadcast where a single edition per day is the
-    # rule. On an ordinary podcast feed two episodes on one day are normal, so
-    # the date in the title is deliberately the only key here - no published_at
-    # fallback, no dedup at all for feeds whose titles carry no date. Accepted
-    # days are folded back in so one batch cannot carry the duplicate itself.
+    # A re-upload can have a new provider id and upload timestamp. Deduplicate
+    # only an explicitly identified edition inside this profile/channel stream.
+    # Unknown editions are deliberately retained rather than guessed.
     if title_filter is not None:
-        known_days = _titled_broadcast_days(session)
+        known_keys = _stored_broadcast_keys(
+            session,
+            profile_name=profile_name,
+            channel_id=resolved_channel_id,
+            title_filter=title_filter,
+        )
         kept: list[EpisodeInfo] = []
         already_known = 0
         for ep in episodes:
-            day = _broadcast_day_from_title(ep.title or "")
-            if day is not None and day in known_days:
+            key = _broadcast_key(ep.episode_id, ep.title or "")
+            if key is not None and key in known_keys:
                 already_known += 1
                 continue
-            if day is not None:
-                known_days.add(day)
+            if key is not None:
+                known_keys.add(key)
             kept.append(ep)
         episodes = kept
         if already_known:
             logger.info(
-                "Skipped %d feed episode(s) whose broadcast day is already stored",
+                "Skipped %d feed episode(s) whose broadcast edition is already stored",
                 already_known,
             )
-
-    # The local recorder supersedes the feed for broadcasts it already captured.
-    # The upload of the same broadcast appears one to two hours later; ingesting
-    # it as well would run the whole pipeline a second time at full API cost.
-    if _local_recorder_settings(settings).get("supersedes_feed", True):
-        local_days = _local_episode_days(session, title_filter)
-        if local_days:
-            before = len(episodes)
-            episodes = [
-                ep
-                for ep in episodes
-                if _feed_broadcast_day(ep) is None or _feed_broadcast_day(ep) not in local_days
-            ]
-            superseded = before - len(episodes)
-            if superseded:
-                logger.info("Skipped %d feed episode(s) already recorded locally", superseded)
 
     result = DetectResult(found=len(episodes))
 
@@ -326,67 +327,42 @@ def _feed_broadcast_day(ep_info: EpisodeInfo) -> date | None:
     return ep_info.published_at.date() if ep_info.published_at else None
 
 
-def _local_episode_days(session: Session, title_filter: re.Pattern | None = None) -> set[date]:
-    """Broadcast days already ingested from the recorder."""
-    return _episode_days_by_source(session, local=True, title_filter=title_filter)
-
-
-def _titled_broadcast_days(session: Session) -> set[date]:
-    """Broadcast days already stored, keyed strictly on the slug or title date.
-
-    Deliberately without the ``published_at`` fallback that
-    :func:`_episode_days_by_source` applies. This set is used to reject feed
-    entries outright, so a wrong match costs a broadcast that never runs. An
-    upload date says nothing about which broadcast an entry contains - the feed
-    re-serves old editions with a current timestamp - while a date in the title
-    or in a recorder slug names the broadcast itself.
-    """
-    days: set[date] = set()
-    for episode_id, title in session.query(Episode.episode_id, Episode.title).all():
-        day = _broadcast_day_from_slug(episode_id) or _broadcast_day_from_title(title or "")
-        if day is not None:
-            days.add(day)
-    return days
-
-
-def _episode_days_by_source(
-    session: Session, *, local: bool, title_filter: re.Pattern | None = None
-) -> set[date]:
-    """Broadcast days already stored, restricted to (or excluding) the recorder.
-
-    Deduplication has to work in *both* directions. Suppressing only the feed is
-    not enough: when the YouTube upload was ingested first — which is the case
-    for every broadcast recorded before the local source existed, and for any
-    evening the recorder misses — the local file would arrive afterwards and
-    start a second, fully paid run for a broadcast that is already done.
-
-    A day is only claimed by an episode that *names* it, in its slug or title.
-    An upload timestamp says nothing about which broadcast an entry contains,
-    and treating it as if it did loses recordings: on 2026-08-13 an unrelated
-    Bitcoin podcast episode published that afternoon claimed the day, and the
-    tagesschau recording made that evening was discarded as a duplicate of it.
-
-    ``title_filter`` restricts the claim to the same programme for the same
-    reason. Two shows broadcast on one day are not duplicates of each other,
-    however similar their dates look.
-    """
+def _stored_broadcast_keys(
+    session: Session,
+    *,
+    profile_name: str | None,
+    channel_id: str | None,
+    title_filter: re.Pattern | None,
+    local: bool | None = None,
+) -> set[tuple[date, str]]:
+    """Return explicit edition keys belonging to the same ingest stream."""
     from btcedu.services.local_recorder_service import SOURCE_NAME
 
-    query = session.query(Episode.episode_id, Episode.title)
-    query = (
-        query.filter(Episode.source == SOURCE_NAME)
-        if local
-        else query.filter(Episode.source != SOURCE_NAME)
+    query = session.query(
+        Episode.episode_id,
+        Episode.title,
+        Episode.source,
+        Episode.content_profile,
+        Episode.channel_id,
     )
+    if local is True:
+        query = query.filter(Episode.source == SOURCE_NAME)
+    elif local is False:
+        query = query.filter(Episode.source != SOURCE_NAME)
 
-    days: set[date] = set()
-    for episode_id, title in query.all():
-        if title_filter is not None and not title_filter.search(title or ""):
+    keys: set[tuple[date, str]] = set()
+    for episode_id, title, _source, stored_profile, stored_channel in query.all():
+        same_stream = bool(
+            (profile_name and stored_profile == profile_name)
+            or (channel_id and stored_channel == channel_id)
+        )
+        same_programme = bool(title_filter and title_filter.search(title or ""))
+        if not same_stream and not same_programme:
             continue
-        day = _broadcast_day_from_slug(episode_id) or _broadcast_day_from_title(title or "")
-        if day is not None:
-            days.add(day)
-    return days
+        key = _broadcast_key(episode_id, title or "")
+        if key is not None:
+            keys.add(key)
+    return keys
 
 
 def _broadcast_day_from_slug(slug: str) -> date | None:
@@ -532,10 +508,26 @@ def detect_local_recordings(
     # from before the recorder existed - would be transcribed, translated,
     # voiced and rendered a second time.
     if config.get("supersedes_feed", True):
-        feed_days = _episode_days_by_source(session, local=False, title_filter=title_filter)
-        if feed_days:
+        feed_keys = _stored_broadcast_keys(
+            session,
+            profile_name=profile_name,
+            channel_id=_resolve_channel_id(
+                session,
+                settings,
+                channel_id,
+                profile_name=profile_name,
+            ),
+            title_filter=title_filter,
+            local=False,
+        )
+        if feed_keys:
             before = len(episodes)
-            episodes = [ep for ep in episodes if _feed_broadcast_day(ep) not in feed_days]
+            episodes = [
+                ep
+                for ep in episodes
+                if (key := _broadcast_key(ep.episode_id, ep.title or "")) is None
+                or key not in feed_keys
+            ]
             skipped = before - len(episodes)
             if skipped:
                 logger.info("Skipped %d local recording(s) already ingested from the feed", skipped)
@@ -681,7 +673,13 @@ def backfill_episodes(
     if not yt_channel_id:
         raise ValueError("No YouTube channel ID configured. Set PODCAST_YOUTUBE_CHANNEL_ID.")
 
-    resolved_channel_id = _resolve_channel_id(session, settings, channel_id)
+    profile_name = settings.default_content_profile
+    resolved_channel_id = _resolve_channel_id(
+        session,
+        settings,
+        channel_id,
+        profile_name=profile_name,
+    )
 
     all_videos = fetch_channel_videos_ytdlp(yt_channel_id)
     result = DetectResult(found=len(all_videos))
@@ -727,6 +725,8 @@ def backfill_episodes(
                 url=ep_info.url,
                 published_at=ep_info.published_at,
                 status=EpisodeStatus.NEW,
+                content_profile=profile_name,
+                pipeline_version=settings.pipeline_version,
             )
             session.add(episode)
         inserted += 1

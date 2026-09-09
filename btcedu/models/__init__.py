@@ -13,13 +13,17 @@ from btcedu.models.channel import Channel  # noqa: F401
 from btcedu.models.content_artifact import ContentArtifact  # noqa: F401
 from btcedu.models.editorial import (  # noqa: F401
     Claim,
+    ClaimAssessment,
     ClaimOrigin,
     ClaimRevision,
     EditorialRevision,
+    EvidenceLink,
     ProviderOperation,
+    ResearchQuery,
     ResearchRun,
     RevisionClaim,
     SourceItem,
+    SourceObservation,
     SourceRevision,
     SourceSpan,
     Topic,

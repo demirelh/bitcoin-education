@@ -1420,6 +1420,34 @@ class CreateNewsroomCoreTablesMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateNewsroomEvidenceTablesMigration(Migration):
+    """Migration 023: Create durable search, observation and evidence tables."""
+
+    @property
+    def version(self) -> str:
+        return "023_create_newsroom_evidence_tables"
+
+    @property
+    def description(self) -> str:
+        return "Create newsroom query, source observation and claim evidence tables"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+        from btcedu.models.editorial import (
+            ClaimAssessment,
+            EvidenceLink,
+            ResearchQuery,
+            SourceObservation,
+        )
+
+        bind = session.get_bind()
+        for model in (ResearchQuery, SourceObservation, EvidenceLink, ClaimAssessment):
+            model.__table__.create(bind, checkfirst=True)
+        session.commit()
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1443,6 +1471,7 @@ MIGRATIONS = [
     AddAvatarClipHashMigration(),
     RepairEpisodeChannelByProfileMigration(),
     CreateNewsroomCoreTablesMigration(),
+    CreateNewsroomEvidenceTablesMigration(),
 ]
 
 

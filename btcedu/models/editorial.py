@@ -40,6 +40,36 @@ class ProviderOperationStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class ResearchQueryStatus(str, enum.Enum):
+    RESERVED = "reserved"
+    COMPLETED = "completed"
+    BLOCKED = "blocked"
+    FAILED = "failed"
+
+
+class FetchStatus(str, enum.Enum):
+    FETCHED = "fetched"
+    BLOCKED = "blocked"
+    UNSUPPORTED = "unsupported"
+    FAILED = "failed"
+
+
+class EvidenceRelation(str, enum.Enum):
+    SUPPORTS = "supports"
+    CONTRADICTS = "contradicts"
+    CONTEXT = "context"
+    INCONCLUSIVE = "inconclusive"
+
+
+class ClaimVerdict(str, enum.Enum):
+    SUPPORTED = "supported"
+    CONTRADICTED = "contradicted"
+    PARTIAL = "partial"
+    CONFLICTING = "conflicting"
+    INSUFFICIENT = "insufficient"
+    UNVERIFIABLE = "unverifiable"
+
+
 class SourceItem(Base):
     __tablename__ = "news_source_items"
 
@@ -268,6 +298,143 @@ class ProviderOperation(Base):
     )
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ResearchQuery(Base):
+    __tablename__ = "news_research_queries"
+    __table_args__ = (
+        UniqueConstraint(
+            "research_run_id",
+            "claim_revision_id",
+            "query_key",
+            name="uq_news_research_query_key",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    research_run_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("news_research_runs.id"), nullable=False, index=True
+    )
+    claim_revision_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("news_claim_revisions.id"), nullable=False, index=True
+    )
+    provider_operation_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("news_provider_operations.id"), nullable=True, index=True
+    )
+    query_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    query_text: Mapped[str] = mapped_column(Text, nullable=False)
+    language: Mapped[str] = mapped_column(String(16), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=ResearchQueryStatus.RESERVED.value, index=True
+    )
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class SourceObservation(Base):
+    __tablename__ = "news_source_observations"
+    __table_args__ = (
+        UniqueConstraint("observation_key", name="uq_news_source_observation_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    observation_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    observation_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    research_run_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("news_research_runs.id"), nullable=False, index=True
+    )
+    research_query_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("news_research_queries.id"), nullable=True, index=True
+    )
+    requested_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    canonical_url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    url_digest: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    publisher: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    title: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retrieved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    body_path: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    fetch_status: Mapped[str] = mapped_column(
+        String(32), nullable=False, default=FetchStatus.FETCHED.value, index=True
+    )
+    http_status: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    retry_after_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
+    provenance_family: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class EvidenceLink(Base):
+    __tablename__ = "news_evidence_links"
+    __table_args__ = (
+        UniqueConstraint(
+            "claim_revision_id",
+            "source_observation_id",
+            "passage_hash",
+            "relation",
+            name="uq_news_evidence_link_passage",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    evidence_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    claim_revision_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("news_claim_revisions.id"), nullable=False, index=True
+    )
+    source_observation_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("news_source_observations.id"), nullable=False, index=True
+    )
+    relation: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    passage: Mapped[str] = mapped_column(Text, nullable=False)
+    translated_passage: Mapped[str | None] = mapped_column(Text, nullable=True)
+    passage_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    provenance_family: Mapped[str | None] = mapped_column(String(500), nullable=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+
+
+class ClaimAssessment(Base):
+    __tablename__ = "news_claim_assessments"
+    __table_args__ = (
+        UniqueConstraint(
+            "research_run_id",
+            "claim_revision_id",
+            name="uq_news_claim_assessment_run",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    assessment_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
+    research_run_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("news_research_runs.id"), nullable=False, index=True
+    )
+    claim_revision_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("news_claim_revisions.id"), nullable=False, index=True
+    )
+    verdict: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    counter_search_completed: Mapped[bool] = mapped_column(nullable=False, default=False)
+    evidence_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=_utcnow, onupdate=_utcnow
+    )
 
 
 class EditorialRevision(Base):

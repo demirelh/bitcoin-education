@@ -19,6 +19,12 @@ class TestSettings:
         assert settings.whisper_language == "de"
         assert settings.raw_data_dir == "data/raw"
         assert settings.transcripts_dir == "data/transcripts"
+        assert settings.newsroom_enabled is False
+        assert settings.newsroom_search_provider == "disabled"
+        assert settings.newsroom_research_max_claims == 5
+        assert settings.newsroom_research_max_queries == 20
+        assert settings.newsroom_research_max_documents == 10
+        assert settings.newsroom_research_max_cost_usd == 0.75
 
     def test_source_type_default(self):
         settings = Settings()

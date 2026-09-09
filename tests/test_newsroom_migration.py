@@ -5,6 +5,7 @@ from btcedu.db import Base
 from btcedu.migrations import (
     MIGRATIONS,
     CreateNewsroomCoreTablesMigration,
+    CreateNewsroomEvidenceTablesMigration,
     get_pending_migrations,
     run_migrations,
 )
@@ -25,6 +26,10 @@ NEWSROOM_TABLES = {
     "news_provider_operations",
     "news_editorial_revisions",
     "news_revision_claims",
+    "news_research_queries",
+    "news_source_observations",
+    "news_evidence_links",
+    "news_claim_assessments",
 }
 
 
@@ -46,9 +51,12 @@ def test_existing_database_adds_newsroom_tables_without_touching_episode(tmp_pat
     session = sessionmaker(bind=engine)()
     for table in NEWSROOM_TABLES:
         session.execute(text(f"DROP TABLE IF EXISTS {table}"))
-    target = CreateNewsroomCoreTablesMigration().version
+    targets = {
+        CreateNewsroomCoreTablesMigration().version,
+        CreateNewsroomEvidenceTablesMigration().version,
+    }
     for migration in MIGRATIONS:
-        if migration.version != target:
+        if migration.version not in targets:
             session.add(SchemaMigration(version=migration.version))
     session.execute(
         text(
@@ -73,4 +81,28 @@ def test_existing_database_adds_newsroom_tables_without_touching_episode(tmp_pat
         text("SELECT COUNT(*) FROM episodes WHERE episode_id='kept'")
     ).scalar()
     assert kept == 1
+    assert get_pending_migrations(session) == []
+
+
+def test_n1_database_can_upgrade_only_the_evidence_tables(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'n1-upgrade.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    evidence_tables = {
+        "news_research_queries",
+        "news_source_observations",
+        "news_evidence_links",
+        "news_claim_assessments",
+    }
+    for table in evidence_tables:
+        session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    target = CreateNewsroomEvidenceTablesMigration().version
+    for migration in MIGRATIONS:
+        if migration.version != target:
+            session.add(SchemaMigration(version=migration.version))
+    session.commit()
+
+    run_migrations(session)
+
+    assert evidence_tables <= set(inspect(engine).get_table_names())
     assert get_pending_migrations(session) == []

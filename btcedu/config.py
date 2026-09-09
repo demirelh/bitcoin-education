@@ -330,6 +330,18 @@ class Settings(BaseSettings):
     episode_retention_days: int = 0  # 0 disables global cleanup; profiles may override
     newsroom_enabled: bool = False
     newsroom_data_dir: str = "data/newsroom"
+    newsroom_search_provider: Literal["disabled", "brave"] = "disabled"
+    brave_search_api_key: str = ""
+    newsroom_research_max_claims: int = 5
+    newsroom_research_max_queries: int = 20
+    newsroom_research_max_documents: int = 10
+    newsroom_research_max_cost_usd: float = 0.75
+    newsroom_research_timeout_seconds: int = 600
+    newsroom_fetch_connect_timeout_seconds: float = 5.0
+    newsroom_fetch_read_timeout_seconds: float = 20.0
+    newsroom_fetch_max_redirects: int = 3
+    newsroom_fetch_max_bytes: int = 2 * 1024 * 1024
+    newsroom_fetch_cache_ttl_seconds: int = 6 * 3600
 
     @model_validator(mode="after")
     def _keep_newsroom_data_outside_episode_outputs(self) -> "Settings":

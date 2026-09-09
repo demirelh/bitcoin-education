@@ -31,7 +31,7 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | N1 Redaktionelle Basis | Erledigt | `bba044e` | Immutable Quellen-/Claimrevisionen, Migration 022, atomare Budgetreservation |
 | N2 Automatische Belege | Erledigt | `97052f8` | Dokumentgebundene Belege, sechs Status, Provenienzfamilien, kontrollierter Fetcher, Budget/Deadline-Stopp |
 | N3 Commons und Rechte | Erledigt | `8ca3146` | Assetbezogene Rechteentscheidung, Lizenzbelege, Dublettenspeicher, Widerruf; keine Altassetübernahme |
-| N4 Interner Artikel-MVP | In Arbeit | – | Abschluss des funktionalen MVP |
+| N4 Interner Artikel-MVP | Erledigt | `5a48f8d` | Dreifachhashbindung von Text, Belegen und Medien; private Reviewfläche, benannte Freigabe |
 | N5 Öffentliche Website | Offen | – | Lokal bauen; nicht veröffentlichen |
 | N6 Themenlebenszyklus | Offen | – | Nach N5 |
 | N7 Gemeinsamer Videopfad | Offen | – | Keine Avataraktivierung |
@@ -51,6 +51,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | 2026-09-09 | N2 gezielt | 88 Recherche-/Fetcher-/Such-/Editorial-/Migrations-/Configtests bestanden |
 | 2026-09-09 | N2 gemeinsame Grenzen | 68 Migrations-, Retention- und Remote-Render-Tests bestanden; Ruff für alle berührten Dateien sauber |
 | 2026-09-09 | N3 gezielt/gemeinsam | 151 Medien-, Recherche-, Editorial-, Fetcher-, Migrations-, Config- und Retentiontests bestanden; Ruff über `btcedu/` und `tests/` sauber |
+| 2026-09-09 | N4 gezielt | 152 Newsroomtests (Artikel-, Web-, Medien-, Recherche-, Migrations-, Configtests) bestanden |
+| 2026-09-09 | N4 Grenzen | 191 Migrations-, Auth- und Dashboardtests sowie 83 Retention-, Remoterender- und Prefixtests bestanden; Ruff sauber |
 
 ## Entscheidungen und Plananpassungen
 
@@ -99,15 +101,31 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 14. Bestehende Pexels-/Frameassets werden nicht in das Rechteledger
     übernommen; sie tragen keinen Beleg und dürfen nicht als freigegeben
     erscheinen.
+15. Eine Artikelrevision ist über Text-, Beleg- und Medienhash zugleich
+    eindeutig. Der Texthash allein hätte eine Neufassung nach entzogenem Bild
+    mit der bereits geprüften Fassung kollidieren lassen.
+16. Zahlen- und Zitatprüfung bezieht sich auf die gesamte Revision, nicht auf
+    die Claims eines einzelnen Absatzes. Eine Überschrift darf eine Zahl
+    wiederholen, die der Fließtext belegt.
+17. Die Freigabe hat bewusst keinen automatischen Pfad. Die Autoapprove-
+    Einstellung der Profile gilt nur für die Videopipeline; ein Test prüft die
+    Abwesenheit dieses Pfades im Quelltext.
+18. JSON-Routen der Redaktion liegen unter `/api/editorial`, die Seite unter
+    `/editorial`. Nur der `/api/`-Pfad liefert einem maschinellen Aufruf 401
+    statt einer Weiterleitung in das Loginformular.
+19. Kein Redaktionsendpunkt steht auf der Loginfreiliste; es gibt hinter der
+    Fläche keinen Export, keinen Upload und keinen Generierungsjob.
 
 ## Wiederaufnahme
 
 Nächster konkreter Schritt:
 
-1. N4: türkischer Artikelentwurf aus der freigegebenen Revision, gebunden an
-   Claimstatus und freigegebene Medien.
-2. Interne Freigabe mit sichtbaren Belegen, Attribution und Sperrgründen;
-   gesperrte oder widerrufene Assets dürfen die Freigabe nicht erreichen.
-3. Fortschritt nach Abschluss von N4 hier eintragen.
+1. N5: eigenständige öffentliche Nachrichtenwebsite, ausschließlich aus
+   freigegebenen Artikelrevisionen erzeugt. Lokal bauen, nicht veröffentlichen.
+2. Das Operator-Dashboard bleibt getrennt; der öffentliche Build darf keine
+   Entwürfe, Sperrgründe oder Betriebsdaten enthalten.
+3. Attribution und Lizenzangabe müssen im öffentlichen Ausgabeformat
+   erscheinen; ein widerrufenes Asset darf nicht im Build landen.
+4. Fortschritt nach Abschluss von N5 hier eintragen.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

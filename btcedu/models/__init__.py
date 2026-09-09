@@ -11,6 +11,20 @@ from btcedu.models.avatar_regeneration import (  # noqa: F401
 )
 from btcedu.models.channel import Channel  # noqa: F401
 from btcedu.models.content_artifact import ContentArtifact  # noqa: F401
+from btcedu.models.editorial import (  # noqa: F401
+    Claim,
+    ClaimOrigin,
+    ClaimRevision,
+    EditorialRevision,
+    ProviderOperation,
+    ResearchRun,
+    RevisionClaim,
+    SourceItem,
+    SourceRevision,
+    SourceSpan,
+    Topic,
+    TopicSource,
+)
 from btcedu.models.episode import Episode, PipelineRun  # noqa: F401
 from btcedu.models.media_asset import MediaAsset, MediaAssetType  # noqa: F401
 from btcedu.models.prompt_version import PromptVersion  # noqa: F401

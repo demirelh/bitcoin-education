@@ -173,6 +173,24 @@ def test_job_package_excludes_render_outputs(db_session, episode, episode_dir):
     assert not any(name.startswith("episode/render/segments") for name in names)
 
 
+def test_job_package_never_includes_private_newsroom_root(
+    db_session, episode, episode_dir, tmp_path
+):
+    newsroom = tmp_path / "newsroom"
+    newsroom.mkdir()
+    (newsroom / "private-evidence.json").write_text('{"private": true}', encoding="utf-8")
+    settings = Settings(
+        outputs_dir=str(episode_dir.parent),
+        newsroom_data_dir=str(newsroom),
+    )
+
+    archive = build_job_package(db_session, episode.episode_id, settings, episode_dir.parent)
+
+    with tarfile.open(archive) as tar:
+        names = set(tar.getnames())
+    assert not any("private-evidence.json" in name for name in names)
+
+
 def test_job_package_omits_source_url(db_session, episode, episode_dir):
     """The runner has no business knowing where the episode came from."""
     settings = Settings(outputs_dir=str(episode_dir.parent))

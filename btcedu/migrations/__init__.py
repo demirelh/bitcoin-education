@@ -1370,6 +1370,56 @@ class RepairEpisodeChannelByProfileMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateNewsroomCoreTablesMigration(Migration):
+    """Migration 022: Create the immutable editorial core and provider ledger."""
+
+    @property
+    def version(self) -> str:
+        return "022_create_newsroom_core_tables"
+
+    @property
+    def description(self) -> str:
+        return "Create newsroom source, claim, topic and research ledger tables"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+        from btcedu.models.editorial import (
+            Claim,
+            ClaimOrigin,
+            ClaimRevision,
+            EditorialRevision,
+            ProviderOperation,
+            ResearchRun,
+            RevisionClaim,
+            SourceItem,
+            SourceRevision,
+            SourceSpan,
+            Topic,
+            TopicSource,
+        )
+
+        tables = (
+            SourceItem,
+            SourceRevision,
+            SourceSpan,
+            Topic,
+            TopicSource,
+            Claim,
+            ClaimRevision,
+            ClaimOrigin,
+            ResearchRun,
+            ProviderOperation,
+            EditorialRevision,
+            RevisionClaim,
+        )
+        bind = session.get_bind()
+        for model in tables:
+            model.__table__.create(bind, checkfirst=True)
+        session.commit()
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1392,6 +1442,7 @@ MIGRATIONS = [
     AddAvatarConcurrencyStateMigration(),
     AddAvatarClipHashMigration(),
     RepairEpisodeChannelByProfileMigration(),
+    CreateNewsroomCoreTablesMigration(),
 ]
 
 

@@ -1,5 +1,6 @@
 import logging
 import warnings
+from pathlib import Path
 from typing import Literal
 
 from pydantic import model_validator
@@ -327,6 +328,17 @@ class Settings(BaseSettings):
     # Output
     outputs_dir: str = "data/outputs"
     episode_retention_days: int = 0  # 0 disables global cleanup; profiles may override
+    newsroom_enabled: bool = False
+    newsroom_data_dir: str = "data/newsroom"
+
+    @model_validator(mode="after")
+    def _keep_newsroom_data_outside_episode_outputs(self) -> "Settings":
+        """Private editorial evidence must never enter retention or render packages."""
+        outputs = Path(self.outputs_dir).expanduser().resolve()
+        newsroom = Path(self.newsroom_data_dir).expanduser().resolve()
+        if outputs == newsroom or outputs in newsroom.parents or newsroom in outputs.parents:
+            raise ValueError("newsroom_data_dir and outputs_dir must not overlap")
+        return self
 
     # Reports & Logs
     reports_dir: str = "data/reports"

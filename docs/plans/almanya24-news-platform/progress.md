@@ -36,7 +36,7 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | N6 Themenlebenszyklus | Erledigt | `814f918` | Vorschläge statt Verknüpfungen, revidierbare Zusammenführung, gebündelte Neuprüfung nach Quellenänderung |
 | N7 Gemeinsamer Videopfad | Erledigt | `ee10d12` | Adapter ohne Modellaufruf, getrennte Skript-/Videofreigabe, rechtekonforme Renderpakete; Avatar unberührt |
 | N8 Bedarfsgerechter Ausbau | Teilweise erledigt | `16224c2` | Profilvalidierung (A8) und Quellen-/Betriebsreport umgesetzt; Anbieteradapter warten auf Vertrag und Budget |
-| N9 Technischer Namensalias | Offen | – | Optionaler kompatibler CLI-/Metadatenumfang, keine Dienstmigration |
+| N9 Namensmigration | Teilweise erledigt | `d7147f9` | CLI-Alias `almanya24` auf denselben Einstiegspunkt; weitere Umbenennungen nur mit eigenem Auftrag |
 
 ## Verifikationsjournal
 
@@ -56,6 +56,7 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | 2026-09-09 | N5 gezielt | 161 Newsroomtests inklusive 28 Public-/Release-Tests bestanden |
 | 2026-09-09 | N5 Grenzen | 31 Migrations-, CLI- und Retentiontests bestanden; Ruff über `btcedu/` und `tests/` sauber |
 | 2026-09-09 | N6 gezielt | 217 Newsroomtests bestanden, davon 33 zu Themengraph, Neuprüfung und Operator-CLI |
+| 2026-09-09 | N9 Schritt 1 | 5 Alias-Tests bestanden; Ruff sauber |
 | 2026-09-09 | N8 gezielt | 300 Newsroomtests bestanden, davon 17 zur Profilvalidierung und 12 zum Report |
 | 2026-09-09 | N8 Grenzen | 327 Tests zu Migrationen, Retention, Remote-Render, Weblogin, Dashboard, Pipeline, Pipeline-CLI und tagesschau-Fluss bestanden; Ruff sauber |
 | 2026-09-09 | N7 gezielt | 271 Newsroomtests bestanden, davon 29 zu Videoedition, Rechtehinweisen und Freigaben |
@@ -196,11 +197,18 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
     bleiben offen. Sie verlangen Vertrag und Kostenfreigabe; ohne beides wäre
     jede Anbindung eine unbeauftragte Ausgabe.
 
+42. `almanya24` und `btcedu` sind derselbe Einstiegspunkt, nicht zwei
+    gleichwertige Kommandos: eine Datenbank, ein Lock, eine Timerfamilie.
+    Paket-, Pfad- und Dienstnamen bleiben unverändert, bis ein einzelner
+    Schritt gesondert beauftragt ist — ein Pfadumzug entwertet gespeicherte
+    Artefakte still.
+
 ## Wiederaufnahme
 
 Nächster konkreter Schritt:
 
-1. N9: Technische Namen schrittweise migrieren.
+1. Alle Pakete N0–N9 sind umgesetzt, soweit sie ohne Anbietervertrag,
+   Deployment oder gesonderten Umbenennungsauftrag umsetzbar sind.
 2. Offen aus N7, falls später gebraucht: ein synthetischer, kostenfreier
    Video-Smoke-Test über den Editionspfad und die Anbindung der Edition an
    eine konkrete Episode (`VideoEdition.episode_id` ist vorgesehen, wird
@@ -214,6 +222,11 @@ Nächster konkreter Schritt:
 5. Offen aus N8: je ein Anbieteradapter pro Folgepaket, erst nach Vertrag
    und Budgetfreigabe; ausserdem Qualitätsauswertung anhand annotierter
    Fehlklassifikationen, sobald echte Betriebsfälle vorliegen.
-6. Fortschritt nach Abschluss von N9 hier eintragen.
+6. Offen aus N9, jeweils gesondert zu beauftragen: Importkompatibilität,
+   Dienste-/Timer-Alias und ein hash-sicherer Pfadumzug. Ohne Auftrag bleibt
+   es beim CLI-Alias.
+7. Nächster sinnvoller Schritt insgesamt: ein realer Trockenlauf des
+   Redaktionspfades auf gespeicherten Daten (Report lesen, Vorschläge und
+   Neuprüfungen bedienen), bevor weitere Funktionen ergänzt werden.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

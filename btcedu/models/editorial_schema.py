@@ -52,3 +52,15 @@ class EvidenceDraft(BaseModel):
     translated_passage: str | None = None
     rationale: str = Field(..., min_length=1)
     provenance_family: str | None = None
+
+
+class ArticleParagraphDraft(BaseModel):
+    kind: Literal["lede", "body", "context"] = "body"
+    text: str = Field(..., min_length=1)
+    claim_keys: list[str] = Field(default_factory=list)
+
+
+class ArticleDraft(BaseModel):
+    title: str = Field(..., min_length=1, max_length=300)
+    lede: str = Field(..., min_length=1)
+    paragraphs: list[ArticleParagraphDraft] = Field(default_factory=list)

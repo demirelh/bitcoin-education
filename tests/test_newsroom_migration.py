@@ -4,6 +4,7 @@ from sqlalchemy.orm import sessionmaker
 from btcedu.db import Base
 from btcedu.migrations import (
     MIGRATIONS,
+    CreateNewsroomArticleTablesMigration,
     CreateNewsroomCoreTablesMigration,
     CreateNewsroomEvidenceTablesMigration,
     CreateNewsroomMediaRightsTablesMigration,
@@ -36,6 +37,10 @@ NEWSROOM_TABLES = {
     "news_license_evidence",
     "news_media_use_decisions",
     "news_revision_media",
+    "news_article_revisions",
+    "news_article_paragraphs",
+    "news_article_paragraph_claims",
+    "news_editorial_decisions",
 }
 
 
@@ -61,6 +66,7 @@ def test_existing_database_adds_newsroom_tables_without_touching_episode(tmp_pat
         CreateNewsroomCoreTablesMigration().version,
         CreateNewsroomEvidenceTablesMigration().version,
         CreateNewsroomMediaRightsTablesMigration().version,
+        CreateNewsroomArticleTablesMigration().version,
     }
     for migration in MIGRATIONS:
         if migration.version not in targets:
@@ -156,3 +162,62 @@ def test_media_rights_tables_do_not_adopt_existing_pipeline_assets(tmp_path):
     assert session.execute(text("SELECT COUNT(*) FROM news_media_assets")).scalar() == 0
     assert session.execute(text("SELECT COUNT(*) FROM media_assets")).scalar() == 1
     assert get_pending_migrations(session) == []
+
+
+ARTICLE_TABLES = {
+    "news_article_revisions",
+    "news_article_paragraphs",
+    "news_article_paragraph_claims",
+    "news_editorial_decisions",
+}
+
+
+def test_n3_database_can_upgrade_only_the_article_tables(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'n3-upgrade.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    for table in ARTICLE_TABLES:
+        session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    target = CreateNewsroomArticleTablesMigration().version
+    for migration in MIGRATIONS:
+        if migration.version != target:
+            session.add(SchemaMigration(version=migration.version))
+    session.commit()
+
+    run_migrations(session)
+
+    assert ARTICLE_TABLES <= set(inspect(engine).get_table_names())
+    assert get_pending_migrations(session) == []
+
+
+def test_article_revisions_separate_versions_by_every_reviewed_hash(tmp_path):
+    """Same words over different evidence or pictures are different versions.
+
+    Approval is bound to the content, evidence and media hash together, so the
+    uniqueness of a stored revision has to span all three. Keying on the text
+    alone would make a redraft after a withdrawn picture collide with the
+    version an operator already reviewed.
+    """
+    engine = create_engine(f"sqlite:///{tmp_path / 'article-hashes.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    run_migrations(session)
+
+    columns = {
+        row[2]
+        for row in session.execute(
+            text("PRAGMA index_info('uq_news_article_revision_content')")
+        )
+    }
+    if not columns:
+        indexes = session.execute(
+            text("PRAGMA index_list('news_article_revisions')")
+        ).fetchall()
+        unique = [row[1] for row in indexes if row[2]]
+        columns = {
+            row[2]
+            for name in unique
+            for row in session.execute(text(f"PRAGMA index_info('{name}')"))
+        }
+
+    assert {"content_hash", "evidence_hash", "media_hash"} <= columns

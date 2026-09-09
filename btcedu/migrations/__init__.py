@@ -1483,6 +1483,39 @@ class CreateNewsroomMediaRightsTablesMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateNewsroomArticleTablesMigration(Migration):
+    """Migration 025: Create article revisions, paragraphs and operator decisions."""
+
+    @property
+    def version(self) -> str:
+        return "025_create_newsroom_article_tables"
+
+    @property
+    def description(self) -> str:
+        return "Create newsroom article revision, paragraph and editorial decision tables"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+        from btcedu.models.article import (
+            ArticleParagraph,
+            ArticleParagraphClaim,
+            ArticleRevision,
+            EditorialDecision,
+        )
+
+        bind = session.get_bind()
+        for model in (
+            ArticleRevision,
+            ArticleParagraph,
+            ArticleParagraphClaim,
+            EditorialDecision,
+        ):
+            model.__table__.create(bind, checkfirst=True)
+        session.commit()
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1508,6 +1541,7 @@ MIGRATIONS = [
     CreateNewsroomCoreTablesMigration(),
     CreateNewsroomEvidenceTablesMigration(),
     CreateNewsroomMediaRightsTablesMigration(),
+    CreateNewsroomArticleTablesMigration(),
 ]
 
 

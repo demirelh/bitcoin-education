@@ -1,5 +1,18 @@
 """Editorial-domain services for the ALMANYA24 newsroom."""
 
+from btcedu.core.editorial.article import (
+    ArticleApprovalBlocked,
+    ArticleContentRejected,
+    ArticleGenerationError,
+    StaleArticleApproval,
+    UnknownClaimReferenced,
+    UnsupportedClaimReferenced,
+    approve_article_revision,
+    article_gate_reasons,
+    article_preview,
+    generate_article_revision,
+    reject_article_revision,
+)
 from btcedu.core.editorial.ingest import ImportedStory, import_story
 from btcedu.core.editorial.jobs import (
     EditorialBudgetExceeded,
@@ -31,6 +44,9 @@ from btcedu.core.editorial.research import (
 )
 
 __all__ = [
+    "ArticleApprovalBlocked",
+    "ArticleContentRejected",
+    "ArticleGenerationError",
     "BrokenImage",
     "CandidateAssessment",
     "EditorialBudgetExceeded",
@@ -44,11 +60,19 @@ __all__ = [
     "DataOnlyEvidenceEvaluator",
     "ResearchDeadlineExceeded",
     "ResearchOutcome",
+    "StaleArticleApproval",
+    "UnknownClaimReferenced",
+    "UnsupportedClaimReferenced",
     "approved_revision_media",
+    "approve_article_revision",
+    "article_gate_reasons",
+    "article_preview",
     "assess_candidate",
     "build_attribution",
     "evaluate_license",
+    "generate_article_revision",
     "import_story",
+    "reject_article_revision",
     "research_claim",
     "research_revision",
     "reserve_provider_operation",

@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <title>Redaktionelle Prüfung — ALMANYA24</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
+  <style>
+    .ed-wrap { max-width: 900px; margin: 24px auto; padding: 0 16px; }
+    .ed-card { background: var(--panel, #1b1f27); border: 1px solid var(--border, #2a3039);
+               border-radius: 14px; padding: 20px; margin-bottom: 16px; }
+    .ed-claim { border-left: 3px solid var(--border, #2a3039); padding: 4px 0 4px 10px;
+                margin: 6px 0; color: var(--muted, #9aa4b2); font-size: 13px; }
+    .ed-open { background: #3a1c1c; color: #f08c8c; border-radius: 10px; padding: 12px; }
+    .ed-hash { font-family: monospace; font-size: 12px; color: var(--muted, #9aa4b2);
+               word-break: break-all; }
+  </style>
+</head>
+<body>
+<div class="ed-wrap">
+{% if article is none %}
+  <div class="ed-card"><h2>Artikel nicht gefunden</h2></div>
+{% else %}
+  <div class="ed-card">
+    <h1>{{ article.title }}</h1>
+    <p>{{ article.lede }}</p>
+    <p class="ed-hash">Status: {{ article.status }} · {{ article.language }}</p>
+  </div>
+
+  {% if article.open_issues %}
+  <div class="ed-card ed-open">
+    <h3>Freigabe blockiert</h3>
+    <ul>{% for reason in article.open_issues %}<li>{{ reason }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  {% for paragraph in article.paragraphs %}
+  <div class="ed-card">
+    <p>{{ paragraph.text }}</p>
+    {% for claim in paragraph.claims %}
+    <div class="ed-claim">
+      <strong>{{ claim.claim_key }}</strong> — {{ claim.verdict }}<br>
+      {{ claim.statement }}
+      {% if claim.rationale %}<br><em>{{ claim.rationale }}</em>{% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  {% if article.media %}
+  <div class="ed-card">
+    <h3>Bildnachweis</h3>
+    {% for item in article.media %}
+    <p>{{ item.caption }}<br>
+      <span class="ed-hash">{{ item.attribution }} · {{ item.license }}</span></p>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if article.unreferenced_claims %}
+  <div class="ed-card">
+    <h3>Nicht verwendete wesentliche Aussagen</h3>
+    <ul>{% for claim in article.unreferenced_claims %}
+      <li>{{ claim.claim_key }} — {{ claim.verdict }}</li>
+    {% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  <div class="ed-card">
+    <h3>Geprüfter Stand</h3>
+    <p class="ed-hash" data-content-hash="{{ article.content_hash }}">Text: {{ article.content_hash }}</p>
+    <p class="ed-hash" data-evidence-hash="{{ article.evidence_hash }}">Belege: {{ article.evidence_hash }}</p>
+    <p class="ed-hash" data-media-hash="{{ article.media_hash }}">Medien: {{ article.media_hash }}</p>
+  </div>
+{% endif %}
+</div>
+</body>
+</html>

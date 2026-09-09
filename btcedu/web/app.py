@@ -101,6 +101,11 @@ def create_app(settings=None) -> Flask:
 
     app.register_blueprint(api_bp, url_prefix="/api")
 
+    from btcedu.web.editorial_routes import editorial_api_bp, editorial_bp
+
+    app.register_blueprint(editorial_bp, url_prefix="/editorial")
+    app.register_blueprint(editorial_api_bp, url_prefix="/api/editorial")
+
     @app.route("/")
     def index():
         return render_template("index.html")

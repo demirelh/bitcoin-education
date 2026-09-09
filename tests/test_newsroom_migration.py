@@ -9,6 +9,7 @@ from btcedu.migrations import (
     CreateNewsroomEvidenceTablesMigration,
     CreateNewsroomMediaRightsTablesMigration,
     CreateNewsroomPublicationTablesMigration,
+    CreateNewsroomTopicGraphTablesMigration,
     get_pending_migrations,
     run_migrations,
 )
@@ -46,6 +47,12 @@ NEWSROOM_TABLES = {
     "news_publication_versions",
     "news_correction_notices",
     "news_site_releases",
+    "news_topic_aliases",
+    "news_topic_merges",
+    "news_update_proposals",
+    "news_publication_dependencies",
+    "news_recheck_jobs",
+    "news_source_issues",
 }
 
 
@@ -73,6 +80,7 @@ def test_existing_database_adds_newsroom_tables_without_touching_episode(tmp_pat
         CreateNewsroomMediaRightsTablesMigration().version,
         CreateNewsroomArticleTablesMigration().version,
         CreateNewsroomPublicationTablesMigration().version,
+        CreateNewsroomTopicGraphTablesMigration().version,
     }
     for migration in MIGRATIONS:
         if migration.version not in targets:
@@ -271,3 +279,67 @@ def test_one_topic_can_only_hold_one_public_address(tmp_path):
     }
 
     assert {"topic_id", "slug"} <= unique_columns
+
+
+TOPIC_GRAPH_TABLES = {
+    "news_topic_aliases",
+    "news_topic_merges",
+    "news_update_proposals",
+    "news_publication_dependencies",
+    "news_recheck_jobs",
+    "news_source_issues",
+}
+
+
+def test_n5_database_can_upgrade_only_the_topic_graph_tables(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'n5-upgrade.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    for table in TOPIC_GRAPH_TABLES:
+        session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    target = CreateNewsroomTopicGraphTablesMigration().version
+    for migration in MIGRATIONS:
+        if migration.version != target:
+            session.add(SchemaMigration(version=migration.version))
+    session.commit()
+
+    run_migrations(session)
+
+    assert TOPIC_GRAPH_TABLES <= set(inspect(engine).get_table_names())
+    assert get_pending_migrations(session) == []
+
+
+def test_public_addresses_survive_the_topic_graph_migration(tmp_path):
+    """A published URL must not change because the newsroom grew a merge graph."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'stable-ids.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    for table in TOPIC_GRAPH_TABLES:
+        session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    target = CreateNewsroomTopicGraphTablesMigration().version
+    for migration in MIGRATIONS:
+        if migration.version != target:
+            session.add(SchemaMigration(version=migration.version))
+    session.execute(
+        text(
+            "INSERT INTO news_topics (topic_id, topic_key, title, status, "
+            "created_at, updated_at) VALUES ('t-1', 'k-1', 'Konut', 'draft', "
+            "'2026-09-09 00:00:00', '2026-09-09 00:00:00')"
+        )
+    )
+    session.execute(
+        text(
+            "INSERT INTO news_publications (publication_id, topic_id, slug, section, "
+            "language, status, first_published_at, updated_at) VALUES "
+            "('p-1', 1, 'berlinde-yeni-konut', 'haber', 'tr', 'published', "
+            "'2026-09-09 00:00:00', '2026-09-09 00:00:00')"
+        )
+    )
+    session.commit()
+
+    run_migrations(session)
+
+    slug = session.execute(
+        text("SELECT slug FROM news_publications WHERE publication_id='p-1'")
+    ).scalar()
+    assert slug == "berlinde-yeni-konut"

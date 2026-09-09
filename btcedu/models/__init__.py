@@ -57,3 +57,17 @@ from btcedu.models.publication import (  # noqa: F401
 )
 from btcedu.models.publish_job import PublishJob, PublishJobStatus  # noqa: F401
 from btcedu.models.review import ReviewDecision, ReviewTask  # noqa: F401
+from btcedu.models.topic_graph import (  # noqa: F401
+    AliasKind,
+    DependencyKind,
+    IssueStatus,
+    MergeStatus,
+    ProposalStatus,
+    PublicationDependency,
+    RecheckJob,
+    RecheckStatus,
+    SourceIssue,
+    TopicAlias,
+    TopicMerge,
+    UpdateProposal,
+)

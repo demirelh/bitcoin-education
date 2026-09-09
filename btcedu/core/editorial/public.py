@@ -340,6 +340,10 @@ def publish_article(
             )
         )
     session.commit()
+
+    from btcedu.core.editorial.recheck import record_dependencies
+
+    record_dependencies(session, publication)
     return publication
 
 

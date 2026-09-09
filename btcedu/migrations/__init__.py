@@ -1544,6 +1544,43 @@ class CreateNewsroomPublicationTablesMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateNewsroomTopicGraphTablesMigration(Migration):
+    """Migration 027: Create topic aliases, merges, dependencies and recheck jobs."""
+
+    @property
+    def version(self) -> str:
+        return "027_create_newsroom_topic_graph_tables"
+
+    @property
+    def description(self) -> str:
+        return "Create newsroom topic alias, merge, proposal, dependency, recheck and issue tables"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+        from btcedu.models.topic_graph import (
+            PublicationDependency,
+            RecheckJob,
+            SourceIssue,
+            TopicAlias,
+            TopicMerge,
+            UpdateProposal,
+        )
+
+        bind = session.get_bind()
+        for model in (
+            TopicAlias,
+            TopicMerge,
+            UpdateProposal,
+            PublicationDependency,
+            RecheckJob,
+            SourceIssue,
+        ):
+            model.__table__.create(bind, checkfirst=True)
+        session.commit()
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1571,6 +1608,7 @@ MIGRATIONS = [
     CreateNewsroomMediaRightsTablesMigration(),
     CreateNewsroomArticleTablesMigration(),
     CreateNewsroomPublicationTablesMigration(),
+    CreateNewsroomTopicGraphTablesMigration(),
 ]
 
 

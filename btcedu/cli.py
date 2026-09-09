@@ -3646,3 +3646,252 @@ def site_reconcile(ctx: click.Context) -> None:
         click.echo(f"[OK] live release: {live.release_id if live else 'none'}")
     finally:
         session.close()
+
+
+@cli.group(name="topics")
+def topics_group() -> None:
+    """Topic graph: proposals, merges, reverts.
+
+    A proposal is a suggestion that two broadcasts are the same story. Only an
+    operator turns it into a link, because a wrong merge silently rewrites what
+    a reader is told happened.
+    """
+
+
+@topics_group.command(name="proposals")
+@click.option("--limit", default=20, show_default=True, help="How many to list.")
+@click.pass_context
+def topics_proposals(ctx: click.Context, limit: int) -> None:
+    """List open update proposals."""
+    from btcedu.models.editorial import Topic
+    from btcedu.models.topic_graph import ProposalStatus, UpdateProposal
+
+    session = ctx.obj["session_factory"]()
+    try:
+        proposals = (
+            session.query(UpdateProposal)
+            .filter_by(status=ProposalStatus.OPEN.value)
+            .order_by(UpdateProposal.score.desc())
+            .limit(limit)
+            .all()
+        )
+        if not proposals:
+            click.echo("no open proposals")
+            return
+        for proposal in proposals:
+            topic = session.get(Topic, proposal.topic_id)
+            title = topic.title if topic is not None else "?"
+            click.echo(
+                f"{proposal.proposal_id}  score={proposal.score:.2f}  "
+                f"topic={title!r}  signals={proposal.signals}"
+            )
+    finally:
+        session.close()
+
+
+def _load_proposal(session, proposal_id: str):
+    from btcedu.models.topic_graph import UpdateProposal
+
+    proposal = (
+        session.query(UpdateProposal).filter_by(proposal_id=proposal_id).one_or_none()
+    )
+    if proposal is None:
+        raise click.ClickException(f"Unknown proposal {proposal_id}")
+    return proposal
+
+
+@topics_group.command(name="accept")
+@click.argument("proposal_id")
+@click.option("--operator", required=True, help="Who is accepting.")
+@click.pass_context
+def topics_accept(ctx: click.Context, proposal_id: str, operator: str) -> None:
+    """Attach the proposed broadcast to the topic. This publishes nothing."""
+    from btcedu.core.editorial.topics import TopicGraphError, accept_proposal
+
+    session = ctx.obj["session_factory"]()
+    try:
+        proposal = _load_proposal(session, proposal_id)
+        try:
+            accept_proposal(session, proposal, operator_ref=f"cli:{operator}")
+        except (TopicGraphError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"[OK] accepted {proposal_id}")
+    finally:
+        session.close()
+
+
+@topics_group.command(name="reject")
+@click.argument("proposal_id")
+@click.option("--operator", required=True, help="Who is rejecting.")
+@click.pass_context
+def topics_reject(ctx: click.Context, proposal_id: str, operator: str) -> None:
+    """Decline a proposed link."""
+    from btcedu.core.editorial.topics import reject_proposal
+
+    session = ctx.obj["session_factory"]()
+    try:
+        proposal = _load_proposal(session, proposal_id)
+        try:
+            reject_proposal(session, proposal, operator_ref=f"cli:{operator}")
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"[OK] rejected {proposal_id}")
+    finally:
+        session.close()
+
+
+@topics_group.command(name="merge")
+@click.argument("primary_topic_key")
+@click.argument("merged_topic_key")
+@click.option("--operator", required=True, help="Who is merging.")
+@click.option("--rationale", required=True, help="Why these are one story.")
+@click.pass_context
+def topics_merge(
+    ctx: click.Context,
+    primary_topic_key: str,
+    merged_topic_key: str,
+    operator: str,
+    rationale: str,
+) -> None:
+    """Declare two topics one story, keeping both rows for a revert."""
+    from btcedu.core.editorial.topics import TopicGraphError, merge_topics
+    from btcedu.models.editorial import Topic
+
+    session = ctx.obj["session_factory"]()
+    try:
+        topics = {}
+        for key in (primary_topic_key, merged_topic_key):
+            topic = session.query(Topic).filter_by(topic_key=key).one_or_none()
+            if topic is None:
+                raise click.ClickException(f"Unknown topic {key}")
+            topics[key] = topic
+        try:
+            merge = merge_topics(
+                session,
+                primary=topics[primary_topic_key],
+                merged=topics[merged_topic_key],
+                operator_ref=f"cli:{operator}",
+                rationale=rationale,
+            )
+        except (TopicGraphError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"[OK] merge {merge.merge_id}")
+    finally:
+        session.close()
+
+
+@topics_group.command(name="revert-merge")
+@click.argument("merge_id")
+@click.option("--operator", required=True, help="Who is reverting.")
+@click.pass_context
+def topics_revert_merge(ctx: click.Context, merge_id: str, operator: str) -> None:
+    """Undo a merge, removing only the links that merge itself added."""
+    from btcedu.core.editorial.topics import TopicGraphError, revert_merge
+    from btcedu.models.topic_graph import TopicMerge
+
+    session = ctx.obj["session_factory"]()
+    try:
+        merge = session.query(TopicMerge).filter_by(merge_id=merge_id).one_or_none()
+        if merge is None:
+            raise click.ClickException(f"Unknown merge {merge_id}")
+        try:
+            revert_merge(session, merge, operator_ref=f"cli:{operator}")
+        except (TopicGraphError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"[OK] reverted {merge_id}")
+    finally:
+        session.close()
+
+
+@cli.group(name="recheck")
+def recheck_group() -> None:
+    """Re-examine published articles after a source or licence changed."""
+
+
+@recheck_group.command(name="queue")
+@click.option(
+    "--kind",
+    type=click.Choice(["source_observation", "media_asset", "source_revision"]),
+    required=True,
+    help="What changed.",
+)
+@click.option("--ref", required=True, help="Identifier of the changed dependency.")
+@click.option("--reason", required=True, help="Why a recheck is needed.")
+@click.pass_context
+def recheck_queue(ctx: click.Context, kind: str, ref: str, reason: str) -> None:
+    """Queue rechecks for every publication that depends on REF."""
+    from btcedu.core.editorial.recheck import queue_rechecks
+    from btcedu.models.topic_graph import DependencyKind
+
+    session = ctx.obj["session_factory"]()
+    try:
+        jobs = queue_rechecks(
+            session, kind=DependencyKind(kind), ref=ref, reason=reason
+        )
+        click.echo(f"[OK] queued {len(jobs)} recheck(s)")
+    finally:
+        session.close()
+
+
+@recheck_group.command(name="run")
+@click.option("--limit", default=10, show_default=True, help="How many jobs to run.")
+@click.pass_context
+def recheck_run(ctx: click.Context, limit: int) -> None:
+    """Run pending rechecks. Nothing is withdrawn automatically."""
+    from btcedu.core.editorial.recheck import pending_rechecks, run_recheck
+
+    session = ctx.obj["session_factory"]()
+    try:
+        jobs = list(pending_rechecks(session, limit=limit))
+        if not jobs:
+            click.echo("no pending rechecks")
+            return
+        for job in jobs:
+            outcome = run_recheck(session, job)
+            click.echo(f"{job.job_id}  {outcome.status}  {outcome.detail}")
+    finally:
+        session.close()
+
+
+@recheck_group.command(name="issues")
+@click.option("--limit", default=20, show_default=True, help="How many to list.")
+@click.pass_context
+def recheck_issues(ctx: click.Context, limit: int) -> None:
+    """List the open source and licence issues waiting for a person."""
+    from btcedu.models.topic_graph import IssueStatus, SourceIssue
+
+    session = ctx.obj["session_factory"]()
+    try:
+        issues = (
+            session.query(SourceIssue)
+            .filter_by(status=IssueStatus.OPEN.value)
+            .order_by(SourceIssue.created_at)
+            .limit(limit)
+            .all()
+        )
+        if not issues:
+            click.echo("no open issues")
+            return
+        for issue in issues:
+            click.echo(f"{issue.issue_id}  {issue.kind}  {issue.ref}  {issue.detail}")
+    finally:
+        session.close()
+
+
+@recheck_group.command(name="resolve")
+@click.argument("issue_id")
+@click.pass_context
+def recheck_resolve(ctx: click.Context, issue_id: str) -> None:
+    """Mark an issue handled."""
+    from btcedu.core.editorial.recheck import resolve_issue
+    from btcedu.models.topic_graph import SourceIssue
+
+    session = ctx.obj["session_factory"]()
+    try:
+        issue = session.query(SourceIssue).filter_by(issue_id=issue_id).one_or_none()
+        if issue is None:
+            raise click.ClickException(f"Unknown issue {issue_id}")
+        resolve_issue(session, issue)
+        click.echo(f"[OK] resolved {issue_id}")
+    finally:
+        session.close()

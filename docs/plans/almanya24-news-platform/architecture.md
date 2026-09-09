@@ -2,15 +2,19 @@
 
 [Einstieg](../almanya24-news-platform.md) | [Ist-Zustand](../../review/almanya24-news-platform/current-system.md) | [Recherche](../../review/almanya24-news-platform/research.md) | [Arbeitspakete](work-packages.md) | [Fortschritt](progress.md)
 
-**Alles in diesem Dokument ist Zielzustand**, sofern nicht explizit als
-bestehender Erweiterungspunkt bezeichnet. Neue Namen, Modelle und
-Konfigurationsschluessel sind Vorschlaege, keine heute nutzbaren Befehle.
+Der folgende **implementierte Pfad** beschreibt den geprüften Entwicklungsbranch.
+Die danach erhaltenen nummerierten Planabschnitte beschreiben den historischen
+Zielzustand, sofern nicht explizit als bestehender Erweiterungspunkt bezeichnet.
+Namen und Konfigurationsschluessel dieser Planabschnitte sind Vorschlaege;
+der Implementierungsabschnitt und der Auditbericht belegen den nutzbaren Stand.
 
 ## Implementierter Pfad im Entwicklungsbranch (Audit 09.09.2026)
 
 Dieser Abschnitt beschreibt **tatsächlichen Code**, nicht den historischen
 Zielentwurf darunter. Details und Abnahmestand:
 [Implementierungsaudit](../../review/almanya24-news-platform/implementation-audit.md).
+Prüfcommit `e10767b`: 4229 Tests bestanden; der Editionspfad wurde mit echten
+lokalen ffmpeg-/ffprobe-Aufrufen und simulierten externen Antworten durchlaufen.
 
 ```mermaid
 flowchart TD
@@ -30,6 +34,7 @@ flowchart TD
     P["Bestehende Pipeline: script -> tts -> render -> review_gate_3"]
     R["Bestehender Renderer: Original-TTS, eingebrannte Credits, draft.mp4"]
     FG["Separate Finalentscheidung: Video-SHA256 und Renderinputhash"]
+    UP["Bestehender manueller Publishpfad: Profilfreigabe + zusätzliche Publishentscheidung"]
     X["Anhalten / private Review, keine automatische Freigabe"]
     T --> D --> C --> S --> F --> E --> M --> A --> G
     E -->|Beleg fehlt / Widerspruch| X
@@ -37,6 +42,9 @@ flowchart TD
     A -->|Zusatzbehauptung / Übersetzungsfehler| X
     G --> W
     G --> V --> VG --> B --> P --> R --> FG
+    FG --> UP
+    UP -->|"ausgeliefertes Profil: gesperrt"| X
+    UP -->|"nur isolierter Test"| DR["DryRunYouTubeService, kein Upload"]
 ```
 
 `newsroom-draft` führt ohne `--execute` und `newsroom_enabled=true` keine

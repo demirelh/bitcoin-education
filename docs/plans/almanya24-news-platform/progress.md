@@ -23,53 +23,81 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 
 ## Paketstatus
 
-**Unabhängiger Abgleich läuft:** Die bisherigen Erledigt-Angaben unten sind
-historische Abschlussbehauptungen, nicht der aktuelle Abnahmenachweis.
-Insbesondere N7 war nur ein isolierter Adapter. Maßgeblich für den erneuten
-Abgleich ist die [Code-/Abnahmematrix](../../review/almanya24-news-platform/implementation-audit.md).
-Aktueller Schritt: korrigierten Gesamtpfad gegen Newsroom- und bestehende
-Videopipeline testen, dann die vollständige Suite sequenziell ausführen.
-Der reale synthetische ffmpeg-Durchlauf ist inzwischen ausgeführt; Modell-,
-Such-/Web-/Commons- und TTS-Anbieterantworten bleiben Offline-Fixtures.
-Die historische Tabelle wird nicht als Vollständigkeitsbeleg verwendet.
+**Unabhängiger Abgleich:** Die früheren Vollständigkeitsbehauptungen wurden
+nicht übernommen. Insbesondere N7 war nur ein isolierter Adapter.
+Die [Code-/Abnahmematrix](../../review/almanya24-news-platform/implementation-audit.md)
+unterscheidet Anfangsstand, Korrekturen und externe Voraussetzungen.
+Aktueller Prüfcommit: `e10767bc64e40d36f9434048bee5955e24887ce8`
+(mit den Integrationskorrekturen aus `f615960` und `1cdf948`).
+Die abschließende isolierte Vollsuite ist grün: **4229 bestanden,
+0 fehlgeschlagen, 0 übersprungen**, 60 Deprecation-Warnungen in
+**3972,90 s (1:06:12)**. Der Code blieb während des gesamten Laufs unverändert.
+Der reale synthetische ffmpeg-Durchlauf ist ausgeführt; externe Antworten
+und Sprache sind Fixtures, der manuelle Publishnachweis ist ausdrücklich Dry-Run.
 
 | Paket | Status | Commit | Nachweis / nächster Schritt |
 | --- | --- | --- | --- |
-| Planübernahme | Erledigt | `6458e61` | Acht Repositorydokumente, Links und UTF-8/NFC geprüft |
-| N0a Importidentität | Erledigt | `9c89cd2` | Stream-/Editionsschlüssel, kein NULL-Kanal-Backfill, korrektes Backfillprofil |
-| N0b Retention-Holds | Erledigt | `de85f64` | Gründe für Pipeline/Avatar/Upload, Dry-Run und dauerhafte Providerledger |
-| N1 Redaktionelle Basis | Erledigt | `bba044e` | Immutable Quellen-/Claimrevisionen, Migration 022, atomare Budgetreservation |
-| N2 Automatische Belege | Erledigt | `97052f8` | Dokumentgebundene Belege, sechs Status, Provenienzfamilien, kontrollierter Fetcher, Budget/Deadline-Stopp |
-| N3 Commons und Rechte | Erledigt | `8ca3146` | Assetbezogene Rechteentscheidung, Lizenzbelege, Dublettenspeicher, Widerruf; keine Altassetübernahme |
-| N4 Interner Artikel-MVP | Erledigt | `5a48f8d` | Dreifachhashbindung von Text, Belegen und Medien; private Reviewfläche, benannte Freigabe |
-| N5 Öffentliche Website | Erledigt | `80ccc0c` | Allowlist-DTO, atomarer Releaseswitch, Korrektur/Rücknahme; lokal gebaut, nicht veröffentlicht |
-| N6 Themenlebenszyklus | Erledigt | `814f918` | Vorschläge statt Verknüpfungen, revidierbare Zusammenführung, gebündelte Neuprüfung nach Quellenänderung |
-| N7 Gemeinsamer Videopfad | Erledigt | `ee10d12` | Adapter ohne Modellaufruf, getrennte Skript-/Videofreigabe, rechtekonforme Renderpakete; Avatar unberührt |
-| N8 Bedarfsgerechter Ausbau | Teilweise erledigt | `16224c2` | Profilvalidierung (A8) und Quellen-/Betriebsreport umgesetzt; Anbieteradapter warten auf Vertrag und Budget |
-| N9 Namensmigration | Teilweise erledigt | `d7147f9` | CLI-Alias `almanya24` auf denselben Einstiegspunkt; weitere Umbenennungen nur mit eigenem Auftrag |
+| Planübernahme | Erhalten und unabhängig abgeglichen | `6458e61`, Audit | Originalbasis und tatsächlicher Diff statt Übernahme des Abschlussberichts |
+| N0a Importidentität | Lokal umgesetzt, gezielt bestätigt | `9c89cd2`, `f615960`, `e10767b` | Explizit fremde Kanäle nicht durch Titelähnlichkeit dedupliziert; historischer Profildefault darf Sendungs-/Editionsidentität nicht verwerfen |
+| N0b Retention-Holds | Lokal umgesetzt | `de85f64`, `f615960` | Pipeline-/Avatar-/Uploadledger sowie gebundene Videoeditionen geschützt |
+| N1 Redaktionelle Basis | Lokal verbunden | `bba044e`, `f615960` | Revisions-/Spanmodelle und atomare Reservation im echten Workflow |
+| N2 Automatische Belege | Lokal verbunden, Anbieterantworten simuliert | `97052f8`, `f615960` | Toolfreier Caller, automatische Queries, echte Dokumentpassagen, semantischer Prüfauftrag und Budgetresume |
+| N3 Commons und Rechte | Lokal verbunden, Livebildabnahme extern | `8ca3146`, `f615960` | Katalog-/Asset-/Rechteprüfung; zusätzliche Video-/Profilentscheidung |
+| N4 Interner Artikel-MVP | Lokal verbunden, Livequalität extern | `5a48f8d`, `f615960` | TR-Entwurf/Konsistenzauftrag; tatsächlicher Text und vollständige fachliche Zustände hashgebunden |
+| N5 Öffentliche Website | Lokal gebaut und geprüft, nicht öffentlich | `80ccc0c`, `f615960` | Suche/Related, Public-only DTO, byte- und freigabefrischer Releaseswitch |
+| N6 Themenlebenszyklus | Lokal verbunden | `814f918`, `f615960` | Updateentscheidung vor Doppelentwurf; Änderungsnachweis für Entwurf/Website/Edition, dauerhafter Fanoutfehler |
+| N7 Gemeinsamer Videopfad | Tatsächliche Pipelineanbindung | `f615960`, `1cdf948` | Episodebindung, echte TTS-/Renderfunktionen, sichtbare Credits, Bytefreigabe und separater manueller Dry-Run-Publisher |
+| N8 Bedarfsgerechter Ausbau | Freigegebener lokaler Umfang umgesetzt | `16224c2`, `f615960` | Profilfehler vor Stufenstart, Report ohne Volltextladen, Ist-/Schätzkosten; weitere Adapter nur bei belegtem Bedarf |
+| N9 Namensmigration | Lokaler Kompatibilitätsschritt umgesetzt | `d7147f9`, `f615960` | Installierte Aliases, echter Prozesslock, Repo-/Hostinventar; kein beauftragter Infrastrukturumzug |
 
 ## Verifikationsjournal
 
-**Unabhängiger Auditlauf (laufend):** 318/331 im ersten verbreiterten Lauf;
+**Unabhängiger Auditlauf (abgeschlossen):** 318/331 im ersten verbreiterten Lauf;
 danach 147/152 und 45/46 in gezielten Nachläufen. Die dabei gefundenen
 Regressionen betrafen falsche Modellfeldannahmen im neuen Report,
 veraltete Fixture-Freigaben, ungenaue Katalogdatierungen und veraltete lokale
-Paketmetadaten. Sie werden korrigiert, nicht als erfolgreiche Abnahme gezählt.
+Paketmetadaten. Sie wurden korrigiert, nicht als erfolgreiche Abnahme gezählt.
 Der letzte verbleibende Fehler war die nur im Test fehlende
 `schema_migrations`-Tabelle. Danach **582 Tests bestanden** (393,87 s),
 anschließend **77 Tests bestanden** (118,47 s) für die letzten
 Änderungshooks/Videoverträge. Zwei neue Tests für Wiederholungsmeldung
 und echten Operatoreinstieg mit automatisch gebildeten Suchqueries bestanden
-ebenfalls. Nächster Schritt ist jetzt die abschließende Vollsuite.
+ebenfalls.
 Der erste Vollsuite-Anlauf auf `f615960` wurde bei der synthetischen
 Bestands-Bulletinprüfung (2 %) gezielt beendet, weil beim weiteren
 Schnittstellenabgleich noch die Zuordnung der neuen Finalfreigabe zum
 manuellen Publisher korrigiert werden musste. Das war kein Ressourcenfehler.
 Danach bestanden **93 Integration-/Publisher-/Bestandsgatetests** (95,52 s).
-Die abschließende Vollsuite wird auf dem korrigierten Commit neu begonnen.
+Die vollständigen Läufe benötigten jeweils etwa eine Stunde. Die ersten
+rund 30 Minuten entfielen weitgehend auf `test_almanya24_e2e.py`, dessen
+Bestandsfälle wiederholt echte synthetische ffmpeg-Welten aufbauen.
+Die geringe anfängliche Prozentzahl war kein Stillstand oder Heap-/OOM-Fehler.
 Die neue `test_editorial_integration.py` führt den realen Renderer aus,
 prüft sichtbare Pixel der eingebrannten Credits, unveränderte TTS,
 bytegebundene Finalfreigabe sowie öffentliche und Remote-Allowlists.
+
+Der erste vollständige Lauf auf `1cdf948` endete nach **1:08:56**:
+**4226 bestanden**, drei Fehler in
+`TestLocalRecordingIsSupersededByFeed`, 60 Deprecation-Warnungen.
+Die neue unbedingte Profil-Mismatch-Sperre ignorierte das historische
+Standardprofil alter, kanalunzugeordneter Tagesschau-Folgen.
+Die Profil-Mismatch-Sperre wurde entfernt: ein bekannter abweichender Kanal
+bleibt ausschließend, bei historischem Profildefault zählt weiterhin die
+explizite Sendung/Edition mit Sendedatum. Keine Bestandsdaten werden verändert.
+
+Der korrigierte Commit `e10767b` bestand zuerst alle **134 gezielten
+Recorder-/Detector-/Kanaltests** (42,98 s), danach **alle 4229 Tests**
+(3972,90 s). Keine Fehler, keine übersprungenen Fälle, kein Ressourcenabbruch.
+Die 60 Warnungen betreffen Pillow-Pixelzugriff, SQLite-Datetimeadapter und
+zwei bestehende Fork-Locktests. Alle Testprozesse dieses Auditlaufs sind beendet.
+Temporäre Konsolenlogs werden nach Übernahme der Ergebnisse entfernt.
+
+Reproduktionsbefehl, ausschließlich in der isolierten Entwicklungsumgebung:
+
+```bash
+nice -n 10 /home/pi/.venvs/almanya24-newsroom-dev/bin/python \
+  -m pytest -v -p no:cacheprovider -o faulthandler_timeout=180 --tb=short
+```
 
 | Zeitpunkt | Umfang | Ergebnis |
 | --- | --- | --- |
@@ -114,10 +142,9 @@ bytegebundene Finalfreigabe sowie öffentliche und Remote-Allowlists.
    einer kurzen `BEGIN IMMEDIATE`-Transaktion; es findet dabei kein Netzwerkzugriff
    statt. Reservierte, eingereichte, abgeschlossene und ungeklärte Operationen
    zählen konservativ gegen das Budget.
-6. Die vollständige Suite ist auf dem Pi in diesem Lauf nicht als Paketgate
-   praktikabel gewesen. Sie wird am nächsten größeren Integrationsmeilenstein
-   erneut gestartet; gezielte gemeinsame Grenzen werden weiterhin pro Paket
-   vollständig geprüft.
+6. Die frühe Annahme, die Vollsuite sei auf dem Pi nicht praktikabel,
+   wurde durch den Audit widerlegt. Sequenzielle Läufe brauchen rund eine
+   Stunde; der abschließende Lauf auf `e10767b` besteht vollständig.
 7. N2 trennt Fund und Beleg. Ein Suchtreffer ist reine Entdeckung; belegend
    ist ausschließlich eine Passage aus einer selbst geladenen Seite, die die
    Anker des Claims unverändert enthält. Damit kann kein Snippet allein zu
@@ -200,8 +227,8 @@ bytegebundene Finalfreigabe sowie öffentliche und Remote-Allowlists.
 33. Nicht-Ereignisbilder tragen einen sichtbaren Hinweis (`ARŞİV`,
     `SEMBOL GÖRSEL`). Ein Archivbild, das wie das Ereignis aussieht, täuscht
     ohne einen einzigen falschen Satz.
-34. Skriptfreigabe und Freigabe der fertigen Datei sind zwei Entscheidungen
-    zweier benannter Personen. Keine davon lädt etwas hoch; ein Test liest das
+34. Skriptfreigabe und Freigabe der fertigen Datei sind getrennte, benannte
+    Entscheidungen. Keine davon lädt etwas hoch; ein Test liest das
     Modul als Syntaxbaum, damit kein Bezeichner zu einem Publisher führt.
 35. Renderpakete enthalten Bilder und Ton, niemals Rechercheunterlagen oder
     Lizenzkorrespondenz. Der entfernte Renderer liegt außerhalb der
@@ -224,9 +251,12 @@ bytegebundene Finalfreigabe sowie öffentliche und Remote-Allowlists.
     Wertung betrifft Unabhängigkeit: Belege aus derselben Provenienzfamilie
     sind eine Quelle, gleich wie viele URLs sie trug — sonst sieht eine
     Agenturmeldung wie Übereinstimmung mehrerer Zeugen aus.
-41. Die in N8 ebenfalls genannten Anbieteradapter (z. B. Openverse, EU AV)
-    bleiben offen. Sie verlangen Vertrag und Kostenfreigabe; ohne beides wäre
-    jede Anbindung eine unbeauftragte Ausgabe.
+41. Zusätzliche N8-Adapter benötigen laut Plan einen konkreten ungelösten
+    Fall und einen entsprechend geschnittenen Folgeauftrag. Openverse/EU AV
+    verlangen nicht pauschal einen bezahlten Vertrag; Implementierung und
+    Fixturetests wären ohne Beschaffung möglich. Ein solcher konkreter
+    zusätzlicher Bedarf wurde hier nicht festgestellt. Reale Pressebildrechte
+    und Liveanbietertarife bleiben gesondert freizugeben.
 
 42. `almanya24` und `btcedu` sind derselbe Einstiegspunkt, nicht zwei
     gleichwertige Kommandos: eine Datenbank, ein Lock, eine Timerfamilie.
@@ -234,30 +264,25 @@ bytegebundene Finalfreigabe sowie öffentliche und Remote-Allowlists.
     Schritt gesondert beauftragt ist — ein Pfadumzug entwertet gespeicherte
     Artefakte still.
 
-## Wiederaufnahme
+## Abschluss und Wiederaufnahmegrenze
 
-Nächster konkreter Schritt:
+Der freigegebene, lokal ausführbare Implementierungsumfang ist abgeschlossen
+und gegen den tatsächlichen Code geprüft. Episodebindung und synthetischer
+Video-Smoke waren fehlende Pflichtintegration, keine optionalen Liveblocker;
+beides ist jetzt umgesetzt und durch die bestehende Pipeline nachgewiesen.
+Auch türkische Suche, Related-Links und Release-Freshness sind implementiert.
+Themen-/Neuprüfungsoperationen bleiben über die vorhandene CLI bedienbar.
 
-1. Alle Pakete N0–N9 sind umgesetzt, soweit sie ohne Anbietervertrag,
-   Deployment oder gesonderten Umbenennungsauftrag umsetzbar sind.
-2. Offen aus N7, falls später gebraucht: ein synthetischer, kostenfreier
-   Video-Smoke-Test über den Editionspfad und die Anbindung der Edition an
-   eine konkrete Episode (`VideoEdition.episode_id` ist vorgesehen, wird
-   bisher nicht gesetzt). Avatar-Aktivierung bleibt außerhalb des Umfangs.
-3. Offen aus N5, falls später gebraucht: clientseitige TR-Suche über
-   `arama/index.json`, Related-Links und responsive Bildvarianten. Die
-   Datenfelder dafür bestehen bereits.
-4. Offen aus N6, falls später gebraucht: eine Weboberfläche für Vorschläge,
-   Zusammenführungen und die Problemliste. Bedienbar ist beides bereits über
-   `btcedu topics` und `btcedu recheck`.
-5. Offen aus N8: je ein Anbieteradapter pro Folgepaket, erst nach Vertrag
-   und Budgetfreigabe; ausserdem Qualitätsauswertung anhand annotierter
-   Fehlklassifikationen, sobald echte Betriebsfälle vorliegen.
-6. Offen aus N9, jeweils gesondert zu beauftragen: Importkompatibilität,
-   Dienste-/Timer-Alias und ein hash-sicherer Pfadumzug. Ohne Auftrag bleibt
-   es beim CLI-Alias.
-7. Nächster sinnvoller Schritt insgesamt: ein realer Trockenlauf des
-   Redaktionspfades auf gespeicherten Daten (Report lesen, Vorschläge und
-   Neuprüfungen bedienen), bevor weitere Funktionen ergänzt werden.
+**Für einen anschließenden kontrollierten Entwicklungs-/Staging-Rollout
+vorbereitet, nicht für ungeprüften öffentlichen Livebetrieb freigegeben.**
+Tatsächlich offen bleiben die im Audit einzeln beschriebenen externen
+Voraussetzungen: genehmigte Liveanbieter und Nutzungsbedingungen, reale
+Redaktions-/Bildrechteabnahme, Domain/TLS/Public-Root und Betreibertexte.
+YouTube-Zielkanal/OAuth und explizite Publishfreigabe werden nur für eine später
+beauftragte echte Veröffentlichung benötigt. Weitere N8-Adapter oder ein
+produktiver N9-Namensumzug sind bedarfsgebundene Folgeaufträge.
 
-Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.
+Kein Push, Deployment, produktiver DB-Eingriff, Dienstwechsel, bezahlter
+Provideraufruf oder echte Veröffentlichung. Avatarerzeugung und automatisches
+Publishing bleiben deaktiviert. Nach dem Prüfcommit folgen nur Dokumentation
+und die Bereinigung eigener temporärer Logs, keine weiteren Codeänderungen.

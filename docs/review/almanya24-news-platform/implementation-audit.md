@@ -2,7 +2,7 @@
 
 Basis: `1c229ccb083a444c9b6920e3a5cd95dd0095a110`.
 Geprüfter Anfangsstand: `1e9bfb2`, sauberer Worktree,
-`feat/almanya24-newsroom`. Keine Subagents, Produktionszugriffe oder Liveprovider.
+`feat/almanya24-newsroom`. Keine Subagents, produktiven Änderungen oder Liveprovideraufrufe.
 Die folgende Matrix beschreibt zunächst den **vorgefundenen**, nicht den
 behaupteten Stand. Die Korrekturen und Nachweise werden darunter fortgeschrieben.
 
@@ -43,14 +43,14 @@ behaupteten Stand. Die Korrekturen und Nachweise werden darunter fortgeschrieben
    Renderintegrität, Metadaten, Budget, Profilfreigabe und eine **zusätzliche**
    manuelle Publishentscheidung bleiben zwingend. Bestandsfolgen unverändert.
 
-## Laufende Korrektur
+## Verlauf der Korrektur
 
-Aktuell in Arbeit: tatsächliche Hashneuberechnung, Public-Suche/Releaseprüfung,
+Zu Beginn in Arbeit: tatsächliche Hashneuberechnung, Public-Suche/Releaseprüfung,
 Video-/Profilrechteentscheidung, bytegebundene Finalentscheidung, Editionsbindung,
 gemeinsame TTS-/Rendererroute und budgetierter Story-zu-Artikel-Ablauf.
-Diese Änderungen sind noch **nicht** als abgeschlossen abgenommen.
+Diese Änderungen waren zu diesem Zeitpunkt noch nicht abgenommen.
 Erster gezielter Lauf: 159 bestanden, fünf erwartete Regressionen aus bisher
-unzulässigen Freigabeannahmen; Anpassung mit zusätzlichen Negativfällen läuft.
+unzulässigen Freigabeannahmen; anschließend Anpassung mit zusätzlichen Negativfällen.
 
 Der fehlende Smoke-Test hatte keinen dokumentierten technischen Blocker.
 Er war schlicht nicht implementiert/ausgeführt. Die fehlende Episodebindung
@@ -141,3 +141,87 @@ und `almanya24*` zeigte `btcedu-run.timer` und `btcedu-detect.timer`,
 keine `almanya24`-Timerfamilie. Kein Dienst wurde verändert. Produktive
 Dienst-/Repository-/Datenpfadumbenennungen sind separate Rolloutentscheidungen,
 nicht noch auszuführende lokale Pflichten dieses Auftrags.
+
+## Paketzuordnung nach den Korrekturen
+
+Die abschließende Codeprüfung bezieht sich auf
+`e10767bc64e40d36f9434048bee5955e24887ce8` einschließlich `1cdf948` und `f615960`.
+Der erste vollständige Lauf ergab 4226 bestandene Tests und drei Fehler
+in der historischen Recorder-Deduplizierung (4136,75 s). Die Korrektur
+entfernt den unbedingten Profil-Mismatch-Ausschluss, nicht den Schutz gegen
+explizit fremde Kanäle: Legacyfolgen ohne Kanal tragen noch den alten
+Profildefault, haben aber eine eindeutige Sendungs-/Editionsidentität.
+Danach bestanden alle 134 gezielten Recorder-/Detector-/Kanaltests in 42,98 s,
+einschließlich des expliziten Fremdkanalfalls. Die erneute Vollsuite auf dem
+korrigierten Commit ist abgeschlossen: **4229 bestanden, keine Fehler,
+keine übersprungenen Tests**, 60 Deprecation-Warnungen, **3972,90 s (1:06:12)**.
+„Lokal umgesetzt“ bedeutet nicht Anbieter-Livebetrieb oder redaktionelle
+Produktionsfreigabe. Die Einstufung „nur isolierter Adapter“ trifft auf den
+früheren N7-Stand zu, nicht mehr auf den korrigierten Pfad.
+
+| Paket | Stand des freigegebenen lokalen Umfangs | Codefundstellen | Nachweise / Grenze |
+|---|---|---|---|
+| N0a | Lokal umgesetzt | `detector._stored_broadcast_keys`, Backfill-/Channelrouting | Detector-/Channeltests; zusätzlicher Fremdkanalfall in `test_editorial_integration` |
+| N0b | Lokal umgesetzt | `retention.retention_hold_reasons` | Retentionregressionen, unveränderte Ledger; neue Editionsbindung wird konservativ gehalten |
+| N1 | Lokal umgesetzt und verbunden | `editorial.ingest.import_story`, `editorial.jobs`, `workflow.BudgetedCaller` | Basis-/Migrations-/Reservations-/Resumetests; Workflow nutzt dieselben persistenten Modelle |
+| N2 | Lokal umgesetzt und verbunden; Livequalität nicht behauptet | `workflow.draft_story/query_plans`, `research`, `editorial_model`, `document_fetcher`, `search_service` | CLI mit automatischen Queries, gelesene Fixturepassagen, Gegenbelege, semantisches Negativurteil, Budgetresume; externe Modellantworten simuliert |
+| N3 | Lokal umgesetzt und verbunden; konkrete Livebildrechte extern | `commons_service`, `media.evaluate_license/select_media_for_revision`, `video.approve_video_media` | Medien-/Lizenztests, ungeklärte Illustration blockiert, Bildbytes und Rollenänderungen, separate Video-/Profilfreigabe |
+| N4 | Lokal umgesetzt und verbunden; redaktionelle Liveabnahme extern | `workflow`, `article`, `web/editorial_routes` | TR-Entwurf, Konsistenzauftrag, benannte hashgebundene Freigabe, private Webtests; keine automatische Freigabe |
+| N5 | Lokal umgesetzt und tatsächlich gebaut | `public.build_public_article/export_blockers`, `site_export.build_site/switch_release` | Öffentliche DTOs, Suche/Related, Bildbytes, Korrektur/Rücknahme, atomare Aktivierung, stale Release verweigert; kein öffentlicher Serverbetrieb |
+| N6 | Lokal umgesetzt und verbunden | `topics.propose_updates/accept_proposal/merge_topics/revert_merge`, `recheck.scan_changes/run_recheck` | Wiederholungsmeldung stoppt vor Doppelentwurf; Annahme nutzt altes Thema; Graph-/Reversal-/Fanout-/Cleanupregressionen, Änderungen zeigen Entwürfe/Website/Editionen |
+| N7 | Lokal umgesetzt, bestehende Pipeline tatsächlich erreicht | `video`, `production`, `pipeline._get_stages/_run_stage`, `tts`, `renderer`, `remote_render.build_job_package`, `publisher._run_all_safety_checks` | Reales ffmpeg/ffprobe, sichtbare Credits, unveränderte TTS, drei getrennte redaktionelle Freigaben plus Video-Rechteentscheidung, separate simulierte manuelle Veröffentlichung |
+| N8 | Freigegebener bedarfsunabhängiger Umfang lokal umgesetzt | `profile_validation`, `editorial.report`, Provider-Protokolle/Fixtures | Explizite Profilfehler, Schätz-/Istkosten, Quellenfamilien, kein Laden von Belegvolltexten im Report; weitere Adapter nur bei konkretem Bedarf, nicht pauschal blockiert |
+| N9 | Freigegebener Kompatibilitätsschritt lokal umgesetzt | `pyproject.toml`, unveränderter `cli:cli`/`runlock`, obiges Inventar | Installierte Aliases, echter gemeinsamer Prozesslock, Referenz-/Remote-/Bestandsregressionen; keine produktiven Namens-/Dienständerungen |
+
+## Abschließende Integration und Abnahme
+
+`tests/test_editorial_integration.py` enthält 17 Testfälle einschließlich
+Parametrisierungen. Der zentrale Durchlauf beginnt mit einer ausgewählten
+Transkriptstory und endet über echte Episodebindung und Pipelineaufrufe bei
+einem realen lokalen MP4. Modellurteile, externe Such-/Dokument-/Commonsantworten
+und Sprachprovider sind Fixtures; sie beweisen keine Livequalität.
+Tatsächlich ausgeführt werden Revisions-/Budgetpersistenz, Dokumentauswertung,
+Freigaben, Public-only Websitebuild und Releaseswitch, Kapitel-/Bildmanifeste,
+TTS-Lautheitsverarbeitung, ffmpeg und ffprobe. Sichtbare Creditpixel,
+unveränderte TTS beim erneuten Rendern, private Remote-Ausschlüsse sowie
+separate Skript-, Medien-, Final- und manuelle Publishgates sind geprüft.
+Fehlende tragfähige Belege, ungeklärte angeforderte Bildrechte und veraltete
+Freigaben blockieren. Die manuelle Veröffentlichungsstrecke verwendet nur
+`DryRunYouTubeService`, keine tatsächliche Veröffentlichung.
+
+Die komplette Suite wurde mit niedriger Priorität und ohne parallele schwere
+Tests in `/home/pi/.venvs/almanya24-newsroom-dev` ausgeführt:
+
+```bash
+nice -n 10 /home/pi/.venvs/almanya24-newsroom-dev/bin/python \
+  -m pytest -v -p no:cacheprovider -o faulthandler_timeout=180 --tb=short
+```
+
+Geprüfter Codecommit: **`e10767bc64e40d36f9434048bee5955e24887ce8`**.
+Die nachfolgenden Änderungen betreffen nur Audit, Fortschritt und Flowcharts.
+Warnungen: ein Pillow-Pixelzugriff, 57 SQLite-Datetimeadapterwarnungen und
+zwei Fork-Warnungen bestehender Locktests; kein Fehler oder Ressourcenabbruch.
+
+**Ergebnis:** Der freigegebene lokal ausführbare Umfang ist abgeschlossen.
+Der Branch ist für einen separat freigegebenen kontrollierten
+Entwicklungs-/Staging-Rollout vorbereitet. Das ist weder eine Freigabe realer
+Inhalte noch ein Nachweis öffentlich betriebenen Systems. Für einen öffentlichen
+Livebetrieb fehlen ausschließlich die nachfolgend benannten Voraussetzungen.
+
+## Externe Voraussetzungen für einen späteren Livebetrieb
+
+1. Such-/Modellkonto mit ausdrücklich freigegebenem Tarif und zulässiger
+   Quellen-/Cacheverwendung; die Offline-Fixtures ersetzen diese Freigabe nicht.
+2. Benannte Redaktion und konkrete Prüfentscheidung für reale Texte,
+   Quellenabhängigkeiten und jedes verwendete Bild, einschließlich Videonutzung.
+   Kein generelles Pressebildabo ist Voraussetzung für den Commons-MVP.
+3. Domain/TLS, korrekter ausschließlich öffentlicher Static-Root sowie echte
+   Betreiber-, Kontakt-, Datenschutz- und Nutzungshinweise. Die vorhandenen
+   leeren/default Betreiberwerte dürfen nicht als produktive Rechtsseiten gelten.
+4. Nur falls später eine echte Veröffentlichung gewünscht ist: explizite
+   Profil-/Zielkanalfreigabe und passendes YouTube-OAuth. Der ausgelieferte
+   Editionsprofilstand sperrt auch manuellen Upload weiterhin absichtlich.
+
+Die Produktionsmigrationen, Dienständerungen und tatsächliche Aktivierung
+sind **nicht ausgeführt**. Sie sind Arbeitsgrenzen dieses Auftrags, kein
+Vorwand für fehlende lokale Adapter-/Integrationstests.

@@ -30,8 +30,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | N0b Retention-Holds | Erledigt | `de85f64` | Gründe für Pipeline/Avatar/Upload, Dry-Run und dauerhafte Providerledger |
 | N1 Redaktionelle Basis | Erledigt | `bba044e` | Immutable Quellen-/Claimrevisionen, Migration 022, atomare Budgetreservation |
 | N2 Automatische Belege | Erledigt | `97052f8` | Dokumentgebundene Belege, sechs Status, Provenienzfamilien, kontrollierter Fetcher, Budget/Deadline-Stopp |
-| N3 Commons und Rechte | In Arbeit | – | Vertragstests ohne echte Käufe |
-| N4 Interner Artikel-MVP | Offen | – | Abschluss des funktionalen MVP |
+| N3 Commons und Rechte | Erledigt | `8ca3146` | Assetbezogene Rechteentscheidung, Lizenzbelege, Dublettenspeicher, Widerruf; keine Altassetübernahme |
+| N4 Interner Artikel-MVP | In Arbeit | – | Abschluss des funktionalen MVP |
 | N5 Öffentliche Website | Offen | – | Lokal bauen; nicht veröffentlichen |
 | N6 Themenlebenszyklus | Offen | – | Nach N5 |
 | N7 Gemeinsamer Videopfad | Offen | – | Keine Avataraktivierung |
@@ -50,6 +50,7 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | 2026-09-09 | Vollsuite nach N1 | Nach mehr als 20 Minuten bei 1 % kontrolliert beendet; bis dahin kein Fehler, aber kein vollständiger Nachweis |
 | 2026-09-09 | N2 gezielt | 88 Recherche-/Fetcher-/Such-/Editorial-/Migrations-/Configtests bestanden |
 | 2026-09-09 | N2 gemeinsame Grenzen | 68 Migrations-, Retention- und Remote-Render-Tests bestanden; Ruff für alle berührten Dateien sauber |
+| 2026-09-09 | N3 gezielt/gemeinsam | 151 Medien-, Recherche-, Editorial-, Fetcher-, Migrations-, Config- und Retentiontests bestanden; Ruff über `btcedu/` und `tests/` sauber |
 
 ## Entscheidungen und Plananpassungen
 
@@ -87,15 +88,26 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 10. Ein Budget- oder Deadlinestopp beendet den Lauf mit Status `blocked`.
     Bereits dauerhafte Bewertungen bleiben erhalten, die übrigen Claims
     bleiben unbewertet und gelten ausdrücklich nicht als geprüft.
+11. N3 trennt Bytes, Angebot, Lizenzbeleg und Verwendungsentscheidung. Ein
+    Bild wird einmal gespeichert, mehrere Spiegel mit unterschiedlichen
+    Lizenzangaben bleiben getrennt nachvollziehbar.
+12. Rechte- und Kontextprüfung liegt vor jedem Ranking. Eine unklare oder
+    nicht kommerzielle Lizenz und ein falscher Ereignisbezug sind
+    Ausschlussgründe, die durch Platzierung nicht heilbar sind.
+13. Mediendownloads nutzen denselben kontrollierten Fetcher wie Belegseiten.
+    Ein zweiter Transportweg würde die Redirect-Neuprüfung erneut gefährden.
+14. Bestehende Pexels-/Frameassets werden nicht in das Rechteledger
+    übernommen; sie tragen keinen Beleg und dürfen nicht als freigegeben
+    erscheinen.
 
 ## Wiederaufnahme
 
 Nächster konkreter Schritt:
 
-1. N3: assetbezogene Rechteentscheidung für Commons-Medien beginnen —
-   Lizenz-/Attributionsmodell und dauerhafte Rechteentscheidung je Asset.
-2. Vertragstests gegen lokale Fixtures; keine echten Käufe und keine
-   Providerzugänge.
-3. Fortschritt nach Abschluss von N3 hier eintragen.
+1. N4: türkischer Artikelentwurf aus der freigegebenen Revision, gebunden an
+   Claimstatus und freigegebene Medien.
+2. Interne Freigabe mit sichtbaren Belegen, Attribution und Sperrgründen;
+   gesperrte oder widerrufene Assets dürfen die Freigabe nicht erreichen.
+3. Fortschritt nach Abschluss von N4 hier eintragen.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

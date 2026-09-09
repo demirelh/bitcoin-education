@@ -80,6 +80,10 @@ class ProfileRegistry:
 
     def __init__(self) -> None:
         self._profiles: dict[str, ContentProfile] = {}
+        #: Files that could not be read, kept so a validation command can name
+        #: them. A profile that silently fails to load is indistinguishable
+        #: from one that was never written.
+        self.load_errors: dict[str, str] = {}
 
     def load_all(self, profiles_dir: str | Path) -> dict[str, ContentProfile]:
         """Load all .yaml profile files from a directory."""
@@ -92,12 +96,14 @@ class ProfileRegistry:
             try:
                 data = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):
+                    self.load_errors[str(yaml_path)] = "file does not contain a mapping"
                     logger.warning("Skipping non-dict YAML: %s", yaml_path)
                     continue
                 profile = ContentProfile(**data)
                 self._profiles[profile.name] = profile
                 logger.debug("Loaded profile: %s from %s", profile.name, yaml_path.name)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                self.load_errors[str(yaml_path)] = f"{type(exc).__name__}: {exc}"
                 logger.exception("Failed to load profile from %s", yaml_path)
 
         return self._profiles

@@ -1768,6 +1768,13 @@ def run_episode_pipeline(
         "\n".join(plan_lines),
     )
 
+    from btcedu.core.profile_validation import assert_episode_profile_valid
+
+    # Before the first stage, not during it: a plan built from a default
+    # because the profile could not be read would produce a video nobody
+    # asked for, and it would look like an ordinary success.
+    assert_episode_profile_valid(settings, episode)
+
     content_profile = getattr(episode, "content_profile", "bitcoin_podcast")
     from btcedu.version import get_git_commit
 

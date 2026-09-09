@@ -4112,3 +4112,70 @@ def edition_inputs(ctx: click.Context, edition_id: str, dest: str) -> None:
         click.echo(f"[OK] {len(manifest['media'])} media file(s) -> {dest}")
     finally:
         session.close()
+
+
+@cli.command(name="profiles-validate")
+@click.option("--profile", default="", help="Validate one profile instead of all.")
+@click.pass_context
+def profiles_validate(ctx: click.Context, profile: str) -> None:
+    """Check profiles before a run instead of discovering them mid-pipeline."""
+    from btcedu.core.profile_validation import (
+        ProfileConfigurationError,
+        profile_problems,
+        registry_load_errors,
+    )
+    from btcedu.profiles import get_registry
+
+    settings = ctx.obj["settings"]
+    registry = get_registry(settings)
+    failed = False
+
+    for path, error in registry_load_errors(settings):
+        failed = True
+        click.echo(f"[FAIL] {path}: {error}")
+
+    profiles = registry.list_profiles()
+    if profile:
+        try:
+            profiles = [registry.get(profile)]
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    for item in profiles:
+        problems = profile_problems(item)
+        if problems:
+            failed = True
+            click.echo(f"[FAIL] {item.name}")
+            for reason in problems:
+                click.echo(f"       {reason}")
+        else:
+            click.echo(f"[OK]   {item.name}")
+
+    if failed:
+        raise click.ClickException("at least one profile is not usable")
+    if not profiles:
+        raise ProfileConfigurationError("<none>", ["no profiles were loaded"])
+
+
+@cli.command(name="newsroom-report")
+@click.option("--json", "as_json", is_flag=True, help="Machine-readable output.")
+@click.pass_context
+def newsroom_report(ctx: click.Context, as_json: bool) -> None:
+    """Coverage, source concentration, cost and open work, counted from the DB."""
+    import dataclasses
+
+    from btcedu.core.editorial.report import build_report, format_report, report_warnings
+
+    session = ctx.obj["session_factory"]()
+    try:
+        report = build_report(session)
+        if as_json:
+            payload = dataclasses.asdict(report)
+            payload["warnings"] = list(report_warnings(report))
+            payload.pop("generated_at", None)
+            payload.pop("since", None)
+            click.echo(json.dumps(payload, indent=2, ensure_ascii=False))
+        else:
+            click.echo(format_report(report))
+    finally:
+        session.close()

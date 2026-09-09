@@ -47,6 +47,12 @@ from btcedu.core.editorial.public import (
     slugify,
     withdraw_publication,
 )
+from btcedu.core.editorial.report import (
+    NewsroomReport,
+    build_report,
+    format_report,
+    report_warnings,
+)
 from btcedu.core.editorial.research import (
     DataOnlyClaimExtractor,
     DataOnlyEvidenceEvaluator,
@@ -82,6 +88,10 @@ from btcedu.core.editorial.video import (
 )
 
 __all__ = [
+    "NewsroomReport",
+    "build_report",
+    "format_report",
+    "report_warnings",
     "EditionBlocked",
     "EditionError",
     "PrivateMaterialInPackage",

@@ -1581,6 +1581,41 @@ class CreateNewsroomTopicGraphTablesMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class CreateNewsroomVideoEditionTablesMigration(Migration):
+    """Migration 028: Create video edition, segment, media and decision tables."""
+
+    @property
+    def version(self) -> str:
+        return "028_create_newsroom_video_edition_tables"
+
+    @property
+    def description(self) -> str:
+        return "Create newsroom video edition, segment, claim, media and decision tables"
+
+    def up(self, session: Session) -> None:
+        logger.info(f"Running migration: {self.version}")
+        from btcedu.models.video_edition import (
+            EditionDecision,
+            EditionMedia,
+            EditionSegment,
+            EditionSegmentClaim,
+            VideoEdition,
+        )
+
+        bind = session.get_bind()
+        for model in (
+            VideoEdition,
+            EditionSegment,
+            EditionSegmentClaim,
+            EditionMedia,
+            EditionDecision,
+        ):
+            model.__table__.create(bind, checkfirst=True)
+        session.commit()
+        self.mark_applied(session)
+        logger.info(f"Migration {self.version} completed successfully")
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1609,6 +1644,7 @@ MIGRATIONS = [
     CreateNewsroomArticleTablesMigration(),
     CreateNewsroomPublicationTablesMigration(),
     CreateNewsroomTopicGraphTablesMigration(),
+    CreateNewsroomVideoEditionTablesMigration(),
 ]
 
 

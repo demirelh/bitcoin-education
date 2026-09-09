@@ -3895,3 +3895,220 @@ def recheck_resolve(ctx: click.Context, issue_id: str) -> None:
         click.echo(f"[OK] resolved {issue_id}")
     finally:
         session.close()
+
+
+@cli.group(name="edition")
+def edition_group() -> None:
+    """Videos derived from an approved article revision.
+
+    Script and finished file are approved separately, and neither approval
+    uploads anything. A render is started by the ordinary pipeline commands.
+    """
+
+
+def _load_edition(session, edition_id: str):
+    from btcedu.models.video_edition import VideoEdition
+
+    edition = session.query(VideoEdition).filter_by(edition_id=edition_id).one_or_none()
+    if edition is None:
+        raise click.ClickException(f"Unknown edition {edition_id}")
+    return edition
+
+
+def _research_run_for(session, edition):
+    """The research run whose evidence the article was approved against."""
+    from btcedu.models.article import ArticleRevision
+    from btcedu.models.editorial import EditorialRevision, ResearchRun
+
+    article = session.get(ArticleRevision, edition.article_revision_id)
+    revision = session.get(EditorialRevision, article.editorial_revision_id)
+    run = (
+        session.query(ResearchRun)
+        .filter_by(topic_id=revision.topic_id)
+        .order_by(ResearchRun.id.desc())
+        .first()
+    )
+    if run is None:
+        raise click.ClickException("No research run for this topic")
+    return run
+
+
+@edition_group.command(name="build")
+@click.argument("article_revision_id")
+@click.option("--profile", default="", help="Content profile that will render it.")
+@click.pass_context
+def edition_build(ctx: click.Context, article_revision_id: str, profile: str) -> None:
+    """Derive a video edition from an approved article revision."""
+    from btcedu.core.editorial.video import EditionError, build_edition
+    from btcedu.models.article import ArticleRevision
+    from btcedu.models.editorial import EditorialRevision, ResearchRun
+
+    session = ctx.obj["session_factory"]()
+    try:
+        article = (
+            session.query(ArticleRevision)
+            .filter_by(article_revision_id=article_revision_id)
+            .one_or_none()
+        )
+        if article is None:
+            raise click.ClickException(f"Unknown article revision {article_revision_id}")
+        revision = session.get(EditorialRevision, article.editorial_revision_id)
+        run = (
+            session.query(ResearchRun)
+            .filter_by(topic_id=revision.topic_id)
+            .order_by(ResearchRun.id.desc())
+            .first()
+        )
+        if run is None:
+            raise click.ClickException("No research run for this topic")
+        profile_obj = None
+        if profile:
+            from btcedu.profiles import get_registry
+
+            profile_obj = get_registry().get(profile)
+        try:
+            edition = build_edition(
+                session, article, research_run=run, profile=profile_obj
+            )
+        except EditionError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"[OK] edition {edition.edition_id} ({edition.status})")
+    finally:
+        session.close()
+
+
+@edition_group.command(name="show")
+@click.argument("edition_id")
+@click.pass_context
+def edition_show(ctx: click.Context, edition_id: str) -> None:
+    """Print the spoken parts, their credits and anything still blocking."""
+    from btcedu.core.editorial.video import (
+        edition_blockers,
+        edition_media,
+        edition_segments,
+    )
+
+    session = ctx.obj["session_factory"]()
+    try:
+        edition = _load_edition(session, edition_id)
+        run = _research_run_for(session, edition)
+        click.echo(f"edition {edition.edition_id}  status={edition.status}")
+        for segment in edition_segments(session, edition):
+            click.echo(f"  {segment.position:2d} {segment.role:14s} {segment.purpose}")
+        for media in edition_media(session, edition):
+            notice = media.on_screen_notice or "-"
+            click.echo(
+                f"  media {media.position}: {media.role} [{notice}] {media.on_screen_credit}"
+            )
+        for reason in edition_blockers(session, edition, research_run=run):
+            click.echo(f"  BLOCKED: {reason}")
+    finally:
+        session.close()
+
+
+@edition_group.command(name="approve-script")
+@click.argument("edition_id")
+@click.option("--operator", required=True, help="Who approves the spoken text.")
+@click.option("--note", default="", help="Anything worth recording.")
+@click.pass_context
+def edition_approve_script(
+    ctx: click.Context, edition_id: str, operator: str, note: str
+) -> None:
+    """Accept the spoken text. This renders nothing."""
+    from btcedu.core.editorial.video import EditionError, approve_script
+
+    session = ctx.obj["session_factory"]()
+    try:
+        edition = _load_edition(session, edition_id)
+        run = _research_run_for(session, edition)
+        try:
+            approve_script(
+                session,
+                edition,
+                operator_ref=f"cli:{operator}",
+                research_run=run,
+                note=note,
+            )
+        except (EditionError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"[OK] script approved for {edition_id}")
+    finally:
+        session.close()
+
+
+@edition_group.command(name="reject-script")
+@click.argument("edition_id")
+@click.option("--operator", required=True, help="Who rejects it.")
+@click.option("--note", required=True, help="Why the script cannot go ahead.")
+@click.pass_context
+def edition_reject_script(
+    ctx: click.Context, edition_id: str, operator: str, note: str
+) -> None:
+    """Send a script back with a reason."""
+    from btcedu.core.editorial.video import reject_script
+
+    session = ctx.obj["session_factory"]()
+    try:
+        edition = _load_edition(session, edition_id)
+        try:
+            reject_script(session, edition, operator_ref=f"cli:{operator}", note=note)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"[OK] script rejected for {edition_id}")
+    finally:
+        session.close()
+
+
+@edition_group.command(name="approve-video")
+@click.argument("edition_id")
+@click.argument("video_path")
+@click.option("--operator", required=True, help="Who watched and accepted the file.")
+@click.option("--note", default="", help="Anything worth recording.")
+@click.pass_context
+def edition_approve_video(
+    ctx: click.Context, edition_id: str, video_path: str, operator: str, note: str
+) -> None:
+    """Accept one specific rendered file. Nothing is uploaded here."""
+    from btcedu.core.editorial.video import EditionError, approve_final_video
+
+    session = ctx.obj["session_factory"]()
+    try:
+        edition = _load_edition(session, edition_id)
+        run = _research_run_for(session, edition)
+        try:
+            approve_final_video(
+                session,
+                edition,
+                operator_ref=f"cli:{operator}",
+                video_path=video_path,
+                research_run=run,
+                note=note,
+            )
+        except (EditionError, ValueError) as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"[OK] final video approved for {edition_id}")
+    finally:
+        session.close()
+
+
+@edition_group.command(name="inputs")
+@click.argument("edition_id")
+@click.argument("dest")
+@click.pass_context
+def edition_inputs(ctx: click.Context, edition_id: str, dest: str) -> None:
+    """Write the approved render inputs into DEST for inspection."""
+    from btcedu.core.editorial.video import EditionError, collect_render_inputs
+
+    session = ctx.obj["session_factory"]()
+    try:
+        edition = _load_edition(session, edition_id)
+        run = _research_run_for(session, edition)
+        try:
+            manifest = collect_render_inputs(
+                session, edition, dest=Path(dest), research_run=run
+            )
+        except EditionError as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"[OK] {len(manifest['media'])} media file(s) -> {dest}")
+    finally:
+        session.close()

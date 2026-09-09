@@ -1,4 +1,6 @@
+import pytest
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import sessionmaker
 
 from btcedu.db import Base
@@ -10,6 +12,7 @@ from btcedu.migrations import (
     CreateNewsroomMediaRightsTablesMigration,
     CreateNewsroomPublicationTablesMigration,
     CreateNewsroomTopicGraphTablesMigration,
+    CreateNewsroomVideoEditionTablesMigration,
     get_pending_migrations,
     run_migrations,
 )
@@ -53,6 +56,11 @@ NEWSROOM_TABLES = {
     "news_publication_dependencies",
     "news_recheck_jobs",
     "news_source_issues",
+    "news_video_editions",
+    "news_edition_segments",
+    "news_edition_segment_claims",
+    "news_edition_media",
+    "news_edition_decisions",
 }
 
 
@@ -81,6 +89,7 @@ def test_existing_database_adds_newsroom_tables_without_touching_episode(tmp_pat
         CreateNewsroomArticleTablesMigration().version,
         CreateNewsroomPublicationTablesMigration().version,
         CreateNewsroomTopicGraphTablesMigration().version,
+        CreateNewsroomVideoEditionTablesMigration().version,
     }
     for migration in MIGRATIONS:
         if migration.version not in targets:
@@ -343,3 +352,58 @@ def test_public_addresses_survive_the_topic_graph_migration(tmp_path):
         text("SELECT slug FROM news_publications WHERE publication_id='p-1'")
     ).scalar()
     assert slug == "berlinde-yeni-konut"
+
+
+VIDEO_EDITION_TABLES = {
+    "news_video_editions",
+    "news_edition_segments",
+    "news_edition_segment_claims",
+    "news_edition_media",
+    "news_edition_decisions",
+}
+
+
+def test_n6_database_can_upgrade_only_the_video_edition_tables(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'n6-upgrade.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+    for table in VIDEO_EDITION_TABLES:
+        session.execute(text(f"DROP TABLE IF EXISTS {table}"))
+    target = CreateNewsroomVideoEditionTablesMigration().version
+    for migration in MIGRATIONS:
+        if migration.version != target:
+            session.add(SchemaMigration(version=migration.version))
+    session.commit()
+
+    run_migrations(session)
+
+    assert VIDEO_EDITION_TABLES <= set(inspect(engine).get_table_names())
+    assert get_pending_migrations(session) == []
+
+
+def test_an_edition_cannot_exist_twice_for_the_same_script_and_media(tmp_path):
+    """The same article, script and pictures are one edition, not two."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'edition-unique.db'}")
+    Base.metadata.create_all(engine)
+    session = sessionmaker(bind=engine)()
+
+    columns = (
+        "edition_id, article_revision_id, language, profile, show_name, "
+        "script_hash, content_hash, evidence_hash, media_hash, status, created_at"
+    )
+    values = (
+        "'{eid}', 1, 'tr', '', '', 'a', 'b', 'c', 'd', 'draft', '2026-09-09 00:00:00'"
+    )
+    session.execute(
+        text(f"INSERT INTO news_video_editions ({columns}) VALUES ({values.format(eid='e-1')})")
+    )
+    session.commit()
+
+    with pytest.raises(IntegrityError):
+        session.execute(
+            text(
+                f"INSERT INTO news_video_editions ({columns}) "
+                f"VALUES ({values.format(eid='e-2')})"
+            )
+        )
+        session.commit()

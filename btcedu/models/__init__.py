@@ -71,3 +71,13 @@ from btcedu.models.topic_graph import (  # noqa: F401
     TopicMerge,
     UpdateProposal,
 )
+from btcedu.models.video_edition import (  # noqa: F401
+    EditionDecision,
+    EditionDecisionKind,
+    EditionDecisionType,
+    EditionMedia,
+    EditionSegment,
+    EditionSegmentClaim,
+    EditionStatus,
+    VideoEdition,
+)

@@ -68,6 +68,10 @@ dev = [
 
 [project.scripts]
 btcedu = "btcedu.cli:cli"
+# The newsroom name, pointing at the same entry point on purpose: one CLI, one
+# database, one lock, one timer family. A rename of packages, paths or services
+# needs its own mandate and its own hash-safe plan (N9).
+almanya24 = "btcedu.cli:cli"
 
 [tool.setuptools.packages.find]
 include = ["btcedu*"]

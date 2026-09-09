@@ -2,18 +2,19 @@
 
 import logging
 import shutil
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
+from btcedu.models.avatar_job import AvatarJob, AvatarJobStatus
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.dead_letter import DeadLetterEntry
 from btcedu.models.episode import Episode, PipelineRun, RunStatus
 from btcedu.models.media_asset import MediaAsset
-from btcedu.models.publish_job import PublishJob
+from btcedu.models.publish_job import PublishJob, PublishJobStatus
 from btcedu.models.review import ReviewTask
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,14 @@ class RetentionResult:
     deleted: int = 0
     protected: int = 0
     blocked: int = 0
+    would_delete: int = 0
+    holds: list["RetentionHold"] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class RetentionHold:
+    episode_id: str
+    reasons: tuple[str, ...]
 
 
 def retention_days(settings: Settings, profile_name: str | None = None) -> int:
@@ -82,6 +91,7 @@ def prune_expired_episodes(
     settings: Settings,
     *,
     now: datetime | None = None,
+    dry_run: bool = False,
 ) -> RetentionResult:
     """Delete expired episode records and their local artifacts.
 
@@ -96,17 +106,14 @@ def prune_expired_episodes(
     result = RetentionResult()
 
     for episode in expired:
-        has_running_stage = (
-            session.query(PipelineRun.id)
-            .filter(
-                PipelineRun.episode_id == episode.id,
-                PipelineRun.status == RunStatus.RUNNING,
-            )
-            .first()
-            is not None
-        )
-        if has_running_stage:
+        reasons = retention_hold_reasons(session, episode)
+        if reasons:
             result.protected += 1
+            result.holds.append(RetentionHold(episode.episode_id, reasons))
+            continue
+
+        if dry_run:
+            result.would_delete += 1
             continue
 
         try:
@@ -123,6 +130,50 @@ def prune_expired_episodes(
 
     session.commit()
     return result
+
+
+def retention_hold_reasons(session: Session, episode: Episode) -> tuple[str, ...]:
+    """Explain every active state that makes episode cleanup unsafe."""
+    reasons: list[str] = []
+    has_running_stage = (
+        session.query(PipelineRun.id)
+        .filter(
+            PipelineRun.episode_id == episode.id,
+            PipelineRun.status == RunStatus.RUNNING,
+        )
+        .first()
+        is not None
+    )
+    if has_running_stage:
+        reasons.append("pipeline_running")
+
+    avatar_statuses = {
+        row[0]
+        for row in session.query(AvatarJob.status)
+        .filter(AvatarJob.episode_id == episode.episode_id)
+        .all()
+    }
+    for status in (
+        AvatarJobStatus.RESERVED.value,
+        AvatarJobStatus.SUBMITTED.value,
+        AvatarJobStatus.RECONCILE_REQUIRED.value,
+    ):
+        if status in avatar_statuses:
+            reasons.append(f"avatar_{status}")
+
+    has_uploading_publish = (
+        session.query(PublishJob.id)
+        .filter(
+            PublishJob.episode_id == episode.episode_id,
+            PublishJob.status == PublishJobStatus.UPLOADING.value,
+        )
+        .first()
+        is not None
+    )
+    if has_uploading_publish:
+        reasons.append("publish_uploading")
+
+    return tuple(reasons)
 
 
 def _delete_episode_files(settings: Settings, episode_id: str) -> None:
@@ -165,7 +216,6 @@ def _delete_episode_records(session: Session, episode: Episode) -> None:
     session.query(MediaAsset).filter(MediaAsset.episode_id == episode_id).delete(
         synchronize_session=False
     )
-    session.query(PublishJob).filter(PublishJob.episode_id == episode_id).delete(
-        synchronize_session=False
-    )
+    # Provider ledgers are durable cost and reconciliation evidence. Retention
+    # removes the episode payload, not the record of external work.
     session.delete(episode)

@@ -221,7 +221,7 @@ def detect_episodes(
     retention = prune_expired_episodes(session, settings)
     if retention.deleted or retention.protected or retention.blocked:
         logger.info(
-            "Episode retention deleted %d expired episode(s); protected %d active episode(s); "
+            "Episode retention deleted %d expired episode(s); protected %d episode(s); "
             "blocked %d episode(s)",
             retention.deleted,
             retention.protected,

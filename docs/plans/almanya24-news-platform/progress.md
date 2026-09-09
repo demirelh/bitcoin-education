@@ -34,7 +34,7 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | N4 Interner Artikel-MVP | Erledigt | `5a48f8d` | Dreifachhashbindung von Text, Belegen und Medien; private Reviewfläche, benannte Freigabe |
 | N5 Öffentliche Website | Erledigt | `80ccc0c` | Allowlist-DTO, atomarer Releaseswitch, Korrektur/Rücknahme; lokal gebaut, nicht veröffentlicht |
 | N6 Themenlebenszyklus | Erledigt | `814f918` | Vorschläge statt Verknüpfungen, revidierbare Zusammenführung, gebündelte Neuprüfung nach Quellenänderung |
-| N7 Gemeinsamer Videopfad | Offen | – | Keine Avataraktivierung |
+| N7 Gemeinsamer Videopfad | Erledigt | `ee10d12` | Adapter ohne Modellaufruf, getrennte Skript-/Videofreigabe, rechtekonforme Renderpakete; Avatar unberührt |
 | N8 Bedarfsgerechter Ausbau | Offen | – | Nur konkret durch Befunde begründete Teilpakete |
 | N9 Technischer Namensalias | Offen | – | Optionaler kompatibler CLI-/Metadatenumfang, keine Dienstmigration |
 
@@ -56,6 +56,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | 2026-09-09 | N5 gezielt | 161 Newsroomtests inklusive 28 Public-/Release-Tests bestanden |
 | 2026-09-09 | N5 Grenzen | 31 Migrations-, CLI- und Retentiontests bestanden; Ruff über `btcedu/` und `tests/` sauber |
 | 2026-09-09 | N6 gezielt | 217 Newsroomtests bestanden, davon 33 zu Themengraph, Neuprüfung und Operator-CLI |
+| 2026-09-09 | N7 gezielt | 271 Newsroomtests bestanden, davon 29 zu Videoedition, Rechtehinweisen und Freigaben |
+| 2026-09-09 | N7 Grenzen | 320 Tests zu Migrationen, Retention, Remote-Render, Weblogin, Dashboard, Pipeline und Pipeline-CLI bestanden; Ruff sauber |
 | 2026-09-09 | N6 Grenzen | 264 Tests zu Migrationen, Retention, Remote-Render, Weblogin, Dashboard und Pipeline-CLI bestanden; Ruff sauber |
 
 ## Entscheidungen und Plananpassungen
@@ -155,21 +157,40 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
     Absturz dazwischen hinterlässt einen Cachefehltreffer statt eines
     Datensatzes, der auf fehlende Bytes zeigt.
 
+31. Der Videoadapter ruft kein Modell auf. Er ordnet freigegebenen Text
+    Sprecherrollen zu; erfundene Übergangssätze gäbe es sonst ohne Prüfung.
+    Dramaturgie darf abweichen, Substanz nicht.
+32. Eine Edition trägt Text-, Beleg- und Medienhash des Artikels. Eine
+    abgeschwächte Bewertung oder ein zurückgezogenes Bild nimmt die
+    Skriptfreigabe wieder weg.
+33. Nicht-Ereignisbilder tragen einen sichtbaren Hinweis (`ARŞİV`,
+    `SEMBOL GÖRSEL`). Ein Archivbild, das wie das Ereignis aussieht, täuscht
+    ohne einen einzigen falschen Satz.
+34. Skriptfreigabe und Freigabe der fertigen Datei sind zwei Entscheidungen
+    zweier benannter Personen. Keine davon lädt etwas hoch; ein Test liest das
+    Modul als Syntaxbaum, damit kein Bezeichner zu einem Publisher führt.
+35. Renderpakete enthalten Bilder und Ton, niemals Rechercheunterlagen oder
+    Lizenzkorrespondenz. Der entfernte Renderer liegt außerhalb der
+    Vertrauensgrenze der Redaktion.
+36. Das neue Routing ist aus, solange ein Profil es nicht unter
+    `stage_config.editorial_video.enabled` einschaltet. Bestehende
+    Produktionsprofile adaptieren weiterhin die Originalsendung.
+
 ## Wiederaufnahme
 
 Nächster konkreter Schritt:
 
-1. N7: Videos aus derselben redaktionellen Revision, aus der der Artikel
-   entsteht. Text und Video dürfen nicht auseinanderlaufen; Grundlage ist die
-   freigegebene Fassung, nicht ein zweiter Generierungslauf.
-2. Avatar-Aktivierung bleibt ausdrücklich außerhalb des Umfangs.
-   Kostenpflichtige Anbieteraufrufe, Deployment und Push bleiben untersagt.
+1. N8: Quellen-, Medien- und Betriebsqualität erweitern.
+2. Offen aus N7, falls später gebraucht: ein synthetischer, kostenfreier
+   Video-Smoke-Test über den Editionspfad und die Anbindung der Edition an
+   eine konkrete Episode (`VideoEdition.episode_id` ist vorgesehen, wird
+   bisher nicht gesetzt). Avatar-Aktivierung bleibt außerhalb des Umfangs.
 3. Offen aus N5, falls später gebraucht: clientseitige TR-Suche über
    `arama/index.json`, Related-Links und responsive Bildvarianten. Die
    Datenfelder dafür bestehen bereits.
 4. Offen aus N6, falls später gebraucht: eine Weboberfläche für Vorschläge,
    Zusammenführungen und die Problemliste. Bedienbar ist beides bereits über
    `btcedu topics` und `btcedu recheck`.
-5. Fortschritt nach Abschluss von N7 hier eintragen.
+5. Fortschritt nach Abschluss von N8 hier eintragen.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

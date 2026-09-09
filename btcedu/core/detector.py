@@ -354,8 +354,8 @@ def _stored_broadcast_keys(
     for episode_id, title, _source, stored_profile, stored_channel in query.all():
         if channel_id and stored_channel and channel_id != stored_channel:
             continue
-        if profile_name and stored_profile and profile_name != stored_profile:
-            continue
+        # Legacy unassigned episodes retain the default profile. A profile mismatch
+        # must not override their explicit programme, edition and broadcast date.
         same_stream = bool(
             (profile_name and stored_profile == profile_name)
             or (channel_id and stored_channel == channel_id)

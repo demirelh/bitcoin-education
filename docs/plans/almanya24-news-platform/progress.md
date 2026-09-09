@@ -27,8 +27,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | --- | --- | --- | --- |
 | Planübernahme | Erledigt | `6458e61` | Acht Repositorydokumente, Links und UTF-8/NFC geprüft |
 | N0a Importidentität | Erledigt | `9c89cd2` | Stream-/Editionsschlüssel, kein NULL-Kanal-Backfill, korrektes Backfillprofil |
-| N0b Retention-Holds | In Arbeit | – | Jobstatus und bestehende Cleanupverträge prüfen |
-| N1 Redaktionelle Basis | Offen | – | Nach N0b |
+| N0b Retention-Holds | Erledigt | `de85f64` | Gründe für Pipeline/Avatar/Upload, Dry-Run und dauerhafte Providerledger |
+| N1 Redaktionelle Basis | In Arbeit | – | Modelle, Migration und persistente Jobreservation |
 | N2 Automatische Belege | Offen | – | Fixtures vollständig; Onlinepilot ohne Zugangsdaten offen |
 | N3 Commons und Rechte | Offen | – | Vertragstests ohne echte Käufe |
 | N4 Interner Artikel-MVP | Offen | – | Abschluss des funktionalen MVP |
@@ -45,6 +45,7 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | 2026-09-09 | Produktionsisolierung | `btcedu-web` arbeitet aus `/home/pi/AI-Startup-Lab/bitcoin-education`; separater Worktree und separate venv eingerichtet |
 | 2026-09-09 | Planübernahme | Acht Dokumente mit gültigem UTF-8/NFC und vollständigen lokalen Links; Commit `6458e61` |
 | 2026-09-09 | N0a gezielt | 139 Tests in Detector/Channel/Recorder/Failover bestanden; Ruff für betroffene Dateien sauber |
+| 2026-09-09 | N0b gezielt | 12 Retentiontests sowie 128 Retention-/Importintegrationstests bestanden; Ruff sauber |
 
 ## Entscheidungen und Plananpassungen
 
@@ -62,8 +63,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 
 Nächster konkreter Schritt:
 
-1. N0b: Avatar-/Publishstatus und Cleanupbeziehungen vollständig erfassen.
-2. Retention-Hold-Resolver samt Dry-Run-Gründen implementieren.
-3. Statusmatrix, Wiederholung und Dateifehler isoliert testen.
+1. N1: vorhandene Migrations-/Modellkonventionen und Storyartefakte erfassen.
+2. Minimalen redaktionellen Datenvertrag und atomare Research-Reservation umsetzen.
+3. Fresh-/Upgrade-/Idempotenztests auf isolierten Datenbanken ausführen.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

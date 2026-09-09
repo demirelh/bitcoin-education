@@ -32,7 +32,7 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | N2 Automatische Belege | Erledigt | `97052f8` | Dokumentgebundene Belege, sechs Status, Provenienzfamilien, kontrollierter Fetcher, Budget/Deadline-Stopp |
 | N3 Commons und Rechte | Erledigt | `8ca3146` | Assetbezogene Rechteentscheidung, Lizenzbelege, Dublettenspeicher, Widerruf; keine Altassetübernahme |
 | N4 Interner Artikel-MVP | Erledigt | `5a48f8d` | Dreifachhashbindung von Text, Belegen und Medien; private Reviewfläche, benannte Freigabe |
-| N5 Öffentliche Website | Offen | – | Lokal bauen; nicht veröffentlichen |
+| N5 Öffentliche Website | Erledigt | `80ccc0c` | Allowlist-DTO, atomarer Releaseswitch, Korrektur/Rücknahme; lokal gebaut, nicht veröffentlicht |
 | N6 Themenlebenszyklus | Offen | – | Nach N5 |
 | N7 Gemeinsamer Videopfad | Offen | – | Keine Avataraktivierung |
 | N8 Bedarfsgerechter Ausbau | Offen | – | Nur konkret durch Befunde begründete Teilpakete |
@@ -53,6 +53,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | 2026-09-09 | N3 gezielt/gemeinsam | 151 Medien-, Recherche-, Editorial-, Fetcher-, Migrations-, Config- und Retentiontests bestanden; Ruff über `btcedu/` und `tests/` sauber |
 | 2026-09-09 | N4 gezielt | 152 Newsroomtests (Artikel-, Web-, Medien-, Recherche-, Migrations-, Configtests) bestanden |
 | 2026-09-09 | N4 Grenzen | 191 Migrations-, Auth- und Dashboardtests sowie 83 Retention-, Remoterender- und Prefixtests bestanden; Ruff sauber |
+| 2026-09-09 | N5 gezielt | 161 Newsroomtests inklusive 28 Public-/Release-Tests bestanden |
+| 2026-09-09 | N5 Grenzen | 31 Migrations-, CLI- und Retentiontests bestanden; Ruff über `btcedu/` und `tests/` sauber |
 
 ## Entscheidungen und Plananpassungen
 
@@ -115,17 +117,33 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
     statt einer Weiterleitung in das Loginformular.
 19. Kein Redaktionsendpunkt steht auf der Loginfreiliste; es gibt hinter der
     Fläche keinen Export, keinen Upload und keinen Generierungsjob.
+20. Öffentliche Ausgabe läuft ausschließlich über Allowlist-Dataclasses. Ein
+    nicht dort benanntes Feld kann keine Seite, keinen Feed und keinen
+    Suchindex erreichen, auch nicht nach einer späteren Spaltenerweiterung.
+21. Belege und Rechte werden zum Buildzeitpunkt erneut geprüft. Ein Artikel mit
+    entzogener Lizenz oder abgeschwächter Bewertung fällt aus dem Build heraus,
+    statt veraltet ausgeliefert zu werden.
+22. Ein Release wird in ein unreferenziertes Verzeichnis geschrieben; der
+    Wechsel erfolgt über `os.replace` auf einen Symlink. `reconcile` glaubt dem
+    Zeiger, nicht der Datenbank, weil Leser dem Zeiger folgen.
+23. Ein Thema behält dauerhaft eine Adresse. Eine neue Fassung unter derselben
+    URL verlangt eine lesbare Korrekturbegründung; eine Rücknahme liefert einen
+    Tombstone und verschwindet aus Sitemap, Feed und Suchindex.
+24. Bauen und Veröffentlichen sind manuelle CLI-Befehle. Standardbasis-URL ist
+    ungültig, Impressums-, Datenschutz- und Rechtetexte bleiben leer statt
+    erfunden.
 
 ## Wiederaufnahme
 
 Nächster konkreter Schritt:
 
-1. N5: eigenständige öffentliche Nachrichtenwebsite, ausschließlich aus
-   freigegebenen Artikelrevisionen erzeugt. Lokal bauen, nicht veröffentlichen.
-2. Das Operator-Dashboard bleibt getrennt; der öffentliche Build darf keine
-   Entwürfe, Sperrgründe oder Betriebsdaten enthalten.
-3. Attribution und Lizenzangabe müssen im öffentlichen Ausgabeformat
-   erscheinen; ein widerrufenes Asset darf nicht im Build landen.
-4. Fortschritt nach Abschluss von N5 hier eintragen.
+1. N6: Themenbündelung, Aktualisierung und dauerhafte Korrekturen. Mehrere
+   Sendungen und Quellen zu einem fortlaufenden Thema zusammenführen.
+2. Voraussetzung ist die bereits funktionsfähige Einzelkorrektur aus N5;
+   eine Bündelung darf keine bestehende öffentliche Adresse brechen.
+3. Offen aus N5, falls später gebraucht: clientseitige TR-Suche über
+   `arama/index.json`, Related-Links und responsive Bildvarianten. Die
+   Datenfelder dafür bestehen bereits.
+4. Fortschritt nach Abschluss von N6 hier eintragen.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

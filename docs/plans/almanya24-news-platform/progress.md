@@ -25,9 +25,9 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 
 | Paket | Status | Commit | Nachweis / nächster Schritt |
 | --- | --- | --- | --- |
-| Planübernahme | In Arbeit | – | Sieben geprüfte Dokumente übernommen; Links und UTF-8 prüfen, dann Dokumentationscheckpoint |
-| N0a Importidentität | Offen | – | Erster Codeauftrag |
-| N0b Retention-Holds | Offen | – | Nach N0a |
+| Planübernahme | Erledigt | `6458e61` | Acht Repositorydokumente, Links und UTF-8/NFC geprüft |
+| N0a Importidentität | Erledigt | `9c89cd2` | Stream-/Editionsschlüssel, kein NULL-Kanal-Backfill, korrektes Backfillprofil |
+| N0b Retention-Holds | In Arbeit | – | Jobstatus und bestehende Cleanupverträge prüfen |
 | N1 Redaktionelle Basis | Offen | – | Nach N0b |
 | N2 Automatische Belege | Offen | – | Fixtures vollständig; Onlinepilot ohne Zugangsdaten offen |
 | N3 Commons und Rechte | Offen | – | Vertragstests ohne echte Käufe |
@@ -43,6 +43,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | Zeitpunkt | Umfang | Ergebnis |
 | --- | --- | --- |
 | 2026-09-09 | Produktionsisolierung | `btcedu-web` arbeitet aus `/home/pi/AI-Startup-Lab/bitcoin-education`; separater Worktree und separate venv eingerichtet |
+| 2026-09-09 | Planübernahme | Acht Dokumente mit gültigem UTF-8/NFC und vollständigen lokalen Links; Commit `6458e61` |
+| 2026-09-09 | N0a gezielt | 139 Tests in Detector/Channel/Recorder/Failover bestanden; Ruff für betroffene Dateien sauber |
 
 ## Entscheidungen und Plananpassungen
 
@@ -60,9 +62,8 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 
 Nächster konkreter Schritt:
 
-1. Dokumentlinks/UTF-8 und Worktree-Status prüfen.
-2. Planübernahme lokal committen.
-3. `news-n0a-import` auf `in_progress` setzen.
-4. N0a-Tests und kleinste ursächliche Korrektur implementieren.
+1. N0b: Avatar-/Publishstatus und Cleanupbeziehungen vollständig erfassen.
+2. Retention-Hold-Resolver samt Dry-Run-Gründen implementieren.
+3. Statusmatrix, Wiederholung und Dateifehler isoliert testen.
 
 Abgeschlossene Pakete werden nicht ohne neuen konkreten Befund wieder geöffnet.

@@ -47,6 +47,7 @@ class EditionDecisionKind(str, enum.Enum):
 
     SCRIPT = "script"
     FINAL_VIDEO = "final_video"
+    MEDIA = "video_media"
 
 
 class EditionDecisionType(str, enum.Enum):
@@ -197,6 +198,8 @@ class EditionDecision(Base):
     evidence_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     media_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     video_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    video_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    render_input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=_utcnow
     )

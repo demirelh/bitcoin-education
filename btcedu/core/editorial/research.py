@@ -355,6 +355,11 @@ def _run_query(
         )
         .first()
     )
+    if query is not None and (
+        query.query_text != plan.query_text or query.language != plan.language
+        or query.purpose != plan.purpose
+    ):
+        raise ValueError(f"Query key {plan.query_key!r} already identifies different work")
     if query is not None and query.status == ResearchQueryStatus.COMPLETED.value:
         return query, _deserialize_search_response(query.result_json or "{}")
     if query is None:
@@ -609,11 +614,25 @@ def _store_evidence_link(
         translated_passage=draft.translated_passage,
         passage_hash=passage_hash,
         rationale=draft.rationale,
-        provenance_family=draft.provenance_family or observation.provenance_family,
+        provenance_family=_document_family(observation, observations),
     )
     session.add(link)
     session.commit()
     return link
+
+
+def _document_family(observation, observations) -> str:
+    text = " ".join((observation.content_text or "").casefold().split())
+    agencies = re.findall(r"\b(dpa|reuters|associated press|afp)\b", text)
+    if agencies:
+        return "agency:" + sorted(set(agencies))[0]
+    if any(
+        other.id != observation.id
+        and " ".join((other.content_text or "").casefold().split()) == text
+        for other in observations
+    ):
+        return "copy:" + _digest(text)
+    return "publisher:" + (_host(observation.canonical_url) or "unknown")
 
 
 def _validate_claim_anchors(claim: ClaimRevision, draft: EvidenceDraft) -> None:
@@ -670,6 +689,26 @@ def _aggregate_verdict(
     return ClaimVerdict.INSUFFICIENT, "No fetched passage sufficiently supports the claim"
 
 
+def assessment_input_hash(session, claim_revision, research_run_id) -> str:
+    rows = (
+        session.query(EvidenceLink, SourceObservation)
+        .join(SourceObservation, SourceObservation.id == EvidenceLink.source_observation_id)
+        .filter(
+            EvidenceLink.claim_revision_id == claim_revision.id,
+            SourceObservation.research_run_id == research_run_id,
+        ).order_by(EvidenceLink.evidence_id).all()
+    )
+    def values(row):
+        return {
+            column.name: getattr(row, column.name) for column in row.__table__.columns
+            if column.name != "body_path"
+        }
+    return canonical_hash({
+        "claim": values(claim_revision),
+        "evidence": [{"link": values(link), "document": values(source)} for link, source in rows],
+    })
+
+
 def _store_assessment(
     session: Session,
     *,
@@ -680,16 +719,8 @@ def _store_assessment(
     counter_search_completed: bool,
     links: tuple[EvidenceLink, ...],
 ) -> ClaimAssessment:
-    evidence_digest = canonical_hash(
-        [
-            {
-                "evidence_id": item.evidence_id,
-                "relation": item.relation,
-                "passage_hash": item.passage_hash,
-            }
-            for item in sorted(links, key=lambda link: link.evidence_id)
-        ]
-    )
+    session.flush()
+    evidence_digest = assessment_input_hash(session, claim_revision, research_run.id)
     assessment = (
         session.query(ClaimAssessment)
         .filter_by(
@@ -747,7 +778,7 @@ def _deserialize_search_response(value: str) -> SearchResponse:
         provider=payload["provider"],
         query=payload["query"],
         request_id=payload.get("request_id"),
-        cost_usd=float(payload.get("cost_usd") or 0.0),
+        cost_usd=payload.get("cost_usd"),
         hits=tuple(
             SearchHit(**SearchHitData.model_validate(item).model_dump())
             for item in payload.get("hits", [])

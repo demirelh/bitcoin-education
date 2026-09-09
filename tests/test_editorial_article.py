@@ -697,21 +697,22 @@ def test_generation_survives_a_restart_in_the_middle_of_research(db_session, tmp
     db_session.query(ClaimAssessment).delete()
     db_session.commit()
 
-    article = generate_article_revision(
-        db_session,
-        editorial_revision=revision,
-        research_run=run,
-        drafter=lambda payload: _draft(
-            paragraphs=[
-                {"text": "Berlin 100 yeni konut bildirdi.", "claim_keys": []}
-            ]
-        ),
-    )
+    with pytest.raises(ArticleContentRejected, match="must reference"):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=lambda payload: _draft(
+                paragraphs=[
+                    {"text": "Berlin 100 yeni konut bildirdi.", "claim_keys": []}
+                ]
+            ),
+        )
     reasons = article_gate_reasons(
         db_session, editorial_revision=revision, research_run=run
     )
 
-    assert article.status == ArticleStatus.DRAFT.value
+    assert db_session.query(ArticleRevision).count() == 0
     assert reasons
     assert db_session.query(EditorialDecision).count() == 0
 

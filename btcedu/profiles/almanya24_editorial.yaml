@@ -1,0 +1,20 @@
+name: almanya24_editorial
+display_name: ALMANYA24
+source_language: de
+target_language: tr
+domain: news
+pipeline_version: 2
+stages_enabled: all
+auto_approve_reviews: false
+auto_publish: false
+stage_config:
+  editorial_video:
+    enabled: true
+  render:
+    intro_enabled: false
+    topic_intro_enabled: false
+    ticker_enabled: false
+  anchor:
+    enabled: false
+youtube:
+  publish_enabled: false

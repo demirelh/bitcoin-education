@@ -277,6 +277,9 @@ def accept_proposal(
     proposal.operator_ref = operator_ref
     proposal.decided_at = now()
     session.commit()
+    from btcedu.core.editorial.recheck import scan_changes
+
+    scan_changes(session, topic_ids=[proposal.topic_id])
     return link
 
 
@@ -289,6 +292,8 @@ def reject_proposal(
 ) -> UpdateProposal:
     if not operator_ref or not operator_ref.strip():
         raise ValueError("Rejecting a proposal needs a named operator")
+    if proposal.status != ProposalStatus.OPEN.value:
+        raise TopicGraphError(f"Proposal is already {proposal.status}")
     proposal.status = ProposalStatus.REJECTED.value
     proposal.operator_ref = operator_ref
     proposal.decided_at = now()
@@ -318,6 +323,8 @@ def merge_topics(
         raise ValueError("A merge needs a rationale that can be read later")
     if _is_merged_away(session, primary):
         raise TopicGraphError("The primary topic is itself merged away")
+    if _is_merged_away(session, merged):
+        raise TopicGraphError("The secondary topic is already merged away")
 
     added: list[int] = []
     for link in session.query(TopicSource).filter_by(topic_id=merged.id).all():

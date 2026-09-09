@@ -3838,10 +3838,12 @@ def recheck_queue(ctx: click.Context, kind: str, ref: str, reason: str) -> None:
 @click.pass_context
 def recheck_run(ctx: click.Context, limit: int) -> None:
     """Run pending rechecks. Nothing is withdrawn automatically."""
-    from btcedu.core.editorial.recheck import pending_rechecks, run_recheck
+    from btcedu.core.editorial.recheck import pending_rechecks, run_recheck, scan_changes
 
     session = ctx.obj["session_factory"]()
     try:
+        changed = scan_changes(session)
+        click.echo("Changed references: " + json.dumps(changed))
         jobs = list(pending_rechecks(session, limit=limit))
         if not jobs:
             click.echo("no pending rechecks")
@@ -3965,7 +3967,7 @@ def edition_build(ctx: click.Context, article_revision_id: str, profile: str) ->
         if profile:
             from btcedu.profiles import get_registry
 
-            profile_obj = get_registry().get(profile)
+            profile_obj = get_registry(ctx.obj["settings"]).get(profile)
         try:
             edition = build_edition(
                 session, article, research_run=run, profile=profile_obj
@@ -4002,6 +4004,46 @@ def edition_show(ctx: click.Context, edition_id: str) -> None:
             )
         for reason in edition_blockers(session, edition, research_run=run):
             click.echo(f"  BLOCKED: {reason}")
+    finally:
+        session.close()
+
+
+@edition_group.command(name="approve-media")
+@click.argument("edition_id")
+@click.option("--operator", required=True)
+@click.option("--note", required=True, help="Video/profile/crop rights rationale.")
+@click.pass_context
+def edition_approve_media(ctx, edition_id: str, operator: str, note: str) -> None:
+    from btcedu.core.editorial.video import EditionError, approve_video_media
+
+    session = ctx.obj["session_factory"]()
+    try:
+        edition = _load_edition(session, edition_id)
+        approve_video_media(
+            session, edition, operator_ref=operator.strip(),
+            research_run=_research_run_for(session, edition), note=note,
+        )
+        click.echo(f"[OK] video media approved for {edition_id}")
+    except EditionError as exc:
+        raise click.ClickException(str(exc)) from exc
+    finally:
+        session.close()
+
+
+@edition_group.command(name="bind")
+@click.argument("edition_id")
+@click.pass_context
+def edition_bind(ctx, edition_id: str) -> None:
+    """Create the production episode; does not run TTS, render or upload."""
+    from btcedu.core.editorial.production import bind_episode
+    from btcedu.core.editorial.video import EditionError
+
+    session = ctx.obj["session_factory"]()
+    try:
+        episode = bind_episode(session, _load_edition(session, edition_id), ctx.obj["settings"])
+        click.echo(f"[OK] edition bound to {episode.episode_id}")
+    except EditionError as exc:
+        raise click.ClickException(str(exc)) from exc
     finally:
         session.close()
 
@@ -4177,5 +4219,62 @@ def newsroom_report(ctx: click.Context, as_json: bool) -> None:
             click.echo(json.dumps(payload, indent=2, ensure_ascii=False))
         else:
             click.echo(format_report(report))
+    finally:
+        session.close()
+
+
+@cli.command(name="newsroom-draft")
+@click.argument("stories_path", type=click.Path(exists=True, path_type=Path))
+@click.option("--story-id", required=True)
+@click.option("--provider", type=click.Choice(["anthropic", "openai"]), required=True)
+@click.option("--model", required=True)
+@click.option("--max-call-cost", type=click.FloatRange(min=0.001), required=True)
+@click.option("--image-subject", default="", help="Explicit image intent; blank means no image.")
+@click.option(
+    "--execute", is_flag=True, help="Explicitly permit configured research provider calls."
+)
+@click.pass_context
+def newsroom_draft(
+    ctx, stories_path: Path, story_id: str, provider: str, model: str,
+    max_call_cost: float, image_subject: str, execute: bool,
+) -> None:
+    """Run a selected transcript story through research and a private TR draft."""
+    from btcedu.core.editorial.media import MediaRequirement
+    from btcedu.core.editorial.workflow import draft_story
+    from btcedu.models.media_rights import MediaRole
+    from btcedu.models.story_schema import StoryDocument
+    from btcedu.services.commons_service import WikimediaCommonsProvider
+    from btcedu.services.document_fetcher import DocumentFetcher
+    from btcedu.services.editorial_model import EditorialModel
+    from btcedu.services.search_service import BraveSearchProvider
+
+    settings = ctx.obj["settings"]
+    if not execute or not settings.newsroom_enabled or settings.dry_run:
+        raise click.ClickException(
+            "Requires --execute and enabled newsroom; offline execution uses injected fixtures"
+        )
+    if settings.newsroom_search_provider != "brave":
+        raise click.ClickException("No approved search provider configured")
+    if image_subject and settings.newsroom_media_provider != "wikimedia_commons":
+        raise click.ClickException("No approved media provider configured")
+    document = StoryDocument.model_validate_json(stories_path.read_text(encoding="utf-8"))
+    story = next((item for item in document.stories if item.story_id == story_id), None)
+    if story is None:
+        raise click.ClickException("Story ID is absent from the transcript story document")
+    fetcher = DocumentFetcher.from_settings(settings)
+    session = ctx.obj["session_factory"]()
+    try:
+        article = draft_story(
+            session, episode_id=document.episode_id, story=story, settings=settings,
+            model_caller=EditorialModel(settings, provider=provider, model=model),
+            provider_name=provider, model_name=model, max_call_cost_usd=max_call_cost,
+            source_published_at=datetime.fromisoformat(document.broadcast_date).replace(tzinfo=UTC),
+            search_provider=BraveSearchProvider(settings.brave_search_api_key),
+            fetcher=fetcher, media_provider=WikimediaCommonsProvider(fetcher),
+            media_requirement=MediaRequirement(
+                subject=image_subject, role=MediaRole.SYMBOLIC
+            ) if image_subject else None,
+        )
+        click.echo(f"Private draft: {article.article_revision_id}; manual review required")
     finally:
         session.close()

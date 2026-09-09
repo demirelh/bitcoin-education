@@ -792,9 +792,9 @@ def test_syndicated_sources_keep_one_provenance_family(db_session, tmp_path):
     )
 
     assert assessment.verdict == "supported"
-    assert {link.provenance_family for link in db_session.query(EvidenceLink)} == {
-        "agency:shared"
-    }
+    families = {link.provenance_family for link in db_session.query(EvidenceLink)}
+    assert len(families) == 1
+    assert next(iter(families)).startswith("copy:")
     assert db_session.query(ClaimAssessment).count() == 1
 
 

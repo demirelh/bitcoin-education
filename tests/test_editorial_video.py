@@ -30,6 +30,7 @@ from btcedu.core.editorial.video import (
     StaleEditionApproval,
     approve_final_video,
     approve_script,
+    approve_video_media,
     assert_no_private_material,
     broadcast_script,
     build_edition,
@@ -59,8 +60,11 @@ from btcedu.profiles import ContentProfile
 from tests.test_editorial_article import _draft, _pipeline  # noqa: F401
 
 
-def _approved(db_session, tmp_path, **kwargs):
+def _approved(db_session, tmp_path, *, role=None, **kwargs):
     revision, run, _ = _pipeline(db_session, tmp_path, **kwargs)
+    if role:
+        db_session.query(MediaUseDecision).one().role = role
+        db_session.commit()
     article = generate_article_revision(
         db_session,
         editorial_revision=revision,
@@ -234,10 +238,7 @@ def test_an_article_whose_evidence_weakened_cannot_become_a_video(db_session, tm
 
 def test_an_archive_picture_carries_a_visible_notice(db_session, tmp_path):
     """A picture that is not of the event must say so on screen."""
-    article, _, run = _approved(db_session, tmp_path)
-    decision = db_session.query(MediaUseDecision).one()
-    decision.role = "archive"
-    db_session.commit()
+    article, _, run = _approved(db_session, tmp_path, role="archive")
 
     edition = build_edition(db_session, article, research_run=run)
     [media] = edition_media(db_session, edition)
@@ -391,7 +392,10 @@ def test_an_article_withdrawn_from_approval_blocks_the_edition(db_session, tmp_p
 
 def test_the_finished_video_needs_its_own_approval(db_session, tmp_path):
     article, _, run = _approved(db_session, tmp_path)
-    edition = build_edition(db_session, article, research_run=run)
+    edition = build_edition(db_session, article, research_run=run, profile=_profile())
+    approve_video_media(
+        db_session, edition, operator_ref="cli:nadine", research_run=run, note="Video crop"
+    )
     rendered = tmp_path / "edition.mp4"
     rendered.write_bytes(b"synthetic")
 
@@ -416,7 +420,7 @@ def test_the_finished_video_needs_its_own_approval(db_session, tmp_path):
     assert decision.kind == EditionDecisionKind.FINAL_VIDEO.value
     assert edition.status == EditionStatus.FINAL_APPROVED.value
     assert edition.final_video_path == str(rendered)
-    assert db_session.query(EditionDecision).count() == 2
+    assert db_session.query(EditionDecision).count() == 3
 
 
 def test_a_final_approval_names_one_specific_file(db_session, tmp_path):
@@ -468,7 +472,11 @@ def test_nothing_in_this_module_uploads_anything(db_session):
 
 def test_a_render_package_contains_only_approved_inputs(db_session, tmp_path):
     article, _, run = _approved(db_session, tmp_path)
-    edition = build_edition(db_session, article, research_run=run)
+    edition = build_edition(db_session, article, research_run=run, profile=_profile())
+    approve_script(db_session, edition, operator_ref="cli:nadine", research_run=run)
+    approve_video_media(
+        db_session, edition, operator_ref="cli:nadine", research_run=run, note="Video crop"
+    )
     dest = tmp_path / "package"
 
     manifest = collect_render_inputs(db_session, edition, dest=dest, research_run=run)
@@ -530,7 +538,9 @@ def test_the_cli_builds_and_approves_an_edition_under_named_operators(db_session
     """Two people, two decisions, both recorded."""
     article, _, run = _approved(db_session, tmp_path)
 
-    built = _run_cli(db_session, ["edition", "build", article.article_revision_id])
+    built = _run_cli(db_session, [
+        "edition", "build", article.article_revision_id, "--profile", "almanya24_editorial"
+    ])
     assert built.exit_code == 0, built.output
     edition_id = db_session.query(VideoEdition).one().edition_id
 
@@ -543,6 +553,11 @@ def test_the_cli_builds_and_approves_an_edition_under_named_operators(db_session
         ["edition", "approve-script", edition_id, "--operator", "nadine"],
     )
     assert approved.exit_code == 0
+    media_approved = _run_cli(db_session, [
+        "edition", "approve-media", edition_id, "--operator", "cli:nadine",
+        "--note", "Video crop",
+    ])
+    assert media_approved.exit_code == 0, media_approved.output
 
     rendered = tmp_path / "edition.mp4"
     rendered.write_bytes(b"synthetic")

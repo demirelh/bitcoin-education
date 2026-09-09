@@ -188,10 +188,16 @@ def queue_rechecks(
     otherwise queue an unbounded number of paid rechecks at once.
     """
     jobs: list[RecheckJob] = []
-    for publication in affected_publications(session, kind=kind, ref=ref):
-        if len(jobs) >= max_fanout:
-            logger.warning("Recheck fanout capped at %s for %s", max_fanout, ref)
-            break
+    affected = affected_publications(session, kind=kind, ref=ref)
+    if len(affected) > max_fanout:
+        open_issue(
+            session, kind="recheck_fanout", ref=f"{kind.value}:{ref}",
+            detail=f"{len(affected)} affected publications exceed limit {max_fanout}: {reason}",
+        )
+        raise RecheckError(
+            "Recheck fanout exceeds limit; durable issue records the unresolved work"
+        )
+    for publication in affected:
         existing = (
             session.query(RecheckJob)
             .filter_by(
@@ -257,6 +263,59 @@ def run_recheck(
     job.completed_at = now()
     session.commit()
     return RecheckOutcome(job_id=job.job_id, status=job.status, detail=job.detail or "")
+
+
+def scan_changes(session: Session, *, topic_ids=None) -> dict[str, list[str]]:
+    """Bounded-memory local sweep; detects drift without contacting any provider."""
+    from btcedu.core.editorial.article import current_article_state
+    from btcedu.core.editorial.public import latest_research_run
+    from btcedu.core.editorial.video import edition_blockers, refresh_edition_status
+    from btcedu.models.video_edition import VideoEdition
+
+    changed = {"articles": [], "publications": [], "editions": []}
+    articles = session.query(ArticleRevision)
+    editions = session.query(VideoEdition)
+    if topic_ids is not None:
+        articles = articles.join(EditorialRevision).filter(
+            EditorialRevision.topic_id.in_(topic_ids)
+        )
+        editions = editions.join(ArticleRevision).join(EditorialRevision).filter(
+            EditorialRevision.topic_id.in_(topic_ids)
+        )
+    for article in articles.yield_per(50):
+        revision = session.get(EditorialRevision, article.editorial_revision_id)
+        run = latest_research_run(session, revision.topic_id)
+        drift = run is None or current_article_state(
+            session, article, research_run=run
+        ) != (article.content_hash, article.evidence_hash, article.media_hash)
+        if not drift:
+            continue
+        changed["articles"].append(article.article_revision_id)
+        open_issue(
+            session, kind="article_drift", ref=article.article_revision_id,
+            detail="Current text, sources or rights differ from the drafted revision",
+        )
+        for publication in session.query(Publication).filter_by(
+            current_article_revision_id=article.id
+        ):
+            changed["publications"].append(publication.publication_id)
+            if not session.query(RecheckJob.id).filter_by(
+                publication_id=publication.id, status=RecheckStatus.PENDING.value
+            ).first():
+                session.add(RecheckJob(
+                    job_id=str(uuid.uuid4()), publication_id=publication.id,
+                    reason="review:article drift", status=RecheckStatus.PENDING.value,
+                ))
+                session.commit()
+    for edition in editions.yield_per(50):
+        from btcedu.core.editorial.production import research_for
+
+        run = research_for(session, edition)
+        if edition_blockers(session, edition, research_run=run):
+            refresh_edition_status(session, edition, research_run=run)
+            changed["editions"].append(edition.edition_id)
+            open_issue(session, kind="edition_drift", ref=edition.edition_id)
+    return changed
 
 
 def pending_rechecks(session: Session, *, limit: int = MAX_FANOUT) -> Sequence[RecheckJob]:

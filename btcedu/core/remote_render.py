@@ -531,6 +531,13 @@ def build_job_package(
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
+    editorial_files = None
+    if episode.source == "editorial_revision":
+        from btcedu.core.editorial.production import production_inputs, require_production
+
+        require_production(session, episode, settings)
+        editorial_files = production_inputs(Path(settings.outputs_dir) / episode_id)
+
     episode_dir = Path(settings.outputs_dir) / episode_id
     if not episode_dir.is_dir():
         raise ValueError(f"No output directory for episode {episode_id}: {episode_dir}")
@@ -600,7 +607,11 @@ def build_job_package(
     shipped = list(job["assets"]) + list((job["scene_render"] or {}).get("studio_assets") or [])
     with tarfile.open(archive_path, "w:gz", compresslevel=1) as tar:
         tar.add(job_json, arcname="job.json")
-        tar.add(episode_dir, arcname="episode", filter=_job_filter(episode_dir))
+        if editorial_files is not None:
+            for relative in sorted(editorial_files):
+                tar.add(episode_dir / relative, arcname=f"episode/{relative}", recursive=False)
+        else:
+            tar.add(episode_dir, arcname="episode", filter=_job_filter(episode_dir))
         for rel in dict.fromkeys(shipped):
             if is_secret_name(rel):
                 raise RuntimeError(f"Refusing to ship {rel} to a remote runner")

@@ -580,6 +580,16 @@ def _run_all_safety_checks(
         _check_profile_publish_permitted(episode, settings),
         _check_branding(episode, settings),
     ]
+    if episode.source == "editorial_revision":
+        from btcedu.core.editorial.production import require_final
+        from btcedu.core.editorial.video import EditionError
+
+        try:
+            require_final(session, episode, settings)
+        except (EditionError, OSError, ValueError) as exc:
+            checks.append(SafetyCheck("editorial_final", False, str(exc)))
+        else:
+            checks.append(SafetyCheck("editorial_final", True, "Edition decision is current"))
     if _requires_manual_publish_review(episode, settings):
         checks.append(_check_manual_publish_approval(session, episode, settings))
     for c in checks:
@@ -915,6 +925,21 @@ def _build_youtube_metadata(
     Returns:
         (title, description, tags)
     """
+    if episode.source == "editorial_revision":
+        from btcedu.core.editorial.production import require_production
+        from btcedu.core.editorial.video import edition_metadata
+
+        if session is None:
+            raise ValueError("Editorial metadata requires its bound edition")
+        edition = require_production(session, episode, settings)
+        metadata = edition_metadata(session, edition)
+        description = "\n\n".join(filter(None, [
+            metadata["summary"], "\n".join(metadata["notices"]), "\n".join(metadata["credits"]),
+        ]))
+        if len(description) > 5000:
+            raise ValueError("Editorial credits exceed YouTube's description limit")
+        return metadata["title"][:100], description, ["ALMANYA24", "Haber"]
+
     chapters_path = Path(settings.outputs_dir) / episode.episode_id / "chapters.json"
 
     # Load profile for profile-specific YouTube metadata

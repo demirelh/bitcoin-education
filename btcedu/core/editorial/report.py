@@ -61,6 +61,7 @@ class CostReport:
     budgeted_cost_usd: float = 0.0
     operations: int = 0
     failed_operations: int = 0
+    estimated_operations: int = 0
     by_provider: list[tuple[str, float]] = field(default_factory=list)
 
 
@@ -106,8 +107,15 @@ def _counts(pairs) -> list[tuple[str, int]]:
 
 def _source_report(session: Session) -> SourceReport:
     report = SourceReport()
-    links = session.query(EvidenceLink).all()
-    observations = {row.id: row for row in session.query(SourceObservation).all()}
+    links = session.query(
+        EvidenceLink.source_observation_id, EvidenceLink.provenance_family,
+        EvidenceLink.relation, EvidenceLink.claim_revision_id,
+    ).all()
+    observations = {row.id: row for row in session.query(
+        SourceObservation.id, SourceObservation.provenance_family,
+        SourceObservation.canonical_url, SourceObservation.publisher,
+        SourceObservation.fetch_status,
+    )}
 
     families: list[str] = []
     publishers: list[str] = []
@@ -120,7 +128,7 @@ def _source_report(session: Session) -> SourceReport:
         families.append(family)
         if observation.publisher:
             publishers.append(observation.publisher)
-        if link.relation in SUPPORTING:
+        if observation.fetch_status == "fetched" and link.relation in SUPPORTING:
             per_claim.setdefault(link.claim_revision_id, set()).add(family)
 
     report.evidence_links = len(links)
@@ -133,7 +141,8 @@ def _source_report(session: Session) -> SourceReport:
         )
 
     material = (
-        session.query(ClaimRevision).filter(ClaimRevision.material.is_(True)).all()
+        session.query(ClaimRevision.id, ClaimRevision.revision_id)
+        .filter(ClaimRevision.material.is_(True)).yield_per(100)
     )
     for claim in material:
         supporting = per_claim.get(claim.id, set())
@@ -146,15 +155,20 @@ def _source_report(session: Session) -> SourceReport:
 
 def _cost_report(session: Session) -> CostReport:
     report = CostReport()
-    runs = session.query(ResearchRun).all()
+    runs = session.query(ResearchRun.max_cost_usd).all()
     report.research_runs = len(runs)
     report.budgeted_cost_usd = round(sum(run.max_cost_usd for run in runs), 4)
 
-    operations = session.query(ProviderOperation).all()
+    operations = session.query(
+        ProviderOperation.actual_cost_usd, ProviderOperation.estimated_cost_usd,
+        ProviderOperation.provider, ProviderOperation.status,
+    ).all()
     report.operations = len(operations)
     per_provider: Counter[str] = Counter()
     total = 0.0
     for operation in operations:
+        if operation.actual_cost_usd is None:
+            report.estimated_operations += 1
         cost = (
             operation.actual_cost_usd
             if operation.actual_cost_usd is not None
@@ -174,7 +188,9 @@ def _cost_report(session: Session) -> CostReport:
 
 def _fetch_report(session: Session) -> FetchReport:
     report = FetchReport()
-    observations = session.query(SourceObservation).all()
+    observations = session.query(
+        SourceObservation.fetch_status, SourceObservation.http_status, SourceObservation.body_path,
+    ).all()
     report.observations = len(observations)
     report.by_status = _counts(row.fetch_status for row in observations)
     report.rate_limited = sum(1 for row in observations if row.http_status == 429)
@@ -187,13 +203,13 @@ def build_report(session: Session, *, now=None) -> NewsroomReport:
     report = NewsroomReport(generated_at=now() if now else None)
 
     report.claims_by_verdict = _counts(
-        row.verdict for row in session.query(ClaimAssessment).all()
+        row.verdict for row in session.query(ClaimAssessment.verdict).yield_per(100)
     )
     report.articles_by_status = _counts(
-        row.status for row in session.query(ArticleRevision).all()
+        row.status for row in session.query(ArticleRevision.status).yield_per(100)
     )
     report.publications_by_status = _counts(
-        row.status for row in session.query(Publication).all()
+        row.status for row in session.query(Publication.status).yield_per(100)
     )
     report.sources = _source_report(session)
     report.cost = _cost_report(session)
@@ -204,7 +220,7 @@ def build_report(session: Session, *, now=None) -> NewsroomReport:
     report.open_issues = (
         session.query(SourceIssue).filter_by(status=IssueStatus.OPEN.value).count()
     )
-    decisions = session.query(MediaUseDecision).all()
+    decisions = session.query(MediaUseDecision.status, MediaUseDecision.revoked_at).all()
     report.media_by_status = _counts(row.status for row in decisions)
     report.revoked_media = sum(1 for row in decisions if row.revoked_at is not None)
     return report
@@ -231,6 +247,10 @@ def report_warnings(report: NewsroomReport) -> tuple[str, ...]:
         )
     if report.cost.failed_operations:
         warnings.append(f"{report.cost.failed_operations} provider operation(s) failed")
+    if report.cost.estimated_operations:
+        warnings.append(
+            f"{report.cost.estimated_operations} operation(s) have estimated, not billed, costs"
+        )
     if report.fetches.rate_limited:
         warnings.append(f"{report.fetches.rate_limited} fetch(es) were rate limited")
     if report.open_issues:

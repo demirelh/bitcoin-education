@@ -111,17 +111,18 @@ def _get_stages(
             }
         ]
 
-    # Load profile for profile-aware stage modifications
-    try:
-        from btcedu.profiles import get_registry
+    from btcedu.core.editorial.video import edition_routing_enabled
+    from btcedu.core.profile_validation import resolve_profile
 
-        profile_registry = get_registry(settings)
-        content_profile = getattr(episode, "content_profile", "bitcoin_podcast")
-        profile = profile_registry.get(content_profile)
-        stage_config = profile.stage_config
-    except Exception:
-        # If profile lookup fails, return default v2 stages
-        return stages
+    content_profile = getattr(episode, "content_profile", None) or "bitcoin_podcast"
+    profile = resolve_profile(settings, content_profile)
+    stage_config = profile.stage_config
+    if edition_routing_enabled(profile):
+        from btcedu.core.editorial.production import SOURCE, STAGES
+
+        if episode.source != SOURCE:
+            raise ValueError("Editorial routing requires an explicitly bound edition episode")
+        return list(STAGES)
 
     analysis_enabled = stage_config.get("transcript_analyze", {}).get("enabled", True)
     if not analysis_enabled:
@@ -552,6 +553,41 @@ def _run_stage(
         )
 
     try:
+        from btcedu.core.editorial.production import (
+            SOURCE,
+            edition_for,
+            prepare_episode,
+            require_final,
+            require_production,
+        )
+
+        if episode.source == SOURCE or edition_for(session, episode) is not None:
+            require_production(session, episode, settings, prepared=stage_name != "script")
+            if stage_name == "script":
+                prepare_episode(session, episode, settings)
+                return StageResult(stage_name, "success", time.monotonic() - t0)
+            if stage_name == "review_gate_3":
+                from btcedu.core.editorial.video import EditionError
+
+                try:
+                    require_final(session, episode, settings)
+                except EditionError as exc:
+                    return StageResult(
+                        stage_name, "review_pending", time.monotonic() - t0, detail=str(exc)
+                    )
+                episode.status = EpisodeStatus.APPROVED
+                session.commit()
+                return StageResult(stage_name, "success", time.monotonic() - t0)
+            if stage_name not in {"tts", "render"}:
+                raise ValueError("Editorial publishing is a separate manual operation")
+            if stage_name == "render":
+                from btcedu.core.renderer import render_video
+
+                result = render_video(session, episode.episode_id, settings, force=force)
+                return StageResult(
+                    stage_name, "success", time.monotonic() - t0, detail=str(result.draft_path)
+                )
+
         if stage_name == "download":
             from btcedu.core.detector import download_episode
 
@@ -1965,6 +2001,9 @@ def _trigger_automatic_copilot_fix(
     error_message: str,
 ) -> None:
     """Launch one best-effort Copilot repair without masking the pipeline error."""
+    if episode.source == "editorial_revision":
+        logger.info("Automatic code repair is disabled for editorial production")
+        return
     try:
         from btcedu.core.copilot_fix import start_copilot_fix
 

@@ -1616,6 +1616,30 @@ class CreateNewsroomVideoEditionTablesMigration(Migration):
         logger.info(f"Migration {self.version} completed successfully")
 
 
+class BindNewsroomVideoBytesMigration(Migration):
+    @property
+    def version(self) -> str:
+        return "029_bind_newsroom_video_bytes"
+
+    @property
+    def description(self) -> str:
+        return "Bind final newsroom decisions to video bytes and render inputs"
+
+    def up(self, session: Session) -> None:
+        from sqlalchemy import inspect, text
+
+        columns = {col["name"] for col in inspect(session.get_bind()).get_columns(
+            "news_edition_decisions"
+        )}
+        for name in ("video_sha256", "render_input_hash"):
+            if name not in columns:
+                session.execute(text(
+                    f"ALTER TABLE news_edition_decisions ADD COLUMN {name} VARCHAR(64)"
+                ))
+        session.commit()
+        self.mark_applied(session)
+
+
 MIGRATIONS = [
     AddChannelsSupportMigration(),
     AddV2PipelineColumnsMigration(),
@@ -1645,6 +1669,7 @@ MIGRATIONS = [
     CreateNewsroomPublicationTablesMigration(),
     CreateNewsroomTopicGraphTablesMigration(),
     CreateNewsroomVideoEditionTablesMigration(),
+    BindNewsroomVideoBytesMigration(),
 ]
 
 

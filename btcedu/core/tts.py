@@ -88,6 +88,11 @@ def generate_tts(
     if not episode:
         raise ValueError(f"Episode not found: {episode_id}")
 
+    if episode.source == "editorial_revision":
+        from btcedu.core.editorial.production import require_production
+
+        require_production(session, episode, settings)
+
     # V2 pipeline only
     if episode.pipeline_version != 2:
         raise ValueError(

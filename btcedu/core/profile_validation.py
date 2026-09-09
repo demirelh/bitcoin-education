@@ -81,6 +81,8 @@ def profile_problems(profile: ContentProfile) -> tuple[str, ...]:
         for key, value in profile.stage_config.items():
             if not isinstance(value, Mapping):
                 problems.append(f"stage_config.{key} must be a mapping")
+            elif "enabled" in value and not isinstance(value["enabled"], bool):
+                problems.append(f"stage_config.{key}.enabled must be a boolean")
 
     if not isinstance(profile.review_gates, Mapping):
         problems.append("review_gates must be a mapping")

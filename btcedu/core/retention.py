@@ -173,6 +173,11 @@ def retention_hold_reasons(session: Session, episode: Episode) -> tuple[str, ...
     if has_uploading_publish:
         reasons.append("publish_uploading")
 
+    from btcedu.models.video_edition import VideoEdition
+
+    if session.query(VideoEdition.id).filter_by(episode_id=episode.id).first():
+        reasons.append("editorial_video_edition")
+
     return tuple(reasons)
 
 

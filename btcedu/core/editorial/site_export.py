@@ -17,11 +17,12 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import tempfile
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from xml.sax.saxutils import escape, quoteattr
@@ -126,12 +127,15 @@ def _article_html(config: SiteConfig, article: PublicArticle) -> str:
             f"({_e(correction.published_on)}): {_e(correction.summary)}</aside>"
         )
     for item in article.media:
+        notice = {"archive": "ARŞİV", "symbolic": "SEMBOL GÖRSEL", "portrait": "PORTRE"}.get(
+            item.role, ""
+        )
         parts.append(
             f'<figure><img src="/media/{_e(item.file_name)}" alt={quoteattr(item.caption)}'
             + (f' width="{item.width}"' if item.width else "")
             + (f' height="{item.height}"' if item.height else "")
             + ' loading="lazy">'
-            f"<figcaption>{_e(item.caption)} "
+            f"<figcaption>{_e(notice)} {_e(item.caption)} "
             f'<span class="credit">{_e(item.attribution)} · {_e(item.license)}</span>'
             "</figcaption></figure>"
         )
@@ -141,6 +145,13 @@ def _article_html(config: SiteConfig, article: PublicArticle) -> str:
             for index in paragraph.sources
         )
         parts.append(f"<p>{_e(paragraph.text)}{refs}</p>")
+    if article.related:
+        parts.append("<nav aria-label=\"İlgili haberler\"><h2>İlgili haberler</h2>")
+        for related in article.related:
+            parts.append(
+                f'<p><a href={quoteattr(related["url"])}>{_e(related["title"])}</a></p>'
+            )
+        parts.append("</nav>")
     if article.sources:
         parts.append('<section class="sources"><h2>Kaynaklar</h2><ol>')
         for index, source in enumerate(article.sources, start=1):
@@ -167,6 +178,7 @@ def _article_html(config: SiteConfig, article: PublicArticle) -> str:
         },
         ensure_ascii=False,
     )
+    json_ld = json_ld.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     head = (
         f"<link rel=\"canonical\" href={quoteattr(article.canonical_url)}>\n"
         f'<script type="application/ld+json">{json_ld}</script>\n'
@@ -236,6 +248,8 @@ def _search_index(articles: list[PublicArticle]) -> str:
         payload = json.dumps(documents, ensure_ascii=False, separators=(",", ":"))
         if all(len(document["text"]) <= 200 for document in documents):
             break
+    if len(payload.encode("utf-8")) > SEARCH_INDEX_LIMIT:
+        raise SiteBuildError("Public search index exceeds the 1 MiB limit")
     return payload
 
 
@@ -244,7 +258,7 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def _copy_media(session: Session, article_row: ArticleRevision, target: Path) -> None:
+def _copy_media(session: Session, article_row: ArticleRevision, target: Path | None) -> None:
     revision = session.get(EditorialRevision, article_row.editorial_revision_id)
     for row in approved_revision_media(session, revision):
         decision = session.get(MediaUseDecision, row.media_use_decision_id)
@@ -254,6 +268,14 @@ def _copy_media(session: Session, article_row: ArticleRevision, target: Path) ->
         source = Path(asset.blob_path)
         if not source.is_file():
             raise SiteBuildError(f"Approved media blob is missing: {asset.asset_id}")
+        if source.is_symlink():
+            raise SiteBuildError("Public media must not be a symlink")
+        with source.open("rb") as stream:
+            digest = hashlib.file_digest(stream, "sha256").hexdigest()
+        if digest != asset.content_hash:
+            raise SiteBuildError(f"Approved media bytes changed: {asset.asset_id}")
+        if target is None:
+            continue
         destination = target / "media" / media_file_name(asset)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
@@ -268,7 +290,7 @@ def build_site(
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> BuildResult:
     """Render every publishable article into a fresh, unreferenced directory."""
-    root = Path(root)
+    root = Path(root).resolve()
     root.mkdir(parents=True, exist_ok=True)
     release_id = str(uuid.uuid4())
     target = root / f"{BUILD_PREFIX}{release_id}"
@@ -308,6 +330,16 @@ def build_site(
             row = session.get(ArticleRevision, publication.current_article_revision_id)
             _copy_media(session, row, target)
 
+        for article in articles:
+            related = tuple(
+                {"url": f"/{other.section}/{other.slug}/", "title": other.title}
+                for other in articles
+                if other.section == article.section and other.slug != article.slug
+            )[:3]
+            _write(
+                target / article.section / article.slug / "index.html",
+                _article_html(config, replace(article, related=related)),
+            )
         _write(target / "index.html", _index_html(config, articles, title="Son haberler"))
         sections = sorted({article.section for article in articles})
         for section in sections:
@@ -322,6 +354,19 @@ def build_site(
         _write(target / "sitemap.xml", _sitemap(articles))
         _write(target / "feed.xml", _feed(config, articles))
         _write(target / "arama" / "index.json", _search_index(articles))
+        _write(
+            target / "arama" / "index.html",
+            _page(
+                config, "Ara",
+                '<h1>Ara</h1><p id="search-status" role="status"></p>'
+                '<ul id="search-results"></ul><script src="/assets/search.js" defer></script>',
+            ),
+        )
+        _write(target / "assets" / "search.js", _SEARCH_JS)
+        _write(
+            target / "publication-state.json",
+            json.dumps(_publication_state(session, config), ensure_ascii=False, sort_keys=True),
+        )
         _write(
             target / "kunye" / "index.html",
             _page(
@@ -343,6 +388,9 @@ def build_site(
 
         gone: list[str] = []
         for publication in withdrawn(session):
+            if any(not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", component)
+                   for component in (publication.section, publication.slug)):
+                raise SiteBuildError("Unsafe withdrawn publication path")
             notice = (
                 session.query(CorrectionNotice)
                 .filter_by(publication_id=publication.id, kind="withdrawal")
@@ -392,7 +440,7 @@ def switch_release(session: Session, *, root: Path, release_id: str) -> Path:
     where the pointer is missing. Nothing is deleted here: the previous release
     stays on disk and remains the rollback target.
     """
-    root = Path(root)
+    root = Path(root).resolve()
     record = (
         session.query(SiteRelease).filter_by(release_id=release_id).one_or_none()
     )
@@ -400,9 +448,23 @@ def switch_release(session: Session, *, root: Path, release_id: str) -> Path:
         raise SiteBuildError(f"Unknown release {release_id}")
     if record.status not in (ReleaseStatus.BUILT.value, ReleaseStatus.LIVE.value):
         raise SiteBuildError(f"Release {release_id} is {record.status}, not built")
-    directory = Path(record.directory)
+    directory = Path(record.directory).resolve()
+    if directory.parent != root or directory.name != f"{BUILD_PREFIX}{release_id}":
+        raise SiteBuildError("Release directory is outside its declared build root")
     if not directory.is_dir():
         raise SiteBuildError(f"Release directory is gone: {directory}")
+    if _tree_hash(directory) != record.content_hash:
+        raise SiteBuildError("Release bytes changed after building")
+    snapshot = json.loads((directory / "publication-state.json").read_text(encoding="utf-8"))
+    config = SiteConfig(base_url=snapshot["base_url"])
+    if snapshot != _publication_state(session, config):
+        raise SiteBuildError("Publication state changed since building; build a fresh release")
+    for publication in publishable(session):
+        from btcedu.core.editorial.public import export_blockers
+
+        article = session.get(ArticleRevision, publication.current_article_revision_id)
+        if not export_blockers(session, article):
+            _copy_media(session, article, None)
 
     pointer = root / CURRENT
     temporary = Path(tempfile.mkdtemp(dir=root, prefix=".pointer-")) / CURRENT
@@ -435,13 +497,18 @@ def reconcile_releases(session: Session, *, root: Path) -> tuple[str, ...]:
     can be removed. The live release is identified by the pointer on disk, not
     by the database, because the pointer is what readers actually follow.
     """
-    root = Path(root)
+    root = Path(root).resolve()
     pointer = root / CURRENT
     served = pointer.resolve() if pointer.exists() else None
     removed: list[str] = []
 
     for record in session.query(SiteRelease).all():
         directory = Path(record.directory)
+        if (
+            directory.is_symlink() or directory.resolve().parent != root
+            or directory.name != f"{BUILD_PREFIX}{record.release_id}"
+        ):
+            raise SiteBuildError("Refusing to reconcile a release outside its build root")
         if served is not None and directory.resolve() == served:
             if record.status != ReleaseStatus.LIVE.value:
                 record.status = ReleaseStatus.LIVE.value
@@ -455,6 +522,50 @@ def reconcile_releases(session: Session, *, root: Path) -> tuple[str, ...]:
             record.status = ReleaseStatus.SUPERSEDED.value
     session.commit()
     return tuple(removed)
+
+
+def _publication_state(session: Session, config: SiteConfig) -> dict:
+    """Public-only snapshot used to reject stale release activation."""
+    current = []
+    for publication in publishable(session):
+        try:
+            current.append(build_public_article(
+                session, publication, base_url=config.base_url
+            ).to_dict())
+        except PublicationBlocked:
+            continue
+    return {
+        "base_url": config.base_url,
+        "articles": json.loads(json.dumps(current)),
+        "withdrawn": [
+            [row.section, row.slug, str(row.updated_at)] for row in withdrawn(session)
+        ],
+    }
+
+
+_SEARCH_JS = """
+"use strict";
+const query = (new URLSearchParams(location.search).get("q") || "")
+  .toLocaleLowerCase("tr").trim();
+const status = document.getElementById("search-status");
+const results = document.getElementById("search-results");
+fetch("/arama/index.json").then(response => {
+  if (!response.ok) throw new Error("Search unavailable");
+  return response.json();
+}).then(rows => {
+  const matches = query ? rows.filter(row =>
+    (row.title + " " + row.text).toLocaleLowerCase("tr").includes(query)) : [];
+  status.textContent = String(matches.length) + " haber";
+  for (const row of matches) {
+    const li = document.createElement("li");
+    const a = document.createElement("a");
+    a.href = "/" + encodeURIComponent(row.section) + "/" + encodeURIComponent(row.slug) + "/";
+    a.textContent = row.title;
+    li.append(a);
+    results.append(li);
+  }
+}).catch(() => { status.textContent = "Arama şu anda kullanılamıyor."; });
+"""
 
 
 _CSS = """:root { color-scheme: light dark; --w: 40rem; }

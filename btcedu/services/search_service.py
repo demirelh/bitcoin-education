@@ -25,7 +25,7 @@ class SearchResponse:
     query: str
     hits: tuple[SearchHit, ...]
     request_id: str | None = None
-    cost_usd: float = 0.0
+    cost_usd: float | None = None
 
 
 class SearchProvider(Protocol):

@@ -8,6 +8,7 @@ generated substitute.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 import re
@@ -158,6 +159,11 @@ def evaluate_license(candidate: MediaCandidate) -> LicensePolicy:
 
 
 def _match_family(text: str) -> LicenseFamily | None:
+    if re.search(r"\bcc[\s\-_]*by\b", text, re.I):
+        if re.search(r"\bnc\b|non[\s-]*commercial", text, re.I):
+            return LicenseFamily.CC_BY_NC
+        if re.search(r"\bnd\b|no[\s-]*derivatives", text, re.I):
+            return LicenseFamily.CC_BY_ND
     for pattern, family in _LICENSE_PATTERNS:
         if pattern.search(text):
             return family
@@ -269,8 +275,16 @@ class MediaBlobStore:
         return self.root / content_hash[:2] / f"{content_hash}{suffix}"
 
     def store(self, content_hash: str, body: bytes, suffix: str) -> Path:
+        if hashlib.sha256(body).hexdigest() != content_hash:
+            raise BrokenImage("Media bytes do not match the content address")
         path = self.path_for(content_hash, suffix)
-        if path.is_file() and path.stat().st_size == len(body):
+        if path.exists():
+            if path.is_symlink():
+                raise BrokenImage("Stored media must not be a symlink")
+            with path.open("rb") as stream:
+                stored_hash = hashlib.file_digest(stream, "sha256").hexdigest()
+            if stored_hash != content_hash:
+                raise BrokenImage("Stored media bytes changed; explicit recovery is required")
             return path
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".partial")
@@ -469,6 +483,8 @@ def _store_offer(
         .first()
     )
     if offer is not None:
+        if offer.media_asset_id != asset.id:
+            raise ValueError("Catalogue offer changed its bytes; record a new offer revision")
         return offer
     offer = MediaSourceOffer(
         offer_id=str(uuid.uuid4()),
@@ -644,6 +660,10 @@ def revoke_media_decision(
     decision.decided_by = revoked_by
     session.query(RevisionMedia).filter_by(media_use_decision_id=decision.id).delete()
     session.commit()
+    from btcedu.core.editorial.recheck import scan_changes
+
+    revision = session.get(EditorialRevision, decision.editorial_revision_id)
+    scan_changes(session, topic_ids=[revision.topic_id])
     return decision
 
 

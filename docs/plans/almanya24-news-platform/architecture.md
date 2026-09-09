@@ -6,6 +6,64 @@
 bestehender Erweiterungspunkt bezeichnet. Neue Namen, Modelle und
 Konfigurationsschluessel sind Vorschlaege, keine heute nutzbaren Befehle.
 
+## Implementierter Pfad im Entwicklungsbranch (Audit 09.09.2026)
+
+Dieser Abschnitt beschreibt **tatsächlichen Code**, nicht den historischen
+Zielentwurf darunter. Details und Abnahmestand:
+[Implementierungsaudit](../../review/almanya24-news-platform/implementation-audit.md).
+
+```mermaid
+flowchart TD
+    T["Vorhandenes Transkript / ausgewählte Story in stories.json"]
+    D["newsroom-draft: --story-id, expliziter Provider und Kostenreservation"]
+    C["DataOnlyClaimExtractor: versionierte Claims und Originalspans"]
+    S["Support- und Gegensuche: Brave-Vertrag / Offline-Fixtures"]
+    F["DocumentFetcher: echte Passagen, keine Snippets als Beleg"]
+    E["DataOnlyEvidenceEvaluator: semantischer Modellauftrag plus deterministische Anker"]
+    M["Commons-Katalog, Relevanz/Rolle, Assetbytes und konkrete Lizenz"]
+    A["TR-Entwurf plus separater semantischer Konsistenzauftrag"]
+    G["Benannte Artikelfreigabe: aktuelle Text-, Beleg- und Medienhashes"]
+    W["publish_article + site build/switch: nur öffentliche DTOs"]
+    V["edition build: unveränderte freigegebene Sätze"]
+    VG["Separate Skript- UND Video/Profil-Medienfreigabe"]
+    B["edition bind: VideoEdition.episode_id"]
+    P["Bestehende Pipeline: script -> tts -> render -> review_gate_3"]
+    R["Bestehender Renderer: Original-TTS, eingebrannte Credits, draft.mp4"]
+    FG["Separate Finalentscheidung: Video-SHA256 und Renderinputhash"]
+    X["Anhalten / private Review, keine automatische Freigabe"]
+    T --> D --> C --> S --> F --> E --> M --> A --> G
+    E -->|Beleg fehlt / Widerspruch| X
+    M -->|angefordertes Bild ungeklärt| X
+    A -->|Zusatzbehauptung / Übersetzungsfehler| X
+    G --> W
+    G --> V --> VG --> B --> P --> R --> FG
+```
+
+`newsroom-draft` führt ohne `--execute` und `newsroom_enabled=true` keine
+Anbieterarbeit aus. Ein bewusst leerer Bildauftrag erlaubt einen Artikel ohne
+Bild; ein ungeklärter angeforderter Bildauftrag wird nicht still so umgedeutet.
+Das neue Profil `almanya24_editorial` wird Bestandsfolgen nicht zugewiesen.
+Avatarerzeugung, automatischer Upload und automatische Codereparatur bleiben
+auf diesem Pfad gesperrt. Ein erneutes Rendern kauft keine neue TTS.
+
+```mermaid
+flowchart LR
+    U["Claim / Quelle / Lizenz / Text / Sprecherplan geändert"]
+    H["Aktuelle Zustände und Dateibytes neu hashen"]
+    I["Alte Artikel-/Skript-/Videoentscheidung unbrauchbar"]
+    Q["recheck run: lokaler Änderungsscan, Issues und Jobs"]
+    O["Erneute Recherche bzw. neuer Entwurf und benannte Freigaben"]
+    U --> H --> I --> Q --> O
+    I --> S["Alter Website-Build nicht aktivierbar"]
+    I --> V["TTS / Render / Finalgate blockieren"]
+```
+
+Ein statisch bereits ausgelieferter Inhalt wird nicht magisch entfernt:
+Die Redaktion muss den korrigierten/Rücknahme-Build aktivieren. Der
+Entwicklungsbranch installiert dafür keinen Timer und verändert keinen Dienst.
+Remote-Pakete sind für Editionsfolgen auf die deklarierten, geprüften
+Renderinputs beschränkt; der neue Pipelinepfad rendert zunächst lokal.
+
 ## 1. Bestaetigter Produktzuschnitt
 
 Der Betreiber hat festgelegt:

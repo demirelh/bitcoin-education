@@ -430,7 +430,7 @@ def _redraft(db_session, revision, run):
     correction only exists once the evidence behind it actually moved.
     """
     assessment = db_session.query(ClaimAssessment).one()
-    assessment.evidence_digest = "c" * 64
+    assessment.rationale = "Reassessment: official figure reconfirmed with current evidence"
     db_session.commit()
 
     second = generate_article_revision(

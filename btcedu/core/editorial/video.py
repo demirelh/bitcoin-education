@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 
 from btcedu.core.editorial.article import current_article_state
 from btcedu.core.editorial.media import approved_revision_media
+from btcedu.core.editorial.public import export_blockers
 from btcedu.models.article import (
     ArticleParagraph,
     ArticleParagraphClaim,
@@ -251,6 +252,9 @@ def build_edition(
     """
     if article.status != ArticleStatus.APPROVED.value:
         raise EditionBlocked(f"Article revision is {article.status}, not approved")
+    blockers = export_blockers(session, article)
+    if blockers:
+        raise EditionBlocked("; ".join(blockers))
 
     content, evidence, media = current_article_state(
         session, article, research_run=research_run
@@ -280,6 +284,8 @@ def build_edition(
         .one_or_none()
     )
     if existing is not None:
+        if existing.profile != (getattr(profile, "name", "") or ""):
+            raise EditionBlocked("An existing edition belongs to another profile")
         return existing
 
     edition = VideoEdition(
@@ -390,7 +396,7 @@ def broadcast_script(session: Session, edition: VideoEdition) -> BroadcastScript
         grounding_references=[article.article_revision_id],
     )
     return BroadcastScript(
-        episode_id=edition.edition_id,
+        episode_id=_episode_identifier(session, edition),
         profile=edition.profile,
         show_name=edition.show_name,
         stories=[story],
@@ -411,6 +417,7 @@ def edition_blockers(
         return ("The article revision this edition was derived from is gone",)
     if article.status != ArticleStatus.APPROVED.value:
         reasons.append(f"Article revision is {article.status}, not approved")
+    reasons.extend(export_blockers(session, article))
 
     content, evidence, media = current_article_state(
         session, article, research_run=research_run
@@ -429,13 +436,39 @@ def edition_blockers(
     else:
         if script_hash(plans) != edition.script_hash:
             reasons.append("The script no longer follows from the article")
+        stored_plans = tuple(
+            SegmentPlan(
+                row.position, SpeakerRole(row.role), SegmentPurpose(row.purpose),
+                row.text, row.source_paragraph_position, segment_claims(session, row),
+            )
+            for row in edition_segments(session, edition)
+        )
+        if stored_plans != plans:
+            reasons.append("Stored speaker parts or claim mappings changed")
 
-    for row in edition_media(session, edition):
+    expected_media = _media_plan(session, session.get(
+        EditorialRevision, article.editorial_revision_id
+    ))
+    actual_media = edition_media(session, edition)
+    if len(actual_media) != len(expected_media):
+        reasons.append("Edition media set changed")
+    for row in actual_media:
         decision = session.get(MediaUseDecision, row.media_use_decision_id)
         if decision is None or decision.revoked_at is not None:
             reasons.append(f"Media at position {row.position} is no longer cleared")
         if row.requires_notice and not row.on_screen_notice:
             reasons.append(f"Media at position {row.position} needs a visible notice")
+        expected = next(
+            (entry for entry in expected_media if entry["position"] == row.position), None
+        )
+        if expected is None or any(
+            getattr(row, key) != expected[key]
+            for key in (
+                "media_use_decision_id", "role", "caption", "on_screen_credit",
+                "on_screen_notice", "requires_notice", "content_hash",
+            )
+        ):
+            reasons.append(f"Media at position {row.position} differs from its approved use")
     return tuple(reasons)
 
 
@@ -571,6 +604,19 @@ def approve_final_video(
     reasons = edition_blockers(session, edition, research_run=research_run)
     if reasons:
         raise StaleEditionApproval("; ".join(reasons))
+    require_script_approval(session, edition, research_run=research_run)
+    require_video_media_approval(session, edition)
+    video_digest = file_hash(path)
+    input_digest = None
+    if edition.episode_id:
+        from btcedu.core.editorial.ingest import canonical_hash
+        from btcedu.core.editorial.production import production_inputs
+
+        if path.name != "draft.mp4" or path.parent.name != "render" or path.is_symlink():
+            raise EditionError("Approve the bound episode's render/draft.mp4")
+        if path.parent.parent.name != _episode_identifier(session, edition):
+            raise EditionError("Final video belongs to another episode")
+        input_digest = canonical_hash(production_inputs(path.parent.parent))
     decision = _record(
         session,
         edition,
@@ -581,6 +627,8 @@ def approve_final_video(
         video_path=str(path),
         now=now,
     )
+    decision.video_sha256 = video_digest
+    decision.render_input_hash = input_digest
     edition.status = EditionStatus.FINAL_APPROVED.value
     edition.final_video_path = str(path)
     session.commit()
@@ -595,7 +643,7 @@ def assert_no_private_material(paths: Iterable[Path]) -> None:
     that establishes why they may be used.
     """
     for path in paths:
-        parts = {part.lower() for part in Path(path).parts}
+        parts = {part.lower() for part in Path(path).resolve().parts}
         hit = parts.intersection(PRIVATE_PATH_MARKERS)
         if hit:
             raise PrivateMaterialInPackage(
@@ -619,8 +667,12 @@ def collect_render_inputs(
     reasons = edition_blockers(session, edition, research_run=research_run)
     if reasons:
         raise StaleEditionApproval("; ".join(reasons))
+    require_script_approval(session, edition, research_run=research_run)
+    require_video_media_approval(session, edition)
 
     dest = Path(dest)
+    if dest.exists() and any(dest.iterdir()):
+        raise EditionError("Render input destination must be empty")
     media_dir = dest / "media"
     media_dir.mkdir(parents=True, exist_ok=True)
 
@@ -632,8 +684,11 @@ def collect_render_inputs(
         source = Path(asset.blob_path)
         assert_no_private_material([source])
         target = media_dir / f"{row.position:02d}{source.suffix}"
-        if source.is_file():
-            shutil.copy2(source, target)
+        if not source.is_file() or source.is_symlink():
+            raise EditionError("Approved media file is missing or is a symlink")
+        if file_hash(source) != row.content_hash:
+            raise EditionError("Approved media bytes changed")
+        shutil.copy2(source, target)
         entries.append(
             {
                 "position": row.position,
@@ -662,6 +717,75 @@ def collect_render_inputs(
     )
     assert_no_private_material(sorted(dest.rglob("*")))
     return manifest
+
+
+def file_hash(path: str | Path) -> str:
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def _episode_identifier(session: Session, edition: VideoEdition) -> str:
+    from btcedu.models.episode import Episode
+
+    episode = session.get(Episode, edition.episode_id) if edition.episode_id else None
+    return episode.episode_id if episode else edition.edition_id
+
+
+def require_script_approval(session: Session, edition: VideoEdition, *, research_run) -> None:
+    reasons = edition_blockers(session, edition, research_run=research_run)
+    decision = (
+        session.query(EditionDecision)
+        .filter_by(video_edition_id=edition.id, kind=EditionDecisionKind.SCRIPT.value)
+        .order_by(EditionDecision.id.desc()).first()
+    )
+    if reasons:
+        raise StaleEditionApproval("; ".join(reasons))
+    if decision is None or decision.decision != EditionDecisionType.APPROVE.value:
+        raise EditionBlocked("A separate script approval is required")
+    if any(getattr(decision, name) != getattr(edition, name) for name in (
+        "script_hash", "content_hash", "evidence_hash", "media_hash"
+    )):
+        raise StaleEditionApproval("Script approval no longer matches the edition")
+
+
+def approve_video_media(
+    session: Session, edition: VideoEdition, *, operator_ref: str, research_run,
+    note: str,
+) -> EditionDecision:
+    """Explicitly clear the selected pictures for the named video profile and crop."""
+    if not operator_ref.strip() or not note.strip() or not edition.profile:
+        raise EditionBlocked("Video media approval requires operator, rationale and profile")
+    reasons = edition_blockers(session, edition, research_run=research_run)
+    if reasons:
+        raise StaleEditionApproval("; ".join(reasons))
+    for row in edition_media(session, edition):
+        use = session.get(MediaUseDecision, row.media_use_decision_id)
+        license = session.get(LicenseEvidence, use.license_evidence_id)
+        if not license or not license.commercial_use_allowed or not license.derivatives_allowed:
+            raise EditionBlocked("Media is not cleared for commercial video/crop")
+    decision = _record(
+        session, edition, kind=EditionDecisionKind.MEDIA,
+        decision=EditionDecisionType.APPROVE, operator_ref=operator_ref,
+        note=json.dumps({"profile": edition.profile, "rationale": note}),
+    )
+    session.commit()
+    return decision
+
+
+def require_video_media_approval(session: Session, edition: VideoEdition) -> None:
+    if not edition_media(session, edition):
+        return
+    decision = (
+        session.query(EditionDecision)
+        .filter_by(video_edition_id=edition.id, kind=EditionDecisionKind.MEDIA.value)
+        .order_by(EditionDecision.id.desc()).first()
+    )
+    if (
+        decision is None or decision.decision != EditionDecisionType.APPROVE.value
+        or decision.media_hash != edition.media_hash
+        or json.loads(decision.note).get("profile") != edition.profile
+    ):
+        raise EditionBlocked("A separate video/profile media approval is required")
 
 
 def edition_metadata(session: Session, edition: VideoEdition) -> dict:

@@ -192,7 +192,7 @@ def parse_catalog_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
     text = value.strip()
-    for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d", "%Y-%m", "%Y"):
+    for pattern in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d"):
         try:
             return datetime.strptime(text, pattern).replace(tzinfo=UTC)
         except ValueError:

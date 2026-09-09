@@ -138,6 +138,7 @@ class PublicMedia:
     caption: str
     attribution: str
     license: str
+    role: str = "event"
     width: int | None = None
     height: int | None = None
 
@@ -271,6 +272,8 @@ def publish_article(
     """
     if not operator_ref or not operator_ref.strip():
         raise ValueError("Publishing needs a named operator")
+    if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", section):
+        raise ValueError("Section must be a single lowercase URL component")
     blockers = export_blockers(session, article)
     if blockers:
         raise PublicationBlocked(blockers)
@@ -388,11 +391,17 @@ def _sources_for(
     claims = revision_claims(session, revision)
     if not claims:
         return [], {}
+    run = latest_research_run(session, revision.topic_id)
+    if run is None:
+        raise PublicationBlocked(["No current research run"])
     links = (
         session.query(EvidenceLink)
+        .join(SourceObservation, SourceObservation.id == EvidenceLink.source_observation_id)
         .filter(
             EvidenceLink.claim_revision_id.in_([claim.id for claim in claims]),
             EvidenceLink.relation.in_(sorted(SUPPORTING_RELATIONS)),
+            SourceObservation.research_run_id == run.id,
+            SourceObservation.fetch_status == "fetched",
         )
         .order_by(EvidenceLink.id)
         .all()
@@ -432,6 +441,7 @@ def _media_for(session: Session, revision: EditorialRevision) -> list[PublicMedi
                 caption=row.caption or "",
                 attribution=decision.attribution_text,
                 license=evidence.license_id if evidence else "",
+                role=decision.role,
                 width=asset.width,
                 height=asset.height,
             )
@@ -446,6 +456,9 @@ def build_public_article(
     base_url: str,
 ) -> PublicArticle:
     """The reader's view of one publication, re-checked at build time."""
+    for component in (publication.section, publication.slug):
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", component):
+            raise PublicationBlocked(("Invalid public URL component",))
     article = session.get(ArticleRevision, publication.current_article_revision_id)
     if article is None:
         raise PublicationBlocked(("Publication has no article revision",))

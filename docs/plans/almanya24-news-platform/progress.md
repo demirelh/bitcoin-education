@@ -23,6 +23,16 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 
 ## Paketstatus
 
+**Unabhängiger Abgleich läuft:** Die bisherigen Erledigt-Angaben unten sind
+historische Abschlussbehauptungen, nicht der aktuelle Abnahmenachweis.
+Insbesondere N7 war nur ein isolierter Adapter. Maßgeblich für den erneuten
+Abgleich ist die [Code-/Abnahmematrix](../../review/almanya24-news-platform/implementation-audit.md).
+Aktueller Schritt: korrigierten Gesamtpfad gegen Newsroom- und bestehende
+Videopipeline testen, dann die vollständige Suite sequenziell ausführen.
+Der reale synthetische ffmpeg-Durchlauf ist inzwischen ausgeführt; Modell-,
+Such-/Web-/Commons- und TTS-Anbieterantworten bleiben Offline-Fixtures.
+Die historische Tabelle wird nicht als Vollständigkeitsbeleg verwendet.
+
 | Paket | Status | Commit | Nachweis / nächster Schritt |
 | --- | --- | --- | --- |
 | Planübernahme | Erledigt | `6458e61` | Acht Repositorydokumente, Links und UTF-8/NFC geprüft |
@@ -39,6 +49,21 @@ Provideraufrufe, Secrets, `anchor_enabled=true` oder automatisches Publishing.
 | N9 Namensmigration | Teilweise erledigt | `d7147f9` | CLI-Alias `almanya24` auf denselben Einstiegspunkt; weitere Umbenennungen nur mit eigenem Auftrag |
 
 ## Verifikationsjournal
+
+**Unabhängiger Auditlauf (laufend):** 318/331 im ersten verbreiterten Lauf;
+danach 147/152 und 45/46 in gezielten Nachläufen. Die dabei gefundenen
+Regressionen betrafen falsche Modellfeldannahmen im neuen Report,
+veraltete Fixture-Freigaben, ungenaue Katalogdatierungen und veraltete lokale
+Paketmetadaten. Sie werden korrigiert, nicht als erfolgreiche Abnahme gezählt.
+Der letzte verbleibende Fehler war die nur im Test fehlende
+`schema_migrations`-Tabelle. Danach **582 Tests bestanden** (393,87 s),
+anschließend **77 Tests bestanden** (118,47 s) für die letzten
+Änderungshooks/Videoverträge. Zwei neue Tests für Wiederholungsmeldung
+und echten Operatoreinstieg mit automatisch gebildeten Suchqueries bestanden
+ebenfalls. Nächster Schritt ist jetzt die abschließende Vollsuite.
+Die neue `test_editorial_integration.py` führt den realen Renderer aus,
+prüft sichtbare Pixel der eingebrannten Credits, unveränderte TTS,
+bytegebundene Finalfreigabe sowie öffentliche und Remote-Allowlists.
 
 | Zeitpunkt | Umfang | Ergebnis |
 | --- | --- | --- |

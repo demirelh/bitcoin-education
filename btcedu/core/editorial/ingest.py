@@ -58,6 +58,7 @@ def import_story(
     source_uri: str | None = None,
     published_at: datetime | None = None,
     claims: Iterable[ClaimDraft] = (),
+    target_topic: Topic | None = None,
 ) -> ImportedStory:
     """Create immutable revisions while reusing an identical prior import."""
     source_key = f"episode:{episode_id}:story:{story.story_id}"
@@ -130,7 +131,7 @@ def import_story(
         session.add(source_span)
         session.flush()
 
-    topic = session.query(Topic).filter_by(topic_key=source_key).first()
+    topic = target_topic or session.query(Topic).filter_by(topic_key=source_key).first()
     if topic is None:
         topic = Topic(topic_id=_new_id(), topic_key=source_key, title=story.headline_de)
         session.add(topic)

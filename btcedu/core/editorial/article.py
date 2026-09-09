@@ -155,15 +155,86 @@ def evidence_hash(
     claims: Sequence[ClaimRevision],
 ) -> str:
     assessments = _assessments(session, research_run, claims)
+    from btcedu.models.editorial import (
+        Claim,
+        ClaimOrigin,
+        EvidenceLink,
+        SourceObservation,
+        SourceRevision,
+        SourceSpan,
+        TopicSource,
+    )
+
+    def evidence_rows(claim):
+        rows = (
+            session.query(EvidenceLink, SourceObservation)
+            .join(SourceObservation, SourceObservation.id == EvidenceLink.source_observation_id)
+            .filter(
+                EvidenceLink.claim_revision_id == claim.id,
+                SourceObservation.research_run_id == research_run.id,
+            )
+            .order_by(EvidenceLink.id)
+            .all()
+        )
+        return [
+            {
+                "link": {
+                    col.name: getattr(link, col.name)
+                    for col in EvidenceLink.__table__.columns
+                },
+                "source": {
+                    col.name: getattr(source, col.name)
+                    for col in SourceObservation.__table__.columns
+                    if col.name != "body_path"
+                },
+            }
+            for link, source in rows
+        ]
+
     return canonical_hash(
         [
             {
                 "claim": claim.revision_id,
+                "claim_state": {
+                    col.name: getattr(claim, col.name)
+                    for col in ClaimRevision.__table__.columns
+                },
+                "documents": evidence_rows(claim),
+                "topic_sources": [
+                    {
+                        col.name: getattr(source, col.name)
+                        for col in SourceRevision.__table__.columns
+                    }
+                    for source in session.query(SourceRevision)
+                    .join(TopicSource, TopicSource.source_revision_id == SourceRevision.id)
+                    .join(Claim, Claim.topic_id == TopicSource.topic_id)
+                    .filter(Claim.id == claim.claim_id).order_by(SourceRevision.id)
+                ],
+                "origins": [
+                    {
+                        "span": span.source_text,
+                        "start": span.start_seconds,
+                        "end": span.end_seconds,
+                        "source": source.source_text,
+                        "hash": source.content_hash,
+                    }
+                    for span, source in session.query(SourceSpan, SourceRevision)
+                    .join(ClaimOrigin, ClaimOrigin.source_span_id == SourceSpan.id)
+                    .join(SourceRevision, SourceRevision.id == SourceSpan.source_revision_id)
+                    .filter(ClaimOrigin.claim_revision_id == claim.id)
+                    .order_by(SourceSpan.id)
+                ],
                 "verdict": (
                     assessments[claim.id].verdict if claim.id in assessments else "unassessed"
                 ),
                 "evidence": (
                     assessments[claim.id].evidence_digest if claim.id in assessments else ""
+                ),
+                "assessment_state": (
+                    {
+                        col.name: getattr(assessments[claim.id], col.name)
+                        for col in ClaimAssessment.__table__.columns
+                    } if claim.id in assessments else None
                 ),
             }
             for claim in sorted(claims, key=lambda item: item.revision_id)
@@ -177,6 +248,8 @@ def media_hash(session: Session, editorial_revision: EditorialRevision) -> str:
     for row in rows:
         decision = session.get(MediaUseDecision, row.media_use_decision_id)
         asset = session.get(NewsroomMediaAsset, decision.media_asset_id)
+        evidence = session.get(LicenseEvidence, decision.license_evidence_id)
+        offer = session.get(MediaSourceOffer, decision.media_source_offer_id)
         payload.append(
             {
                 "position": row.position,
@@ -184,6 +257,18 @@ def media_hash(session: Session, editorial_revision: EditorialRevision) -> str:
                 "decision": decision.decision_id,
                 "attribution": decision.attribution_text,
                 "asset": asset.content_hash,
+                "use": {
+                    col.name: getattr(decision, col.name)
+                    for col in MediaUseDecision.__table__.columns
+                },
+                "license": {
+                    col.name: getattr(evidence, col.name)
+                    for col in LicenseEvidence.__table__.columns
+                } if evidence else None,
+                "offer": {
+                    col.name: getattr(offer, col.name)
+                    for col in MediaSourceOffer.__table__.columns
+                } if offer else None,
             }
         )
     return canonical_hash(payload)
@@ -205,6 +290,8 @@ def article_gate_reasons(
     assessments = _assessments(session, research_run, claims)
     keys = claim_keys(session, claims)
     reasons: list[str] = []
+    from btcedu.core.editorial.research import assessment_input_hash
+
     for claim in claims:
         if not claim.material:
             continue
@@ -212,11 +299,18 @@ def article_gate_reasons(
         assessment = assessments.get(claim.id)
         if assessment is None:
             reasons.append(f"core claim {key!r} has no evidence assessment")
-        elif assessment.verdict in BLOCKING_VERDICTS:
+        elif assessment.verdict not in USABLE_VERDICTS | {ClaimVerdict.UNVERIFIABLE.value}:
             reasons.append(f"core claim {key!r} is {assessment.verdict}")
+        elif assessment.evidence_digest != assessment_input_hash(session, claim, research_run.id):
+            reasons.append(f"core claim {key!r} needs a fresh evidence assessment")
 
-    for row in approved_revision_media(session, editorial_revision):
+    for row in session.query(RevisionMedia).filter_by(
+        editorial_revision_id=editorial_revision.id
+    ):
         decision = session.get(MediaUseDecision, row.media_use_decision_id)
+        if decision is None or decision.status != "approved" or decision.revoked_at is not None:
+            reasons.append("Attached media has no current use approval")
+            continue
         evidence = session.get(LicenseEvidence, decision.license_evidence_id)
         offer = session.get(MediaSourceOffer, decision.media_source_offer_id)
         if evidence is None or offer is None:
@@ -278,7 +372,7 @@ def _validate_paragraph(
     invented = {
         number
         for number in numbers
-        if number not in allowed and len(number.replace(".", "").replace(",", "")) >= 2
+        if number not in allowed
     }
     if invented:
         raise ArticleContentRejected(
@@ -327,6 +421,7 @@ def generate_article_revision(
             language=language,
             evidence_hash=current_evidence,
             media_hash=current_media,
+            policy_version=policy_version,
         )
         .order_by(ArticleRevision.id.desc())
         .first()
@@ -388,6 +483,8 @@ def generate_article_revision(
     )
     quote_available = any(claim.claim_type == "quote" for claim in claims)
     for paragraph in draft.paragraphs:
+        if paragraph.kind == "body" and not paragraph.claim_keys:
+            raise ArticleContentRejected("Every body paragraph must reference checked claims")
         unknown = [key for key in paragraph.claim_keys if key not in by_key]
         if unknown:
             raise UnknownClaimReferenced(
@@ -408,6 +505,11 @@ def generate_article_revision(
             allowed_numbers=allowed_numbers,
             quote_available=quote_available,
         )
+        for quote in _QUOTED.findall(paragraph.text):
+            if not any(
+                claim.claim_type == "quote" and quote in claim.statement for claim in referenced
+            ):
+                raise ArticleContentRejected("Quoted words are not present in a referenced claim")
     for text in (draft.title, draft.lede):
         _validate_paragraph(
             text,
@@ -480,8 +582,34 @@ def current_article_state(
     """The hashes that describe what a reviewer would see right now."""
     revision = session.get(EditorialRevision, article.editorial_revision_id)
     claims = revision_claims(session, revision)
+    paragraphs = (
+        session.query(ArticleParagraph)
+        .filter_by(article_revision_id=article.id)
+        .order_by(ArticleParagraph.position)
+        .all()
+    )
+    content = canonical_hash({
+        "title": article.title,
+        "lede": article.lede,
+        "paragraphs": [
+            {
+                "kind": paragraph.kind,
+                "text": paragraph.text,
+                "claims": sorted(
+                    row.revision_id
+                    for row in session.query(ClaimRevision)
+                    .join(
+                        ArticleParagraphClaim,
+                        ArticleParagraphClaim.claim_revision_id == ClaimRevision.id,
+                    )
+                    .filter(ArticleParagraphClaim.article_paragraph_id == paragraph.id)
+                ),
+            }
+            for paragraph in paragraphs
+        ],
+    })
     return (
-        article.content_hash,
+        content,
         evidence_hash(session, research_run=research_run, claims=claims),
         media_hash(session, revision),
     )
@@ -529,6 +657,10 @@ def approve_article_revision(
         article.block_reason = "; ".join(reasons)
         session.commit()
         raise ArticleApprovalBlocked(reasons)
+    if (article.content_hash, article.evidence_hash, article.media_hash) != (
+        content, evidence, media
+    ):
+        raise StaleArticleApproval("Revision changed; generate and review a new revision")
 
     decision = EditorialDecision(
         decision_id=str(uuid.uuid4()),

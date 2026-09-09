@@ -9,8 +9,13 @@ was typed.
 
 from __future__ import annotations
 
+import subprocess
+import sys
 import tomllib
+from importlib.metadata import distribution
 from pathlib import Path
+
+from btcedu.core.runlock import _lock_path as real_lock_path
 
 PYPROJECT = Path("pyproject.toml")
 
@@ -21,7 +26,11 @@ def _scripts() -> dict[str, str]:
 
 
 def test_both_names_are_installed():
-    scripts = _scripts()
+    scripts = {
+        row.name: row.value
+        for row in distribution("bitcoin-education").entry_points
+        if row.group == "console_scripts"
+    }
 
     assert "btcedu" in scripts
     assert "almanya24" in scripts
@@ -41,15 +50,40 @@ def test_the_entry_point_resolves_to_one_click_group():
     assert cli.name == "cli"
 
 
-def test_the_database_and_lock_do_not_depend_on_the_name(tmp_path):
+def test_the_database_and_lock_do_not_depend_on_the_name(tmp_path, monkeypatch):
     """One lock file and one database, whichever name invoked the run."""
     from btcedu.config import Settings
-    from btcedu.core.runlock import _lock_path
+    from btcedu.core.runlock import pipeline_lock
 
     settings = Settings(database_url=f"sqlite:///{tmp_path / 'one.db'}")
 
-    assert "btcedu" in settings.database_url or str(tmp_path) in settings.database_url
-    assert _lock_path(settings) == _lock_path(settings)
+    monkeypatch.setattr("btcedu.core.runlock._lock_path", real_lock_path)
+    assert real_lock_path(settings) == tmp_path / "pipeline.lock"
+    child = """
+import sys
+from importlib.metadata import distribution
+from btcedu.config import Settings
+from btcedu.cli import cli
+from btcedu.core.runlock import pipeline_lock, PipelineBusyError
+entry = next(e for e in distribution("bitcoin-education").entry_points if e.name == sys.argv[1])
+assert entry.load() is cli
+settings = Settings(_env_file=None, database_url=sys.argv[2])
+try:
+    with pipeline_lock(settings):
+        raise AssertionError("Second entrypoint acquired an already held database lock")
+except PipelineBusyError:
+    print("blocked")
+"""
+    with pipeline_lock(settings):
+        for name in ("almanya24", "btcedu"):
+            result = subprocess.run(
+                [sys.executable, "-c", child, name, settings.database_url],
+                text=True,
+                capture_output=True,
+                timeout=30,
+                check=True,
+            )
+            assert result.stdout.strip() == "blocked"
 
 
 def test_no_second_command_group_was_registered():

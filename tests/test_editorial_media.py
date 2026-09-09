@@ -574,7 +574,8 @@ def test_catalog_html_is_reduced_to_visible_text():
     [
         ("2026-09-08", datetime(2026, 9, 8, tzinfo=UTC)),
         ("2026-09-08 12:30:00", datetime(2026, 9, 8, 12, 30, tzinfo=UTC)),
-        ("2026", datetime(2026, 1, 1, tzinfo=UTC)),
+        ("2026", None),
+        ("2026-09", None),
         ("", None),
         ("undatiert", None),
     ],

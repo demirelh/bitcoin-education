@@ -51,6 +51,17 @@ while read -r pid; do
   fi
 done < <(fuser 8765/tcp 2>/dev/null | tr ' ' '\n')
 
+for _ in {1..20}; do
+  if ! fuser -s 8765/tcp; then
+    break
+  fi
+  sleep 0.25
+done
+if fuser -s 8765/tcp; then
+  echo "The previous preview process did not release port 8765." >&2
+  exit 1
+fi
+
 install -m 0644 "${unit}" /etc/systemd/system/almanya24-dev-preview.service
 systemctl daemon-reload
 systemctl enable --now almanya24-dev-preview.service

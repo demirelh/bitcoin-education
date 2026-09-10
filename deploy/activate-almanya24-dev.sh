@@ -91,8 +91,66 @@ fi
 
 install -m 0644 "${unit}" /etc/systemd/system/almanya24-dev-preview.service
 systemctl daemon-reload
+
+# The protected Caddy route is installed before the preview is started, so a
+# failure at any later step can never leave preview content reachable through
+# the previous unauthenticated route.
+backup="${caddyfile}.bak-almanya24-dev-$(date -u +%Y%m%dT%H%M%SZ)"
+cp --preserve=mode,ownership,timestamps "${caddyfile}" "${backup}"
+
+rollback_activation() {
+  systemctl stop almanya24-dev-preview.service 2>/dev/null || true
+  systemctl disable almanya24-dev-preview.service 2>/dev/null || true
+  cp --preserve=mode,ownership,timestamps "${backup}" "${caddyfile}"
+  systemctl reload caddy || true
+  echo "Activation failed; preview stopped and Caddy restored from ${backup}." >&2
+}
+trap rollback_activation ERR
+
+install -o root -g root -m 0644 "${staged}" "${caddyfile}"
+systemctl reload caddy
+systemctl is-active --quiet caddy
+
+# basic_auth is evaluated ahead of the reverse proxy, so these must already
+# answer 401 while the preview backend is still down.
+for path in "/" "/almanya/example-article/" "/assets/site.css"; do
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "https://sahimi.app/almanya24-dev${path}")"
+  if [[ "${status}" != "401" ]]; then
+    echo "Expected anonymous ${path} request to return HTTP 401, got ${status}." >&2
+    exit 1
+  fi
+done
+
+# Type=simple reports the unit as started right after fork, roughly 250 ms
+# before Python has bound the socket, so readiness is polled instead of assumed.
+wait_for_preview_ready() {
+  local deadline=$((SECONDS + 45))
+  local status="000"
+  local state=""
+  while ((SECONDS < deadline)); do
+    state="$(systemctl show almanya24-dev-preview.service -p ActiveState --value)"
+    if [[ "${state}" != "active" && "${state}" != "activating" ]]; then
+      echo "Preview service left startup with ActiveState '${state}'." >&2
+      journalctl -u almanya24-dev-preview.service -n 30 --no-pager >&2 || true
+      return 1
+    fi
+    status="$(curl --silent --max-time 5 --output /dev/null \
+      --write-out '%{http_code}' http://127.0.0.1:8765/ || true)"
+    if [[ "${status}" == "200" ]]; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "Preview did not serve HTTP 200 on 127.0.0.1:8765 within 45s" \
+    "(last response code: ${status})." >&2
+  journalctl -u almanya24-dev-preview.service -n 30 --no-pager >&2 || true
+  return 1
+}
+
 systemctl enable --now almanya24-dev-preview.service
-curl --fail --silent --show-error http://127.0.0.1:8765/ >/dev/null
+wait_for_preview_ready
+
 main_pid="$(systemctl show almanya24-dev-preview.service -p MainPID --value)"
 mapfile -t port_pids < <(fuser 8765/tcp 2>/dev/null | tr ' ' '\n' | sed '/^$/d')
 if [[ "${#port_pids[@]}" -ne 1 || "${port_pids[0]}" != "${main_pid}" ]]; then
@@ -100,19 +158,8 @@ if [[ "${#port_pids[@]}" -ne 1 || "${port_pids[0]}" != "${main_pid}" ]]; then
   exit 1
 fi
 
-backup="${caddyfile}.bak-almanya24-dev-$(date -u +%Y%m%dT%H%M%SZ)"
-cp --preserve=mode,ownership,timestamps "${caddyfile}" "${backup}"
-install -o root -g root -m 0644 "${staged}" "${caddyfile}"
-
-rollback_caddy() {
-  cp --preserve=mode,ownership,timestamps "${backup}" "${caddyfile}"
-  systemctl reload caddy || true
-}
-trap rollback_caddy ERR
-
-systemctl reload caddy
-systemctl is-active --quiet caddy
-
+# Re-checked with the backend live: anonymous requests must still be rejected
+# now that the preview can actually serve content.
 for path in "/" "/almanya/example-article/" "/assets/site.css"; do
   status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
     "https://sahimi.app/almanya24-dev${path}")"

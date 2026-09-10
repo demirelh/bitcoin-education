@@ -169,23 +169,43 @@ for path in "/" "/almanya/example-article/" "/assets/site.css"; do
   fi
 done
 
-read -r -p "Preview Basic Auth username: " verify_user
-read -r -s -p "Preview Basic Auth password: " verify_password
-echo
 netrc="$(mktemp)"
 chmod 0600 "${netrc}"
-printf 'machine sahimi.app login %s password %s\n' \
-  "${verify_user}" "${verify_password}" >"${netrc}"
-unset verify_password
+printf 'machine sahimi.app login preview-verify password invalid-%s\n' \
+  "${RANDOM}${RANDOM}" >"${netrc}"
 
+# Deliberately wrong credentials must also be rejected. This distinguishes an
+# enforced basic_auth from a route that merely happens to answer 401.
 for path in "/" "/assets/site.css"; do
   status="$(curl --netrc-file "${netrc}" --silent --output /dev/null \
     --write-out '%{http_code}' "https://sahimi.app/almanya24-dev${path}")"
-  if [[ "${status}" != "200" ]]; then
-    echo "Expected authenticated ${path} request to return HTTP 200, got ${status}." >&2
+  if [[ "${status}" != "401" ]]; then
+    echo "Expected wrong-credential ${path} request to return HTTP 401, got ${status}." >&2
     exit 1
   fi
 done
+
+if [[ "${PREVIEW_VERIFY_AUTH:-1}" == "1" ]]; then
+  read -r -p "Preview Basic Auth username: " verify_user
+  read -r -s -p "Preview Basic Auth password: " verify_password
+  echo
+  printf 'machine sahimi.app login %s password %s\n' \
+    "${verify_user}" "${verify_password}" >"${netrc}"
+  unset verify_password
+
+  for path in "/" "/assets/site.css"; do
+    status="$(curl --netrc-file "${netrc}" --silent --output /dev/null \
+      --write-out '%{http_code}' "https://sahimi.app/almanya24-dev${path}")"
+    if [[ "${status}" != "200" ]]; then
+      echo "Expected authenticated ${path} request to return HTTP 200, got ${status}." >&2
+      exit 1
+    fi
+  done
+else
+  echo "NOTE: authenticated check skipped (PREVIEW_VERIFY_AUTH=0)." >&2
+  echo "      The route reuses SAHIMI_BASIC_AUTH_USER/HASH from" >&2
+  echo "      /etc/caddy/sahimi-auth.env, i.e. the same credentials as /sahimi/." >&2
+fi
 
 homepage_after="$(curl --silent --output /dev/null --write-out '%{http_code}' \
   https://sahimi.app/)"

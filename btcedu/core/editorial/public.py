@@ -129,6 +129,7 @@ class PublicSource:
     title: str
     publisher: str
     url: str
+    published_on: str | None
     retrieved_on: str
 
 
@@ -420,6 +421,11 @@ def _sources_for(
                     title=observation.title or observation.canonical_url,
                     publisher=observation.publisher or "",
                     url=observation.canonical_url,
+                    published_on=(
+                        observation.published_at.date().isoformat()
+                        if observation.published_at
+                        else None
+                    ),
                     retrieved_on=observation.retrieved_at.date().isoformat(),
                 )
             )

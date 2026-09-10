@@ -1,6 +1,7 @@
 """LLM API service wrapper with Anthropic + OpenAI fallback support."""
 
 import hashlib
+import inspect
 import json
 import logging
 from dataclasses import dataclass
@@ -241,12 +242,16 @@ def _call_anthropic(
         max_retries=settings.max_retries,
     )
 
+    request = {
+        "model": model,
+        "max_tokens": effective_max_tokens,
+        "system": system_prompt,
+        "messages": [{"role": "user", "content": user_message}],
+    }
+    if "temperature" in inspect.signature(client.messages.create).parameters:
+        request["temperature"] = settings.claude_temperature
     response = client.messages.create(
-        model=model,
-        max_tokens=effective_max_tokens,
-        temperature=settings.claude_temperature,
-        system=system_prompt,
-        messages=[{"role": "user", "content": user_message}],
+        **request,
     )
 
     text = ""

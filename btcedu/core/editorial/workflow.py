@@ -144,6 +144,8 @@ def draft_story(
     max_call_cost_usd=0.0,
     plan_builder=query_plans,
     source_published_at=None,
+    source_language="de",
+    source_uri=None,
 ):
     if not settings.newsroom_enabled:
         raise ValueError("Newsroom is disabled")
@@ -153,6 +155,8 @@ def draft_story(
         session,
         episode_id=episode_id,
         story=story,
+        source_language=source_language,
+        source_uri=source_uri,
         published_at=source_published_at,
     )
     propose_updates(session, imported.source_revision)
@@ -191,7 +195,7 @@ def draft_story(
     )
     claims = DataOnlyClaimExtractor(caller).extract(
         source_text=imported.source_span.source_text,
-        language="de",
+        language=source_language,
         span_id=imported.source_span.span_id,
     )
     if not claims or len(claims) > settings.newsroom_research_max_claims:
@@ -202,6 +206,8 @@ def draft_story(
         story=story,
         claims=claims,
         target_topic=target_topic,
+        source_language=source_language,
+        source_uri=source_uri,
         published_at=source_published_at,
     )
     for claim in claims:

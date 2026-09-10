@@ -206,6 +206,7 @@ def test_a_source_appears_with_its_publisher_and_retrieval_date(db_session, tmp_
     assert public.sources
     assert public.sources[0].url.startswith("https://")
     assert public.sources[0].retrieved_on.count("-") == 2
+    assert public.sources[0].published_on is None
     assert any(paragraph.sources for paragraph in public.paragraphs)
 
 

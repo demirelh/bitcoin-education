@@ -349,7 +349,11 @@ def _validate_paragraph(
     keys = keys or {}
     for claim in claims:
         key = keys.get(claim.id, claim.revision_id)
-        if claim.numeric_value and claim.numeric_value not in text:
+        if (
+            claim.numeric_value
+            and any(char.isdigit() for char in claim.numeric_value)
+            and claim.numeric_value not in text
+        ):
             raise ArticleContentRejected(
                 f"Paragraph drops the number {claim.numeric_value!r} of claim {key!r}"
             )
@@ -479,7 +483,9 @@ def generate_article_revision(
         raise
 
     allowed_numbers = frozenset(
-        claim.numeric_value for claim in claims if claim.numeric_value
+        claim.numeric_value
+        for claim in claims
+        if claim.numeric_value and any(char.isdigit() for char in claim.numeric_value)
     )
     quote_available = any(claim.claim_type == "quote" for claim in claims)
     for paragraph in draft.paragraphs:

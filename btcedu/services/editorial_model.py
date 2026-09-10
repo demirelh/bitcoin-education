@@ -7,12 +7,20 @@ from btcedu.models.editorial_schema import ArticleDraft, ClaimDraft, EvidenceDra
 
 
 class EditorialModel:
-    def __init__(self, settings, *, provider: str, model: str):
+    def __init__(
+        self,
+        settings,
+        *,
+        provider: str,
+        model: str,
+        max_tokens_by_task: dict[str, int] | None = None,
+    ):
         if provider not in {"anthropic", "openai"}:
             raise ValueError("Editorial documents require a tool-free API provider")
         if not model.strip():
             raise ValueError("An explicit editorial model is required")
         self.settings, self.provider, self.model = settings, provider, model
+        self.max_tokens_by_task = max_tokens_by_task or {}
 
     def __call__(self, payload) -> ModelReply:
         from btcedu.services.claude_service import call_claude
@@ -42,7 +50,7 @@ class EditorialModel:
             system,
             json.dumps(payload, ensure_ascii=False),
             self.settings,
-            max_tokens=4096,
+            max_tokens=self.max_tokens_by_task.get(payload["task"], 4096),
             json_mode=True,
             provider_override=self.provider,
             model_override=self.model,

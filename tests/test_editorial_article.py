@@ -368,6 +368,27 @@ def test_numbers_must_survive_into_the_translation(db_session, tmp_path):
         )
 
 
+def test_spelled_out_numbers_may_be_translated_as_words(db_session, tmp_path):
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    claim = db_session.query(ClaimRevision).one()
+    claim.numeric_value = "fünf"
+    db_session.commit()
+
+    article = generate_article_revision(
+        db_session,
+        editorial_revision=revision,
+        research_run=run,
+        drafter=lambda payload: _draft(
+            title="Berlin'de yeni konutlar",
+            paragraphs=[
+                {"text": "Berlin beş yeni konut bildirdi.", "claim_keys": ["housing"]}
+            ],
+        ),
+    )
+
+    assert article.title == "Berlin'de yeni konutlar"
+
+
 def test_invented_numbers_are_rejected(db_session, tmp_path):
     revision, run, _ = _pipeline(db_session, tmp_path)
 

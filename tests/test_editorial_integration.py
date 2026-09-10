@@ -418,7 +418,12 @@ def test_tool_free_model_contract_and_budgeted_resume(db_session, tmp_path, monk
     caller = BudgetedCaller(
         db_session,
         run,
-        EditorialModel(settings, provider="openai", model="test-model"),
+        EditorialModel(
+            settings,
+            provider="openai",
+            model="test-model",
+            max_tokens_by_task={"check_article_consistency": 512},
+        ),
         provider="openai",
         model="test-model",
         max_call_cost_usd=0.02,
@@ -427,6 +432,7 @@ def test_tool_free_model_contract_and_budgeted_resume(db_session, tmp_path, monk
     assert caller(payload) == caller(payload) == {"consistent": True, "issues": []}
     assert call.call_count == 1
     assert call.call_args.kwargs["provider_override"] == "openai"
+    assert call.call_args.kwargs["max_tokens"] == 512
     assert "tools" not in call.call_args.kwargs
     response.cost_usd = 0.03
     payload = {"task": "check_article_consistency", "draft": "over-budget"}

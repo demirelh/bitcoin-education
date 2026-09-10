@@ -100,7 +100,27 @@ class DataOnlyClaimExtractor:
         result = self.caller(payload)
         if not isinstance(result, list):
             raise ValueError("Claim extractor must return a list")
-        return tuple(ClaimDraft.model_validate(item) for item in result)
+        drafts = tuple(ClaimDraft.model_validate(item) for item in result)
+        source_folded = source_text.casefold()
+        anchor_fields = (
+            "subject",
+            "location",
+            "event_date",
+            "numeric_value",
+            "unit",
+            "attribution",
+        )
+        return tuple(
+            draft.model_copy(
+                update={
+                    field: None
+                    for field in anchor_fields
+                    if (value := getattr(draft, field))
+                    and value.casefold() not in source_folded
+                }
+            )
+            for draft in drafts
+        )
 
 
 class DataOnlyEvidenceEvaluator:
@@ -149,7 +169,58 @@ class DataOnlyEvidenceEvaluator:
         result = self.caller(payload)
         if not isinstance(result, list):
             raise ValueError("Evidence evaluator must return a list")
-        return tuple(EvidenceDraft.model_validate(item) for item in result)
+        by_url = {item.canonical_url: item for item in observations}
+        drafts = tuple(EvidenceDraft.model_validate(item) for item in result)
+        return tuple(
+            _expand_supporting_passage(claim, by_url.get(draft.canonical_url), draft)
+            for draft in drafts
+        )
+
+
+def _expand_supporting_passage(claim, observation, draft):
+    """Keep a model-selected passage contiguous while including its exact claim anchors."""
+    if (
+        draft.relation != EvidenceRelation.SUPPORTS.value
+        or observation is None
+        or not observation.content_text
+    ):
+        return draft
+    anchors = [
+        value
+        for value in (
+            claim.subject,
+            claim.numeric_value,
+            claim.unit,
+            claim.attribution,
+            claim.event_date,
+            claim.statement if claim.claim_type == "quote" else None,
+        )
+        if value
+    ]
+    text = observation.content_text
+    folded = text.casefold()
+    statement_start = folded.find(claim.statement.casefold())
+    if statement_start >= 0:
+        return draft.model_copy(
+            update={
+                "passage": text[
+                    statement_start : statement_start + len(claim.statement)
+                ]
+            }
+        )
+    start = folded.find(draft.passage.casefold())
+    if start < 0:
+        return draft
+    left, right = start, start + len(draft.passage)
+    for anchor in anchors:
+        position = folded.find(anchor.casefold())
+        if position < 0:
+            return draft
+        left = min(left, position)
+        right = max(right, position + len(anchor))
+    if right - left > 4_000:
+        return draft
+    return draft.model_copy(update={"passage": text[left:right]})
 
 
 def research_claim(

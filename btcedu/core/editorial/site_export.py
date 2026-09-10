@@ -245,10 +245,16 @@ def _article_html(
         parts.append('<section class="sources"><h2>Kaynaklar</h2><ol>')
         for index, source in enumerate(article.sources, start=1):
             label = f"{source.title} — {source.publisher}" if source.publisher else source.title
+            dates = (
+                f"Yayın: {_e(source.published_on)} · "
+                if source.published_on
+                else ""
+            )
             parts.append(
                 f'<li id="kaynak-{index}"><a href={quoteattr(source.url)} '
                 f'rel="nofollow noopener">{_e(label)}</a> '
-                f'<span class="retrieved">({_e(source.retrieved_on)})</span></li>'
+                f'<span class="retrieved">({dates}Erişim: '
+                f"{_e(source.retrieved_on)})</span></li>"
             )
         parts.append("</ol></section>")
     parts.append("</article>")

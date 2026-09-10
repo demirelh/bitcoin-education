@@ -38,7 +38,7 @@ awk -v snippet="${snippet}" '
 validation_hash="$(caddy hash-password --algorithm bcrypt --plaintext validation-only)"
 SAHIMI_BASIC_AUTH_USER=validation-user \
   SAHIMI_BASIC_AUTH_HASH="${validation_hash}" \
-  caddy validate --config "${staged}"
+  caddy validate --config "${staged}" --adapter caddyfile
 
 while read -r pid; do
   [[ -n "${pid}" ]] || continue

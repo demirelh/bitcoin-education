@@ -443,6 +443,109 @@ def test_tool_free_model_contract_and_budgeted_resume(db_session, tmp_path, monk
     assert call.call_count == 2
 
 
+def test_model_reply_without_the_result_envelope_is_still_usable(
+    db_session, tmp_path, monkeypatch
+):
+    """A bare JSON object must not discard a reply the provider was paid for.
+
+    In JSON mode gpt-4o answers the requested schema directly instead of
+    wrapping it in ``{"result": ...}``. Raising ``KeyError`` there left the
+    operation in ``reconcile_required``, which blocked every retry and stopped
+    the bounded live run right after the article had been drafted.
+    """
+    from types import SimpleNamespace
+
+    from btcedu.core.editorial.workflow import BudgetedCaller
+    from btcedu.models.editorial import ProviderOperation, ProviderOperationStatus
+    from btcedu.services.editorial_model import EditorialModel
+
+    _, run, settings, _ = workflow_fixture(db_session, tmp_path)
+    response = SimpleNamespace(
+        text='{"consistent": true, "issues": []}',
+        cost_usd=0.01,
+        input_tokens=20,
+        output_tokens=10,
+        model="test-model",
+    )
+    monkeypatch.setattr(
+        "btcedu.services.claude_service.call_claude", MagicMock(return_value=response)
+    )
+    caller = BudgetedCaller(
+        db_session,
+        run,
+        EditorialModel(settings, provider="openai", model="test-model"),
+        provider="openai",
+        model="test-model",
+        max_call_cost_usd=0.02,
+    )
+
+    payload = {"task": "check_article_consistency", "draft": "bare"}
+    assert caller(payload) == {"consistent": True, "issues": []}
+    # The reply is durably stored as completed, so a repeat is served from the
+    # ledger instead of paying for the same answer twice.
+    assert caller(payload) == {"consistent": True, "issues": []}
+    operation = (
+        db_session.query(ProviderOperation)
+        .filter(ProviderOperation.operation_key.like("check_article_consistency:%"))
+        .order_by(ProviderOperation.id.desc())
+        .first()
+    )
+    assert operation.status == ProviderOperationStatus.COMPLETED.value
+
+
+def test_a_failed_operation_may_be_retried_but_an_uncertain_one_may_not(
+    db_session, tmp_path, monkeypatch
+):
+    """Only an unknown provider outcome is allowed to block a retry.
+
+    A decided failure that keeps its operation row blocked made every later
+    attempt raise instead of redrafting, which is how the first live run lost
+    the remaining stories.
+    """
+    from types import SimpleNamespace
+
+    from btcedu.core.editorial.workflow import BudgetedCaller
+    from btcedu.models.editorial import ProviderOperation, ProviderOperationStatus
+    from btcedu.services.editorial_model import EditorialModel
+
+    _, run, settings, _ = workflow_fixture(db_session, tmp_path)
+    response = SimpleNamespace(
+        text='{"result": {"consistent": true, "issues": []}}',
+        cost_usd=0.01,
+        input_tokens=20,
+        output_tokens=10,
+        model="test-model",
+    )
+    monkeypatch.setattr(
+        "btcedu.services.claude_service.call_claude", MagicMock(return_value=response)
+    )
+    caller = BudgetedCaller(
+        db_session,
+        run,
+        EditorialModel(settings, provider="openai", model="test-model"),
+        provider="openai",
+        model="test-model",
+        max_call_cost_usd=0.02,
+    )
+    payload = {"task": "check_article_consistency", "draft": "retryable"}
+    caller(payload)
+    operation = (
+        db_session.query(ProviderOperation)
+        .filter(ProviderOperation.operation_key.like("check_article_consistency:%"))
+        .order_by(ProviderOperation.id.desc())
+        .first()
+    )
+
+    operation.status = ProviderOperationStatus.FAILED.value
+    db_session.commit()
+    assert caller(payload) == {"consistent": True, "issues": []}
+
+    operation.status = ProviderOperationStatus.RECONCILE_REQUIRED.value
+    db_session.commit()
+    with pytest.raises(RuntimeError, match="reconciliation"):
+        caller(payload)
+
+
 def test_legacy_final_decisions_gain_nullable_byte_bindings(db_session):
     from sqlalchemy import inspect, text
 

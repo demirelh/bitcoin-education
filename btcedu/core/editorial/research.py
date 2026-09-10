@@ -663,7 +663,9 @@ def _store_evidence_link(
         raise ValueError("Evidence must reference a successfully fetched document")
     if draft.passage not in (observation.content_text or ""):
         raise ValueError("Evidence passage is not present in the fetched document")
-    _validate_claim_anchors(claim_revision, draft)
+    _validate_claim_anchors(
+        claim_revision, draft, document_text=observation.content_text or ""
+    )
     passage_hash = _digest(draft.passage)
     existing = (
         session.query(EvidenceLink)
@@ -707,7 +709,9 @@ def _document_family(observation, observations) -> str:
     return "publisher:" + (_host(observation.canonical_url) or "unknown")
 
 
-def _validate_claim_anchors(claim: ClaimRevision, draft: EvidenceDraft) -> None:
+def _validate_claim_anchors(
+    claim: ClaimRevision, draft: EvidenceDraft, *, document_text: str = ""
+) -> None:
     if draft.relation != EvidenceRelation.SUPPORTS.value:
         return
     normalized = _anchor_text(draft.passage)
@@ -717,10 +721,22 @@ def _validate_claim_anchors(claim: ClaimRevision, draft: EvidenceDraft) -> None:
         raise ValueError("Supporting passage does not contain the claim number")
     if claim.unit and _anchor_text(claim.unit) not in normalized:
         raise ValueError("Supporting passage does not contain the claim unit")
-    if claim.attribution and not any(
-        form in normalized for form in _attribution_forms(claim.attribution)
-    ):
-        raise ValueError("Supporting passage does not contain the attribution")
+    if claim.attribution:
+        forms = _attribution_forms(claim.attribution)
+        context = _attributing_context(document_text, draft.passage)
+        document = _anchor_text(document_text)
+        surname = _attribution_surname(claim.attribution)
+        named = (
+            any(form in normalized for form in forms)
+            or any(form in context for form in forms)
+            or (
+                bool(surname)
+                and any(form in document for form in forms)
+                and re.search(rf"\b{re.escape(surname)}\b", context) is not None
+            )
+        )
+        if not named:
+            raise ValueError("Supporting passage does not contain the attribution")
     if claim.event_date and _anchor_text(claim.event_date) not in normalized:
         raise ValueError("Supporting passage does not contain the claim date")
     if claim.claim_type == "quote":
@@ -932,6 +948,37 @@ def _attribution_forms(attribution: str) -> tuple[str, ...]:
     if base and base != full:
         forms.append(base)
     return tuple(forms)
+
+
+def _attributing_context(document_text: str, passage: str, *, preceding: int = 2) -> str:
+    """Return the passage together with the sentences that attribute it.
+
+    German reported speech names its source once and then continues in
+    Konjunktiv I: "Aus Sicht von Innenministerin Magdalena Finke (CDU) ist
+    Schleswig-Holstein gut aufgestellt. In Schleswig-Holstein gebe es aktuell
+    rund 2.800 Sirenen." Demanding the attribution inside the cited sentence
+    would reject exactly the passage a reporter is expected to cite. The window
+    stays local so an attribution elsewhere in the article cannot be borrowed.
+    """
+    if not document_text:
+        return _anchor_text(passage)
+    position = document_text.find(passage)
+    if position < 0:
+        return _anchor_text(passage)
+    lead = [part for part in _SENTENCE_SPLIT.split(document_text[:position]) if part.strip()]
+    return _anchor_text(" ".join([*lead[-preceding:], passage]))
+
+
+def _attribution_surname(attribution: str) -> str:
+    """Return the family name an article uses on second reference.
+
+    A source is introduced with the full name and referred to as "laut Finke"
+    afterwards. The short form is only accepted inside the attributing window
+    and only when the full name is present in the same document.
+    """
+    base = re.sub(r"\s*\([^)]*\)\s*$", "", attribution).strip()
+    tokens = [token for token in base.split() if len(token) >= 3]
+    return _anchor_text(tokens[-1]) if tokens else ""
 
 
 def _quoted_spans(statement: str) -> tuple[str, ...]:

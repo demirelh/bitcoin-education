@@ -323,6 +323,24 @@ def article_gate_reasons(
     return tuple(reasons)
 
 
+def _checked_numbers(claims: Sequence[ClaimRevision]) -> set[str]:
+    """Return the figures these claims were actually checked against.
+
+    A claim carries its figure in ``numeric_value`` only when the extractor
+    isolated one; "In Schleswig-Holstein gibt es aktuell rund 2.800 Sirenen"
+    keeps the number in the statement alone. That number went through evidence
+    linking with the rest of the sentence, so it is checked, and an article
+    repeating it is not inventing a figure.
+    """
+    allowed: set[str] = set()
+    for claim in claims:
+        if claim.numeric_value:
+            allowed.add(claim.numeric_value)
+            allowed.update(_NUMBER.findall(claim.numeric_value))
+        allowed.update(_NUMBER.findall(claim.statement or ""))
+    return allowed
+
+
 def _validate_paragraph(
     text: str,
     claims: Sequence[ClaimRevision],
@@ -370,9 +388,7 @@ def _validate_paragraph(
                 )
 
     numbers = set(_NUMBER.findall(text))
-    allowed = set(allowed_numbers) | {
-        claim.numeric_value for claim in claims if claim.numeric_value
-    }
+    allowed = set(allowed_numbers) | _checked_numbers(claims)
     invented = {
         number
         for number in numbers
@@ -393,11 +409,7 @@ def _validate_draft_against_claims(
     keys,
 ) -> None:
     """Reject a draft that goes beyond the claims that were actually checked."""
-    allowed_numbers = frozenset(
-        claim.numeric_value
-        for claim in claims
-        if claim.numeric_value and any(char.isdigit() for char in claim.numeric_value)
-    )
+    allowed_numbers = frozenset(_checked_numbers(claims))
     quote_available = any(claim.claim_type == "quote" for claim in claims)
     for paragraph in draft.paragraphs:
         if paragraph.kind == "body" and not paragraph.claim_keys:
@@ -448,6 +460,7 @@ def generate_article_revision(
     model_name: str = "",
     prompt_hash: str | None = None,
     estimated_cost_usd: float = 0.0,
+    repair_attempts: int = 1,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> ArticleRevision:
     """Draft the article for one editorial revision, once per input state.
@@ -527,27 +540,42 @@ def generate_article_revision(
         ],
         "untrusted_input": True,
     }
-    try:
-        draft = ArticleDraft.model_validate(drafter(payload))
-    except Exception as exc:
-        operation.status = ProviderOperationStatus.RECONCILE_REQUIRED.value
-        operation.error_message = str(exc)
-        session.commit()
-        raise
+    attempt_payload = payload
+    for remaining in range(repair_attempts, -1, -1):
+        try:
+            draft = ArticleDraft.model_validate(drafter(attempt_payload))
+        except Exception as exc:
+            operation.status = ProviderOperationStatus.RECONCILE_REQUIRED.value
+            operation.error_message = str(exc)
+            session.commit()
+            raise
 
-    try:
-        _validate_draft_against_claims(
-            draft, claims=claims, by_key=by_key, assessments=assessments, keys=keys
-        )
-    except Exception as exc:
-        # The reply arrived and was judged: this is a decided outcome, not an
-        # uncertain one. Leaving it in flight would make every later attempt
-        # fail with "requires reconciliation before retry" instead of redrafting.
-        operation.status = ProviderOperationStatus.FAILED.value
-        operation.error_message = str(exc)
-        operation.completed_at = now()
-        session.commit()
-        raise
+        try:
+            _validate_draft_against_claims(
+                draft, claims=claims, by_key=by_key, assessments=assessments, keys=keys
+            )
+            break
+        except ArticleContentRejected as exc:
+            if remaining:
+                # Hand the deterministic verdict back once instead of asking
+                # for the identical draft again. The gate is unchanged; only
+                # the model is told what it has to repair.
+                attempt_payload = {**payload, "rejected_reason": str(exc)}
+                continue
+            # The reply arrived and was judged: this is a decided outcome, not
+            # an uncertain one. Leaving it in flight would make every later
+            # attempt fail with "requires reconciliation before retry".
+            operation.status = ProviderOperationStatus.FAILED.value
+            operation.error_message = str(exc)
+            operation.completed_at = now()
+            session.commit()
+            raise
+        except Exception as exc:
+            operation.status = ProviderOperationStatus.FAILED.value
+            operation.error_message = str(exc)
+            operation.completed_at = now()
+            session.commit()
+            raise
 
     content_hash = canonical_hash(
         {

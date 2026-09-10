@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,6 +11,7 @@ from btcedu.core.editorial.research import (
     DataOnlyClaimExtractor,
     DataOnlyEvidenceEvaluator,
     ResearchDeadlineExceeded,
+    _validate_claim_anchors,
     research_claim,
     research_revision,
 )
@@ -1026,3 +1028,98 @@ def test_supporting_evidence_accepts_passages_that_state_the_claim(
 
     link = db_session.query(EvidenceLink).one()
     assert link.relation == "supports"
+
+
+def _link_with_document(db_session, tmp_path, *, claim_updates, document, passage):
+    """Run one claim through research where document and passage differ."""
+    claim, run = _prepare(db_session, claim_updates=claim_updates)
+    url = "https://example.com/report"
+    provider = _provider(support_url=url)
+    fetcher, _ = _fetcher(tmp_path, {url: document})
+    evaluator = DataOnlyEvidenceEvaluator(
+        lambda payload: [
+            {
+                "canonical_url": url,
+                "relation": "supports",
+                "passage": passage,
+                "rationale": "A model proposed this passage.",
+            }
+        ]
+    )
+    research_claim(
+        db_session,
+        research_run=run,
+        claim_revision=claim,
+        query_plans=_plans(with_counter=False),
+        search_provider=provider,
+        fetcher=fetcher,
+        evaluator=evaluator,
+    )
+    return db_session.query(EvidenceLink).all()
+
+
+@pytest.mark.parametrize(
+    ("claim_updates", "lead"),
+    [
+        pytest.param(
+            {"attribution": "Senatorin Magdalena Finke"},
+            "Aus Sicht von Senatorin Magdalena Finke ist Berlin gut aufgestellt.",
+            id="full-name-in-the-preceding-sentence",
+        ),
+        pytest.param(
+            {"attribution": "Senatorin Magdalena Finke"},
+            "Senatorin Magdalena Finke stellte den Bericht vor. Das gelte laut Finke weiterhin.",
+            id="surname-on-second-reference",
+        ),
+    ],
+)
+def test_attribution_may_be_carried_by_the_preceding_sentences(
+    db_session, tmp_path, claim_updates, lead
+):
+    """Reported speech attributes once and then continues in Konjunktiv I.
+
+    The cited sentence carries the number, the sentence before it carries the
+    source. Demanding both in the same sentence rejected the passage a reporter
+    is expected to cite and blocked the story in the bounded live run.
+    """
+    passage = "In Berlin gebe es 100 neue Wohnungen."
+    links = _link_with_document(
+        db_session,
+        tmp_path,
+        claim_updates=claim_updates,
+        document=f"{lead} {passage}",
+        passage=passage,
+    )
+
+    assert [link.relation for link in links] == ["supports"]
+
+
+def test_attribution_is_not_borrowed_from_an_unrelated_part_of_the_document():
+    """The window stays local, and a name absent from the document is refused."""
+    passage = "In Berlin gebe es 100 neue Wohnungen."
+    claim = SimpleNamespace(
+        subject="Berlin",
+        numeric_value="100",
+        unit="Wohnungen",
+        attribution="Senatorin Magdalena Finke",
+        event_date=None,
+        claim_type="fact",
+        statement="Berlin meldet 100 neue Wohnungen.",
+    )
+    draft = SimpleNamespace(relation="supports", passage=passage)
+    distant = (
+        "Aus Sicht von Senatorin Magdalena Finke ist Berlin gut aufgestellt. "
+        "Der Bericht nennt weitere Details. Die Lage bleibe unveraendert. "
+        "Ein Sprecher ergaenzte die Angaben. " + passage
+    )
+
+    with pytest.raises(ValueError, match="attribution"):
+        _validate_claim_anchors(claim, draft, document_text=distant)
+
+    with pytest.raises(ValueError, match="attribution"):
+        _validate_claim_anchors(
+            claim, draft, document_text=f"Ein Sprecher berichtete. {passage}"
+        )
+
+    with pytest.raises(ValueError, match="attribution"):
+        _validate_claim_anchors(claim, draft, document_text="")

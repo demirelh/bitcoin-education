@@ -6,6 +6,20 @@ from btcedu.core.editorial.workflow import ModelReply
 from btcedu.models.editorial_schema import ArticleDraft, ClaimDraft, EvidenceDraft
 
 
+def _unwrapped(reply):
+    """Accept both the requested envelope and a bare object.
+
+    The system prompt asks for ``{"result": ...}``, but in JSON mode a model
+    routinely answers with the object itself. Raising ``KeyError`` on that
+    discards a reply the provider was already paid for and leaves the operation
+    in ``reconcile_required``, which blocks every later attempt. The shape is
+    still validated downstream against the task schema.
+    """
+    if isinstance(reply, dict) and "result" in reply:
+        return reply["result"]
+    return reply
+
+
 class EditorialModel:
     def __init__(
         self,
@@ -45,6 +59,8 @@ class EditorialModel:
             "causal links or certainty. For consistency checking, compare EVERY statement, "
             "including title and lede, against the claims; reject unsupported additions, "
             "missing qualifiers, mistranslations or non-Turkish prose."
+            ' If the payload carries "rejected_reason", a deterministic check refused the '
+            "previous draft: fix exactly that problem and change nothing else."
         )
         response = call_claude(
             system,
@@ -57,7 +73,7 @@ class EditorialModel:
         )
         result = json.loads(response.text)
         return ModelReply(
-            result=result["result"],
+            result=_unwrapped(result),
             cost_usd=response.cost_usd,
             input_tokens=response.input_tokens,
             output_tokens=response.output_tokens,

@@ -62,6 +62,15 @@ class BudgetedCaller:
             ):
                 raise RuntimeError("Stored model cost exceeds the approved reservation")
             return json.loads(operation.usage_json)["result"]
+        if operation.status == ProviderOperationStatus.FAILED.value:
+            # A failed operation is a decided outcome, not one still in flight.
+            # Refusing to retry it strands the story permanently; only an
+            # uncertain provider outcome may keep blocking.
+            operation.status = ProviderOperationStatus.RESERVED.value
+            operation.error_message = None
+            operation.completed_at = None
+            operation.actual_cost_usd = None
+            self.session.commit()
         if operation.status != ProviderOperationStatus.RESERVED.value:
             raise RuntimeError("Uncertain model operation requires reconciliation")
         operation.status = ProviderOperationStatus.SUBMITTED.value

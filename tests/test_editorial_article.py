@@ -408,6 +408,106 @@ def test_invented_numbers_are_rejected(db_session, tmp_path):
         )
 
 
+def test_a_number_carried_only_by_the_claim_statement_is_allowed(db_session, tmp_path):
+    """The extractor does not always isolate a figure into numeric_value.
+
+    "In Schleswig-Holstein gibt es aktuell rund 2.800 Sirenen" was checked as a
+    whole sentence, so an article repeating 2.800 is not inventing a figure.
+    Rejecting it blocked the only story of the bounded live run at the very last
+    gate, after the draft and the semantic check had both passed.
+    """
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    claim = db_session.query(ClaimRevision).one()
+    claim.numeric_value = None
+    claim.statement = "In Schleswig-Holstein gibt es aktuell rund 2.800 Sirenen."
+    db_session.commit()
+
+    article = generate_article_revision(
+        db_session,
+        editorial_revision=revision,
+        research_run=run,
+        drafter=lambda payload: _draft(
+            title="Schleswig-Holstein'da 2.800 siren",
+            paragraphs=[
+                {
+                    "text": "Schleswig-Holstein'da şu anda yaklaşık 2.800 siren bulunuyor.",
+                    "claim_keys": ["housing"],
+                }
+            ],
+        ),
+    )
+
+    assert "2.800" in article.title
+
+
+def test_a_rejected_draft_is_repaired_once_with_the_reason(db_session, tmp_path):
+    """The gate is unchanged; the model is simply told what to fix.
+
+    Re-asking with the identical payload returns the identical draft from the
+    operation ledger, so a rejected article could never be repaired. One bounded
+    retry carries the deterministic verdict back to the model.
+    """
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    seen: list[dict] = []
+
+    def drafter(payload):
+        seen.append(payload)
+        if "rejected_reason" not in payload:
+            return _draft(
+                paragraphs=[
+                    {
+                        "text": "Berlin 100 yeni konut bildirdi, toplam 4200 daire.",
+                        "claim_keys": ["housing"],
+                    }
+                ]
+            )
+        return _draft(
+            paragraphs=[{"text": "Berlin 100 yeni konut bildirdi.", "claim_keys": ["housing"]}]
+        )
+
+    article = generate_article_revision(
+        db_session,
+        editorial_revision=revision,
+        research_run=run,
+        drafter=drafter,
+    )
+
+    assert len(seen) == 2
+    assert "introduces numbers" in seen[1]["rejected_reason"]
+    texts = [
+        row.text
+        for row in db_session.query(ArticleParagraph).filter_by(article_revision_id=article.id)
+    ]
+    assert texts and all("4200" not in text for text in texts)
+
+
+def test_repair_is_bounded_and_the_rejection_still_stands(db_session, tmp_path):
+    """A model that keeps failing must not loop and must leave a decided state."""
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    calls = []
+
+    def drafter(payload):
+        calls.append(payload)
+        return _draft(
+            paragraphs=[
+                {
+                    "text": "Berlin 100 yeni konut bildirdi, toplam 4200 daire.",
+                    "claim_keys": ["housing"],
+                }
+            ]
+        )
+
+    with pytest.raises(ArticleContentRejected, match="introduces numbers"):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=drafter,
+        )
+
+    assert len(calls) == 2
+
+
 def test_uncertainty_must_not_be_upgraded_to_certainty(db_session, tmp_path):
     revision, run, _ = _pipeline(
         db_session,

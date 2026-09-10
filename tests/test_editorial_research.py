@@ -962,3 +962,67 @@ def test_revision_research_marks_run_blocked_on_deadline(db_session, tmp_path):
     assert "deadline" in outcome.block_reason.lower()
     assert run.status == "blocked"
     assert len(outcome.researched_revision_ids) < 3
+
+
+@pytest.mark.parametrize(
+    ("claim_updates", "passage"),
+    [
+        pytest.param(
+            {"attribution": "Senatorin Magdalena Finke (SPD)"},
+            "Laut Senatorin Magdalena Finke ( SPD ) meldet Berlin 100 neue Wohnungen.",
+            id="bracket-padding-from-html-extraction",
+        ),
+        pytest.param(
+            {},
+            "Berlin meldet 100 neue Wohnungen. Spandau ist nicht betroffen.",
+            id="unrelated-negation-in-another-sentence",
+        ),
+        pytest.param(
+            {"claim_type": "quote", "attribution": "Berlin"},
+            "Berlin erklaerte, es seien 100 neue Wohnungen gemeldet worden.",
+            id="reported-speech-quote-without-verbatim-wording",
+        ),
+        pytest.param(
+            {"statement": 'Berlin meldet "100 neue Wohnungen".', "claim_type": "quote"},
+            'Berlin meldet \u201e100 neue Wohnungen\u201c in diesem Jahr.',
+            id="typographic-quotes-around-the-same-words",
+        ),
+    ],
+)
+def test_supporting_evidence_accepts_passages_that_state_the_claim(
+    db_session, tmp_path, claim_updates, passage
+):
+    """Anchors must survive typography and passage scope.
+
+    Each passage here states exactly what the claim says; only bracket padding
+    from HTML extraction, an unrelated negation in a neighbouring sentence,
+    paraphrased reported speech or typographic quotes differ. Rejecting these
+    blocked every story of the first live run.
+    """
+    claim, run = _prepare(db_session, claim_updates=claim_updates)
+    url = "https://example.com/report"
+    provider = _provider(support_url=url)
+    fetcher, _ = _fetcher(tmp_path, {url: passage})
+    evaluator = DataOnlyEvidenceEvaluator(
+        lambda payload: [
+            {
+                "canonical_url": url,
+                "relation": "supports",
+                "passage": passage,
+                "rationale": "A model proposed this passage.",
+            }
+        ]
+    )
+
+    research_claim(
+        db_session,
+        research_run=run,
+        claim_revision=claim,
+        query_plans=_plans(with_counter=False),
+        search_provider=provider,
+        fetcher=fetcher,
+        evaluator=evaluator,
+    )
+
+    link = db_session.query(EvidenceLink).one()
+    assert link.relation == "supports"

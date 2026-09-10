@@ -384,6 +384,59 @@ def _validate_paragraph(
         )
 
 
+def _validate_draft_against_claims(
+    draft,
+    *,
+    claims,
+    by_key,
+    assessments,
+    keys,
+) -> None:
+    """Reject a draft that goes beyond the claims that were actually checked."""
+    allowed_numbers = frozenset(
+        claim.numeric_value
+        for claim in claims
+        if claim.numeric_value and any(char.isdigit() for char in claim.numeric_value)
+    )
+    quote_available = any(claim.claim_type == "quote" for claim in claims)
+    for paragraph in draft.paragraphs:
+        if paragraph.kind == "body" and not paragraph.claim_keys:
+            raise ArticleContentRejected("Every body paragraph must reference checked claims")
+        unknown = [key for key in paragraph.claim_keys if key not in by_key]
+        if unknown:
+            raise UnknownClaimReferenced(
+                f"Article references claims that are not in this revision: {sorted(unknown)}"
+            )
+        referenced = [by_key[key] for key in paragraph.claim_keys]
+        for claim in referenced:
+            assessment = assessments.get(claim.id)
+            verdict = assessment.verdict if assessment else "unassessed"
+            if verdict not in USABLE_VERDICTS and verdict != ClaimVerdict.UNVERIFIABLE.value:
+                raise UnsupportedClaimReferenced(
+                    f"Article asserts claim {keys[claim.id]!r} which is {verdict}"
+                )
+        _validate_paragraph(
+            paragraph.text,
+            referenced,
+            keys,
+            allowed_numbers=allowed_numbers,
+            quote_available=quote_available,
+        )
+        for quote in _QUOTED.findall(paragraph.text):
+            if not any(
+                claim.claim_type == "quote" and quote in claim.statement for claim in referenced
+            ):
+                raise ArticleContentRejected("Quoted words are not present in a referenced claim")
+    for text in (draft.title, draft.lede):
+        _validate_paragraph(
+            text,
+            [],
+            keys,
+            allowed_numbers=allowed_numbers,
+            quote_available=quote_available,
+        )
+
+
 def generate_article_revision(
     session: Session,
     *,
@@ -482,48 +535,19 @@ def generate_article_revision(
         session.commit()
         raise
 
-    allowed_numbers = frozenset(
-        claim.numeric_value
-        for claim in claims
-        if claim.numeric_value and any(char.isdigit() for char in claim.numeric_value)
-    )
-    quote_available = any(claim.claim_type == "quote" for claim in claims)
-    for paragraph in draft.paragraphs:
-        if paragraph.kind == "body" and not paragraph.claim_keys:
-            raise ArticleContentRejected("Every body paragraph must reference checked claims")
-        unknown = [key for key in paragraph.claim_keys if key not in by_key]
-        if unknown:
-            raise UnknownClaimReferenced(
-                f"Article references claims that are not in this revision: {sorted(unknown)}"
-            )
-        referenced = [by_key[key] for key in paragraph.claim_keys]
-        for claim in referenced:
-            assessment = assessments.get(claim.id)
-            verdict = assessment.verdict if assessment else "unassessed"
-            if verdict not in USABLE_VERDICTS and verdict != ClaimVerdict.UNVERIFIABLE.value:
-                raise UnsupportedClaimReferenced(
-                    f"Article asserts claim {keys[claim.id]!r} which is {verdict}"
-                )
-        _validate_paragraph(
-            paragraph.text,
-            referenced,
-            keys,
-            allowed_numbers=allowed_numbers,
-            quote_available=quote_available,
+    try:
+        _validate_draft_against_claims(
+            draft, claims=claims, by_key=by_key, assessments=assessments, keys=keys
         )
-        for quote in _QUOTED.findall(paragraph.text):
-            if not any(
-                claim.claim_type == "quote" and quote in claim.statement for claim in referenced
-            ):
-                raise ArticleContentRejected("Quoted words are not present in a referenced claim")
-    for text in (draft.title, draft.lede):
-        _validate_paragraph(
-            text,
-            [],
-            keys,
-            allowed_numbers=allowed_numbers,
-            quote_available=quote_available,
-        )
+    except Exception as exc:
+        # The reply arrived and was judged: this is a decided outcome, not an
+        # uncertain one. Leaving it in flight would make every later attempt
+        # fail with "requires reconciliation before retry" instead of redrafting.
+        operation.status = ProviderOperationStatus.FAILED.value
+        operation.error_message = str(exc)
+        operation.completed_at = now()
+        session.commit()
+        raise
 
     content_hash = canonical_hash(
         {

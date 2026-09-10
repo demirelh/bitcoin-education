@@ -754,3 +754,44 @@ def test_paragraph_claim_links_are_persisted(db_session, tmp_path):
     assert paragraph.article_revision_id == article.id
     assert link.article_paragraph_id == paragraph.id
     assert link.claim_revision_id == claim.id
+
+
+def test_rejected_draft_closes_the_provider_operation_and_allows_a_retry(db_session, tmp_path):
+    """A judged reply is a decided outcome, not an in-flight one.
+
+    The first live run left the operation on "submitted" whenever the
+    deterministic validation rejected a draft. Every later attempt then failed
+    with "requires reconciliation before retry", which aborted the whole run.
+    """
+    revision, run, _ = _pipeline(db_session, tmp_path)
+
+    with pytest.raises(ArticleContentRejected, match="drops the number"):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=lambda payload: _draft(
+                title="Berlin'de yeni konutlar",
+                paragraphs=[
+                    {"text": "Berlin yeni konut bildirdi.", "claim_keys": ["housing"]}
+                ],
+            ),
+        )
+
+    operation = db_session.query(ProviderOperation).filter_by(operation_type="article").one()
+    assert operation.status == "failed"
+    assert operation.completed_at is not None
+    assert "drops the number" in operation.error_message
+
+    article = generate_article_revision(
+        db_session,
+        editorial_revision=revision,
+        research_run=run,
+        drafter=lambda payload: _draft(
+            title="Berlin'de yeni konutlar",
+            paragraphs=[
+                {"text": "Berlin 100 yeni konut bildirdi.", "claim_keys": ["housing"]}
+            ],
+        ),
+    )
+    assert article.title == "Berlin'de yeni konutlar"

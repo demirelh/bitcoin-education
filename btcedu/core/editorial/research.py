@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import time
+import unicodedata
 import uuid
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
@@ -709,20 +710,30 @@ def _document_family(observation, observations) -> str:
 def _validate_claim_anchors(claim: ClaimRevision, draft: EvidenceDraft) -> None:
     if draft.relation != EvidenceRelation.SUPPORTS.value:
         return
-    normalized = draft.passage.casefold()
-    if claim.subject and claim.subject.casefold() not in normalized:
+    normalized = _anchor_text(draft.passage)
+    if claim.subject and _anchor_text(claim.subject) not in normalized:
         raise ValueError("Supporting passage does not name the claim subject")
-    if claim.numeric_value and claim.numeric_value.casefold() not in normalized:
+    if claim.numeric_value and _anchor_text(claim.numeric_value) not in normalized:
         raise ValueError("Supporting passage does not contain the claim number")
-    if claim.unit and claim.unit.casefold() not in normalized:
+    if claim.unit and _anchor_text(claim.unit) not in normalized:
         raise ValueError("Supporting passage does not contain the claim unit")
-    if claim.attribution and claim.attribution.casefold() not in normalized:
+    if claim.attribution and not any(
+        form in normalized for form in _attribution_forms(claim.attribution)
+    ):
         raise ValueError("Supporting passage does not contain the attribution")
-    if claim.event_date and claim.event_date.casefold() not in normalized:
+    if claim.event_date and _anchor_text(claim.event_date) not in normalized:
         raise ValueError("Supporting passage does not contain the claim date")
-    if claim.claim_type == "quote" and claim.statement.casefold() not in normalized:
-        raise ValueError("Supporting passage does not contain the claimed quote")
-    if _has_negation(claim.statement) != _has_negation(draft.passage):
+    if claim.claim_type == "quote":
+        # Reported speech ("X forderte den Rücktritt") is a paraphrase and can
+        # never appear verbatim. Only the words the claim actually puts in
+        # quotation marks have to be found in the passage; if the statement
+        # quotes nothing, the subject and attribution checks above carry it.
+        quoted = _quoted_spans(claim.statement)
+        for span in quoted:
+            if span not in normalized:
+                raise ValueError("Supporting passage does not contain the claimed quote")
+    anchored = _anchoring_sentences(draft.passage, claim)
+    if _has_negation(claim.statement) != _has_negation(anchored):
         raise ValueError("Supporting passage changes the claim's negation")
 
 
@@ -878,6 +889,90 @@ def _host(url: str) -> str | None:
 def _has_negation(value: str) -> bool:
     words = set(re.findall(r"\w+", value.casefold(), flags=re.UNICODE))
     return bool(words & {"nicht", "kein", "keine", "keinen", "no", "not", "never", "değil", "yok"})
+
+
+_QUOTE_CHARS = (
+    "\u201c\u201d\u201e\u201f\u00ab\u00bb\u2039\u203a"
+    "\u2018\u2019\u201a\u201b\u2032\u2033"
+)
+_QUOTED_SPAN = re.compile(r'"([^"]{3,})"')
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _anchor_text(value: str) -> str:
+    """Normalise text before an anchor comparison.
+
+    Extracted article bodies and model output disagree on typography rather
+    than on content: the fetched text pads brackets that carried inline markup
+    (``( CDU )``) and uses typographic quotes and dashes where the model writes
+    plain ASCII. Comparing those raw would reject passages that state exactly
+    what the claim says.
+    """
+    text = unicodedata.normalize("NFKC", value)
+    text = "".join('"' if char in _QUOTE_CHARS else char for char in text)
+    text = text.replace("\u00ad", "").replace("\u2010", "-").replace("\u2013", "-")
+    text = " ".join(text.split())
+    text = re.sub(r"([(\[])\s+", r"\1", text)
+    text = re.sub(r"\s+([)\]])", r"\1", text)
+    text = re.sub(r"\s+([,;:.!?])", r"\1", text)
+    return text.casefold()
+
+
+def _attribution_forms(attribution: str) -> tuple[str, ...]:
+    """Return the acceptable spellings of an attribution.
+
+    A trailing annotation such as a party tag or an acronym identifies the same
+    party as the bare name, so ``Innenministerin Magdalena Finke (CDU)`` is
+    considered named by a passage that says ``Innenministerin Magdalena Finke``.
+    The identity itself is still required verbatim.
+    """
+    full = _anchor_text(attribution)
+    forms = [full]
+    base = _anchor_text(re.sub(r"\s*\([^)]*\)\s*$", "", attribution))
+    if base and base != full:
+        forms.append(base)
+    return tuple(forms)
+
+
+def _quoted_spans(statement: str) -> tuple[str, ...]:
+    """Return the words a quote claim asserts verbatim.
+
+    Quotation marks are the normal marker, direct speech after a colon is the
+    other. Plain reported speech ("X forderte den Rücktritt") asserts no
+    wording of its own and is carried by the subject and attribution checks;
+    demanding it verbatim would reject every correctly paraphrased passage.
+    """
+    normalized = _anchor_text(statement)
+    spans = _QUOTED_SPAN.findall(normalized)
+    if spans:
+        return tuple(spans)
+    _, separator, tail = normalized.partition(":")
+    if separator and len(tail.split()) >= 3:
+        return (tail.strip(),)
+    return ()
+
+
+def _anchoring_sentences(passage: str, claim: ClaimRevision) -> str:
+    """Return the part of the passage that carries the claim.
+
+    Negation is a property of the supported statement, not of the excerpt it
+    was quoted from. A multi-sentence passage routinely contains an unrelated
+    negation ("Tübingen sei nicht betroffen"), which must not invalidate a
+    passage whose anchoring sentence supports the claim exactly.
+    """
+    anchors = [
+        _anchor_text(value)
+        for value in (claim.subject, claim.numeric_value, claim.attribution)
+        if value
+    ]
+    if not anchors:
+        return passage
+    selected = [
+        sentence
+        for sentence in _SENTENCE_SPLIT.split(passage)
+        if any(anchor in _anchor_text(sentence) for anchor in anchors)
+    ]
+    return " ".join(selected) if selected else passage
 
 
 def _check_deadline(

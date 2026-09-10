@@ -292,6 +292,11 @@ def test_a_build_produces_a_complete_readable_site(db_session, tmp_path):
     assert '<link rel="canonical"' in page
     assert '"@type": "NewsArticle"' in page
     assert "Kaynaklar" in page
+    index = (root / "index.html").read_text(encoding="utf-8")
+    assert 'class="brand"' in index
+    assert 'class="lead-grid"' in index
+    assert 'class="lead-story"' in index
+    assert 'aria-label="Haber kategorileri"' in index
 
 
 def test_a_build_uses_the_configured_public_subpath(db_session, tmp_path):
@@ -300,6 +305,7 @@ def test_a_build_uses_the_configured_public_subpath(db_session, tmp_path):
     config = SiteConfig(
         site_name="ALMANYA24 DEV",
         base_url="https://sahimi.app/almanya24-dev/",
+        preview_notice="Korumalı geliştirme önizlemesi",
     )
 
     result = build_site(
@@ -322,6 +328,8 @@ def test_a_build_uses_the_configured_public_subpath(db_session, tmp_path):
     assert 'src="/almanya24-dev/media/' in article_page
     assert 'src="/almanya24-dev/assets/search.js"' in search_page
     assert 'const basePath = "/almanya24-dev";' in search_script
+    assert "Korumalı geliştirme önizlemesi" in index
+    assert f'href="/almanya24-dev/{publication.section}/"' in index
 
 
 def test_the_build_copies_only_approved_media_bytes(db_session, tmp_path):

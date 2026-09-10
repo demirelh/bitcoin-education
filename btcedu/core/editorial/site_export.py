@@ -66,6 +66,8 @@ class SiteConfig:
 
     site_name: str = "ALMANYA24"
     base_url: str = "https://example.invalid"
+    tagline: str = "Almanya, Türkiye ve dünyadan doğrulanmış haberler"
+    preview_notice: str = ""
     imprint: str = ""
     privacy: str = ""
     contact: str = ""
@@ -108,12 +110,70 @@ def _site_path(config: SiteConfig, path: str) -> str:
     return f"{config.base_path}{path}"
 
 
-def _page(config: SiteConfig, title: str, body: str, *, head: str = "") -> str:
+def _category_label(section: str) -> str:
+    return {
+        "almanya": "Almanya",
+        "turkiye": "Türkiye",
+        "dunya": "Dünya",
+        "ekonomi": "Ekonomi",
+        "yasam": "Yaşam",
+        "kultur": "Kültür",
+        "spor": "Spor",
+        "haber": "Gündem",
+    }.get(section, section.replace("-", " ").title())
+
+
+def _media_markup(
+    config: SiteConfig,
+    article: PublicArticle,
+    *,
+    class_name: str,
+) -> str:
+    if not article.media:
+        return (
+            f'<div class="{class_name} story-image-placeholder" aria-hidden="true">'
+            f"<span>{_e(_category_label(article.section))}</span></div>"
+        )
+    item = article.media[0]
+    notice = {"archive": "ARŞİV", "symbolic": "SEMBOL GÖRSEL", "portrait": "PORTRE"}.get(
+        item.role, ""
+    )
+    media_url = _site_path(config, f"/media/{item.file_name}")
+    return (
+        f'<figure class="{class_name}"><img src={quoteattr(media_url)} '
+        f'alt={quoteattr(item.caption)}'
+        + (f' width="{item.width}"' if item.width else "")
+        + (f' height="{item.height}"' if item.height else "")
+        + ' loading="lazy">'
+        f"<figcaption>{_e(notice)} {_e(item.caption)} "
+        f'<span class="credit">{_e(item.attribution)} · {_e(item.license)}</span>'
+        "</figcaption></figure>"
+    )
+
+
+def _page(
+    config: SiteConfig,
+    title: str,
+    body: str,
+    *,
+    head: str = "",
+    sections: tuple[str, ...] = (),
+) -> str:
     home = _site_path(config, "/")
     search = _site_path(config, "/arama/")
     stylesheet = _site_path(config, "/assets/site.css")
     imprint = _site_path(config, "/kunye/")
     privacy = _site_path(config, "/gizlilik/")
+    navigation = "".join(
+        f'<a href={quoteattr(_site_path(config, f"/{section}/"))}>'
+        f"{_e(_category_label(section))}</a>"
+        for section in sections
+    )
+    notice = (
+        f'<aside class="preview-notice">{_e(config.preview_notice)}</aside>\n'
+        if config.preview_notice
+        else ""
+    )
     return (
         "<!DOCTYPE html>\n"
         f'<html lang="tr">\n<head>\n<meta charset="utf-8">\n'
@@ -121,9 +181,15 @@ def _page(config: SiteConfig, title: str, body: str, *, head: str = "") -> str:
         f"<title>{_e(title)}</title>\n"
         f'<link rel="stylesheet" href={quoteattr(stylesheet)}>\n'
         f"{head}</head>\n<body>\n"
-        f'<header class="site"><a href={quoteattr(home)}>{_e(config.site_name)}</a>'
+        '<header class="site"><div class="masthead">'
+        f'<a class="brand" href={quoteattr(home)}>{_e(config.site_name)}</a>'
+        f'<p>{_e(config.tagline)}</p></div>'
         f'<form class="search" action={quoteattr(search)} method="get">'
-        '<input type="search" name="q" aria-label="Ara"></form></header>\n'
+        '<input type="search" name="q" aria-label="Haber ara" placeholder="Haber ara">'
+        '<button type="submit">Ara</button></form>'
+        f'<nav class="categories" aria-label="Haber kategorileri">{navigation}</nav>'
+        "</header>\n"
+        f"{notice}"
         f"<main>\n{body}\n</main>\n"
         '<footer class="site">'
         f'<a href={quoteattr(imprint)}>Künye</a> · '
@@ -132,32 +198,36 @@ def _page(config: SiteConfig, title: str, body: str, *, head: str = "") -> str:
     )
 
 
-def _article_html(config: SiteConfig, article: PublicArticle) -> str:
-    parts = [f"<article>\n<h1>{_e(article.title)}</h1>"]
+def _article_html(
+    config: SiteConfig,
+    article: PublicArticle,
+    *,
+    sections: tuple[str, ...] = (),
+) -> str:
+    parts = [
+        '<article class="article-page">',
+        f'<p class="category">{_e(_category_label(article.section))}</p>',
+        f"<h1>{_e(article.title)}</h1>",
+    ]
     parts.append(
         f'<p class="lede">{_e(article.lede)}</p>'
-        f'<p class="meta"><time datetime={quoteattr(article.published_on)}>'
-        f"{_e(article.published_on)}</time></p>"
+        '<p class="meta">Yayın: '
+        f'<time datetime={quoteattr(article.published_on)}>{_e(article.published_on)}</time>'
+        + (
+            " · Güncelleme: "
+            f'<time datetime={quoteattr(article.updated_on)}>{_e(article.updated_on)}</time>'
+            if article.updated_on != article.published_on
+            else ""
+        )
+        + "</p>"
     )
     for correction in article.corrections:
         parts.append(
             f'<aside class="correction"><strong>Düzeltme</strong> '
             f"({_e(correction.published_on)}): {_e(correction.summary)}</aside>"
         )
-    for item in article.media:
-        notice = {"archive": "ARŞİV", "symbolic": "SEMBOL GÖRSEL", "portrait": "PORTRE"}.get(
-            item.role, ""
-        )
-        media_url = _site_path(config, f"/media/{item.file_name}")
-        parts.append(
-            f'<figure><img src={quoteattr(media_url)} alt={quoteattr(item.caption)}'
-            + (f' width="{item.width}"' if item.width else "")
-            + (f' height="{item.height}"' if item.height else "")
-            + ' loading="lazy">'
-            f"<figcaption>{_e(notice)} {_e(item.caption)} "
-            f'<span class="credit">{_e(item.attribution)} · {_e(item.license)}</span>'
-            "</figcaption></figure>"
-        )
+    if article.media:
+        parts.append(_media_markup(config, article, class_name="article-visual"))
     for paragraph in article.paragraphs:
         refs = "".join(
             f'<sup><a href="#kaynak-{index + 1}">{index + 1}</a></sup>'
@@ -202,21 +272,54 @@ def _article_html(config: SiteConfig, article: PublicArticle) -> str:
         f"<link rel=\"canonical\" href={quoteattr(article.canonical_url)}>\n"
         f'<script type="application/ld+json">{json_ld}</script>\n'
     )
-    return _page(config, f"{article.title} — {config.site_name}", "\n".join(parts), head=head)
+    return _page(
+        config,
+        f"{article.title} — {config.site_name}",
+        "\n".join(parts),
+        head=head,
+        sections=sections,
+    )
 
 
 def _index_html(config: SiteConfig, articles: list[PublicArticle], *, title: str) -> str:
-    items = [f"<h1>{_e(title)}</h1>", '<ul class="teasers">']
-    for article in articles:
-        article_url = _site_path(config, f"/{article.section}/{article.slug}/")
-        items.append(
-            f'<li><a href={quoteattr(article_url)}>'
-            f"<h2>{_e(article.title)}</h2><p>{_e(article.lede)}</p></a>"
-            f'<time datetime={quoteattr(article.published_on)}>'
-            f"{_e(article.published_on)}</time></li>"
+    if not articles:
+        return _page(
+            config,
+            f"{title} — {config.site_name}",
+            f'<section class="empty-news"><h1>{_e(title)}</h1>'
+            "<p>Bu bölümde henüz yayıma hazır haber bulunmuyor.</p></section>",
         )
-    items.append("</ul>")
-    return _page(config, f"{title} — {config.site_name}", "\n".join(items))
+
+    sections = tuple(dict.fromkeys(article.section for article in articles))
+
+    def story(article: PublicArticle, class_name: str) -> str:
+        article_url = _site_path(config, f"/{article.section}/{article.slug}/")
+        return (
+            f'<article class="{class_name}">'
+            f'<a class="story-link" href={quoteattr(article_url)}>'
+            f'{_media_markup(config, article, class_name="story-image")}'
+            '<div class="story-copy">'
+            f'<p class="category">{_e(_category_label(article.section))}</p>'
+            f"<h2>{_e(article.title)}</h2><p>{_e(article.lede)}</p>"
+            f'<time datetime={quoteattr(article.published_on)}>'
+            f"Yayın: {_e(article.published_on)}</time></div></a></article>"
+        )
+
+    hero = story(articles[0], "lead-story")
+    secondary = "".join(story(article, "secondary-story") for article in articles[1:3])
+    cards = "".join(story(article, "news-card") for article in articles[3:])
+    body = (
+        f'<section class="page-heading"><p class="eyebrow">Güncel dosya</p>'
+        f"<h1>{_e(title)}</h1></section>"
+        f'<section class="lead-grid">{hero}<div class="secondary-grid">{secondary}</div></section>'
+        + (f'<section class="news-grid">{cards}</section>' if cards else "")
+    )
+    return _page(
+        config,
+        f"{title} — {config.site_name}",
+        body,
+        sections=sections,
+    )
 
 
 def _tombstone_html(config: SiteConfig, publication: Publication, summary: str) -> str:
@@ -350,6 +453,7 @@ def build_site(
             row = session.get(ArticleRevision, publication.current_article_revision_id)
             _copy_media(session, row, target)
 
+        sections = tuple(dict.fromkeys(article.section for article in articles))
         for article in articles:
             related = tuple(
                 {
@@ -361,10 +465,13 @@ def build_site(
             )[:3]
             _write(
                 target / article.section / article.slug / "index.html",
-                _article_html(config, replace(article, related=related)),
+                _article_html(
+                    config,
+                    replace(article, related=related),
+                    sections=sections,
+                ),
             )
         _write(target / "index.html", _index_html(config, articles, title="Son haberler"))
-        sections = sorted({article.section for article in articles})
         for section in sections:
             _write(
                 target / section / "index.html",
@@ -385,6 +492,7 @@ def build_site(
                 '<ul id="search-results"></ul>'
                 f'<script src={quoteattr(_site_path(config, "/assets/search.js"))} '
                 "defer></script>",
+                sections=sections,
             ),
         )
         _write(target / "assets" / "search.js", _search_js(config))
@@ -399,6 +507,7 @@ def build_site(
                 f"Künye — {config.site_name}",
                 f"<article><h1>Künye</h1><p>{_e(config.imprint)}</p>"
                 f"<p>{_e(config.contact)}</p><p>{_e(config.usage_rights)}</p></article>",
+                sections=sections,
             ),
         )
         _write(
@@ -407,6 +516,7 @@ def build_site(
                 config,
                 f"Gizlilik — {config.site_name}",
                 f"<article><h1>Gizlilik</h1><p>{_e(config.privacy)}</p></article>",
+                sections=sections,
             ),
         )
         _write(target / "assets" / "site.css", _CSS)
@@ -599,22 +709,319 @@ fetch(basePath + "/arama/index.json").then(response => {{
 """
 
 
-_CSS = """:root { color-scheme: light dark; --w: 40rem; }
+_CSS = """:root {
+  color-scheme: light;
+  --ink: #161616;
+  --muted: #666;
+  --line: #dedede;
+  --paper: #fff;
+  --soft: #f3f4f5;
+  --brand: #c9001f;
+  --brand-dark: #8f0016;
+  --content: 1180px;
+}
 * { box-sizing: border-box; }
-body { margin: 0; font: 17px/1.6 system-ui, sans-serif; }
-header.site, footer.site { display: flex; gap: 1rem; align-items: center;
-  padding: .75rem 1rem; border-bottom: 1px solid #8884; }
-footer.site { border: 0; border-top: 1px solid #8884; }
-main { max-width: var(--w); margin: 0 auto; padding: 1rem; }
-img { max-width: 100%; height: auto; }
-figure { margin: 1rem 0; }
-figcaption { font-size: .85rem; opacity: .8; }
-.credit { display: block; font-size: .78rem; opacity: .75; }
-.lede { font-size: 1.15rem; font-weight: 600; }
-.correction { border-left: 4px solid #c33; padding: .5rem .75rem; margin: 1rem 0; }
-.teasers { list-style: none; padding: 0; }
-.teasers li { border-bottom: 1px solid #8884; padding: .75rem 0; }
-.teasers a { text-decoration: none; color: inherit; }
-.sources { font-size: .9rem; }
-@media (max-width: 30rem) { body { font-size: 16px; } }
+html { background: #e9eaec; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 16px/1.55 Arial, Helvetica, sans-serif;
+  margin: 0 auto;
+  min-height: 100vh;
+}
+a { color: inherit; }
+img { display: block; height: auto; max-width: 100%; }
+.site {
+  background: #fff;
+  border-bottom: 1px solid var(--line);
+}
+.masthead {
+  align-items: end;
+  display: flex;
+  justify-content: space-between;
+  margin: 0 auto;
+  max-width: var(--content);
+  padding: 1.45rem 1.25rem 1rem;
+}
+.brand {
+  color: var(--brand);
+  font-size: clamp(2rem, 5vw, 3.65rem);
+  font-weight: 950;
+  letter-spacing: -.065em;
+  line-height: .9;
+  text-decoration: none;
+}
+.masthead p {
+  color: var(--muted);
+  font-size: .82rem;
+  margin: 0 0 .15rem;
+  text-align: right;
+}
+.search {
+  display: flex;
+  margin: 0 auto;
+  max-width: var(--content);
+  padding: 0 1.25rem .9rem;
+}
+.search input {
+  border: 1px solid var(--line);
+  border-radius: .2rem 0 0 .2rem;
+  min-height: 2.5rem;
+  padding: .55rem .75rem;
+  width: min(22rem, 100%);
+}
+.search button {
+  background: var(--ink);
+  border: 0;
+  color: #fff;
+  cursor: pointer;
+  font-weight: 700;
+  padding: .55rem 1rem;
+}
+.categories {
+  background: var(--ink);
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  padding: 0 max(1.25rem, calc((100vw - var(--content)) / 2 + 1.25rem));
+  scrollbar-width: none;
+}
+.categories a {
+  color: #fff;
+  flex: 0 0 auto;
+  font-size: .82rem;
+  font-weight: 800;
+  letter-spacing: .035em;
+  padding: .72rem 1.1rem;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.categories a:hover { background: var(--brand); }
+.preview-notice {
+  background: #fff4d8;
+  border-bottom: 1px solid #efd48e;
+  color: #5e4300;
+  font-size: .82rem;
+  font-weight: 700;
+  padding: .55rem 1.25rem;
+  text-align: center;
+}
+main {
+  margin: 0 auto;
+  max-width: var(--content);
+  min-height: 65vh;
+  padding: 1.5rem 1.25rem 4rem;
+}
+.page-heading {
+  align-items: baseline;
+  border-bottom: 4px solid var(--ink);
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+.page-heading h1 {
+  font-size: 1.55rem;
+  letter-spacing: -.035em;
+  margin: 0 0 .55rem;
+}
+.eyebrow, .category {
+  color: var(--brand);
+  font-size: .72rem !important;
+  font-weight: 900 !important;
+  letter-spacing: .08em;
+  margin: 0 0 .4rem !important;
+  text-transform: uppercase;
+}
+.lead-grid {
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: minmax(0, 1.8fr) minmax(17rem, .85fr);
+  padding-bottom: 1.5rem;
+}
+.story-link { display: block; text-decoration: none; }
+.story-link:hover h2 { color: var(--brand); }
+.story-image {
+  background: #dfe2e5;
+  margin: 0 0 .85rem;
+  overflow: hidden;
+}
+.story-image img {
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  width: 100%;
+}
+.story-image figcaption { display: none; }
+.story-image-placeholder {
+  align-items: end;
+  aspect-ratio: 16 / 9;
+  background:
+    linear-gradient(135deg, rgb(201 0 31 / 92%), rgb(80 0 13 / 94%)),
+    repeating-linear-gradient(45deg, #fff2 0 1px, transparent 1px 18px);
+  color: #fff;
+  display: flex;
+  font-size: .75rem;
+  font-weight: 900;
+  letter-spacing: .12em;
+  padding: 1rem;
+  text-transform: uppercase;
+}
+.lead-story h2 {
+  font-size: clamp(2rem, 4vw, 3.25rem);
+  letter-spacing: -.055em;
+  line-height: 1.02;
+  margin: 0;
+}
+.story-copy > p:not(.category) {
+  color: var(--muted);
+  margin: .6rem 0;
+}
+.story-copy time {
+  color: var(--muted);
+  font-size: .76rem;
+  font-weight: 700;
+}
+.secondary-grid { display: grid; gap: 1rem; }
+.secondary-story + .secondary-story {
+  border-top: 1px solid var(--line);
+  padding-top: 1rem;
+}
+.secondary-story h2 {
+  font-size: 1.25rem;
+  letter-spacing: -.025em;
+  line-height: 1.15;
+  margin: 0;
+}
+.secondary-story .story-copy > p:not(.category) {
+  display: -webkit-box;
+  font-size: .88rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.news-grid {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding-top: 1.5rem;
+}
+.news-card {
+  border-bottom: 3px solid var(--ink);
+  padding-bottom: 1rem;
+}
+.news-card h2 {
+  font-size: 1.2rem;
+  letter-spacing: -.025em;
+  line-height: 1.18;
+  margin: 0;
+}
+.news-card .story-copy > p:not(.category) {
+  display: -webkit-box;
+  font-size: .86rem;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+}
+.article-page {
+  margin: 1rem auto;
+  max-width: 760px;
+}
+.article-page h1 {
+  font-size: clamp(2rem, 5vw, 3.5rem);
+  letter-spacing: -.055em;
+  line-height: 1.03;
+  margin: 0;
+}
+.article-page > p {
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.08rem;
+}
+.article-page .lede {
+  color: #3f3f3f;
+  font: 700 1.3rem/1.45 Arial, Helvetica, sans-serif;
+}
+.meta {
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font: 700 .78rem/1.5 Arial, Helvetica, sans-serif !important;
+  padding-bottom: .75rem;
+}
+.article-visual { margin: 1.25rem 0; }
+.article-visual img {
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  width: 100%;
+}
+figcaption {
+  color: var(--muted);
+  font-size: .76rem;
+  line-height: 1.4;
+  margin-top: .4rem;
+}
+.credit { display: block; font-size: .7rem; }
+.correction {
+  background: #fff1f2;
+  border-left: 4px solid var(--brand);
+  padding: .75rem 1rem;
+}
+.sources {
+  border-top: 4px solid var(--ink);
+  font-size: .88rem;
+  margin-top: 2rem;
+  padding-top: .75rem;
+}
+.sources a { color: var(--brand-dark); overflow-wrap: anywhere; }
+.empty-news { padding: 4rem 0; text-align: center; }
+footer.site {
+  background: var(--ink);
+  border: 0;
+  color: #fff;
+  gap: 1rem;
+  justify-content: center;
+  padding: 1.4rem;
+}
+footer.site a { font-size: .82rem; }
+@media (max-width: 760px) {
+  .masthead { align-items: flex-start; display: block; padding-top: 1rem; }
+  .brand { font-size: 2.55rem; }
+  .masthead p { margin-top: .45rem; text-align: left; }
+  .search { padding-bottom: .7rem; }
+  .search input { width: 100%; }
+  .categories { padding: 0; }
+  .categories a { padding: .7rem .85rem; }
+  main { padding: 1rem .9rem 3.5rem; }
+  .page-heading { display: block; }
+  .eyebrow { margin-bottom: .1rem !important; }
+  .lead-grid { display: block; }
+  .secondary-grid {
+    border-top: 1px solid var(--line);
+    gap: .85rem;
+    margin-top: 1rem;
+    padding-top: 1rem;
+  }
+  .secondary-story .story-link {
+    display: grid;
+    gap: .75rem;
+    grid-template-columns: 8.5rem minmax(0, 1fr);
+  }
+  .secondary-story .story-image { margin: 0; }
+  .secondary-story h2 { font-size: 1.05rem; }
+  .secondary-story .story-copy > p:not(.category) { display: none; }
+  .news-grid { grid-template-columns: 1fr; }
+  .news-card .story-link {
+    display: grid;
+    gap: .85rem;
+    grid-template-columns: 8.5rem minmax(0, 1fr);
+  }
+  .news-card .story-image { margin: 0; }
+  .news-card .story-copy > p:not(.category) { display: none; }
+  .article-page h1 { font-size: 2.1rem; }
+  .article-page > p { font-size: 1rem; }
+}
+@media (max-width: 420px) {
+  .preview-notice { text-align: left; }
+  .lead-story h2 { font-size: 1.85rem; }
+  .secondary-story .story-link,
+  .news-card .story-link { grid-template-columns: 7.25rem minmax(0, 1fr); }
+}
 """

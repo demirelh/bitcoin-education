@@ -390,3 +390,108 @@ is a `completed` `llm` operation and its reply is stored in `usage_json`. Only
 the deterministic *reason* for their refusal was never written, because the
 pre-fix code path stored no `error_message`. The review page therefore shows all
 four drafts.
+
+## Raised call limit: the story reached a stored article revision
+
+The operator raised the call ceiling for `bundesweiter-warntag` from 12 to 20
+provider calls, leaving the 0.25 USD total unchanged and explicitly including
+the paid-but-discarded call. The remaining work was a targeted repair of the
+existing draft, not a fresh research run.
+
+### Cost accounting, completed
+
+The ledger of this approval holds **12 recorded calls at 0.090 USD**. One
+further call was paid for and then discarded by the missing-envelope defect
+(fix 7); its cost was never recorded and cannot be reconstructed, so a
+conservative **0.015 USD** is reserved for it — above the most expensive call
+observed in the whole run (0.013997 USD). Total charged against the approval:
+**13 calls, at most 0.105 USD of the approved 0.25 USD.**
+
+Two of the entries in the harness ledger are `fake` rows worth 0.003 USD from
+the offline threshold test and are not provider calls. Because the harness
+resumes its counter from the manifest, the first attempt at the raised ceiling
+was blocked immediately by its own guard at zero cost; the limits then had to be
+expressed in the harness's own cumulative terms (`--max-calls 17`,
+`--budget-usd 0.238`), which is what keeps the real total at or below 0.25 USD.
+
+### The quotation gate was wrong, not the draft
+
+The refusal that ended the previous round — "Paragraph presents a quotation
+without a quoted claim to back it" — was a **false positive**. `_QUOTED`
+treated the straight apostrophe as a quotation mark, but Turkish separates
+suffixes from proper nouns with exactly that character. A single paragraph
+containing `Schleswig-Holstein'de` and `Euro'dan` therefore looked like one
+single-quoted passage. The earlier report called this refusal legitimate; that
+was wrong.
+
+`_quotable()` now drops apostrophes that stand between two letters before the
+scan. A real quotation mark never does, so genuine single quotes remain
+detectable, and `’` was added to the delimiter class, which closes a hole rather
+than opening one.
+
+### A German role noun cannot be demanded inside Turkish prose
+
+With the quotation error gone, the next refusal was
+`Paragraph drops the attribution 'Sprecherin'`. The check required the
+attribution verbatim. For a personal name that is right — `Magdalena Finke`
+travels into every language unchanged — but `Sprecherin` does not, so the rule
+silently forbade every claim a source attributed to an unnamed official.
+
+`_is_personal_name()` now separates the two cases. A named source must still
+appear verbatim; an unnamed role must be attributed by an explicit marker in the
+article's own language (`ATTRIBUTION_MARKERS`). Dropping the attribution
+entirely is still refused.
+
+### The repair step was under-informed
+
+It received one violation at a time and no evidence, so each defect cost a paid
+round and the model could reintroduce the previous one. `_draft_violations()`
+now reports every violation, `supporting_passages()` supplies the checked
+passages with publisher and URL, and the repair payload carries the accumulated
+list. An unchanged repair payload is refused before the call, because an
+identical payload only buys the same draft back from the ledger.
+
+### A local budget stop is not an uncertain provider outcome
+
+The run then failed with `Uncertain model operation requires reconciliation`.
+The harness's own call guard had raised a plain `RuntimeError` *before sending
+anything*, and `BudgetedCaller` recorded that as `reconcile_required`, which
+permanently blocked the retry. Nothing was sent and nothing was billed.
+`ProviderCallNotAttempted` (in `core/editorial/jobs.py`) now marks that case;
+the reservation is returned to `reserved` and the story simply resumes. A real
+transport failure still requires reconciliation, because the request may have
+arrived.
+
+### Result
+
+The story now produces a **stored, technically validated Turkish article
+revision** — the first in this project. Consumption for the repair itself was
+two provider calls; every subsequent step ran from the ledger at zero cost.
+
+Two further defects surfaced after that and were fixed:
+
+* the preview harness looked up the topic's research run with `.one()`, which
+  fails once a topic has been researched more than once;
+* `inspect_image()` rejected the selected Commons photograph because Pillow
+  reports a Multi-Picture Object as `image/mpo` while Commons declares
+  `image/jpeg`. MPO is a JPEG stream with more than one frame — same magic
+  bytes, same decoder — so this discarded ordinary, correctly licensed press
+  photographs. `_SAME_FORMAT` now accepts it; a PNG declared as JPEG is still
+  refused.
+
+With the picture attached, the media hash changed and a **second** article
+revision was created, which is the intended invalidation behaviour.
+
+### What was not done
+
+The article is stored with status `draft`. It was **not** approved: the harness
+gained a `--no-approve` mode so the real draft is not marked approved on the
+operator's behalf, and the public site correctly shows nothing. The draft,
+its picture with CC0 credit and licence, the claims with verdicts and the source
+passages are rendered in the access-protected review view at `/_inceleme/`.
+
+Verified: `200` locally, `401` anonymously from outside, the article absent from
+the public start page. Screenshots remain impossible on this Pi.
+
+The role `İçişleri Bakanı` in the Turkish text was checked against the source:
+NDR writes `Innenministerin Magdalena Finke (CDU)`, so it is supported.

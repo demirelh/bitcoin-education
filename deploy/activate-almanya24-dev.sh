@@ -12,7 +12,8 @@ snippet="${repo_dir}/deploy/Caddyfile.almanya24-dev"
 unit="${repo_dir}/deploy/almanya24-dev-preview.service"
 staged="$(mktemp)"
 cleaned="$(mktemp)"
-trap 'rm -f "${staged}" "${cleaned}"' EXIT
+netrc=""
+trap 'rm -f "${staged}" "${cleaned}" "${netrc}"' EXIT
 
 awk '
   /# BEGIN ALMANYA24 DEV PREVIEW/ { skip = 1; next }
@@ -40,18 +41,44 @@ SAHIMI_BASIC_AUTH_USER=validation-user \
   SAHIMI_BASIC_AUTH_HASH="${validation_hash}" \
   caddy validate --config "${staged}" --adapter caddyfile
 
+homepage_before="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  https://sahimi.app/)"
+dashboard_before="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  https://sahimi.app/sahimi/)"
+
+if systemctl cat almanya24-dev-preview.service >/dev/null 2>&1; then
+  systemctl stop almanya24-dev-preview.service
+fi
+
 while read -r pid; do
   [[ -n "${pid}" ]] || continue
   command_line="$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)"
-  if [[ "${command_line}" == *"data/almanya24-preview/serve_preview.py --port 8765"* ]]; then
-    kill "${pid}"
-  else
+  process_cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
+  process_user="$(stat -c '%U' "/proc/${pid}" 2>/dev/null || true)"
+  if [[ "${process_cwd}" != "${repo_dir}" \
+    || "${process_user}" != "pi" \
+    || "${command_line}" != *"data/almanya24-preview/serve_preview.py --port 8765"* ]]; then
     echo "Port 8765 is occupied by an unexpected process: ${command_line}" >&2
     exit 1
   fi
+  kill "${pid}"
+  for _ in {1..40}; do
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 0.25
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    current_command="$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)"
+    current_cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
+    if [[ "${current_cwd}" != "${repo_dir}" \
+      || "${current_command}" != *"data/almanya24-preview/serve_preview.py --port 8765"* ]]; then
+      echo "Preview PID ${pid} changed identity while stopping; refusing SIGKILL." >&2
+      exit 1
+    fi
+    kill -9 "${pid}"
+  fi
 done < <(fuser 8765/tcp 2>/dev/null | tr ' ' '\n')
 
-for _ in {1..20}; do
+for _ in {1..40}; do
   if ! fuser -s 8765/tcp; then
     break
   fi
@@ -66,6 +93,12 @@ install -m 0644 "${unit}" /etc/systemd/system/almanya24-dev-preview.service
 systemctl daemon-reload
 systemctl enable --now almanya24-dev-preview.service
 curl --fail --silent --show-error http://127.0.0.1:8765/ >/dev/null
+main_pid="$(systemctl show almanya24-dev-preview.service -p MainPID --value)"
+mapfile -t port_pids < <(fuser 8765/tcp 2>/dev/null | tr ' ' '\n' | sed '/^$/d')
+if [[ "${#port_pids[@]}" -ne 1 || "${port_pids[0]}" != "${main_pid}" ]]; then
+  echo "Expected exactly systemd MainPID ${main_pid} on port 8765; got: ${port_pids[*]:-none}" >&2
+  exit 1
+fi
 
 backup="${caddyfile}.bak-almanya24-dev-$(date -u +%Y%m%dT%H%M%SZ)"
 cp --preserve=mode,ownership,timestamps "${caddyfile}" "${backup}"
@@ -78,11 +111,42 @@ rollback_caddy() {
 trap rollback_caddy ERR
 
 systemctl reload caddy
+systemctl is-active --quiet caddy
 
-status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
-  https://sahimi.app/almanya24-dev/)"
-if [[ "${status}" != "401" ]]; then
-  echo "Expected protected preview to return HTTP 401, got ${status}." >&2
+for path in "/" "/almanya/example-article/" "/assets/site.css"; do
+  status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+    "https://sahimi.app/almanya24-dev${path}")"
+  if [[ "${status}" != "401" ]]; then
+    echo "Expected anonymous ${path} request to return HTTP 401, got ${status}." >&2
+    exit 1
+  fi
+done
+
+read -r -p "Preview Basic Auth username: " verify_user
+read -r -s -p "Preview Basic Auth password: " verify_password
+echo
+netrc="$(mktemp)"
+chmod 0600 "${netrc}"
+printf 'machine sahimi.app login %s password %s\n' \
+  "${verify_user}" "${verify_password}" >"${netrc}"
+unset verify_password
+
+for path in "/" "/assets/site.css"; do
+  status="$(curl --netrc-file "${netrc}" --silent --output /dev/null \
+    --write-out '%{http_code}' "https://sahimi.app/almanya24-dev${path}")"
+  if [[ "${status}" != "200" ]]; then
+    echo "Expected authenticated ${path} request to return HTTP 200, got ${status}." >&2
+    exit 1
+  fi
+done
+
+homepage_after="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  https://sahimi.app/)"
+dashboard_after="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  https://sahimi.app/sahimi/)"
+if [[ "${homepage_after}" != "${homepage_before}" \
+  || "${dashboard_after}" != "${dashboard_before}" ]]; then
+  echo "Existing Sahimi routes changed status during activation." >&2
   exit 1
 fi
 trap - ERR

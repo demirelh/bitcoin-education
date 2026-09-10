@@ -1,0 +1,16 @@
+[Unit]
+Description=ALMANYA24 development acceptance preview
+After=network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/AI-Startup-Lab/almanya24-newsroom-dev
+ExecStart=/home/pi/.venvs/almanya24-newsroom-dev/bin/python data/almanya24-preview/serve_preview.py --port 8765
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

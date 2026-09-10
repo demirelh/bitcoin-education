@@ -294,6 +294,36 @@ def test_a_build_produces_a_complete_readable_site(db_session, tmp_path):
     assert "Kaynaklar" in page
 
 
+def test_a_build_uses_the_configured_public_subpath(db_session, tmp_path):
+    article, _, _ = _approved(db_session, tmp_path)
+    publication = publish_article(db_session, article, operator_ref="web:editor")
+    config = SiteConfig(
+        site_name="ALMANYA24 DEV",
+        base_url="https://sahimi.app/almanya24-dev/",
+    )
+
+    result = build_site(
+        db_session, root=tmp_path / "site", config=config, operator_ref="cli:ops"
+    )
+    root = result.directory
+    index = (root / "index.html").read_text(encoding="utf-8")
+    article_page = (
+        root / publication.section / publication.slug / "index.html"
+    ).read_text(encoding="utf-8")
+    search_page = (root / "arama" / "index.html").read_text(encoding="utf-8")
+    search_script = (root / "assets" / "search.js").read_text(encoding="utf-8")
+
+    assert 'href="/almanya24-dev/assets/site.css"' in index
+    assert (
+        f'href="/almanya24-dev/{publication.section}/{publication.slug}/"' in index
+    )
+    assert 'action="/almanya24-dev/arama/"' in index
+    assert 'href="/almanya24-dev/"' in article_page
+    assert 'src="/almanya24-dev/media/' in article_page
+    assert 'src="/almanya24-dev/assets/search.js"' in search_page
+    assert 'const basePath = "/almanya24-dev";' in search_script
+
+
 def test_the_build_copies_only_approved_media_bytes(db_session, tmp_path):
     article, _, _ = _approved(db_session, tmp_path)
     publish_article(db_session, article, operator_ref="web:editor")

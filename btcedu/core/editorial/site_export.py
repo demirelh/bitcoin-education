@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from xml.sax.saxutils import escape, quoteattr
 
 from sqlalchemy.orm import Session
@@ -70,6 +71,11 @@ class SiteConfig:
     contact: str = ""
     usage_rights: str = ""
 
+    @property
+    def base_path(self) -> str:
+        path = urlsplit(self.base_url).path.rstrip("/")
+        return "" if path == "/" else path
+
     @classmethod
     def from_settings(cls, settings) -> SiteConfig:
         return cls(
@@ -96,20 +102,32 @@ def _e(value: str) -> str:
     return escape(str(value))
 
 
+def _site_path(config: SiteConfig, path: str) -> str:
+    if not path.startswith("/"):
+        raise ValueError("Site paths must start with '/'")
+    return f"{config.base_path}{path}"
+
+
 def _page(config: SiteConfig, title: str, body: str, *, head: str = "") -> str:
+    home = _site_path(config, "/")
+    search = _site_path(config, "/arama/")
+    stylesheet = _site_path(config, "/assets/site.css")
+    imprint = _site_path(config, "/kunye/")
+    privacy = _site_path(config, "/gizlilik/")
     return (
         "<!DOCTYPE html>\n"
         f'<html lang="tr">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         f"<title>{_e(title)}</title>\n"
-        '<link rel="stylesheet" href="/assets/site.css">\n'
+        f'<link rel="stylesheet" href={quoteattr(stylesheet)}>\n'
         f"{head}</head>\n<body>\n"
-        f'<header class="site"><a href="/">{_e(config.site_name)}</a>'
-        '<form class="search" action="/arama/" method="get">'
+        f'<header class="site"><a href={quoteattr(home)}>{_e(config.site_name)}</a>'
+        f'<form class="search" action={quoteattr(search)} method="get">'
         '<input type="search" name="q" aria-label="Ara"></form></header>\n'
         f"<main>\n{body}\n</main>\n"
         '<footer class="site">'
-        f'<a href="/kunye/">Künye</a> · <a href="/gizlilik/">Gizlilik</a>'
+        f'<a href={quoteattr(imprint)}>Künye</a> · '
+        f'<a href={quoteattr(privacy)}>Gizlilik</a>'
         "</footer>\n</body>\n</html>\n"
     )
 
@@ -130,8 +148,9 @@ def _article_html(config: SiteConfig, article: PublicArticle) -> str:
         notice = {"archive": "ARŞİV", "symbolic": "SEMBOL GÖRSEL", "portrait": "PORTRE"}.get(
             item.role, ""
         )
+        media_url = _site_path(config, f"/media/{item.file_name}")
         parts.append(
-            f'<figure><img src="/media/{_e(item.file_name)}" alt={quoteattr(item.caption)}'
+            f'<figure><img src={quoteattr(media_url)} alt={quoteattr(item.caption)}'
             + (f' width="{item.width}"' if item.width else "")
             + (f' height="{item.height}"' if item.height else "")
             + ' loading="lazy">'
@@ -189,8 +208,9 @@ def _article_html(config: SiteConfig, article: PublicArticle) -> str:
 def _index_html(config: SiteConfig, articles: list[PublicArticle], *, title: str) -> str:
     items = [f"<h1>{_e(title)}</h1>", '<ul class="teasers">']
     for article in articles:
+        article_url = _site_path(config, f"/{article.section}/{article.slug}/")
         items.append(
-            f'<li><a href="/{_e(article.section)}/{_e(article.slug)}/">'
+            f'<li><a href={quoteattr(article_url)}>'
             f"<h2>{_e(article.title)}</h2><p>{_e(article.lede)}</p></a>"
             f'<time datetime={quoteattr(article.published_on)}>'
             f"{_e(article.published_on)}</time></li>"
@@ -332,7 +352,10 @@ def build_site(
 
         for article in articles:
             related = tuple(
-                {"url": f"/{other.section}/{other.slug}/", "title": other.title}
+                {
+                    "url": _site_path(config, f"/{other.section}/{other.slug}/"),
+                    "title": other.title,
+                }
                 for other in articles
                 if other.section == article.section and other.slug != article.slug
             )[:3]
@@ -359,10 +382,12 @@ def build_site(
             _page(
                 config, "Ara",
                 '<h1>Ara</h1><p id="search-status" role="status"></p>'
-                '<ul id="search-results"></ul><script src="/assets/search.js" defer></script>',
+                '<ul id="search-results"></ul>'
+                f'<script src={quoteattr(_site_path(config, "/assets/search.js"))} '
+                "defer></script>",
             ),
         )
-        _write(target / "assets" / "search.js", _SEARCH_JS)
+        _write(target / "assets" / "search.js", _search_js(config))
         _write(
             target / "publication-state.json",
             json.dumps(_publication_state(session, config), ensure_ascii=False, sort_keys=True),
@@ -402,7 +427,9 @@ def build_site(
                 target / publication.section / publication.slug / "index.html",
                 _tombstone_html(config, publication, summary),
             )
-            gone.append(f"/{publication.section}/{publication.slug}/")
+            gone.append(
+                _site_path(config, f"/{publication.section}/{publication.slug}/")
+            )
         _write(target / "gone.json", json.dumps(sorted(gone), ensure_ascii=False))
 
         content_hash = _tree_hash(target)
@@ -543,28 +570,32 @@ def _publication_state(session: Session, config: SiteConfig) -> dict:
     }
 
 
-_SEARCH_JS = """
+def _search_js(config: SiteConfig) -> str:
+    base_path = json.dumps(config.base_path)
+    return f"""
 "use strict";
+const basePath = {base_path};
 const query = (new URLSearchParams(location.search).get("q") || "")
   .toLocaleLowerCase("tr").trim();
 const status = document.getElementById("search-status");
 const results = document.getElementById("search-results");
-fetch("/arama/index.json").then(response => {
+fetch(basePath + "/arama/index.json").then(response => {{
   if (!response.ok) throw new Error("Search unavailable");
   return response.json();
-}).then(rows => {
+}}).then(rows => {{
   const matches = query ? rows.filter(row =>
     (row.title + " " + row.text).toLocaleLowerCase("tr").includes(query)) : [];
   status.textContent = String(matches.length) + " haber";
-  for (const row of matches) {
+  for (const row of matches) {{
     const li = document.createElement("li");
     const a = document.createElement("a");
-    a.href = "/" + encodeURIComponent(row.section) + "/" + encodeURIComponent(row.slug) + "/";
+    a.href = basePath + "/" + encodeURIComponent(row.section) + "/" +
+      encodeURIComponent(row.slug) + "/";
     a.textContent = row.title;
     li.append(a);
     results.append(li);
-  }
-}).catch(() => { status.textContent = "Arama şu anda kullanılamıyor."; });
+  }}
+}}).catch(() => {{ status.textContent = "Arama şu anda kullanılamıyor."; }});
 """
 
 

@@ -1,0 +1,23 @@
+	# BEGIN ALMANYA24 DEV PREVIEW
+	@almanya24_dev_bare {
+		host sahimi.app
+		path /almanya24-dev
+	}
+	redir @almanya24_dev_bare /almanya24-dev/ permanent
+
+	@almanya24_dev {
+		host sahimi.app
+		path /almanya24-dev/*
+	}
+	handle @almanya24_dev {
+		uri strip_prefix /almanya24-dev
+		reverse_proxy 127.0.0.1:8765
+		header {
+			-Server
+			X-Content-Type-Options nosniff
+			X-Frame-Options DENY
+			Referrer-Policy strict-origin-when-cross-origin
+			X-Robots-Tag "noindex, nofollow"
+		}
+	}
+	# END ALMANYA24 DEV PREVIEW

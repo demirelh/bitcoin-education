@@ -79,8 +79,12 @@ trap rollback_caddy ERR
 
 systemctl reload caddy
 
-curl --fail --silent --show-error \
-  https://sahimi.app/almanya24-dev/ >/dev/null
+status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+  https://sahimi.app/almanya24-dev/)"
+if [[ "${status}" != "401" ]]; then
+  echo "Expected protected preview to return HTTP 401, got ${status}." >&2
+  exit 1
+fi
 trap - ERR
-echo "ALMANYA24 DEV is available at https://sahimi.app/almanya24-dev/"
+echo "Protected ALMANYA24 DEV is available at https://sahimi.app/almanya24-dev/"
 echo "Caddy backup: ${backup}"

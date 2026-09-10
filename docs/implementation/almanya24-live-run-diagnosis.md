@@ -495,3 +495,38 @@ the public start page. Screenshots remain impossible on this Pi.
 
 The role `İçişleri Bakanı` in the Turkish text was checked against the source:
 NDR writes `Innenministerin Magdalena Finke (CDU)`, so it is supported.
+
+### Full-suite verification and one unrelated defect it exposed
+
+The full suite was run twice, sequentially and in file order
+(`pytest -q -p no:randomly`, 1 h 05 min each on this Pi). Both runs reported
+`1 failed, 4254 passed`, always the same test:
+`tests/test_web_avatar.py::TestApprovingFromTheDashboard::test_a_complete_episode_can_be_approved`.
+
+The failure is unrelated to the editorial work — that test imports nothing from
+`btcedu/core/editorial/` — but it is deterministic, so it was tracked down
+rather than dismissed. Reduced reproduction:
+`pytest tests/test_avatar_concurrency.py tests/test_web_avatar.py -q -p no:randomly`
+(one minute). It disappears under `gc.disable()` and under any instrumentation
+of the code path, which is what pointed at the mechanism.
+
+`_get_session()` in `btcedu/web/api.py` hands out sessions that are never
+closed. In the test harness the engine is an in-memory SQLite with a
+`StaticPool`, so **every** session in the process shares one DBAPI connection.
+When the garbage collector reclaims one of the leaked sessions it resets that
+shared connection, and the `ROLLBACK` lands between the breaker's `INSERT` and
+its `COMMIT`. `avatar_breaker.get_or_create()` then returned an instance whose
+row no longer existed, and the first attribute read inside `_refresh_state()`
+raised `ObjectDeletedError` — a `500` on a dashboard page that only wanted to
+display whether submissions are allowed.
+
+Production uses a file database with one connection per session, so the
+interleaving does not occur there. The exposed weakness is real all the same:
+the breaker row belongs to no single session, and a row can legitimately
+disappear underneath a held instance. `get_or_create()` now reads the state back
+before handing the row out and re-establishes it if it has gone, bounded to
+three attempts; failing to establish it raises rather than inventing a breaker
+view. Two regression tests cover both branches.
+
+Nothing about the breaker's policy changed: the failure classes that count, the
+thresholds, the cooldowns and the operator-signed reset are untouched.

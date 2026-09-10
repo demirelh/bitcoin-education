@@ -23,6 +23,16 @@ class EditorialOperationConflict(RuntimeError):
     pass
 
 
+class ProviderCallNotAttempted(RuntimeError):
+    """A local guard stopped the call before anything was sent.
+
+    A budget ceiling, a call cap or a kill switch is not an uncertain provider
+    outcome: no request left the machine, so nothing was billed and nothing
+    needs reconciling. Recording it as uncertain strands the story and forces a
+    manual reconciliation after every ordinary budget stop.
+    """
+
+
 _BUDGETED_STATUSES = frozenset(
     {
         ProviderOperationStatus.RESERVED.value,

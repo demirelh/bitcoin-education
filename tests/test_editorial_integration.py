@@ -728,3 +728,79 @@ def test_operator_cli_connects_automatic_queries_to_private_draft(
     assert "Widerspruch" in queries[1]
     assert db_session.query(ArticleRevision).one().status == "draft"
     assert db_session.query(EditorialDecision).count() == 0
+
+
+def test_a_local_call_guard_leaves_the_operation_reusable(db_session, tmp_path):
+    """A budget or call ceiling is not an uncertain provider outcome.
+
+    Nothing left the machine and nothing was billed, so recording it as
+    uncertain strands the story and forces a manual reconciliation after every
+    ordinary budget stop.
+    """
+    from btcedu.core.editorial.jobs import ProviderCallNotAttempted
+    from btcedu.core.editorial.workflow import BudgetedCaller
+    from btcedu.models.editorial import ProviderOperation, ProviderOperationStatus
+
+    _, run, _settings, _ = workflow_fixture(db_session, tmp_path)
+
+    def guard(payload):
+        raise ProviderCallNotAttempted("call limit reached")
+
+    caller = BudgetedCaller(
+        db_session,
+        run,
+        guard,
+        provider="openai",
+        model="test-model",
+        max_call_cost_usd=0.02,
+    )
+    payload = {"task": "check_article_consistency", "draft": "unsent"}
+
+    with pytest.raises(ProviderCallNotAttempted):
+        caller(payload)
+
+    operation = (
+        db_session.query(ProviderOperation)
+        .filter(ProviderOperation.operation_key.like("check_article_consistency:%"))
+        .order_by(ProviderOperation.id.desc())
+        .first()
+    )
+    assert operation.status == ProviderOperationStatus.RESERVED.value
+    assert operation.actual_cost_usd is None
+
+    def answer(payload):
+        return ModelReply(result={"consistent": True, "issues": []}, cost_usd=0.01)
+
+    caller.caller = answer
+    assert caller(payload) == {"consistent": True, "issues": []}
+
+
+def test_a_transport_failure_still_requires_reconciliation(db_session, tmp_path):
+    """The request may have reached the provider, so it stays uncertain."""
+    from btcedu.core.editorial.workflow import BudgetedCaller
+    from btcedu.models.editorial import ProviderOperation, ProviderOperationStatus
+
+    _, run, _settings, _ = workflow_fixture(db_session, tmp_path)
+
+    def broken(payload):
+        raise TimeoutError("connection dropped mid-request")
+
+    caller = BudgetedCaller(
+        db_session,
+        run,
+        broken,
+        provider="openai",
+        model="test-model",
+        max_call_cost_usd=0.02,
+    )
+
+    with pytest.raises(TimeoutError):
+        caller({"task": "check_article_consistency", "draft": "in flight"})
+
+    operation = (
+        db_session.query(ProviderOperation)
+        .filter(ProviderOperation.operation_key.like("check_article_consistency:%"))
+        .order_by(ProviderOperation.id.desc())
+        .first()
+    )
+    assert operation.status == ProviderOperationStatus.RECONCILE_REQUIRED.value

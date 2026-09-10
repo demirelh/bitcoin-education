@@ -294,6 +294,13 @@ class MediaBlobStore:
 
 
 _SUFFIXES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+_SAME_FORMAT = {
+    # A Multi-Picture Object is a JPEG stream carrying more than one frame:
+    # identical magic bytes, decoded by the same decoder, and what many cameras
+    # write. Reporting it as a type mismatch discards ordinary Commons photos.
+    "image/jpeg": {"image/jpeg", "image/mpo"},
+    "image/png": {"image/png", "image/apng"},
+}
 
 
 class BrokenImage(RuntimeError):
@@ -312,7 +319,7 @@ def inspect_image(body: bytes, content_type: str) -> tuple[int, int]:
             actual = Image.MIME.get(image.format or "", "")
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise BrokenImage("Image bytes could not be decoded") from exc
-    if actual and actual != content_type:
+    if actual and actual not in _SAME_FORMAT.get(content_type, {content_type}):
         raise BrokenImage(
             f"Declared content type {content_type} does not match the bytes ({actual})"
         )

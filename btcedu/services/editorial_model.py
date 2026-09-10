@@ -60,7 +60,12 @@ class EditorialModel:
             "including title and lede, against the claims; reject unsupported additions, "
             "missing qualifiers, mistranslations or non-Turkish prose."
             ' If the payload carries "rejected_reason", a deterministic check refused the '
-            "previous draft: fix exactly that problem and change nothing else."
+            'previous draft: fix exactly the problems listed in "rejected_reasons" and '
+            "change nothing else. Repair an attribution by naming the speaker the claim "
+            "gives, or by attributing the sentence in the article's own language when the "
+            'source only names a role. "supporting_evidence" holds the checked passages a '
+            "claim rests on; paraphrase from those and never quote unless the claim is a "
+            "quote."
         )
         response = call_claude(
             system,

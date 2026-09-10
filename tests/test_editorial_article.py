@@ -895,3 +895,190 @@ def test_rejected_draft_closes_the_provider_operation_and_allows_a_retry(db_sess
         ),
     )
     assert article.title == "Berlin'de yeni konutlar"
+
+
+
+def _attribute(db_session, revision, attribution):
+    """Attribute the claims after research, not before.
+
+    The fixture document carries no speaker, so an attributed claim could never
+    pass evidence anchoring; the article gate is what these tests exercise.
+    """
+    for claim in (
+        db_session.query(ClaimRevision)
+        .join(RevisionClaim, RevisionClaim.claim_revision_id == ClaimRevision.id)
+        .filter(RevisionClaim.editorial_revision_id == revision.id)
+    ):
+        claim.attribution = attribution
+    db_session.commit()
+
+
+def test_a_turkish_suffix_apostrophe_is_not_a_quotation(db_session, tmp_path):
+    """Turkish separates suffixes from proper nouns with an apostrophe.
+
+    "Schleswig-Holstein'de ... Euro'dan" is ordinary prose, but two of those in
+    one paragraph looked exactly like one single-quoted passage and the
+    paragraph was refused as an unbacked quotation.
+    """
+    revision, run, _ = _pipeline(db_session, tmp_path)
+
+    article = generate_article_revision(
+        db_session,
+        editorial_revision=revision,
+        research_run=run,
+        drafter=lambda payload: _draft(
+            paragraphs=[
+                {
+                    "text": "Berlin'de 100 yeni konut bildirildi, Almanya'nın planına göre.",
+                    "claim_keys": ["housing"],
+                }
+            ]
+        ),
+    )
+
+    assert article.id is not None
+
+
+def test_a_real_single_quotation_is_still_refused(db_session, tmp_path):
+    """Dropping intra-word apostrophes must not blind the quotation gate."""
+    revision, run, _ = _pipeline(db_session, tmp_path)
+
+    with pytest.raises(ArticleContentRejected, match="quotation"):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=lambda payload: _draft(
+                paragraphs=[
+                    {
+                        "text": "Berlin 100 yeni konut bildirdi: 'planımız hazır' denildi.",
+                        "claim_keys": ["housing"],
+                    }
+                ]
+            ),
+        )
+
+
+def test_a_named_source_must_still_appear_verbatim(db_session, tmp_path):
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    _attribute(db_session, revision, "Magdalena Finke")
+
+    with pytest.raises(ArticleContentRejected, match="drops the attribution"):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=lambda payload: _draft(
+                paragraphs=[
+                    {"text": "Berlin 100 yeni konut bildirdi.", "claim_keys": ["housing"]}
+                ]
+            ),
+        )
+
+
+def test_an_unnamed_role_may_be_attributed_in_the_article_language(db_session, tmp_path):
+    """A German role noun cannot be demanded verbatim inside Turkish prose.
+
+    Requiring "Sprecherin" in a Turkish article forbids every claim the source
+    attributed to an unnamed official, so an attribution marker in the article's
+    own language satisfies the check instead.
+    """
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    _attribute(db_session, revision, "Sprecherin")
+
+    article = generate_article_revision(
+        db_session,
+        editorial_revision=revision,
+        research_run=run,
+        drafter=lambda payload: _draft(
+            paragraphs=[
+                {
+                    "text": "Bir sözcüye göre Berlin 100 yeni konut bildirdi.",
+                    "claim_keys": ["housing"],
+                }
+            ]
+        ),
+    )
+
+    assert article.id is not None
+
+
+def test_an_unnamed_role_may_not_simply_be_dropped(db_session, tmp_path):
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    _attribute(db_session, revision, "Sprecherin")
+
+    with pytest.raises(ArticleContentRejected, match="as established fact"):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=lambda payload: _draft(
+                paragraphs=[
+                    {"text": "Berlin'de 100 yeni konut var.", "claim_keys": ["housing"]}
+                ]
+            ),
+        )
+
+
+def test_the_repair_step_receives_every_violation_and_the_evidence(db_session, tmp_path):
+    """One violation at a time costs a paid call per defect.
+
+    The repair payload therefore carries the full list plus the checked
+    passages, so the model can attribute from the evidence instead of guessing.
+    """
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    seen: list[dict] = []
+
+    def drafter(payload):
+        seen.append(payload)
+        if "rejected_reason" not in payload:
+            return _draft(
+                paragraphs=[
+                    {
+                        "text": "Berlin 100 yeni konut bildirdi, toplam 4200 daire.",
+                        "claim_keys": ["housing"],
+                    }
+                ]
+            )
+        return _draft(
+            paragraphs=[{"text": "Berlin 100 yeni konut bildirdi.", "claim_keys": ["housing"]}]
+        )
+
+    generate_article_revision(
+        db_session,
+        editorial_revision=revision,
+        research_run=run,
+        drafter=drafter,
+    )
+
+    repair = seen[1]
+    assert any("introduces numbers" in reason for reason in repair["rejected_reasons"])
+    assert repair["supporting_evidence"]["housing"][0]["passage"]
+
+
+def test_repair_stops_instead_of_rebuying_an_identical_payload(db_session, tmp_path):
+    """A second repair with unchanged input would return the cached draft."""
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    calls: list[dict] = []
+
+    def drafter(payload):
+        calls.append(payload)
+        return _draft(
+            paragraphs=[
+                {
+                    "text": "Berlin 100 yeni konut bildirdi, toplam 4200 daire.",
+                    "claim_keys": ["housing"],
+                }
+            ]
+        )
+
+    with pytest.raises(ArticleContentRejected, match="introduces numbers"):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=drafter,
+            repair_attempts=3,
+        )
+
+    assert len(calls) == 2

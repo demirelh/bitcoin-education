@@ -16,7 +16,11 @@ from sqlalchemy.orm import Session
 
 from btcedu.core.editorial.article import ArticleContentRejected, generate_article_revision
 from btcedu.core.editorial.ingest import canonical_hash, import_story
-from btcedu.core.editorial.jobs import reserve_provider_operation, reserve_research_run
+from btcedu.core.editorial.jobs import (
+    ProviderCallNotAttempted,
+    reserve_provider_operation,
+    reserve_research_run,
+)
 from btcedu.core.editorial.media import MediaBlobStore, select_media_for_revision
 from btcedu.core.editorial.research import (
     DataOnlyClaimExtractor,
@@ -78,6 +82,11 @@ class BudgetedCaller:
         self.session.commit()
         try:
             reply = self.caller(payload)
+        except ProviderCallNotAttempted:
+            operation.status = ProviderOperationStatus.RESERVED.value
+            operation.submitted_at = None
+            self.session.commit()
+            raise
         except Exception:
             operation.status = ProviderOperationStatus.RECONCILE_REQUIRED.value
             operation.error_message = "Model call failed; outcome requires reconciliation"
@@ -155,6 +164,7 @@ def draft_story(
     source_published_at=None,
     source_language="de",
     source_uri=None,
+    repair_attempts=1,
 ):
     if not settings.newsroom_enabled:
         raise ValueError("Newsroom is disabled")
@@ -303,4 +313,5 @@ def draft_story(
         drafter=checked_draft,
         model_name=model_name,
         policy_version="newsroom-workflow-v2",
+        repair_attempts=repair_attempts,
     )

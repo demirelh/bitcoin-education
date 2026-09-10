@@ -674,3 +674,30 @@ def test_http_error_type_is_reported_for_media(tmp_path):
 
     with pytest.raises(DocumentHTTPError):
         fetcher.fetch_binary(url, allowed_content_types=ALLOWED_IMAGE_TYPES)
+
+
+def test_a_multi_picture_jpeg_is_accepted_as_jpeg():
+    """A Multi-Picture Object is a JPEG stream with more than one frame.
+
+    Cameras write it routinely and Wikimedia Commons serves it as image/jpeg,
+    so reporting it as a declared-type mismatch discarded ordinary, correctly
+    licensed press photographs.
+    """
+    import io
+
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (32, 24), "blue").save(
+        buffer, format="MPO", append_images=[Image.new("RGB", (32, 24), "green")]
+    )
+    body = buffer.getvalue()
+    assert Image.open(io.BytesIO(body)).format == "MPO"
+
+    assert inspect_image(body, "image/jpeg") == (32, 24)
+
+
+def test_a_png_declared_as_jpeg_is_still_refused():
+    """Accepting the JPEG family must not accept a different format."""
+    with pytest.raises(BrokenImage, match="does not match the bytes"):
+        inspect_image(_png_bytes(), "image/jpeg")

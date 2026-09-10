@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from btcedu.core.editorial.ingest import canonical_hash
-from btcedu.core.editorial.jobs import reserve_provider_operation
+from btcedu.core.editorial.jobs import ProviderCallNotAttempted, reserve_provider_operation
 from btcedu.core.editorial.media import approved_revision_media
 from btcedu.models.article import (
     ArticleParagraph,
@@ -70,9 +70,42 @@ UNCERTAINTY_MARKERS = (
     "mutmaß",
     "soll ",
 )
+ATTRIBUTION_MARKERS = (
+    "göre",
+    "gore",
+    "açıkla",
+    "acikla",
+    "belirt",
+    "bildir",
+    "ifade et",
+    "duyur",
+    "sözcü",
+    "sozcu",
+    "yetkili",
+    "laut",
+    "zufolge",
+    "sprecher",
+    "nach angaben",
+    "mitgeteilt",
+    "erklärte",
+    "sagte",
+)
 _MARKUP = re.compile(r"<\s*/?\s*[a-zA-Z]|<\s*!|&#|javascript:", re.I)
-_QUOTED = re.compile(r"[\"“”„»«']([^\"“”„»«']{4,})[\"“”„»«']")
+_QUOTED = re.compile(r"[\"“”„»«'’]([^\"“”„»«'’]{4,})[\"“”„»«'’]")
+_SUFFIX_APOSTROPHE = re.compile(r"(?<=[^\W_])['’](?=[^\W_])")
 _NUMBER = re.compile(r"\d[\d.,]*")
+
+
+def _quotable(text: str) -> str:
+    """Drop the apostrophes that separate Turkish suffixes from proper nouns.
+
+    ``Schleswig-Holstein'de`` and ``Euro'dan`` are ordinary words, but two of
+    them in one paragraph look exactly like one single-quoted passage, so a
+    correctly attributed sentence was refused as an unbacked quotation. A real
+    quotation mark never stands between two letters, so removing only the
+    intra-word ones leaves genuine quotes detectable.
+    """
+    return _SUFFIX_APOSTROPHE.sub("", text)
 
 
 class ArticleGenerationError(RuntimeError):
@@ -341,6 +374,18 @@ def _checked_numbers(claims: Sequence[ClaimRevision]) -> set[str]:
     return allowed
 
 
+def _is_personal_name(attribution: str) -> bool:
+    """A named source, as opposed to a role the source language names its own way.
+
+    ``Magdalena Finke`` travels into every language unchanged, so the article
+    has to carry it. ``Sprecherin`` does not: demanding that German noun inside
+    Turkish prose is unsatisfiable, which silently forbids every claim a source
+    attributed to an unnamed official.
+    """
+    tokens = attribution.split()
+    return len(tokens) >= 2 and all(token[:1].isupper() for token in tokens)
+
+
 def _validate_paragraph(
     text: str,
     claims: Sequence[ClaimRevision],
@@ -358,7 +403,7 @@ def _validate_paragraph(
     if _MARKUP.search(text):
         raise ArticleContentRejected("Article text must be plain text without markup")
 
-    quoted = [match.group(1).strip() for match in _QUOTED.finditer(text)]
+    quoted = [match.group(1).strip() for match in _QUOTED.finditer(_quotable(text))]
     if quoted and not quote_available:
         raise ArticleContentRejected(
             "Paragraph presents a quotation without a quoted claim to back it"
@@ -376,9 +421,15 @@ def _validate_paragraph(
                 f"Paragraph drops the number {claim.numeric_value!r} of claim {key!r}"
             )
         if claim.attribution and claim.attribution not in text:
-            raise ArticleContentRejected(
-                f"Paragraph drops the attribution {claim.attribution!r} of claim {key!r}"
-            )
+            if _is_personal_name(claim.attribution):
+                raise ArticleContentRejected(
+                    f"Paragraph drops the attribution {claim.attribution!r} of claim {key!r}"
+                )
+            if not any(marker in text.casefold() for marker in ATTRIBUTION_MARKERS):
+                raise ArticleContentRejected(
+                    f"Paragraph presents claim {key!r} as established fact, but the source "
+                    f"attributed it to {claim.attribution!r}; name the speaker or attribute it"
+                )
         if claim.modality:
             lowered = text.casefold()
             if not any(marker in lowered for marker in UNCERTAINTY_MARKERS):
@@ -434,9 +485,10 @@ def _validate_draft_against_claims(
             allowed_numbers=allowed_numbers,
             quote_available=quote_available,
         )
-        for quote in _QUOTED.findall(paragraph.text):
+        for quote in _QUOTED.findall(_quotable(paragraph.text)):
             if not any(
-                claim.claim_type == "quote" and quote in claim.statement for claim in referenced
+                claim.claim_type == "quote" and quote in _quotable(claim.statement or "")
+                for claim in referenced
             ):
                 raise ArticleContentRejected("Quoted words are not present in a referenced claim")
     for text in (draft.title, draft.lede):
@@ -447,6 +499,75 @@ def _validate_draft_against_claims(
             allowed_numbers=allowed_numbers,
             quote_available=quote_available,
         )
+
+
+def _draft_violations(draft, *, claims, by_key, assessments, keys) -> list[str]:
+    """Every reason the draft is refused, not merely the first one found.
+
+    A repair attempt that is told about one violation at a time costs a paid
+    call per defect and can reintroduce the previous one. The gate itself keeps
+    failing on the first violation; this only reports them.
+    """
+    refused = (ArticleContentRejected, UnknownClaimReferenced, UnsupportedClaimReferenced)
+    empty = draft.model_copy(update={"paragraphs": []})
+    violations: list[str] = []
+    for index, paragraph in enumerate(draft.paragraphs, start=1):
+        single = draft.model_copy(update={"paragraphs": [paragraph], "title": "", "lede": ""})
+        try:
+            _validate_draft_against_claims(
+                single, claims=claims, by_key=by_key, assessments=assessments, keys=keys
+            )
+        except refused as exc:
+            violations.append(f"paragraph {index}: {exc}")
+    try:
+        _validate_draft_against_claims(
+            empty, claims=claims, by_key=by_key, assessments=assessments, keys=keys
+        )
+    except refused as exc:
+        violations.append(f"title or lede: {exc}")
+    return violations
+
+
+def supporting_passages(
+    session: Session,
+    *,
+    research_run: ResearchRun,
+    claims: Sequence[ClaimRevision],
+    keys: dict[int, str],
+) -> dict[str, list[dict]]:
+    """The passages a claim actually rests on, keyed by claim key.
+
+    The drafter is asked to attribute and paraphrase precisely; without the
+    checked passage it can only guess at the wording the evidence supports.
+    """
+    from btcedu.models.editorial import EvidenceLink, SourceObservation
+
+    if not claims:
+        return {}
+    rows = (
+        session.query(EvidenceLink, SourceObservation)
+        .join(SourceObservation, SourceObservation.id == EvidenceLink.source_observation_id)
+        .filter(
+            EvidenceLink.claim_revision_id.in_([claim.id for claim in claims]),
+            SourceObservation.research_run_id == research_run.id,
+            EvidenceLink.relation == "supports",
+        )
+        .order_by(EvidenceLink.id)
+        .all()
+    )
+    by_claim: dict[str, list[dict]] = {}
+    for link, source in rows:
+        key = keys.get(link.claim_revision_id)
+        if key is None:
+            continue
+        by_claim.setdefault(key, []).append(
+            {
+                "passage": link.passage,
+                "publisher": source.publisher,
+                "url": source.canonical_url or source.requested_url,
+            }
+        )
+    return by_claim
 
 
 def generate_article_revision(
@@ -540,10 +661,19 @@ def generate_article_revision(
         ],
         "untrusted_input": True,
     }
+    evidence = supporting_passages(
+        session, research_run=research_run, claims=claims, keys=keys
+    )
     attempt_payload = payload
+    seen_payloads = {canonical_hash(payload)}
+    reported: list[str] = []
     for remaining in range(repair_attempts, -1, -1):
         try:
             draft = ArticleDraft.model_validate(drafter(attempt_payload))
+        except ProviderCallNotAttempted:
+            operation.status = ProviderOperationStatus.RESERVED.value
+            session.commit()
+            raise
         except Exception as exc:
             operation.status = ProviderOperationStatus.RECONCILE_REQUIRED.value
             operation.error_message = str(exc)
@@ -557,11 +687,28 @@ def generate_article_revision(
             break
         except ArticleContentRejected as exc:
             if remaining:
-                # Hand the deterministic verdict back once instead of asking
-                # for the identical draft again. The gate is unchanged; only
-                # the model is told what it has to repair.
-                attempt_payload = {**payload, "rejected_reason": str(exc)}
-                continue
+                # Hand the deterministic verdict back instead of asking for the
+                # identical draft again. The gate is unchanged; the model is
+                # told every violation at once, together with the passages the
+                # claims actually rest on, so it can attribute and paraphrase
+                # from the checked wording rather than guess.
+                for violation in _draft_violations(
+                    draft, claims=claims, by_key=by_key, assessments=assessments, keys=keys
+                ) or [str(exc)]:
+                    if violation not in reported:
+                        reported.append(violation)
+                attempt_payload = {
+                    **payload,
+                    "rejected_reason": str(exc),
+                    "rejected_reasons": list(reported),
+                    "supporting_evidence": evidence,
+                }
+                digest = canonical_hash(attempt_payload)
+                if digest not in seen_payloads:
+                    seen_payloads.add(digest)
+                    continue
+                # Repeating an input that already produced this refusal would
+                # buy the same draft back from the ledger, so stop here.
             # The reply arrived and was judged: this is a decided outcome, not
             # an uncertain one. Leaving it in flight would make every later
             # attempt fail with "requires reconciliation before retry".

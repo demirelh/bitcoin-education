@@ -28,6 +28,7 @@ from typing import Any
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.exc import ObjectDeletedError
 
 from btcedu.core.avatar_retry import FailureClass, FailureVerdict
 from btcedu.models.avatar_job_audit import AvatarAuditAction, AvatarJobAudit
@@ -115,36 +116,62 @@ class BreakerView:
         }
 
 
-def get_or_create(session: Session, provider: str) -> AvatarProviderBreaker:
-    """Fetch the breaker row, creating a closed one on first use."""
-    row = (
+#: How often first use may lose the race before it gives up. Two other writers
+#: winning in a row is already implausible; a third means something else is
+#: wrong and looping forever would only hide it.
+_FIRST_USE_ATTEMPTS = 3
+
+
+def _fetch(session: Session, provider: str) -> AvatarProviderBreaker | None:
+    return (
         session.query(AvatarProviderBreaker)
         .filter(AvatarProviderBreaker.provider == provider)
         .first()
     )
-    if row is not None:
-        return row
-    row = AvatarProviderBreaker(
-        provider=provider,
-        state=BreakerState.CLOSED.value,
-        consecutive_failures=0,
-        updated_at=_utcnow(),
-    )
-    session.add(row)
+
+
+def _is_present(row: AvatarProviderBreaker) -> bool:
+    """Whether the row still exists behind an instance we are holding.
+
+    The breaker row is not owned by one session. Between the SELECT that found
+    it and the first attribute read, another writer may have removed it, or an
+    interleaved rollback may have undone the INSERT we just committed. Reading
+    an expired attribute then raises ``ObjectDeletedError`` deep inside whoever
+    asked for the breaker state — on the dashboard that is a 500 on a page that
+    only wanted to display a status. One extra read here turns it into a
+    recoverable answer.
+    """
     try:
-        session.commit()
-    except IntegrityError:
-        # Two runs reached first use at the same moment. The other one won;
-        # its row is just as good as the one we were about to write.
-        session.rollback()
-        row = (
-            session.query(AvatarProviderBreaker)
-            .filter(AvatarProviderBreaker.provider == provider)
-            .first()
-        )
-        if row is None:  # pragma: no cover - only if the unique index vanished
-            raise
-    return row
+        row.state
+    except ObjectDeletedError:
+        return False
+    return True
+
+
+def get_or_create(session: Session, provider: str) -> AvatarProviderBreaker:
+    """Fetch the breaker row, creating a closed one on first use."""
+    for _ in range(_FIRST_USE_ATTEMPTS):
+        row = _fetch(session, provider)
+        if row is None:
+            row = AvatarProviderBreaker(
+                provider=provider,
+                state=BreakerState.CLOSED.value,
+                consecutive_failures=0,
+                updated_at=_utcnow(),
+            )
+            session.add(row)
+            try:
+                session.commit()
+            except IntegrityError:
+                # Two runs reached first use at the same moment. The other one
+                # won; its row is just as good as the one we were about to
+                # write, so read it back on the next pass.
+                session.rollback()
+                continue
+        if _is_present(row):
+            return row
+        session.expunge(row)
+    raise RuntimeError(f"Could not establish the breaker row for provider {provider!r}")
 
 
 def _refresh_state(

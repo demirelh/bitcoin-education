@@ -1026,6 +1026,40 @@ class TestCircuitBreaker:
         self._fail(session, clock, 6, code=400)
         assert avatar_breaker.status(session, PROVIDER, now=clock.now).submissions_allowed
 
+    def test_a_vanished_row_is_re_established_instead_of_raising(self, session, monkeypatch):
+        # The breaker row belongs to no single session. Reading the state of an
+        # instance whose row disappeared used to raise ObjectDeletedError out of
+        # `status()`, which on the dashboard is a 500 on a page that only wanted
+        # to show whether submissions are allowed.
+        from sqlalchemy import text
+
+        stale = avatar_breaker.get_or_create(session, PROVIDER)
+        session.execute(text("DELETE FROM avatar_provider_breakers"))
+        session.commit()
+
+        served = [False]
+        original = avatar_breaker._fetch
+
+        def fetch_once(sess, provider):
+            if not served[0]:
+                served[0] = True
+                return stale
+            return original(sess, provider)
+
+        monkeypatch.setattr(avatar_breaker, "_fetch", fetch_once)
+
+        view = avatar_breaker.status(session, PROVIDER)
+        assert view.state == "closed"
+        assert view.submissions_allowed
+        assert served[0], "the stale instance was never handed out"
+
+    def test_a_row_that_never_materialises_is_reported_not_hidden(self, session, monkeypatch):
+        # Recovery is bounded. If the row cannot be established the caller must
+        # hear about it rather than receive a breaker view invented on the spot.
+        monkeypatch.setattr(avatar_breaker, "_is_present", lambda row: False)
+        with pytest.raises(RuntimeError, match="breaker row"):
+            avatar_breaker.get_or_create(session, PROVIDER)
+
 
 # ---------------------------------------------------------------------------
 # Shutdown, budget and policy

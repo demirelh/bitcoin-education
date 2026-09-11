@@ -57,7 +57,7 @@ while read -r pid; do
   process_user="$(stat -c '%U' "/proc/${pid}" 2>/dev/null || true)"
   if [[ "${process_cwd}" != "${repo_dir}" \
     || "${process_user}" != "pi" \
-    || "${command_line}" != *"data/almanya24-preview/serve_preview.py --port 8765"* ]]; then
+    || "${command_line}" != *"scripts/almanya24_preview/serve_preview.py --port 8765"* ]]; then
     echo "Port 8765 is occupied by an unexpected process: ${command_line}" >&2
     exit 1
   fi
@@ -70,7 +70,7 @@ while read -r pid; do
     current_command="$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)"
     current_cwd="$(readlink -f "/proc/${pid}/cwd" 2>/dev/null || true)"
     if [[ "${current_cwd}" != "${repo_dir}" \
-      || "${current_command}" != *"data/almanya24-preview/serve_preview.py --port 8765"* ]]; then
+      || "${current_command}" != *"scripts/almanya24_preview/serve_preview.py --port 8765"* ]]; then
       echo "Preview PID ${pid} changed identity while stopping; refusing SIGKILL." >&2
       exit 1
     fi

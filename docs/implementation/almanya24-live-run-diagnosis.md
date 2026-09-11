@@ -171,7 +171,7 @@ scope. It now takes explicit bounds:
 ```bash
 cd /home/pi/AI-Startup-Lab/almanya24-newsroom-dev
 /home/pi/.venvs/almanya24-newsroom-dev/bin/python \
-    data/almanya24-preview/build_current_preview.py \
+    scripts/almanya24_preview/build_current_preview.py \
     --only-story bundesweiter-warntag \
     --max-calls 12 \
     --budget-usd 0.25
@@ -228,7 +228,7 @@ is the environment the preview unit already uses. It must be invoked by its
 absolute path:
 
 ```bash
-/home/pi/.venvs/almanya24-newsroom-dev/bin/python data/almanya24-preview/build_current_preview.py
+/home/pi/.venvs/almanya24-newsroom-dev/bin/python scripts/almanya24_preview/build_current_preview.py
 ```
 
 Repointing the worktree's `.venv` at it is **not** an option: `.venv` is a
@@ -372,7 +372,7 @@ call budget by one call.
 
 Because there is no published article, the evidence a human needs was rendered
 into the access-protected preview at `/_inceleme/`
-(`data/almanya24-preview/build_review_page.py`). It shows the four drafts held
+(`scripts/almanya24_preview/build_review_page.py`). It shows the four drafts held
 in the ledger, the deterministic refusals, the claims with their verdicts and
 the real supporting passages with source links. The page carries `noindex`,
 states plainly that nothing is approved or published, and no article was marked

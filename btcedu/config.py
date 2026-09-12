@@ -351,6 +351,12 @@ class Settings(BaseSettings):
     newsroom_site_privacy: str = ""
     newsroom_site_contact: str = ""
     newsroom_site_usage_rights: str = ""
+    #: Development only: show stored drafts on the site without an editorial
+    #: approval. The checks still run and their results are still recorded and
+    #: displayed — a negative result simply stops being a hard stop, and every
+    #: affected page says so in plain words. Never enable this anywhere a
+    #: reader could mistake the result for a published article.
+    newsroom_dev_auto_release: bool = False
 
     @model_validator(mode="after")
     def _keep_newsroom_data_outside_episode_outputs(self) -> "Settings":

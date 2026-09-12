@@ -589,3 +589,143 @@ def test_no_private_path_leaks_into_the_built_site(db_session, tmp_path):
     assert str(tmp_path) not in text
     assert "sqlite" not in text.lower()
     assert "web:editor" not in text
+
+
+# ---------------------------------------------------------------------------
+# The development auto-release switch
+# ---------------------------------------------------------------------------
+
+
+def _unapproved(db_session, tmp_path):
+    """A finished draft that nobody signed off."""
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    article = generate_article_revision(
+        db_session,
+        editorial_revision=revision,
+        research_run=run,
+        drafter=lambda payload: _draft(),
+    )
+    return article
+
+
+def test_the_switch_is_off_unless_it_is_asked_for(db_session, tmp_path):
+    """The default has to stay the blocking one, or the switch is a back door."""
+    article = _unapproved(db_session, tmp_path)
+
+    with pytest.raises(PublicationBlocked):
+        publish_article(db_session, article, operator_ref="dev:preview")
+
+
+def test_the_switch_offers_a_draft_without_inventing_an_approval(
+    db_session, tmp_path
+):
+    """Visible, yes. Approved, no — the stored record must not claim otherwise."""
+    from btcedu.core.editorial.public import _DEV_AUTO_RELEASE_DECISION
+    from btcedu.models.article import EditorialDecision
+
+    article = _unapproved(db_session, tmp_path)
+
+    publication = publish_article(
+        db_session,
+        article,
+        operator_ref="dev:preview",
+        dev_auto_release=True,
+    )
+
+    assert publication.slug
+    assert db_session.query(EditorialDecision).count() == 0
+    version = db_session.query(PublicationVersion).one()
+    assert version.decision_id == _DEV_AUTO_RELEASE_DECISION
+
+
+def test_the_switch_does_not_silence_the_checks(db_session, tmp_path):
+    """The blockers are still computed, and they travel with the article."""
+    article = _unapproved(db_session, tmp_path)
+    publication = publish_article(
+        db_session, article, operator_ref="dev:preview", dev_auto_release=True
+    )
+
+    public = build_public_article(
+        db_session,
+        publication,
+        base_url=CONFIG.base_url,
+        dev_auto_release=True,
+    )
+
+    assert public.is_dev_auto_released
+    assert "No operator approval recorded" in public.dev_auto_release_reasons
+
+
+def test_the_switch_does_not_overrule_a_technical_check(db_session, tmp_path):
+    """A malformed URL is not an editorial opinion the switch may overrule."""
+    article = _unapproved(db_session, tmp_path)
+    publication = publish_article(
+        db_session, article, operator_ref="dev:preview", dev_auto_release=True
+    )
+    publication.slug = "Ge\u00e7ersiz Slug"
+
+    with pytest.raises(PublicationBlocked):
+        build_public_article(
+            db_session,
+            publication,
+            base_url=CONFIG.base_url,
+            dev_auto_release=True,
+        )
+
+
+def test_an_unapproved_draft_stays_out_of_an_ordinary_build(db_session, tmp_path):
+    article = _unapproved(db_session, tmp_path)
+    publish_article(
+        db_session, article, operator_ref="dev:preview", dev_auto_release=True
+    )
+
+    result = _build(db_session, tmp_path)
+
+    assert result.article_count == 0
+
+
+def test_a_development_build_shows_the_draft_and_says_what_is_missing(
+    db_session, tmp_path
+):
+    """The page must not read like a published article that lost a signature."""
+    import dataclasses
+
+    article = _unapproved(db_session, tmp_path)
+    publication = publish_article(
+        db_session, article, operator_ref="dev:preview", dev_auto_release=True
+    )
+
+    result = build_site(
+        db_session,
+        root=tmp_path / "site",
+        config=dataclasses.replace(CONFIG, dev_auto_release=True),
+        operator_ref="cli:ops",
+    )
+    page = (
+        result.directory / publication.section / publication.slug / "index.html"
+    ).read_text(encoding="utf-8")
+    index = (result.directory / "index.html").read_text(encoding="utf-8")
+
+    assert result.article_count == 1
+    assert 'class="dev-release"' in page
+    assert "otomatik yay\u0131na al\u0131nd\u0131" in page
+    assert "No operator approval recorded" in page
+    assert 'class="dev-badge"' in index
+
+
+def test_the_development_notice_does_not_leak_into_the_public_payload(
+    db_session, tmp_path
+):
+    """The reasons are internal status strings; the feed and index are public."""
+    article = _unapproved(db_session, tmp_path)
+    publication = publish_article(
+        db_session, article, operator_ref="dev:preview", dev_auto_release=True
+    )
+
+    public = build_public_article(
+        db_session, publication, base_url=CONFIG.base_url, dev_auto_release=True
+    )
+
+    assert public.dev_auto_release_reasons
+    assert "dev_auto_release_reasons" not in public.to_dict()
+    assert "approval" not in json.dumps(public.to_dict(), ensure_ascii=False)

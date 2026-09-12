@@ -530,3 +530,49 @@ view. Two regression tests cover both branches.
 
 Nothing about the breaker's policy changed: the failure classes that count, the
 thresholds, the cooldowns and the operator-signed reset are untouched.
+
+## Entwicklungs-Freigabeschalter (`NEWSROOM_DEV_AUTO_RELEASE`)
+
+Der Nutzer hat ausdrücklich genehmigt, Artikelentwürfe auf der
+zugriffsgeschützten Entwicklungsseite ohne manuelle Einzelgenehmigung zu
+zeigen. Umgesetzt als abschaltbarer Schalter, der standardmäßig aus ist.
+
+**Was der Schalter *nicht* tut.** Er unterdrückt keine Prüfung. `export_blockers`
+läuft unverändert; die Gründe werden nur nicht mehr fatal, sondern wandern als
+`PublicArticle.dev_auto_release_reasons` auf die Seite. Es entsteht **keine**
+`EditorialDecision`, und die Artikelrevision bleibt `draft` — der Datenbestand
+behauptet also nirgends eine Freigabe.
+
+`PublicationVersion.decision_id` ist nicht nullable. Statt einer erfundenen
+UUID, die bei einer Prüfung von einer echten Entscheidung ununterscheidbar
+wäre, steht dort der Sentinel `dev-auto-release`.
+
+**Technische Prüfungen bleiben hart.** Eine ungültige URL-Komponente und eine
+fehlende Artikelrevision werfen weiterhin `PublicationBlocked`; das sind keine
+redaktionellen Urteile, die ein Entwicklungsschalter überstimmen darf.
+
+**Kennzeichnung.** Artikelseite: roter Kasten „Geliştirme sürümü — otomatik
+yayına alındı" mit der Liste der unerfüllten Bedingungen. Startseite: Badge auf
+der Karte. Bewusst wird nicht bloß „nicht freigegeben" gesagt — sonst könnte
+ein Leser annehmen, die Prüfungen seien in Ordnung und es fehle nur eine
+Unterschrift.
+
+**Kein Leck in die öffentliche Payload.** `to_dict()` entfernt das Feld wieder:
+es speist Suchindex und Feed, und die Gründe sind interne Statustexte. Der
+bestehende Allowlist-Test hat genau das aufgedeckt.
+
+**Ausführung.** `scripts/almanya24_preview/release_dev_drafts.py` liest den
+Schalter aus der Umgebung und bricht ohne ihn ab (negativ verifiziert). Es ruft
+kein Modell auf und erzeugt keinen neuen Text: der vorhandene Warntag-Entwurf
+wird veröffentlicht, die Seite mit `dev_auto_release=True` neu gebaut, der
+Release umgeschaltet und die Reviewansicht neu erzeugt.
+
+**Ergebnis.** 1 Publication, 1 PublicationVersion (`decision_id=dev-auto-release`),
+0 EditorialDecisions, beide Revisionen weiter `draft`. Verworfene
+Zwischenversionen können strukturell nicht als zweite Nachricht erscheinen,
+weil pro Topic genau eine Publication existiert.
+
+**Verifiziert.** Lokal 200 für Startseite, Artikelseite und `/_inceleme/`;
+anonym extern 401 für Startseite, Artikelseite und Assets. Gezielte Tests:
+300 bestanden (`-k "editorial or newsroom or publication or site_export"`),
+darunter 7 neue Regressionstests.

@@ -12,6 +12,7 @@ intention in the database; building the site is a separate step.
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 import uuid
@@ -53,6 +54,14 @@ from btcedu.models.publication import (
     PublicationStatus,
     PublicationVersion,
 )
+
+logger = logging.getLogger(__name__)
+
+#: Written into ``PublicationVersion.decision_id`` when the development switch
+#: offered an article that no one approved. The column is non-nullable, so some
+#: value has to go in; a fabricated UUID would be indistinguishable from a real
+#: decision on inspection, whereas this one names itself.
+_DEV_AUTO_RELEASE_DECISION = "dev-auto-release"
 
 SUPPORTING_RELATIONS = frozenset({"supports", "partially_supports"})
 
@@ -173,9 +182,23 @@ class PublicArticle:
     media: tuple[PublicMedia, ...] = ()
     corrections: tuple[PublicCorrection, ...] = ()
     related: tuple[dict[str, str], ...] = ()
+    #: Non-empty only under the development auto-release switch: the reasons
+    #: this article would normally not be offered at all. They are carried to
+    #: the page rather than dropped, because a build that hides why it ignored
+    #: a blocker is indistinguishable from one that passed the checks.
+    dev_auto_release_reasons: tuple[str, ...] = ()
+
+    @property
+    def is_dev_auto_released(self) -> bool:
+        return bool(self.dev_auto_release_reasons)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        payload = asdict(self)
+        # The development notice is rendered onto the page from the object, but
+        # it is not part of the public payload: the reasons are internal status
+        # strings, and this dict feeds the search index and the syndicated feed.
+        payload.pop("dev_auto_release_reasons", None)
+        return payload
 
     def search_document(self) -> dict:
         """The public-only search record: headline, lede and body, nothing else."""
@@ -263,6 +286,7 @@ def publish_article(
     operator_ref: str,
     section: str = "haber",
     correction_summary: str = "",
+    dev_auto_release: bool = False,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> Publication:
     """Offer an approved article under a stable public identity.
@@ -270,14 +294,27 @@ def publish_article(
     A second version of the same topic reuses the slug. The URL that was read
     keeps pointing at the newsroom's current answer, and the change is recorded
     as a correction rather than appearing as a new, unrelated article.
+
+    ``dev_auto_release`` is the development switch. It does not skip a single
+    check: the blockers are still computed and still logged, they simply stop
+    being fatal, and nothing here fabricates an approval or moves the article
+    out of ``draft``. The stored record therefore keeps telling the truth, and
+    the pages built from it say that no human signed anything off.
     """
     if not operator_ref or not operator_ref.strip():
         raise ValueError("Publishing needs a named operator")
     if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", section):
         raise ValueError("Section must be a single lowercase URL component")
     blockers = export_blockers(session, article)
-    if blockers:
+    if blockers and not dev_auto_release:
         raise PublicationBlocked(blockers)
+    if blockers:
+        logger.warning(
+            "Development auto-release: offering %r despite %d unmet condition(s): %s",
+            article.title,
+            len(blockers),
+            "; ".join(blockers),
+        )
 
     revision = session.get(EditorialRevision, article.editorial_revision_id)
     run = latest_research_run(session, revision.topic_id)
@@ -339,7 +376,11 @@ def publish_article(
                 content_hash=content,
                 evidence_hash=evidence,
                 media_hash=media,
-                decision_id=decision.decision_id,
+                decision_id=(
+                    decision.decision_id
+                    if decision is not None
+                    else _DEV_AUTO_RELEASE_DECISION
+                ),
                 published_at=moment,
             )
         )
@@ -460,8 +501,15 @@ def build_public_article(
     publication: Publication,
     *,
     base_url: str,
+    dev_auto_release: bool = False,
 ) -> PublicArticle:
-    """The reader's view of one publication, re-checked at build time."""
+    """The reader's view of one publication, re-checked at build time.
+
+    Under ``dev_auto_release`` the editorial blockers become a notice carried
+    on the article instead of a reason to leave it out. The technical checks
+    above stay fatal: a malformed URL component or a missing revision is not an
+    editorial judgement that a development switch is entitled to overrule.
+    """
     for component in (publication.section, publication.slug):
         if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", component):
             raise PublicationBlocked(("Invalid public URL component",))
@@ -469,7 +517,7 @@ def build_public_article(
     if article is None:
         raise PublicationBlocked(("Publication has no article revision",))
     blockers = export_blockers(session, article)
-    if blockers:
+    if blockers and not dev_auto_release:
         raise PublicationBlocked(blockers)
 
     revision = session.get(EditorialRevision, article.editorial_revision_id)
@@ -523,6 +571,7 @@ def build_public_article(
         sources=tuple(sources),
         media=tuple(_media_for(session, revision)),
         corrections=corrections,
+        dev_auto_release_reasons=tuple(blockers),
     )
 
 

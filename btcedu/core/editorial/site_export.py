@@ -72,6 +72,8 @@ class SiteConfig:
     privacy: str = ""
     contact: str = ""
     usage_rights: str = ""
+    #: Development only; see ``Settings.newsroom_dev_auto_release``.
+    dev_auto_release: bool = False
 
     @property
     def base_path(self) -> str:
@@ -87,6 +89,7 @@ class SiteConfig:
             privacy=settings.newsroom_site_privacy,
             contact=settings.newsroom_site_contact,
             usage_rights=settings.newsroom_site_usage_rights,
+            dev_auto_release=bool(getattr(settings, "newsroom_dev_auto_release", False)),
         )
 
 
@@ -198,6 +201,27 @@ def _page(
     )
 
 
+def _dev_release_banner(article: PublicArticle) -> str:
+    """The notice an auto-released draft must carry on its own page.
+
+    It names the unmet conditions rather than summarising them, because the
+    point of the development switch is to look at the draft *and* at what is
+    still wrong with it. Saying only "not approved" would let a reader assume
+    the checks were fine and a signature was merely missing.
+    """
+    if not article.is_dev_auto_released:
+        return ""
+    items = "".join(f"<li>{_e(reason)}</li>" for reason in article.dev_auto_release_reasons)
+    return (
+        '<aside class="dev-release" role="note">'
+        "<strong>Geliştirme sürümü — otomatik yayına alındı</strong>"
+        "<p>Bu taslak insan onayı almadan geliştirme önizlemesinde gösteriliyor. "
+        "Yayımlanmış bir haber değildir ve aşağıdaki koşullar sağlanmamıştır:</p>"
+        f"<ul>{items}</ul>"
+        "</aside>"
+    )
+
+
 def _article_html(
     config: SiteConfig,
     article: PublicArticle,
@@ -209,6 +233,7 @@ def _article_html(
         f'<p class="category">{_e(_category_label(article.section))}</p>',
         f"<h1>{_e(article.title)}</h1>",
     ]
+    parts.append(_dev_release_banner(article))
     parts.append(
         f'<p class="lede">{_e(article.lede)}</p>'
         '<p class="meta">Yayın: '
@@ -300,12 +325,18 @@ def _index_html(config: SiteConfig, articles: list[PublicArticle], *, title: str
 
     def story(article: PublicArticle, class_name: str) -> str:
         article_url = _site_path(config, f"/{article.section}/{article.slug}/")
+        badge = (
+            '<p class="dev-badge">Geliştirme sürümü — otomatik</p>'
+            if article.is_dev_auto_released
+            else ""
+        )
         return (
             f'<article class="{class_name}">'
             f'<a class="story-link" href={quoteattr(article_url)}>'
             f'{_media_markup(config, article, class_name="story-image")}'
             '<div class="story-copy">'
             f'<p class="category">{_e(_category_label(article.section))}</p>'
+            f"{badge}"
             f"<h2>{_e(article.title)}</h2><p>{_e(article.lede)}</p>"
             f'<time datetime={quoteattr(article.published_on)}>'
             f"Yayın: {_e(article.published_on)}</time></div></a></article>"
@@ -441,7 +472,10 @@ def build_site(
         for publication in publishable(session):
             try:
                 article = build_public_article(
-                    session, publication, base_url=config.base_url
+                    session,
+                    publication,
+                    base_url=config.base_url,
+                    dev_auto_release=config.dev_auto_release,
                 )
             except PublicationBlocked as exc:
                 # A build never guesses. An article whose evidence or rights no
@@ -803,6 +837,35 @@ img { display: block; height: auto; max-width: 100%; }
   text-transform: uppercase;
 }
 .categories a:hover { background: var(--brand); }
+.dev-release {
+  background: #fdecea;
+  border: 2px solid #c0392b;
+  border-radius: 4px;
+  color: #7b241c;
+  margin: 1rem 0 1.5rem;
+  padding: .9rem 1.1rem;
+}
+.dev-release strong {
+  display: block;
+  font-size: .95rem;
+  letter-spacing: .02em;
+  margin-bottom: .4rem;
+  text-transform: uppercase;
+}
+.dev-release p { margin: 0 0 .5rem; }
+.dev-release ul { margin: 0; padding-left: 1.2rem; }
+.dev-release li { font-size: .88rem; }
+.dev-badge {
+  background: #c0392b;
+  color: #fff;
+  display: inline-block;
+  font-size: .68rem;
+  font-weight: 700;
+  letter-spacing: .04em;
+  margin: 0 0 .35rem;
+  padding: .15rem .45rem;
+  text-transform: uppercase;
+}
 .preview-notice {
   background: #fff4d8;
   border-bottom: 1px solid #efd48e;

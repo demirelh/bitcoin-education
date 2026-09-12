@@ -10,6 +10,8 @@ repo_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 caddyfile="/etc/caddy/Caddyfile"
 snippet="${repo_dir}/deploy/Caddyfile.almanya24-dev"
 unit="${repo_dir}/deploy/almanya24-dev-preview.service"
+daily_unit="${repo_dir}/deploy/almanya24-daily.service"
+daily_timer="${repo_dir}/deploy/almanya24-daily.timer"
 staged="$(mktemp)"
 cleaned="$(mktemp)"
 netrc=""
@@ -216,6 +218,29 @@ if [[ "${homepage_after}" != "${homepage_before}" \
   echo "Existing Sahimi routes changed status during activation." >&2
   exit 1
 fi
+# The daily transcript-to-news timer. Installed last, and only once the
+# protected route has been proven to reject anonymous requests: the timer
+# publishes drafts onto exactly that route, so activating it before the
+# protection is verified would be the one ordering that could expose them.
+install -m 0644 "${daily_unit}" /etc/systemd/system/almanya24-daily.service
+install -m 0644 "${daily_timer}" /etc/systemd/system/almanya24-daily.timer
+systemctl daemon-reload
+systemctl enable --now almanya24-daily.timer
+
+if ! systemctl is-active --quiet almanya24-daily.timer; then
+  echo "almanya24-daily.timer did not come up." >&2
+  systemctl status almanya24-daily.timer --no-pager >&2 || true
+  exit 1
+fi
+
+# A budget that is silently non-zero would be the one activation mistake that
+# costs money, so it is reported rather than assumed.
+daily_budget="$(systemctl show almanya24-daily.service \
+  -p Environment --value | tr ' ' '\n' | grep '^ALMANYA24_DAILY_BUDGET_USD=' \
+  | cut -d= -f2 || true)"
+echo "Daily run budget: ${daily_budget:-unknown} USD (0 = paid calls locked)."
+
 trap - ERR
 echo "Protected ALMANYA24 DEV is available at https://sahimi.app/almanya24-dev/"
+echo "Operations status: https://sahimi.app/almanya24-dev/_durum/"
 echo "Caddy backup: ${backup}"

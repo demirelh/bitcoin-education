@@ -173,7 +173,13 @@ def _page(
         for section in sections
     )
     notice = (
-        f'<aside class="preview-notice">{_e(config.preview_notice)}</aside>\n'
+        f'<aside class="preview-notice">{_e(config.preview_notice)}'
+        + (
+            f' · <a href={quoteattr(_site_path(config, "/_durum/"))}>İşletim durumu</a>'
+            if config.dev_auto_release
+            else ""
+        )
+        + "</aside>\n"
         if config.preview_notice
         else ""
     )

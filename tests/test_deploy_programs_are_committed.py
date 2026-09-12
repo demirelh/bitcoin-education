@@ -73,6 +73,33 @@ def _programs_in(text: str) -> set[str]:
     return found
 
 
+def _module_targets(text: str) -> set[str]:
+    """Every ``python -m package.module`` an interpreter is asked to run.
+
+    Without this the guard has a hole exactly the size of the mistake it
+    exists to prevent: ``-m`` reaches a program just as well as a path does,
+    and a unit invoking an untracked module fails in a clean checkout in
+    precisely the same way.
+    """
+    found: set[str] = set()
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        tokens = line.replace("=", " ").split()
+        for index, token in enumerate(tokens):
+            if token.strip("'\"") != "-m" or index + 1 >= len(tokens):
+                continue
+            dotted = tokens[index + 1].strip("'\"")
+            if not re.fullmatch(r"[A-Za-z_][\w.]*", dotted):
+                continue
+            # Only modules that live in this repository. ``python -m venv``
+            # is the standard library's problem, not a broken ExecStart.
+            if not (REPO / dotted.split(".")[0]).is_dir():
+                continue
+            found.add(dotted.replace(".", "/") + ".py")
+    return found
+
+
 def _unit_files() -> list[Path]:
     return sorted(DEPLOY.glob("*.service")) + sorted(DEPLOY.glob("*.timer"))
 
@@ -84,7 +111,8 @@ def _script_files() -> list[Path]:
 @pytest.mark.parametrize("unit", _unit_files(), ids=lambda p: p.name)
 def test_a_unit_only_executes_committed_programs(unit: Path):
     tracked = _tracked_files()
-    for program in _programs_in(unit.read_text()):
+    text = unit.read_text()
+    for program in _programs_in(text) | _module_targets(text):
         assert program in tracked, (
             f"{unit.name} executes {program}, which is not in the git tree. "
             "A clean checkout of this branch could not start it. Move the "
@@ -95,7 +123,8 @@ def test_a_unit_only_executes_committed_programs(unit: Path):
 @pytest.mark.parametrize("script", _script_files(), ids=lambda p: p.name)
 def test_a_deploy_script_only_executes_committed_programs(script: Path):
     tracked = _tracked_files()
-    for program in _programs_in(script.read_text()):
+    text = script.read_text()
+    for program in _programs_in(text) | _module_targets(text):
         assert program in tracked, (
             f"{script.name} executes {program}, which is not in the git tree."
         )
@@ -128,3 +157,53 @@ def test_runtime_data_is_not_committed():
         or path.endswith((".sqlite", ".sqlite.bak"))
     ]
     assert offenders == [], f"Runtime data was committed: {offenders}"
+
+
+# ---------------------------------------------------------------------------
+# The daily unit's promises, which are only worth anything if they hold
+# ---------------------------------------------------------------------------
+
+
+def _daily_unit() -> str:
+    return (DEPLOY / "almanya24-daily.service").read_text()
+
+
+def test_paid_calls_are_locked_until_a_budget_is_granted():
+    """The committed unit must not ship a spendable default.
+
+    A budget that arrives by accident is the one activation mistake that
+    costs money, and the file in version control is where it would arrive.
+    """
+    unit = _daily_unit()
+    assert "Environment=ALMANYA24_DAILY_BUDGET_USD=0" in unit
+    assert "Environment=ALMANYA24_DAILY_MAX_CALLS=0" in unit
+
+
+def test_the_daily_unit_passes_every_limit_explicitly():
+    """No limit may fall back to a default inside the program."""
+    unit = _daily_unit()
+    for flag in ("--budget-usd", "--max-calls", "--max-stories"):
+        assert flag in unit, f"{flag} is not passed by the unit"
+
+
+def test_only_the_daily_unit_turns_the_development_bypass_on():
+    """The switch is off by default; exactly one unit is entitled to set it."""
+    setters = [
+        unit.name
+        for unit in _unit_files()
+        if "NEWSROOM_DEV_AUTO_RELEASE=true" in unit.read_text()
+    ]
+    assert setters == ["almanya24-daily.service"]
+
+
+def test_production_data_is_mounted_read_only():
+    """Transcripts are read from production; nothing may be written back."""
+    unit = _daily_unit()
+    assert "ReadOnlyPaths=/home/pi/AI-Startup-Lab/bitcoin-education" in unit
+    assert "ReadWritePaths=" in unit
+    write_targets = [
+        line.split("=", 1)[1]
+        for line in unit.splitlines()
+        if line.startswith("ReadWritePaths=")
+    ]
+    assert all("almanya24-newsroom-dev" in target for target in write_targets)

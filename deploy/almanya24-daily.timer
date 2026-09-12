@@ -1,0 +1,23 @@
+[Unit]
+Description=ALMANYA24 daily transcript-to-news schedule (development only)
+
+[Timer]
+# stories.json has landed between 20:31 and 20:37 on every observed broadcast,
+# so 21:15 leaves roughly forty minutes of headroom after the latest of them.
+# The two later slots are the catch-up: a transcript that arrives late is
+# picked up the same night or the next morning without anyone noticing that it
+# was late. Combined with --lookback-days 3 this also survives a day of
+# downtime.
+OnCalendar=*-*-* 21:15:00
+OnCalendar=*-*-* 22:30:00
+OnCalendar=*-*-* 06:45:00
+
+# A run missed because the machine was off happens once, on the next boot,
+# rather than for every slot that elapsed.
+Persistent=true
+AccuracySec=1m
+RandomizedDelaySec=90
+Unit=almanya24-daily.service
+
+[Install]
+WantedBy=timers.target

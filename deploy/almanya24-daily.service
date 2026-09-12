@@ -1,0 +1,44 @@
+[Unit]
+Description=ALMANYA24 daily transcript-to-news run (development only)
+Documentation=file:///home/pi/AI-Startup-Lab/almanya24-newsroom-dev/docs/implementation/almanya24-daily-automation.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/AI-Startup-Lab/almanya24-newsroom-dev
+
+# The approved development bypass. Deliberately set here and nowhere else:
+# the switch is off by default everywhere, and this is the only unit that is
+# entitled to turn it on.
+Environment=NEWSROOM_DEV_AUTO_RELEASE=true
+
+# Hard consumption limits, locked shut until a daily budget is approved.
+# A zero budget and zero calls is a complete stop, not a small allowance: the
+# run still discovers transcripts, selects stories and reports what it would
+# have written, and cannot contact a paid provider at all.
+Environment=ALMANYA24_DAILY_BUDGET_USD=0
+Environment=ALMANYA24_DAILY_MAX_CALLS=0
+Environment=ALMANYA24_DAILY_MAX_STORIES=6
+
+# Optional override, not in version control, for when a budget is granted.
+# The leading '-' means a missing file is not an error.
+EnvironmentFile=-/home/pi/AI-Startup-Lab/almanya24-newsroom-dev/data/almanya24-preview/daily-budget.env
+
+ExecStart=/home/pi/.venvs/almanya24-newsroom-dev/bin/python -m scripts.almanya24_preview.daily_run \
+    --budget-usd ${ALMANYA24_DAILY_BUDGET_USD} \
+    --max-calls ${ALMANYA24_DAILY_MAX_CALLS} \
+    --max-stories ${ALMANYA24_DAILY_MAX_STORIES} \
+    --lookback-days 3
+
+TimeoutStartSec=3600
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+# Production output is read for transcripts and never written.
+ReadOnlyPaths=/home/pi/AI-Startup-Lab/bitcoin-education
+ReadWritePaths=/home/pi/AI-Startup-Lab/almanya24-newsroom-dev/data
+
+[Install]
+WantedBy=multi-user.target

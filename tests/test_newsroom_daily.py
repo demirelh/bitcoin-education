@@ -276,7 +276,7 @@ def _harness(
     return paths, settings, caller, drafter, publisher
 
 
-def _run(session, tmp_path, *, limits: DailyLimits, outputs: Path, **kwargs):
+def _run(session, tmp_path, *, limits: DailyLimits, outputs: Path, drafter_override=None, **kwargs):
     paths, settings, caller, drafter, publisher = _harness(session, tmp_path, **kwargs)
     report = run_daily(
         paths=paths,
@@ -284,7 +284,7 @@ def _run(session, tmp_path, *, limits: DailyLimits, outputs: Path, **kwargs):
         outputs_dir=outputs,
         settings_factory=lambda _paths: settings,
         model_factory=lambda _settings: caller,
-        drafter=drafter,
+        drafter=drafter_override or drafter,
         publisher=publisher,
         today=date(2026, 9, 11),
         now=datetime(2026, 9, 11, 21, 30),
@@ -745,3 +745,42 @@ def test_the_operations_page_is_linked_only_in_development(db_session, tmp_path)
 
     assert "_durum" in (on.directory / "index.html").read_text(encoding="utf-8")
     assert "_durum" not in (off.directory / "index.html").read_text(encoding="utf-8")
+
+
+def test_an_open_topic_question_is_not_recorded_as_a_failure(db_session, tmp_path):
+    """Whether a broadcast continues an existing story is an editor's call.
+
+    Filing it as a failure would bury it among real errors and spend the
+    story's retries on a question no retry can answer.
+    """
+    outputs = _outputs(tmp_path, count=1)
+
+    def refusing(*, settings, model, selected, published_at):
+        raise ValueError(
+            "Possible topic update: review the stored proposals before drafting"
+        )
+
+    report, _paths, _caller = _run(
+        db_session,
+        tmp_path,
+        limits=DailyLimits(budget_usd=1.0, max_calls=20, max_stories=3),
+        outputs=outputs,
+        drafter_override=refusing,
+    )
+
+    assert [item.status for item in report.stories] == ["needs_decision"]
+    assert report.outcome == RunOutcome.NEEDS_EDITORIAL_DECISION.value
+
+
+def test_an_open_topic_question_does_not_consume_the_retry_budget(tmp_path):
+    outputs = _outputs(tmp_path, count=1)
+    source = discover_transcripts(outputs, today=date(2026, 9, 11))[0]
+    selected = select_stories(source, limit=1)
+    processed = ProcessedStories(tmp_path / "processed.sqlite")
+
+    for _ in range(4):
+        processed.record(
+            selected[0].key, episode_id=source.episode_id, status="needs_decision"
+        )
+
+    assert pending_stories(selected, processed) == selected

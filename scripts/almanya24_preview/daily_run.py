@@ -29,6 +29,7 @@ from btcedu.core.editorial.daily import DailyPaths, RunOutcome, run_daily
 from btcedu.core.editorial.limits import DailyLimits
 from btcedu.core.editorial.media import MediaRequirement
 from btcedu.core.editorial.public import publish_article
+from btcedu.core.editorial.reconcile import reconcile_operations
 from btcedu.core.editorial.site_export import SiteConfig, build_site, switch_release
 from btcedu.core.editorial.workflow import draft_story
 from btcedu.db import Base
@@ -137,6 +138,13 @@ def make_drafter(session):
 
     def drafter(*, settings, model, selected, published_at: datetime) -> DraftResult:
         from btcedu.services.commons_service import WikimediaCommonsProvider
+
+        # A search that failed on an earlier night left its operation blocked.
+        # Clearing only the demonstrably effect-free ones keeps the guard on
+        # anything whose outcome is actually uncertain.
+        report = reconcile_operations(session)
+        if report.resolved:
+            logger.info("Reconciled %d effect-free operations", len(report.resolved))
 
         fetcher = DocumentFetcher.from_settings(settings)
         requirement = MediaRequirement(

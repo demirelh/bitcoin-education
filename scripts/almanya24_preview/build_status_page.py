@@ -25,12 +25,14 @@ OUTCOME_LABELS = {
     RunOutcome.BUDGET_EXHAUSTED.value: ("Bütçe tükendi", "blocked"),
     RunOutcome.ERROR.value: ("Teknik hata", "error"),
     RunOutcome.ALREADY_RUNNING.value: ("Zaten çalışıyor", "idle"),
+    RunOutcome.NEEDS_EDITORIAL_DECISION.value: ("Editör kararı bekleniyor", "blocked"),
 }
 
 STORY_LABELS = {
     "drafted": "Taslak oluşturuldu",
     "failed": "Başarısız",
     "waiting_for_budget": "Bütçe bekliyor",
+    "needs_decision": "Editör kararı bekliyor",
 }
 
 TIMER_UNIT = "almanya24-daily.timer"

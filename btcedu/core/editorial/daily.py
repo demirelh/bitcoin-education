@@ -57,6 +57,10 @@ class RunOutcome(str, Enum):
     BUDGET_EXHAUSTED = "budget_exhausted"
     ERROR = "error"
     ALREADY_RUNNING = "already_running"
+    #: Topics were found and are processable, but every one of them raised a
+    #: question only an editor may answer. Distinct from an error, which sends
+    #: an operator hunting for a defect, and from "no topics", which is untrue.
+    NEEDS_EDITORIAL_DECISION = "needs_editorial_decision"
 
 
 @dataclass
@@ -222,6 +226,12 @@ def pending_stories(
         status, attempts = processed.status(item.key)
         if status in TERMINAL_STATUSES:
             continue
+        # An open editorial question is not a failed attempt. It is settled by
+        # an editor, not by a retry, and re-checking it costs nothing because
+        # it is raised before the first paid call.
+        if status == "needs_decision":
+            pending.append(item)
+            continue
         if attempts >= MAX_STORY_ATTEMPTS:
             continue
         pending.append(item)
@@ -381,6 +391,24 @@ def run_daily(
                     break
                 except Exception as exc:  # noqa: BLE001 - isolated per story
                     detail = story_failure(exc)
+                    if _needs_editorial_decision(detail):
+                        logger.info("Story %s awaits an editorial decision", item.key)
+                        processed.record(
+                            item.key,
+                            episode_id=item.episode_id,
+                            status="needs_decision",
+                            detail=detail,
+                        )
+                        report.stories.append(
+                            StoryResult(
+                                key=item.key,
+                                headline_de=item.story.headline_de,
+                                section=item.section,
+                                status="needs_decision",
+                                detail=detail,
+                            )
+                        )
+                        continue
                     logger.warning("Story %s failed: %s", item.key, detail)
                     logger.debug("%s", traceback.format_exc(limit=20))
                     processed.record(
@@ -428,6 +456,13 @@ def run_daily(
                 )
                 if not report.stories:
                     report.outcome = RunOutcome.NO_SUITABLE_TOPICS.value
+                elif report.outcome == RunOutcome.ERROR.value and all(
+                    entry.status == "needs_decision" for entry in report.stories
+                ):
+                    # Nothing is broken; everything is waiting for an editor.
+                    # Calling that an error would send operators looking for a
+                    # defect that does not exist.
+                    report.outcome = RunOutcome.NEEDS_EDITORIAL_DECISION.value
             return _finish(report, ledger, day, paths, processed, moment)
     except AlreadyRunning as exc:
         report.outcome = RunOutcome.ALREADY_RUNNING.value
@@ -444,6 +479,23 @@ def run_daily(
 def _is_exhaustion(detail: str) -> bool:
     lowered = detail.casefold()
     return "budget guard" in lowered or "call guard" in lowered
+
+
+#: Conditions the workflow raises that are editorial questions, not defects.
+#: An open topic-update proposal asks whether a broadcast continues an existing
+#: story. Only an editor can answer that, and answering it automatically would
+#: be exactly the human decision this run is not entitled to make. Recording it
+#: as a failure would instead bury it among real errors and burn the story's
+#: retry budget on a question no retry can settle.
+_EDITORIAL_DECISIONS = (
+    "possible topic update",
+    "require an explicit editorial split",
+)
+
+
+def _needs_editorial_decision(detail: str) -> bool:
+    lowered = detail.casefold()
+    return any(marker in lowered for marker in _EDITORIAL_DECISIONS)
 
 
 def _finish(

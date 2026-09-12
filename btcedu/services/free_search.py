@@ -18,6 +18,7 @@ assessed against tagesschau, and the evidence record will show that.
 from __future__ import annotations
 
 import json
+import re
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime
@@ -31,6 +32,46 @@ WIKIPEDIA_SEARCH = "https://de.wikipedia.org/w/api.php"
 #: page carries a headline and no body, so fetching it yields no passage that
 #: could support anything.
 _UNREADABLE = frozenset({"video", "audio", "bildergalerie"})
+
+#: German function words carry no retrieval value but are matched literally by
+#: both endpoints, so they actively reduce a query to nothing.
+_STOPWORDS = frozenset(
+    """
+    aber alle als am an auch auf aus bei beim bis das dass dem den der des die
+    durch ein eine einem einen einer eines er es fuer für gegen hat haben hier
+    ihr im in ist ins kann mit nach nicht noch oder ohne sein sich sie sind so
+    soll über um und uns unter vom von vor war werden wie wird wurde zu zum zur
+    """.split()
+)
+
+
+def _keywords(query: str, limit: int) -> str:
+    """Reduce a query to the terms that actually carry it.
+
+    Both endpoints are keyword searches that require every term to match, so a
+    full headline retrieves nothing. German capitalises its nouns, which makes
+    the carrying terms cheap to identify without a language model.
+    """
+    words = re.findall(r"[\wÄÖÜäöüß-]+", query)
+    kept: list[str] = []
+    for word in words:
+        if word.lower() in _STOPWORDS or len(word) < 3:
+            continue
+        if word[0].isupper() or word.isdigit():
+            kept.append(word)
+    if not kept:
+        kept = [w for w in words if w.lower() not in _STOPWORDS and len(w) >= 4]
+    return " ".join(kept[:limit])
+
+
+def _query_variants(query: str) -> list[str]:
+    """The query itself, then progressively looser keyword forms."""
+    variants = [query.strip()]
+    for limit in (4, 2):
+        candidate = _keywords(query, limit)
+        if candidate and candidate not in variants:
+            variants.append(candidate)
+    return variants
 
 
 @dataclass(frozen=True)
@@ -59,11 +100,19 @@ class FreeNewsSearchProvider:
     def search(self, query: str, *, language: str = "de", count: int = 8) -> SearchResponse:
         items: list[_Item] = []
         errors: list[str] = []
-        for source in (self._tagesschau, self._wikipedia):
-            try:
-                items.extend(source(query, language=language))
-            except Exception as exc:  # noqa: BLE001 - one channel failing is not fatal
-                errors.append(f"{source.__name__.lstrip('_')}: {type(exc).__name__}: {exc}")
+        for variant in _query_variants(query):
+            for source in (self._tagesschau, self._wikipedia):
+                try:
+                    items.extend(source(variant, language=language))
+                except Exception as exc:  # noqa: BLE001 - one channel failing is not fatal
+                    errors.append(
+                        f"{source.__name__.lstrip('_')}: {type(exc).__name__}: {exc}"
+                    )
+            # Keep loosening while only one publisher answers. A single
+            # publisher is exactly the case the independence check has to
+            # reject, so stopping there would manufacture that verdict.
+            if len({item.publisher for item in items}) >= 2:
+                break
         if not items:
             raise SearchProviderError(
                 "No free search channel returned a usable result"

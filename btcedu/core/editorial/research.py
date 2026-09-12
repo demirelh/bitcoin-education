@@ -662,7 +662,31 @@ def _store_evidence_link(
     if observation is None:
         raise ValueError("Evidence must reference a successfully fetched document")
     if draft.passage not in (observation.content_text or ""):
-        raise ValueError("Evidence passage is not present in the fetched document")
+        # Compare under the same normalisation the anchor checks use. The
+        # extracted body and the model disagree on typography -- padded
+        # brackets, typographic quotes, soft hyphens, wrapped lines -- not on
+        # wording. A raw comparison rejects passages that are in the document
+        # verbatim, which is a defect in the check, not a missing source. The
+        # passage must still appear word for word; nothing here is fuzzy.
+        if _anchor_text(draft.passage) not in _anchor_text(observation.content_text or ""):
+            # Second chance on the word sequence alone. Extraction does not
+            # punctuate the boundary between a headline and the paragraph that
+            # follows it, so a model quoting across that boundary writes a full
+            # stop the document does not carry -- while stating the identical
+            # words. Requiring the same words in the same order still rejects
+            # an invented passage, a changed number or an added negation.
+            if _word_sequence(draft.passage) not in _word_sequence(
+                observation.content_text or ""
+            ):
+                # Name what was rejected. Without it the only way to tell an
+                # invented passage from a truncated document is another paid run.
+                excerpt = " ".join(draft.passage.split())[:160]
+                raise ValueError(
+                    "Evidence passage is not present in the fetched document: "
+                    f"{excerpt!r} (truncated for the log; "
+                    f"passage {len(draft.passage)} chars, "
+                    f"document {len(observation.content_text or '')} chars)"
+                )
     _validate_claim_anchors(
         claim_revision, draft, document_text=observation.content_text or ""
     )
@@ -913,6 +937,18 @@ _QUOTE_CHARS = (
 )
 _QUOTED_SPAN = re.compile(r'"([^"]{3,})"')
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+
+def _word_sequence(value: str) -> str:
+    """The words of a text, with everything that is not a word removed.
+
+    Used only as a fallback for the presence check, where the question is
+    whether the passage stands in the document at all. Punctuation differs
+    between an extracted body and a quoting model at block boundaries; words
+    do not. Padded so that a comparison cannot match inside a longer word.
+    """
+    text = _anchor_text(value)
+    return " " + " ".join(re.findall(r"[\w]+", text)) + " "
 
 
 def _anchor_text(value: str) -> str:

@@ -235,10 +235,25 @@ fi
 
 # A budget that is silently non-zero would be the one activation mistake that
 # costs money, so it is reported rather than assumed.
+#
+# `systemctl show -p Environment` lists only the unit's own Environment=
+# directives; values from EnvironmentFile= are resolved at start and never
+# appear there. Reading only that reported 0 USD while the effective budget was
+# the approved one -- the most misleading answer this script could give.
+budget_file="${repo_dir}/data/almanya24-preview/daily-budget.env"
 daily_budget="$(systemctl show almanya24-daily.service \
   -p Environment --value | tr ' ' '\n' | grep '^ALMANYA24_DAILY_BUDGET_USD=' \
   | cut -d= -f2 || true)"
-echo "Daily run budget: ${daily_budget:-unknown} USD (0 = paid calls locked)."
+budget_source="unit default"
+if [[ -f "${budget_file}" ]]; then
+  file_budget="$(grep -E '^ALMANYA24_DAILY_BUDGET_USD=' "${budget_file}" \
+    | tail -n1 | cut -d= -f2 || true)"
+  if [[ -n "${file_budget}" ]]; then
+    daily_budget="${file_budget}"
+    budget_source="daily-budget.env"
+  fi
+fi
+echo "Daily run budget: ${daily_budget:-unknown} USD from ${budget_source} (0 = paid calls locked)."
 
 trap - ERR
 echo "Protected ALMANYA24 DEV is available at https://sahimi.app/almanya24-dev/"

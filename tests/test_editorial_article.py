@@ -818,16 +818,17 @@ def test_generation_survives_a_restart_in_the_middle_of_research(db_session, tmp
     db_session.query(ClaimAssessment).delete()
     db_session.commit()
 
-    with pytest.raises(ArticleContentRejected, match="must reference"):
+    def drafter_must_not_be_reached(payload):
+        raise AssertionError("nothing is draftable, so no call may be paid for")
+
+    # Refused before the provider call rather than after it: with no assessment
+    # there is no claim the article may assert, and that is knowable up front.
+    with pytest.raises(UnsupportedClaimReferenced, match="nothing can be drafted"):
         generate_article_revision(
             db_session,
             editorial_revision=revision,
             research_run=run,
-            drafter=lambda payload: _draft(
-                paragraphs=[
-                    {"text": "Berlin 100 yeni konut bildirdi.", "claim_keys": []}
-                ]
-            ),
+            drafter=drafter_must_not_be_reached,
         )
     reasons = article_gate_reasons(
         db_session, editorial_revision=revision, research_run=run

@@ -640,6 +640,17 @@ def generate_article_revision(
     operation.status = ProviderOperationStatus.SUBMITTED.value
     session.commit()
 
+    # A claim whose evidence did not hold up is not available to the article.
+    # Offering it in the prompt with verdict "unassessed" invited the model to
+    # assert it and then failed the draft for doing so; withholding it states
+    # the same rule where it can be followed. The guard below is unchanged.
+    usable_claims = [claim for claim in claims if claim.id in assessments]
+    if not usable_claims:
+        raise UnsupportedClaimReferenced(
+            "No claim of this revision carries an assessment; nothing can be drafted"
+        )
+    claims = usable_claims
+
     payload = {
         "task": "draft_article",
         "language": language,

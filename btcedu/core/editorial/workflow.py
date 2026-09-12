@@ -165,9 +165,17 @@ def draft_story(
     source_language="de",
     source_uri=None,
     repair_attempts=1,
+    dev_auto_release=False,
 ):
+    """``dev_auto_release`` keeps editorial rejections as recorded warnings.
+
+    Off by default. It never silences a check and never marks anything as
+    approved: the verdict is stored on the revision and shown in the review
+    view. Technical and safety failures still raise.
+    """
     if not settings.newsroom_enabled:
         raise ValueError("Newsroom is disabled")
+    dev_findings: list[str] = []
     from btcedu.core.editorial.topics import add_alias, propose_updates
 
     imported = import_story(
@@ -184,8 +192,18 @@ def draft_story(
         .filter_by(source_revision_id=imported.source_revision.id)
         .all()
     )
-    if any(row.status == ProposalStatus.OPEN.value for row in proposals):
+    open_proposals = [row for row in proposals if row.status == ProposalStatus.OPEN.value]
+    if open_proposals and not dev_auto_release:
         raise ValueError("Possible topic update: review the stored proposals before drafting")
+    if open_proposals:
+        # Deciding that a broadcast continues an existing topic has editorial
+        # consequences, so the switch must not make that call. Drafting under
+        # the broadcast's own new topic instead decides nothing: the proposals
+        # stay OPEN for a reviewer, and the finding says so.
+        dev_findings.append(
+            f"Topic continuity unresolved: {len(open_proposals)} open update proposal(s); "
+            "drafted as a separate topic without merging."
+        )
     accepted = [row for row in proposals if row.status == ProposalStatus.ACCEPTED.value]
     if len(accepted) > 1:
         raise ValueError("Several accepted topic destinations require an explicit editorial split")
@@ -273,7 +291,16 @@ def draft_story(
         deadline_seconds=settings.newsroom_research_timeout_seconds,
     )
     if outcome.blocked:
-        raise ValueError(outcome.block_reason)
+        if not dev_auto_release:
+            raise ValueError(outcome.block_reason)
+        # Thin evidence is exactly what the development preview needs to make
+        # visible. Suppressing the story hides the finding; carrying it forward
+        # as a warning states it on the page instead.
+        dev_findings.append(f"Evidence gate: {outcome.block_reason}")
+    for revision_id, reason in outcome.unsupported:
+        # Excluded from the article, but named so a reviewer can see which
+        # statement was dropped and why rather than only noticing a gap.
+        dev_findings.append(f"Claim excluded ({revision_id}): {reason}")
     if media_requirement is not None:
         selection = select_media_for_revision(
             session,
@@ -300,13 +327,25 @@ def draft_story(
                 "untrusted_input": True,
             }
         )
+        findings: list[str] = []
         if not isinstance(verdict, dict) or verdict.get("consistent") is not True:
-            raise ArticleContentRejected("Semantic article check rejected the draft")
-        if verdict.get("issues") != []:
-            raise ArticleContentRejected("Semantic article check has unresolved findings")
+            findings.append("Semantic article check rejected the draft")
+        elif verdict.get("issues") != []:
+            issues = verdict.get("issues")
+            detail = "; ".join(str(issue) for issue in issues)[:300] if issues else ""
+            findings.append(
+                "Semantic article check has unresolved findings"
+                + (f": {detail}" if detail else "")
+            )
+        if findings and not dev_auto_release:
+            raise ArticleContentRejected(findings[0])
+        # In development the draft is kept instead of discarded, and the
+        # verdict travels with it. Throwing it away was losing the only thing
+        # that could be reviewed: the reviewer never saw what was rejected.
+        dev_findings.extend(findings)
         return draft
 
-    return generate_article_revision(
+    article = generate_article_revision(
         session,
         editorial_revision=revision,
         research_run=run,
@@ -315,3 +354,10 @@ def draft_story(
         policy_version="newsroom-workflow-v2",
         repair_attempts=repair_attempts,
     )
+    if dev_findings:
+        # Recorded on the revision, so the review view and the development
+        # banner state what failed. This is not an approval and does not
+        # pretend the check passed.
+        article.block_reason = "; ".join(dict.fromkeys(dev_findings))[:1000]
+        session.commit()
+    return article

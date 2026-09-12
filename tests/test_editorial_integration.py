@@ -55,6 +55,8 @@ def workflow_fixture(
     relation="supports",
     license_id="CC BY-SA 4.0",
     episode_id="offline-transcript",
+    consistency=None,
+    dev_auto_release=False,
 ):
     settings = Settings(
         newsroom_enabled=True,
@@ -92,7 +94,7 @@ def workflow_fixture(
         elif task == "draft_article":
             result = _draft()
         elif task == "check_article_consistency":
-            result = {"consistent": True, "issues": []}
+            result = consistency or {"consistent": True, "issues": []}
         else:
             raise AssertionError(f"Unexpected model task {task}")
         return ModelReply(result=result, cost_usd=0.001, model="offline-fixture")
@@ -116,6 +118,7 @@ def workflow_fixture(
         media_requirement=MediaRequirement(subject="Berlin", role=MediaRole.SYMBOLIC),
         plan_builder=_plans,
         max_call_cost_usd=0.01,
+        dev_auto_release=dev_auto_release,
     )
     return (
         article,
@@ -804,3 +807,105 @@ def test_a_transport_failure_still_requires_reconciliation(db_session, tmp_path)
         .first()
     )
     assert operation.status == ProviderOperationStatus.RECONCILE_REQUIRED.value
+
+
+# ---------------------------------------------------------------------------
+# The development bypass at the point where a draft was actually being lost
+# ---------------------------------------------------------------------------
+
+
+def test_a_semantically_rejected_draft_is_discarded_by_default(db_session, tmp_path):
+    from btcedu.core.editorial.article import ArticleContentRejected
+
+    with pytest.raises(ArticleContentRejected):
+        workflow_fixture(
+            db_session,
+            tmp_path,
+            consistency={"consistent": False, "issues": ["invented figure"]},
+        )
+
+
+def test_in_development_the_rejected_draft_is_kept_with_its_verdict(db_session, tmp_path):
+    """Discarding it destroyed the only thing a reviewer could look at.
+
+    The draft is stored, stays a draft, and carries what the check said.
+    """
+    article, _run, _settings, _tasks = workflow_fixture(
+        db_session,
+        tmp_path,
+        consistency={"consistent": False, "issues": ["invented figure"]},
+        dev_auto_release=True,
+    )
+
+    assert article.id is not None
+    assert article.status == "draft"
+    assert "Semantic article check rejected the draft" in article.block_reason
+
+
+def test_the_recorded_verdict_reaches_the_reader_as_a_warning(db_session, tmp_path):
+    from btcedu.core.editorial.public import export_blockers
+
+    article, _run, _settings, _tasks = workflow_fixture(
+        db_session,
+        tmp_path,
+        consistency={"consistent": False, "issues": ["invented figure"]},
+        dev_auto_release=True,
+    )
+
+    blockers = export_blockers(db_session, article)
+    assert any("Semantic article check" in reason for reason in blockers)
+
+
+def test_unresolved_findings_name_what_was_found(db_session, tmp_path):
+    article, _run, _settings, _tasks = workflow_fixture(
+        db_session,
+        tmp_path,
+        consistency={"consistent": True, "issues": ["paragraph 2 overstates the source"]},
+        dev_auto_release=True,
+    )
+
+    assert "paragraph 2 overstates the source" in article.block_reason
+
+
+def test_the_development_switch_never_approves_anything(db_session, tmp_path):
+    """A warning is not a signature. No decision may exist."""
+    from btcedu.models.article import EditorialDecision
+
+    article, _run, _settings, _tasks = workflow_fixture(
+        db_session,
+        tmp_path,
+        consistency={"consistent": False, "issues": ["invented figure"]},
+        dev_auto_release=True,
+    )
+
+    decisions = (
+        db_session.query(EditorialDecision).filter_by(article_revision_id=article.id).all()
+    )
+    assert decisions == []
+
+
+def test_an_open_topic_proposal_is_reported_not_decided(db_session, tmp_path):
+    """The switch may unblock drafting; it may not merge topics for a reviewer."""
+    from btcedu.models.topic_graph import ProposalStatus, UpdateProposal
+
+    article, _run, _settings, _tasks = workflow_fixture(
+        db_session, tmp_path, dev_auto_release=True
+    )
+    open_before = (
+        db_session.query(UpdateProposal).filter_by(status=ProposalStatus.OPEN.value).count()
+    )
+
+    second, _run2, _s2, _t2 = workflow_fixture(db_session, tmp_path, dev_auto_release=True)
+
+    open_after = (
+        db_session.query(UpdateProposal).filter_by(status=ProposalStatus.OPEN.value).count()
+    )
+    assert second is not None and article is not None
+    assert open_after >= open_before
+    # Nothing was merged on the reviewer's behalf.
+    assert (
+        db_session.query(UpdateProposal)
+        .filter_by(status=ProposalStatus.ACCEPTED.value)
+        .count()
+        == 0
+    )

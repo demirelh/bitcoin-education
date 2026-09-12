@@ -1123,3 +1123,43 @@ def test_attribution_is_not_borrowed_from_an_unrelated_part_of_the_document():
 
     with pytest.raises(ValueError, match="attribution"):
         _validate_claim_anchors(claim, draft, document_text="")
+
+
+def test_one_unsupported_claim_does_not_discard_the_supported_ones(
+    db_session, tmp_path, monkeypatch
+):
+    """The agreed rule excludes the statement. Excluding the story was a defect."""
+    import btcedu.core.editorial.research as research_module
+
+    claims, run = _prepare_many(db_session, 3)
+    url = "https://example.com/report"
+    provider = _provider(support_url=url)
+    fetcher, _ = _fetcher(tmp_path, {url: "Berlin meldet 100 neue Wohnungen."})
+
+    real = research_module.research_claim
+    seen = {"n": 0}
+
+    def first_claim_has_no_usable_evidence(session, **kwargs):
+        seen["n"] += 1
+        if seen["n"] == 1:
+            raise ValueError("Evidence passage is not present in the fetched document: '...'")
+        return real(session, **kwargs)
+
+    monkeypatch.setattr(research_module, "research_claim", first_claim_has_no_usable_evidence)
+
+    outcome = research_revision(
+        db_session,
+        research_run=run,
+        claim_revisions=claims,
+        plan_builder=lambda claim: _plans(with_counter=False),
+        search_provider=provider,
+        fetcher=fetcher,
+        evaluator=_supporting_evaluator(url),
+        max_claims=3,
+    )
+
+    assert len(outcome.unsupported) == 1
+    assert "not present in the fetched document" in outcome.unsupported[0][1]
+    # The other two survived rather than being discarded along with it.
+    assert len(outcome.researched_revision_ids) == 2
+    assert run.status == "needs_review"

@@ -174,6 +174,7 @@ def make_drafter(session):
             source_published_at=published_at,
             source_language="de",
             source_uri=None,
+            dev_auto_release=settings.newsroom_dev_auto_release,
         )
         try:
             article = draft_story(**kwargs)

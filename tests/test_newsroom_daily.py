@@ -784,3 +784,31 @@ def test_an_open_topic_question_does_not_consume_the_retry_budget(tmp_path):
         )
 
     assert pending_stories(selected, processed) == selected
+
+
+def test_failures_before_a_named_moment_are_retried_after_a_fix(tmp_path, monkeypatch):
+    """A deployed fix changes the input, so the old failure should not stick."""
+    processed = ProcessedStories(tmp_path / "p.sqlite")
+    processed.record("ep:s01", episode_id="ep", status="failed", detail="old defect")
+    processed.record("ep:s01", episode_id="ep", status="failed", detail="old defect")
+
+    cleared = processed.clear_failures_before("2999-01-01T00:00:00+01:00")
+
+    assert cleared == 1
+    assert processed.status("ep:s01") == ("", 0)
+
+
+def test_failures_after_the_named_moment_are_left_alone(tmp_path):
+    """Otherwise it becomes a standing licence to retry a real dead end."""
+    processed = ProcessedStories(tmp_path / "p.sqlite")
+    processed.record("ep:s01", episode_id="ep", status="failed", detail="still broken")
+
+    assert processed.clear_failures_before("2000-01-01T00:00:00+01:00") == 0
+    assert processed.status("ep:s01")[0] == "failed"
+
+
+def test_an_editorial_question_is_not_cleared_as_a_failure(tmp_path):
+    processed = ProcessedStories(tmp_path / "p.sqlite")
+    processed.record("ep:s01", episode_id="ep", status="needs_decision", detail="topic")
+
+    assert processed.clear_failures_before("2999-01-01T00:00:00+01:00") == 0

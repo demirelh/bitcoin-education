@@ -69,6 +69,8 @@ class ResearchOutcome:
     skipped_revision_ids: tuple[str, ...]
     blocked_revision_id: str | None = None
     block_reason: str | None = None
+    #: Claims whose evidence did not hold up, with the reason each was dropped.
+    unsupported: tuple[tuple[str, str], ...] = ()
 
     @property
     def blocked(self) -> bool:
@@ -224,6 +226,21 @@ def _expand_supporting_passage(claim, observation, draft):
     return draft.model_copy(update={"passage": text[left:right]})
 
 
+def _search_cost(search_provider, plan) -> float:
+    """What this search will actually be billed at.
+
+    The plan carries a generic placeholder, but the key-less endpoints charge
+    nothing. Reserving a fee against them spent the model budget on free work
+    and, worse, made a failed search look like an operation with an unknown
+    bill -- so the reconcile guard refused to release it and the story stayed
+    dead. A provider states its own price; only an unknown one falls back.
+    """
+    declared = getattr(search_provider, "cost_per_search_usd", None)
+    if declared is not None:
+        return float(declared)
+    return plan.estimated_cost_usd
+
+
 def research_claim(
     session: Session,
     *,
@@ -363,6 +380,7 @@ def research_revision(
     started_at = monotonic()
     assessments: list[ClaimAssessment] = []
     researched: list[str] = []
+    unsupported: list[tuple[str, str]] = []
     for claim in selected:
         existing = (
             session.query(ClaimAssessment)
@@ -398,6 +416,16 @@ def research_revision(
                 blocked_revision_id=claim.revision_id,
                 block_reason=str(exc),
             )
+        except ValueError as exc:
+            # One claim whose evidence does not hold up is a reason to drop
+            # that claim, not the whole story: the agreed rule is that
+            # insufficiently supported statements are excluded. Killing the
+            # story instead discarded every properly supported claim with it.
+            # A JSONDecodeError is a ValueError, so a truncated provider reply
+            # lands here too -- also one claim's problem, not the story's.
+            session.rollback()
+            unsupported.append((claim.revision_id, str(exc)[:300]))
+            continue
         assessments.append(assessment)
         researched.append(claim.revision_id)
 
@@ -407,6 +435,7 @@ def research_revision(
         assessments=tuple(assessments),
         researched_revision_ids=tuple(researched),
         skipped_revision_ids=skipped,
+        unsupported=tuple(unsupported),
     )
 
 
@@ -461,7 +490,7 @@ def _run_query(
         provider=search_provider.name,
         model_name="",
         input_hash=canonical_hash(plan.model_dump(mode="json")),
-        estimated_cost_usd=plan.estimated_cost_usd,
+        estimated_cost_usd=_search_cost(search_provider, plan),
     )
     if operation.status == ProviderOperationStatus.COMPLETED.value and query.result_json:
         query.status = ResearchQueryStatus.COMPLETED.value

@@ -220,3 +220,35 @@ und für viele Aussagen findet sich bei ihnen schlicht kein Dokument, das die
 konkrete Zahl oder das konkrete Zitat trägt. Das ist eine Frage der Quellenbasis,
 nicht der Implementierung, und sollte nicht durch Aufweichen der Prüfungen
 beantwortet werden.
+
+## What the first real timer runs exposed
+
+Four defects, each found by a run rather than by reading the code:
+
+1. **A free search reserved a fee.** The query plan carried a generic
+   `0.005 USD` placeholder while the key-less endpoints charge nothing. That
+   overstated the day's spend and, worse, made a failed search look like an
+   operation with an uncertain bill, so `reconcile_operations` refused to
+   release it and the story stayed dead. The provider now states its own price
+   (`cost_per_search_usd`); only an unknown provider falls back to the plan.
+2. **One unsupported claim discarded the whole story.** The agreed rule is that
+   insufficiently supported statements are excluded. `research_revision` now
+   drops the claim, records it in `ResearchOutcome.unsupported`, and continues
+   with the claims that do hold up.
+3. **An unusable claim was still offered to the drafter.** It appeared in the
+   prompt with verdict `unassessed`, the model asserted it, and the draft was
+   then rejected for doing so. It is now withheld, and a revision with no
+   assessed claim at all is refused *before* the paid call.
+4. **A failure was permanent.** `ALMANYA24_RETRY_FAILED_BEFORE=<timestamp>`
+   forgets failures recorded before that moment, which is what makes a deployed
+   fix retryable without turning into a standing licence to retry: failures
+   after the stamp are untouched.
+
+### Development switch, extended
+
+With `NEWSROOM_DEV_AUTO_RELEASE=true` the switch additionally carries these
+forward as findings instead of suppressing the story: an evidence-gate block,
+each excluded claim, and an open topic-update proposal. The proposal case
+drafts under the broadcast's own new topic — the proposals stay `OPEN`, so
+nothing is merged on a reviewer's behalf. No `EditorialDecision` is ever
+written; a warning is not a signature.

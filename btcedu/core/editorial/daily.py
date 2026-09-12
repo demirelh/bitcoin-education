@@ -183,6 +183,22 @@ class ProcessedStories:
             ).fetchone()
         return (row[0], int(row[1])) if row else ("", 0)
 
+    def clear_failures_before(self, moment: str) -> int:
+        """Forget failed attempts recorded before ``moment``.
+
+        A code fix changes the input a retry would send, so refusing to try
+        again would be wrong. Bounding it by a timestamp is what keeps it from
+        becoming a standing licence to retry: failures the fix caused after it
+        are untouched, so a genuine dead end still dies.
+        """
+        with closing(sqlite3.connect(self.path)) as db:
+            cursor = db.execute(
+                "DELETE FROM processed_stories WHERE status = 'failed' AND updated_at < ?",
+                (moment,),
+            )
+            db.commit()
+            return cursor.rowcount
+
     def record(self, story_key: str, *, episode_id: str, status: str, detail: str = "") -> None:
         now = datetime.now(BERLIN).isoformat()
         with closing(sqlite3.connect(self.path)) as db:
@@ -325,6 +341,16 @@ def run_daily(
     )
     ledger = DailyLedger(paths.ledger)
     processed = ProcessedStories(paths.processed)
+
+    # A deployed fix changes what a retry would send, so past failures caused
+    # by it should not be permanent. The operator names the moment the fix went
+    # in; failures after it stay recorded, so this cannot become a standing
+    # retry loop that spends the budget on the same dead end every night.
+    retry_before = os.environ.get("ALMANYA24_RETRY_FAILED_BEFORE", "").strip()
+    if retry_before:
+        cleared = processed.clear_failures_before(retry_before)
+        if cleared:
+            logger.info("Cleared %d failure(s) recorded before %s", cleared, retry_before)
 
     try:
         with RunLock(paths.lock):

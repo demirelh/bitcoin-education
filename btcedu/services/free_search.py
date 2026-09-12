@@ -92,6 +92,11 @@ class FreeNewsSearchProvider:
 
     name = "free-news"
 
+    #: These endpoints need no key and charge nothing, so reserving budget
+    #: against them would both overstate the day's spend and make a failed
+    #: search look like one with an uncertain bill.
+    cost_per_search_usd = 0.0
+
     def __init__(self, fetcher, *, per_publisher: int = 4, timeout: float = 20.0) -> None:
         self.fetcher = fetcher
         self.per_publisher = per_publisher

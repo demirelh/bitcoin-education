@@ -254,6 +254,10 @@ def export_blockers(session: Session, article: ArticleRevision) -> tuple[str, ..
     reasons: list[str] = []
     if article.status != ArticleStatus.APPROVED.value:
         reasons.append(f"Article is {article.status}, not approved")
+    if article.block_reason:
+        # Recorded when a check rejected this revision. Repeating it here is
+        # what puts it in front of a reviewer instead of leaving it in a table.
+        reasons.append(article.block_reason)
 
     decision = _approval(session, article)
     if decision is None:

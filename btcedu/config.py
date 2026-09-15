@@ -126,9 +126,9 @@ class Settings(BaseSettings):
 
     # Image Generation (Sprint 7)
     image_gen_provider: str = "dalle3"  # "dalle3" | "flux" | "ideogram" | "pexels"
-    image_gen_model: str = "dall-e-3"
-    image_gen_size: str = "1792x1024"  # DALL-E 3 landscape (closest to 1920x1080)
-    image_gen_quality: str = "standard"  # "standard" or "hd"
+    image_gen_model: str = "gpt-image-1"
+    image_gen_size: str = "1536x1024"  # gpt-image-1 landscape (closest to 1920x1080)
+    image_gen_quality: str = "standard"  # legacy vocabulary; mapped to gpt-image-1's own
     image_gen_style_prefix: str = (
         "Professional educational content illustration for Bitcoin/cryptocurrency video. "
         "Clean, modern, minimalist design. "

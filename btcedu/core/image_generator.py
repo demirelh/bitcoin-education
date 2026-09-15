@@ -1,4 +1,4 @@
-"""Image generation: Create visual assets from chapter JSON via DALL-E 3."""
+"""Image generation: Create visual assets from chapter JSON via gpt-image-1 (formerly DALL-E 3)."""
 
 import fcntl
 import hashlib
@@ -21,7 +21,7 @@ from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
 from btcedu.models.media_asset import MediaAsset, MediaAssetType
 from btcedu.services.claude_service import call_claude
-from btcedu.services.errors import ErrorCategory, PipelineError
+from btcedu.services.errors import ErrorCategory, PipelineError, classify_error, is_transient
 from btcedu.services.image_gen_service import (
     ImageGenRequest,
     ImageGenResponse,
@@ -858,7 +858,7 @@ def generate_images(
             "prompt_version": prompt_version.version,
             "prompt_hash": prompt_content_hash,
             "model": settings.claude_model,
-            "image_gen_model": getattr(settings, "image_gen_model", "dall-e-3"),
+            "image_gen_model": getattr(settings, "image_gen_model", "gpt-image-1"),
             "input_files": [str(chapters_path)],
             "input_content_hash": chapters_hash,
             "output_files": [str(manifest_path)]
@@ -901,11 +901,37 @@ def generate_images(
             or not (output_dir.parent / entry.file_path).exists()
         ]
         if unresolved:
-            raise PipelineError(
-                "Image generation left chapter(s) without a usable picture: "
-                f"{', '.join(sorted(set(unresolved)))}. Rerun imagegen to regenerate them.",
-                ErrorCategory.TRANSIENT_SERVER,
+            unresolved_ids = sorted(set(unresolved))
+            # The per-chapter error (provider auth failure, quota exhaustion,
+            # transient 5xx, ...) is recorded in the failed entry's metadata.
+            # Re-classify it instead of always reporting a transient server
+            # error: a 401/403 from every provider needs a credential fix, not
+            # an automatic retry that will fail identically forever.
+            failure_messages = {
+                entry.chapter_id: entry.metadata.get("error")
+                for entry in image_entries
+                if entry.chapter_id in unresolved_ids and entry.generation_method == "failed"
+            }
+            category = ErrorCategory.TRANSIENT_SERVER
+            for message in failure_messages.values():
+                if not message:
+                    continue
+                chapter_category = classify_error(RuntimeError(message))
+                if not is_transient(chapter_category):
+                    category = chapter_category
+                    break
+            detail = "; ".join(
+                f"{chapter_id}: {message}"
+                for chapter_id, message in sorted(failure_messages.items())
+                if message
             )
+            message = (
+                "Image generation left chapter(s) without a usable picture: "
+                f"{', '.join(unresolved_ids)}. Rerun imagegen to regenerate them."
+            )
+            if detail:
+                message += f" Details — {detail}"
+            raise PipelineError(message, category)
 
         # Create ContentArtifact record
         artifact = ContentArtifact(
@@ -1330,7 +1356,7 @@ def _generate_single_image(
 
     request = ImageGenRequest(
         prompt=image_prompt,
-        model=getattr(settings, "image_gen_model", "dall-e-3"),
+        model=getattr(settings, "image_gen_model", "gpt-image-1"),
         size=getattr(settings, "image_gen_size", "1792x1024"),
         quality=getattr(settings, "image_gen_quality", "standard"),
         style_prefix=effective_prefix,

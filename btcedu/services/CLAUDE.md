@@ -29,8 +29,20 @@ Each service uses a Protocol for swappable implementations:
 - `image_provider_factory.py` plus `flux_service.py` / `ideogram_service.py` —
   profile-owned generative image routing. Flux and Ideogram retry transient CDN
   failures while downloading an already-generated (and already-billed) image,
-  as DALL-E 3 has always done.
-- `image_gen_service.py` — DALL-E 3 via openai SDK
+  as the `dalle3` provider has always done. The `dalle3` provider name is a
+  routing key, not a live model id: OpenAI retired dall-e-3 for image
+  generation, so `image_gen_service.py` now calls `gpt-image-1` underneath it.
+- `image_gen_service.py` — `DallE3ImageService` (name kept for compatibility)
+  calls `gpt-image-1` via the openai SDK. gpt-image-1 only returns inline
+  base64 (`b64_json`), never a hosted url, so `generate_image()` encodes it as
+  a `data:` URI and the shared `download_image()` decodes/writes it directly
+  instead of making an HTTP request. Cost is computed from the response's
+  `usage` token counts (`GPT_IMAGE_*_COST_PER_TOKEN`), not a flat per-image
+  table. `quality`/`size` accept the legacy dall-e-3 vocabulary
+  (`"standard"`/`"hd"`, `"1792x1024"`, ...) and are translated to gpt-image-1's
+  own (`"medium"`/`"high"`, `"1536x1024"`, ...) before the API call. The
+  `dall-e-2` edit path (`edit_image()`, used by `frame_editor.py` /
+  `frame_extractor.py`) is unrelated and untouched by this migration.
 - `pexels_service.py` — Pexels stock photo/video search via raw HTTP
 - `meteo_service.py` — Open-Meteo / DWD ICON forecasts via urllib (`OpenMeteoService`, `MeteoService` Protocol). One multi-location request, never raises: failures degrade to an empty list. `_request()` is the seam patched in tests.
 - `notify_service.py` — WhatsApp push for pipeline failures via the local whatsapp-service REST API. Never raises, skipped when disabled or in dry-run.

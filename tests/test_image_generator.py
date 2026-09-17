@@ -815,10 +815,24 @@ def test_unresolved_chapter_image_reports_auth_error_not_transient(db_session, t
 
 def test_fallback_provider_rescues_a_failed_chapter_image(db_session, tmp_path):
     """The profile's fallback_provider must actually be used, not just configured."""
+    from types import SimpleNamespace
+
     from btcedu.core.image_generator import generate_images
 
     episode_id = "ep_fallback"
     settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+    profile = SimpleNamespace(
+        stage_config={
+            "imagegen": {
+                "provider": "generative",
+                "fallback_provider": "ideogram",
+            },
+            "render": {},
+        },
+        branding={},
+    )
+    registry = MagicMock()
+    registry.get.return_value = profile
     images_dir = Path(settings.outputs_dir) / episode_id / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     (images_dir / "ch01_rescued.png").write_bytes(b"rescued")
@@ -838,6 +852,7 @@ def test_fallback_provider_rescues_a_failed_chapter_image(db_session, tmp_path):
     )
 
     with (
+        patch("btcedu.profiles.get_registry", return_value=registry),
         patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
         patch("btcedu.core.image_generator._create_media_asset_record"),
         patch(
@@ -851,3 +866,46 @@ def test_fallback_provider_rescues_a_failed_chapter_image(db_session, tmp_path):
     assert result.failed_count == 0
     manifest = json.loads((images_dir / "manifest.json").read_text())
     assert manifest["images"][0]["generation_method"] == "ideogram"
+
+
+def test_pexels_fallback_rescues_failed_generative_provider(db_session, tmp_path):
+    """A healthy stock provider is the terminal fallback for generative auth failures."""
+    from types import SimpleNamespace
+
+    from btcedu.core.image_generator import generate_images
+
+    episode_id = "ep_pexels_fallback"
+    settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+    settings.pexels_api_key = "pexels-key"
+    photo = SimpleNamespace(
+        id=123,
+        width=1920,
+        height=1080,
+        photographer="Photographer",
+        photographer_url="https://example.com/photographer",
+        url="https://example.com/photo",
+        alt="News photo",
+    )
+    pexels = MagicMock()
+    pexels.search.return_value = SimpleNamespace(photos=[photo])
+    pexels.download_photo.side_effect = lambda _photo, path, size: path.write_bytes(b"stock")
+
+    with (
+        patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
+        patch("btcedu.core.image_generator._create_media_asset_record"),
+        patch(
+            "btcedu.core.image_generator._generate_single_image",
+            side_effect=RuntimeError("Flux API rejected the request [auth_error]"),
+        ),
+        patch("btcedu.services.pexels_service.PexelsService", return_value=pexels),
+    ):
+        result = generate_images(db_session, episode_id, settings, force=True)
+
+    assert result.failed_count == 0
+    manifest = json.loads(
+        (Path(settings.outputs_dir) / episode_id / "images" / "manifest.json").read_text()
+    )
+    entry = manifest["images"][0]
+    assert entry["generation_method"] == "pexels"
+    assert entry["metadata"]["pexels_id"] == 123
+    assert entry["metadata"]["license"] == "Pexels License (free for commercial use)"

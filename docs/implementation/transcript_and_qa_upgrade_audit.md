@@ -189,9 +189,10 @@ werden lokal mit pydub geteilt und nacheinander transkribiert. Der Request verwe
 - YouTube: `YouTubeService` Protocol, Dry-Run- und Data-API-Implementierung.
 - Bilder: Factory für DALL-E 3, Flux/fal.ai und Ideogram mit DALL-E-Fallback;
   zusätzlich Pexels- und Gemini-Services.
-- `tagesschau_tr` nutzt aktuell `imagegen.provider: generative`; das Core-Routing
-  verteilt nach Visual-Typ auf Ideogram, Flux oder DALL-E. Gemini Frame Editing
-  läuft nur bei explizitem Profilwert `gemini_frame_edit`.
+- `tagesschau_tr` nutzt `imagegen.provider: generative`; das Core-Routing
+  verteilt nach Visual-Typ auf Ideogram oder Flux und verwendet Pexels als
+  terminalen Fallback. Gemini Frame Editing läuft nur bei explizitem
+  Profilwert `gemini_frame_edit`.
 
 Externe Provider sind in den Tests mockbar; Dry-Run-Implementierungen existieren für
 kritische Dienste. Die Retry-Logik ist teilweise zentral

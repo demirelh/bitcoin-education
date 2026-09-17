@@ -1530,8 +1530,7 @@ class TestV2PipelineE2E:
 
 class TestImagegenDispatch:
     """The imagegen stage routes by the profile's imagegen.provider:
-    tagesschau_tr (provider: generative) → generate_images; other profiles
-    fall back to the Pexels stock path."""
+    tagesschau_tr calls generate_images; stock profiles use Pexels."""
 
     def _v2_episode(self, db_session, profile):
         ep = Episode(

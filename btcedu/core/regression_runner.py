@@ -113,17 +113,28 @@ def _recent_episode_ids(
     *,
     profile: str,
     count: int,
+    outputs_dir: str | None = None,
+    required_artifact: str | None = None,
 ) -> list[str]:
-    episodes = (
+    candidates = (
         session.query(Episode)
         .filter(Episode.content_profile == profile)
         .order_by(Episode.published_at.desc())
-        .limit(count)
         .all()
     )
+    if required_artifact:
+        output_root = Path(outputs_dir or "").resolve()
+        episodes = [
+            episode
+            for episode in candidates
+            if (output_root / episode.episode_id / required_artifact).exists()
+        ][:count]
+    else:
+        episodes = candidates[:count]
     if len(episodes) != count:
         raise ValueError(
-            f"Expected {count} episodes for profile {profile!r}, found {len(episodes)}"
+            f"Expected {count} eligible episodes for profile {profile!r}, "
+            f"found {len(episodes)}"
         )
     return [episode.episode_id for episode in episodes]
 
@@ -171,7 +182,14 @@ def run_recent_episode_regression(
     """Run recent episodes in an isolated copy."""
     from btcedu.core.pipeline import _run_stage
 
-    episode_ids = _recent_episode_ids(production_session, profile=profile, count=count)
+    required_artifact = "chapters.json" if from_stage == "imagegen" else None
+    episode_ids = _recent_episode_ids(
+        production_session,
+        profile=profile,
+        count=count,
+        outputs_dir=settings.outputs_dir,
+        required_artifact=required_artifact,
+    )
 
     workspace_root = Path(settings.outputs_dir).resolve() / ".regression-workspaces"
     workspace_root.mkdir(parents=True, exist_ok=True)

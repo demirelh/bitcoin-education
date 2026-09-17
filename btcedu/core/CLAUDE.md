@@ -87,6 +87,9 @@ Each v2 stage module follows the same pattern:
   pushed or resumed, the affected stage must pass
   `btcedu regression-run --only-stage` against the three most recent episodes
   of the same profile in the isolated regression workspace.
+- **Imagegen regression selection**: an `--only-stage imagegen` replay selects
+  the most recent profile episodes that have `chapters.json`; episodes that
+  never reached chapterize cannot validate imagegen and are excluded.
 - **Copilot model ids expire**: GitHub retires ids without notice and the CLI
   then aborts with `Model "..." from --model flag is not available`, failing the
   stage. The active producer default is `claude-sonnet-5`. Verify any new id in

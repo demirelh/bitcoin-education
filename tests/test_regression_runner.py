@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 from btcedu.config import Settings
 from btcedu.core.pipeline import StageResult
-from btcedu.core.regression_runner import run_recent_episode_regression
+from btcedu.core.regression_runner import _recent_episode_ids, run_recent_episode_regression
 from btcedu.core.reviewer import _compute_artifact_hash, has_approved_review_for_artifacts
 from btcedu.db import get_session_factory, init_db
 from btcedu.models.episode import Episode, EpisodeStatus
@@ -192,4 +192,42 @@ def test_publish_only_regression_forces_dry_run(tmp_path):
         )
 
     assert result.stages == ["publish"]
+    session.close()
+
+
+def test_imagegen_regression_selects_recent_episodes_with_chapters(tmp_path):
+    database_url = f"sqlite:///{tmp_path / 'production.db'}"
+    init_db(database_url)
+    session = get_session_factory(database_url)()
+    outputs = tmp_path / "outputs"
+    now = datetime.now(UTC)
+
+    for index, episode_id in enumerate(("new-ready", "new-incomplete", "middle", "old")):
+        session.add(
+            Episode(
+                episode_id=episode_id,
+                source="youtube_rss",
+                title=episode_id,
+                url=f"https://example.com/{episode_id}",
+                published_at=now - timedelta(days=index),
+                status=EpisodeStatus.FRAMES_EXTRACTED,
+                pipeline_version=2,
+                content_profile="tagesschau_tr",
+            )
+        )
+        if episode_id != "new-incomplete":
+            episode_dir = outputs / episode_id
+            episode_dir.mkdir(parents=True)
+            (episode_dir / "chapters.json").write_text("{}", encoding="utf-8")
+    session.commit()
+
+    selected = _recent_episode_ids(
+        session,
+        profile="tagesschau_tr",
+        count=3,
+        outputs_dir=str(outputs),
+        required_artifact="chapters.json",
+    )
+
+    assert selected == ["new-ready", "middle", "old"]
     session.close()

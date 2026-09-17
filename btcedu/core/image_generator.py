@@ -292,6 +292,51 @@ def _failed_image_entry(chapter, error: str) -> "ImageEntry":
     )
 
 
+def _generate_pexels_fallback(chapter, output_dir: Path, settings: Settings) -> "ImageEntry":
+    """Download one attributed stock photo when a generative provider is unavailable."""
+    from btcedu.core.stock_images import _derive_search_query
+    from btcedu.services.pexels_service import PexelsService
+
+    service = PexelsService(api_key=settings.pexels_api_key)
+    query = _derive_search_query(chapter, domain_tag="news")
+    result = service.search(
+        query=query,
+        per_page=1,
+        orientation=settings.pexels_orientation,
+    )
+    if not result.photos:
+        raise RuntimeError(f"Pexels returned no fallback image for query {query!r}")
+
+    photo = result.photos[0]
+    filename = f"{chapter.chapter_id}_{_slugify_filename_part(chapter.title)}_pexels.jpg"
+    target_path = output_dir / filename
+    service.download_photo(photo, target_path, size=settings.pexels_download_size)
+
+    return ImageEntry(
+        chapter_id=chapter.chapter_id,
+        chapter_title=chapter.title,
+        visual_type=chapter.visual.type,
+        file_path=f"images/{filename}",
+        prompt=query,
+        generation_method="pexels",
+        model=None,
+        size=f"{photo.width}x{photo.height}",
+        mime_type="image/jpeg",
+        size_bytes=target_path.stat().st_size,
+        metadata={
+            "pexels_id": photo.id,
+            "photographer": photo.photographer,
+            "photographer_url": photo.photographer_url,
+            "source_url": photo.url,
+            "license": "Pexels License (free for commercial use)",
+            "search_query": query,
+            "alt_text": photo.alt,
+            "downloaded_at": _utcnow().isoformat(),
+            "cost_usd": 0.0,
+        },
+    )
+
+
 @dataclass
 class ImageEntry:
     """Metadata for a single generated or placeholder image."""
@@ -736,16 +781,21 @@ def generate_images(
                                 _fallback_provider,
                             )
                             _check_cost_limit(before_call=True)
-                            image_entry = _generate_single_image(
-                                chapter,
-                                image_prompt,
-                                _get_fallback_service(settings, provider=_fallback_provider),
-                                output_dir,
-                                settings,
-                                style_prefix_override=_profile_style_prefix,
-                                smart_routing=False,
-                                branding=_branding_cfg,
-                            )
+                            if _fallback_provider == "pexels":
+                                image_entry = _generate_pexels_fallback(
+                                    chapter, output_dir, settings
+                                )
+                            else:
+                                image_entry = _generate_single_image(
+                                    chapter,
+                                    image_prompt,
+                                    _get_fallback_service(settings, provider=_fallback_provider),
+                                    output_dir,
+                                    settings,
+                                    style_prefix_override=_profile_style_prefix,
+                                    smart_routing=False,
+                                    branding=_branding_cfg,
+                                )
                             total_cost += image_entry.metadata.get("cost_usd", 0.0)
                             _check_cost_limit(before_call=False)
                             generated_count += 1

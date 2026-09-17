@@ -66,9 +66,11 @@ not supported. All v2-only stages are guarded in `_run_stage()`.
 
 Provider choice is profile-owned, not hardcoded. LLM calls go through
 `services/claude_service.call_claude()` (providers: `anthropic`, `openai`,
-`github_models`, `copilot_cli`). Images may route among Flux, Ideogram,
-DALL-E, Gemini or Pexels; TTS uses ElevenLabs; weather cards are rendered
-deterministically (HTML/SVG + headless Chromium), never by an image model.
+`github_models`, `copilot_cli`). `tagesschau_tr` routes primary generation
+through Flux or Ideogram and uses Pexels as the terminal fallback; other
+profiles may route among Flux, Ideogram, DALL-E, Gemini or Pexels. Weather
+cards are rendered deterministically (HTML/SVG + headless Chromium), never by
+an image model. TTS uses ElevenLabs.
 ElevenLabs may hold several accounts (`ELEVENLABS_API_KEY_FALLBACK`); the
 next one is taken up only when the current plan reports its quota spent.
 Generated takes are levelled to −15 LUFS before the noise check reads them and

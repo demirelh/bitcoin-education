@@ -208,6 +208,7 @@ def test_tagesschau_profile_operational_contract():
     assert config["qa"]["quality_gate"]["max_automatic_retries"] == 2
     assert config["adapt"]["mode"] == "conditional"
     assert config["imagegen"]["provider"] == "generative"
+    assert config["imagegen"]["fallback_provider"] == "pexels"
     assert config["tts"]["voice_id"]
     assert config["tts"]["model"] == "eleven_multilingual_v2"
     assert profile.auto_publish is False

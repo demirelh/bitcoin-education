@@ -6,6 +6,11 @@ from pathlib import Path
 
 import requests
 
+from btcedu.services.errors import (
+    classify_error,
+    is_transient,
+    raise_for_status_with_body,
+)
 from btcedu.services.image_gen_service import (
     ImageEditRequest,
     ImageGenRequest,
@@ -118,10 +123,19 @@ class FluxImageService:
                 if r.status_code == 429:
                     time.sleep(2**attempt * 2)
                     continue
-                r.raise_for_status()
+                raise_for_status_with_body(r)
                 return r.json()
             except Exception as e:
                 last_exc = e
+                category = classify_error(e)
+                if not is_transient(category):
+                    # An invalid key or an empty balance fails identically on
+                    # every retry; report it as permanent instead of burning
+                    # two further attempts and calling it a server error.
+                    raise RuntimeError(
+                        f"Flux API rejected the request permanently "
+                        f"[{category.value}]: {e}"
+                    ) from e
                 if attempt < max_retries - 1:
                     logger.warning(f"Flux call failed (attempt {attempt + 1}): {e}, retrying...")
                     time.sleep(2**attempt)

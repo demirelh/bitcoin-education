@@ -11,6 +11,7 @@ from typing import Protocol
 
 import requests
 
+from btcedu.services.errors import ErrorCategory, classify_error
 from btcedu.services.retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
@@ -184,7 +185,9 @@ class DallE3ImageService:
         usage = response_data.get("usage")
         cost = self._compute_cost_from_usage(usage) if usage else self._compute_cost(size, quality)
 
-        logger.info(f"gpt-image-1 generated image: size={size}, quality={quality}, cost=${cost:.3f}")
+        logger.info(
+            f"gpt-image-1 generated image: size={size}, quality={quality}, cost=${cost:.3f}"
+        )
 
         return ImageGenResponse(
             image_url=image_url,
@@ -253,7 +256,9 @@ class DallE3ImageService:
         """
         from openai import APIError, OpenAI, RateLimitError
 
-        client = OpenAI(api_key=self.api_key)
+        # The service owns retrying; SDK retries would multiply paid or
+        # quota-rejected requests (same rule as transcription_service).
+        client = OpenAI(api_key=self.api_key, max_retries=0)
 
         for attempt in range(max_retries):
             try:
@@ -270,6 +275,13 @@ class DallE3ImageService:
                 response = client.images.edit(**kwargs)
                 return response.model_dump()
             except RateLimitError as e:
+                # OpenAI reports an empty credit balance as HTTP 429 with
+                # code "credit_balance_exhausted". Retrying that only rebills
+                # nothing and hides a billing problem behind a rate limit.
+                if classify_error(e) == ErrorCategory.PERMANENT_QUOTA:
+                    raise RuntimeError(
+                        f"DALL-E 2 edit credit balance exhausted (no retry): {e}"
+                    ) from e
                 if attempt < max_retries - 1:
                     wait_time = 2**attempt
                     logger.warning(
@@ -326,7 +338,9 @@ class DallE3ImageService:
         """
         from openai import APIError, OpenAI, RateLimitError
 
-        client = OpenAI(api_key=self.api_key)
+        # The service owns retrying; SDK retries would multiply paid or
+        # quota-rejected requests (same rule as transcription_service).
+        client = OpenAI(api_key=self.api_key, max_retries=0)
 
         for attempt in range(max_retries):
             try:
@@ -339,6 +353,13 @@ class DallE3ImageService:
                 )
                 return response.model_dump()
             except RateLimitError as e:
+                # OpenAI reports an empty credit balance as HTTP 429 with
+                # code "credit_balance_exhausted". Retrying that only rebills
+                # nothing and hides a billing problem behind a rate limit.
+                if classify_error(e) == ErrorCategory.PERMANENT_QUOTA:
+                    raise RuntimeError(
+                        f"gpt-image-1 credit balance exhausted (no retry): {e}"
+                    ) from e
                 if attempt < max_retries - 1:
                     wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
                     logger.warning(

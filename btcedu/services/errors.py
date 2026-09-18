@@ -29,7 +29,9 @@ class ErrorCategory(str, Enum):
 _RATE_LIMIT_PATTERNS = re.compile(r"rate.?limit|429|too.?many.?requests", re.IGNORECASE)
 _QUOTA_PATTERNS = re.compile(
     r"quota[_\s-]?exceeded|insufficient[_\s-]?quota|insufficient.*credits|"
-    r"not enough.*credits|no credits remaining|credit[_\s-]?balance[_\s-]?exhausted",
+    r"not enough.*credits|no credits remaining|credit[_\s-]?balance[_\s-]?exhausted|"
+    r"\b402\b|payment.?required|billing.*(required|hard.?limit)|"
+    r"user is locked|top[_\s-]?up",
     re.IGNORECASE,
 )
 _NETWORK_PATTERNS = re.compile(
@@ -110,6 +112,9 @@ def classify_error(exc: Exception) -> ErrorCategory:
     Uses exception type first, then falls back to message pattern matching.
     """
     status_code = getattr(exc, "status_code", None)
+    if status_code is None:
+        # requests.HTTPError carries the code on its response, not the exception
+        status_code = getattr(getattr(exc, "response", None), "status_code", None)
     error_code = str(
         getattr(exc, "error_code", None) or getattr(exc, "code", None) or ""
     ).lower()
@@ -122,6 +127,8 @@ def classify_error(exc: Exception) -> ErrorCategory:
         return ErrorCategory.PERMANENT_QUOTA
     if status_code == 429:
         return ErrorCategory.TRANSIENT_RATE_LIMIT
+    if status_code == 402:
+        return ErrorCategory.PERMANENT_QUOTA
     if status_code in {401, 403}:
         return ErrorCategory.PERMANENT_AUTH
 
@@ -152,6 +159,25 @@ def classify_error(exc: Exception) -> ErrorCategory:
 def is_transient(category: ErrorCategory) -> bool:
     """Return True if the error category is transient (retryable)."""
     return category in _TRANSIENT_CATEGORIES
+
+
+def raise_for_status_with_body(response, max_body_chars: int = 300) -> None:
+    """Like ``response.raise_for_status()``, but keep the provider's own detail.
+
+    The bare requests message ("403 Client Error: Forbidden for url: ...") hides
+    why a provider refused. fal.ai answers a billing lock with
+    ``{"detail": "User is locked. Reason: TOP_UP."}`` and a 403 — indistinguishable
+    from a bad key unless the body survives into the message that classification
+    and the operator finally see.
+    """
+    import requests
+
+    try:
+        response.raise_for_status()
+    except requests.HTTPError as exc:
+        body = (response.text or "").strip().replace("\n", " ")[:max_body_chars]
+        message = f"{exc} — {body}" if body else str(exc)
+        raise requests.HTTPError(message, response=response) from exc
 
 
 class PipelineError(Exception):

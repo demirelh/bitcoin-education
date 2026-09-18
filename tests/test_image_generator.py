@@ -813,6 +813,35 @@ def test_unresolved_chapter_image_reports_auth_error_not_transient(db_session, t
     assert "ch01" in str(excinfo.value)
 
 
+def test_unresolved_chapter_image_reports_payment_required_as_quota(db_session, tmp_path):
+    """HTTP 402 means the provider account is out of credits. It must not be
+    reported as a transient server error that "usually resolves on its own".
+    """
+    from btcedu.core.image_generator import generate_images
+    from btcedu.services.errors import ErrorCategory, PipelineError, is_transient
+
+    episode_id = "ep_unresolved_payment"
+    settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+
+    with (
+        patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
+        patch("btcedu.core.image_generator._create_media_asset_record"),
+        patch(
+            "btcedu.core.image_generator._generate_single_image",
+            side_effect=RuntimeError(
+                "Ideogram API failed after 3 retries: 402 Client Error: Payment Required "
+                "for url: https://api.ideogram.ai/generate"
+            ),
+        ),
+        pytest.raises(PipelineError) as excinfo,
+    ):
+        generate_images(db_session, episode_id, settings, force=True)
+
+    assert excinfo.value.category == ErrorCategory.PERMANENT_QUOTA
+    assert not is_transient(excinfo.value.category)
+    assert "402" in str(excinfo.value)
+
+
 def test_fallback_provider_rescues_a_failed_chapter_image(db_session, tmp_path):
     """The profile's fallback_provider must actually be used, not just configured."""
     from types import SimpleNamespace

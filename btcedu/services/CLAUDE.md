@@ -29,7 +29,10 @@ Each service uses a Protocol for swappable implementations:
 - `image_provider_factory.py` plus `flux_service.py` / `ideogram_service.py` —
   profile-owned generative image routing. Flux and Ideogram retry transient CDN
   failures while downloading an already-generated (and already-billed) image,
-  as the `dalle3` provider has always done. The `dalle3` provider name is a
+  as the `dalle3` provider has always done. Their `_call_with_retry()` classifies
+  each failure and **fails fast on permanent ones** (401/402/403): retrying an
+  invalid key or an empty balance only delays the stage and disguises a billing
+  problem as a server error. The `dalle3` provider name is a
   routing key, not a live model id: OpenAI retired dall-e-3 for image
   generation, so `image_gen_service.py` now calls `gpt-image-1` underneath it.
 - `image_gen_service.py` — `DallE3ImageService` (name kept for compatibility)
@@ -43,6 +46,10 @@ Each service uses a Protocol for swappable implementations:
   own (`"medium"`/`"high"`, `"1536x1024"`, ...) before the API call. The
   `dall-e-2` edit path (`edit_image()`, used by `frame_editor.py` /
   `frame_extractor.py`) is unrelated and untouched by this migration.
+  OpenAI reports an exhausted balance as **HTTP 429 with code
+  `credit_balance_exhausted`**, so both retry loops classify the error and fail
+  fast instead of treating it as a rate limit; SDK-internal retries are disabled
+  (`max_retries=0`) so one refusal is not multiplied into nine requests.
 - `pexels_service.py` — Pexels stock photo/video search via raw HTTP
 - `meteo_service.py` — Open-Meteo / DWD ICON forecasts via urllib (`OpenMeteoService`, `MeteoService` Protocol). One multi-location request, never raises: failures degrade to an empty list. `_request()` is the seam patched in tests.
 - `notify_service.py` — WhatsApp push for pipeline failures via the local whatsapp-service REST API. Never raises, skipped when disabled or in dry-run.
@@ -51,7 +58,11 @@ Each service uses a Protocol for swappable implementations:
   average transcription episodes remain; recent quota failures force critical.
 - `errors.py` — `ErrorCategory` (incl. `PERMANENT_QUOTA` for exhausted provider credits),
   `is_transient()`, `ERROR_SUGGESTIONS`. Provider quota codes take precedence over
-  generic HTTP 429 rate-limit classification.
+  generic HTTP 429 rate-limit classification. HTTP **402 / "payment required"** is
+  `PERMANENT_QUOTA` and **401/403** is `PERMANENT_AUTH` — never a transient
+  `server_error`, because an empty balance or a rejected key fails identically on
+  every retry. The status code is read from the exception *and* from
+  `exc.response.status_code`, so a bare `requests.HTTPError` classifies correctly.
 - `ffmpeg_service.py` — ffmpeg subprocess wrapper: `normalize_video_clip()`, `create_video_segment()`, `concat_segments()`, `probe_media()`, `generate_test_video()`, `generate_silent_audio()`
 - `youtube_service.py` — target-separated YouTube Data API upload + OAuth.
   Test/production credentials and expected channel IDs are resolved explicitly;
@@ -63,7 +74,8 @@ Each service uses a Protocol for swappable implementations:
 - `transcription_service.py` — provider-neutral OpenAI and local faster-whisper
   transcription, with automatic chunking for large OpenAI inputs. The shared retry
   decorator owns OpenAI retries; SDK retries are disabled to avoid multiplying paid
-  or quota-rejected requests.
+  or quota-rejected requests. Profiles may configure a local fallback that is used
+  only when the primary reports permanent quota exhaustion.
 - `gemini_image_service.py` — Gemini 2.0 Flash image editing via raw HTTP REST API. `edit_image()` -> `GeminiEditResult(image_path, cost_usd)`
 
 ## Conventions

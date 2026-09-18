@@ -962,14 +962,25 @@ def generate_images(
                 for entry in image_entries
                 if entry.chapter_id in unresolved_ids and entry.generation_method == "failed"
             }
-            category = ErrorCategory.TRANSIENT_SERVER
-            for message in failure_messages.values():
-                if not message:
-                    continue
-                chapter_category = classify_error(RuntimeError(message))
-                if not is_transient(chapter_category):
-                    category = chapter_category
-                    break
+            chapter_categories = [
+                classify_error(RuntimeError(message))
+                for message in failure_messages.values()
+                if message
+            ]
+            permanent = [c for c in chapter_categories if not is_transient(c)]
+            # An actionable credential or billing failure outranks a vague
+            # UNKNOWN from another chapter, so the operator is told what to fix.
+            actionable = [
+                c
+                for c in permanent
+                if c in (ErrorCategory.PERMANENT_AUTH, ErrorCategory.PERMANENT_QUOTA)
+            ]
+            if actionable:
+                category = actionable[0]
+            elif permanent:
+                category = permanent[0]
+            else:
+                category = ErrorCategory.TRANSIENT_SERVER
             detail = "; ".join(
                 f"{chapter_id}: {message}"
                 for chapter_id, message in sorted(failure_messages.items())

@@ -354,3 +354,40 @@ class TestRetryOnTransient:
 
         assert my_function.__name__ == "my_function"
         assert my_function.__doc__ == "My docstring."
+
+
+class TestBillingAndAuthClassification:
+    """402/401/403 are operator problems, never transient server errors."""
+
+    def test_payment_required_message_is_quota(self):
+        exc = RuntimeError(
+            "Ideogram API failed after 3 retries: 402 Client Error: "
+            "Payment Required for url: https://api.ideogram.ai/generate"
+        )
+        assert classify_error(exc) == ErrorCategory.PERMANENT_QUOTA
+        assert not is_transient(classify_error(exc))
+
+    def test_forbidden_message_is_auth(self):
+        exc = RuntimeError(
+            "Flux API failed after 3 retries: 403 Client Error: "
+            "Forbidden for url: https://fal.run/fal-ai/flux/dev"
+        )
+        assert classify_error(exc) == ErrorCategory.PERMANENT_AUTH
+
+    def test_http_error_response_status_is_used(self):
+        response = requests.Response()
+        response.status_code = 402
+        exc = requests.HTTPError("client error", response=response)
+        assert classify_error(exc) == ErrorCategory.PERMANENT_QUOTA
+
+    def test_http_error_response_401_is_auth(self):
+        response = requests.Response()
+        response.status_code = 401
+        exc = requests.HTTPError("client error", response=response)
+        assert classify_error(exc) == ErrorCategory.PERMANENT_AUTH
+
+    def test_server_error_stays_transient(self):
+        response = requests.Response()
+        response.status_code = 503
+        exc = requests.HTTPError("service unavailable", response=response)
+        assert is_transient(classify_error(exc))

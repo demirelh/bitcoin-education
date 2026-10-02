@@ -2,6 +2,7 @@
 
 import json
 
+from btcedu.core.editorial.jobs import ModelReplyUnusable
 from btcedu.core.editorial.workflow import ModelReply
 from btcedu.models.editorial_schema import ArticleDraft, ClaimDraft, EvidenceDraft
 
@@ -76,7 +77,12 @@ class EditorialModel:
             provider_override=self.provider,
             model_override=self.model,
         )
-        result = json.loads(response.text)
+        try:
+            result = json.loads(response.text)
+        except json.JSONDecodeError as exc:
+            raise ModelReplyUnusable(
+                f"{payload['task']} reply is not JSON: {exc}", cost_usd=response.cost_usd
+            ) from exc
         return ModelReply(
             result=_unwrapped(result),
             cost_usd=response.cost_usd,

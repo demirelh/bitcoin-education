@@ -898,6 +898,46 @@ def test_rejected_draft_closes_the_provider_operation_and_allows_a_retry(db_sess
     assert article.title == "Berlin'de yeni konutlar"
 
 
+def test_a_refused_draft_call_can_be_retried_but_a_lost_one_cannot(db_session, tmp_path):
+    import httpx2
+    import openai
+
+    revision, run, _ = _pipeline(db_session, tmp_path)
+    request = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
+    error = {"message": "You have no credits remaining.", "code": "credit_balance_exhausted"}
+
+    def refusing(payload):
+        raise openai.RateLimitError(
+            "Error code: 429",
+            response=httpx2.Response(429, request=request, json={"error": error}),
+            body=error,
+        )
+
+    with pytest.raises(openai.RateLimitError):
+        generate_article_revision(
+            db_session, editorial_revision=revision, research_run=run, drafter=refusing
+        )
+    operation = db_session.query(ProviderOperation).filter_by(operation_type="article").one()
+    assert operation.status == "failed"
+
+    def timing_out(payload):
+        raise openai.APITimeoutError(request=request)
+
+    with pytest.raises(openai.APITimeoutError):
+        generate_article_revision(
+            db_session, editorial_revision=revision, research_run=run, drafter=timing_out
+        )
+    db_session.refresh(operation)
+    assert operation.status == "reconcile_required"
+
+    with pytest.raises(Exception, match="reconciliation"):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=lambda payload: _draft(),
+        )
+
 
 def _attribute(db_session, revision, attribution):
     """Attribute the claims after research, not before.

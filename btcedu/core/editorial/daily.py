@@ -29,6 +29,7 @@ from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 
+from btcedu.core.editorial.jobs import provider_account_unusable
 from btcedu.core.editorial.limits import (
     BERLIN,
     BudgetNotApproved,
@@ -61,6 +62,10 @@ class RunOutcome(str, Enum):
     #: question only an editor may answer. Distinct from an error, which sends
     #: an operator hunting for a defect, and from "no topics", which is untrue.
     NEEDS_EDITORIAL_DECISION = "needs_editorial_decision"
+    #: The model provider refused the account itself -- an empty balance or a
+    #: rejected key. Every remaining story would fail the same way, so the run
+    #: stops and leaves them pending instead of spending their retries on it.
+    PROVIDER_UNAVAILABLE = "provider_unavailable"
 
 
 @dataclass
@@ -417,6 +422,21 @@ def run_daily(
                     break
                 except Exception as exc:  # noqa: BLE001 - isolated per story
                     detail = story_failure(exc)
+                    if provider_account_unusable(exc):
+                        logger.error("Model provider refused the account: %s", detail)
+                        report.outcome = RunOutcome.PROVIDER_UNAVAILABLE.value
+                        report.errors.append(detail)
+                        report.stories.append(
+                            StoryResult(
+                                key=item.key,
+                                headline_de=item.story.headline_de,
+                                section=item.section,
+                                status="waiting_for_provider",
+                                detail=detail,
+                            )
+                        )
+                        exhausted = True
+                        break
                     if _needs_editorial_decision(detail):
                         logger.info("Story %s awaits an editorial decision", item.key)
                         processed.record(
@@ -474,6 +494,7 @@ def run_daily(
             if report.outcome not in {
                 RunOutcome.BUDGET_EXHAUSTED.value,
                 RunOutcome.BUDGET_NOT_APPROVED.value,
+                RunOutcome.PROVIDER_UNAVAILABLE.value,
             }:
                 report.outcome = (
                     RunOutcome.SUCCESS.value

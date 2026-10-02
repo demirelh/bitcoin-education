@@ -27,7 +27,11 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from btcedu.core.editorial.jobs import ProviderCallNotAttempted
+from btcedu.core.editorial.jobs import (
+    ModelReplyUnusable,
+    ProviderCallNotAttempted,
+    provider_rejection_status,
+)
 
 BERLIN = ZoneInfo("Europe/Berlin")
 
@@ -270,8 +274,16 @@ class LedgerGuardedModel:
         )
         try:
             reply = self.model(payload)
-        except Exception:
-            self.ledger.abandon(call_id)
+        except ModelReplyUnusable as exc:
+            self.ledger.settle(call_id, actual_usd=exc.cost_usd, outcome="unusable_reply")
+            self._failed_payloads.add(fingerprint)
+            raise
+        except Exception as exc:
+            if provider_rejection_status(exc) is not None:
+                # Refused before any work was done: nothing was billed.
+                self.ledger.settle(call_id, actual_usd=0.0, outcome="rejected")
+            else:
+                self.ledger.abandon(call_id)
             self._failed_payloads.add(fingerprint)
             raise
         self.ledger.settle(call_id, actual_usd=float(getattr(reply, "cost_usd", 0.0) or 0.0))

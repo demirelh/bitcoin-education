@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 from btcedu.core.editorial.article import ArticleContentRejected, generate_article_revision
 from btcedu.core.editorial.ingest import canonical_hash, import_story
 from btcedu.core.editorial.jobs import (
+    ModelReplyUnusable,
     ProviderCallNotAttempted,
+    provider_rejection_status,
     reserve_provider_operation,
     reserve_research_run,
 )
@@ -39,6 +41,14 @@ class ModelReply:
     input_tokens: int = 0
     output_tokens: int = 0
     model: str = ""
+
+
+def _close_decided(operation, *, cost_usd: float, message: str) -> None:
+    """Record a call whose outcome is known; ``failed`` stays retryable."""
+    operation.status = ProviderOperationStatus.FAILED.value
+    operation.actual_cost_usd = cost_usd
+    operation.error_message = message[:500]
+    operation.completed_at = datetime.now(UTC)
 
 
 class BudgetedCaller:
@@ -87,9 +97,19 @@ class BudgetedCaller:
             operation.submitted_at = None
             self.session.commit()
             raise
-        except Exception:
-            operation.status = ProviderOperationStatus.RECONCILE_REQUIRED.value
-            operation.error_message = "Model call failed; outcome requires reconciliation"
+        except ModelReplyUnusable as exc:
+            _close_decided(operation, cost_usd=exc.cost_usd, message=f"Unusable reply: {exc}")
+            self.session.commit()
+            raise
+        except Exception as exc:
+            status = provider_rejection_status(exc)
+            if status is None:
+                operation.status = ProviderOperationStatus.RECONCILE_REQUIRED.value
+                operation.error_message = "Model call failed; outcome requires reconciliation"
+            else:
+                _close_decided(
+                    operation, cost_usd=0.0, message=f"Provider rejected the call (HTTP {status})"
+                )
             self.session.commit()
             raise
         if not math.isfinite(reply.cost_usd) or reply.cost_usd < 0:

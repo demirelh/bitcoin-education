@@ -17,7 +17,12 @@ from datetime import UTC, datetime
 from sqlalchemy.orm import Session
 
 from btcedu.core.editorial.ingest import canonical_hash
-from btcedu.core.editorial.jobs import ProviderCallNotAttempted, reserve_provider_operation
+from btcedu.core.editorial.jobs import (
+    ModelReplyUnusable,
+    ProviderCallNotAttempted,
+    provider_rejection_status,
+    reserve_provider_operation,
+)
 from btcedu.core.editorial.media import approved_revision_media
 from btcedu.models.article import (
     ArticleParagraph,
@@ -686,7 +691,13 @@ def generate_article_revision(
             session.commit()
             raise
         except Exception as exc:
-            operation.status = ProviderOperationStatus.RECONCILE_REQUIRED.value
+            if isinstance(exc, ModelReplyUnusable) or provider_rejection_status(exc):
+                # A refusal or an unusable reply is a known outcome; only a
+                # call whose fate is unknown has to wait for reconciliation.
+                operation.status = ProviderOperationStatus.FAILED.value
+                operation.completed_at = now()
+            else:
+                operation.status = ProviderOperationStatus.RECONCILE_REQUIRED.value
             operation.error_message = str(exc)
             session.commit()
             raise

@@ -105,6 +105,7 @@ nach dem Muster in `deploy/daily-budget.env.example`. Sie wird per
 | `budget_not_approved` | Grenzen stehen auf 0 |
 | `budget_exhausted` | Tagesgrenze im Lauf erreicht |
 | `failed` | Technischer Fehler |
+| `provider_unavailable` | Modellkonto verweigert (kein Guthaben/Schlüssel ungültig); Lauf stoppt, Geschichte wartet ohne Fehlversuch |
 | `already_running` | Ein anderer Lauf hält den Lock |
 
 ## Nebenläufigkeit, Wiederaufnahme, Teilfehler
@@ -252,3 +253,30 @@ each excluded claim, and an open topic-update proposal. The proposal case
 drafts under the broadcast's own new topic — the proposals stay `OPEN`, so
 nothing is merged on a reviewer's behalf. No `EditorialDecision` is ever
 written; a warning is not a signature.
+
+## Known provider outcomes are not uncertain ones (2026-10-01)
+
+Sixteen stories died with "Uncertain model operation requires
+reconciliation". The cause was a classification error, not the guard: on
+2026-09-30 the OpenAI account answered HTTP 429 `credit_balance_exhausted`,
+yet every exception from a model call was filed as `reconcile_required`. The
+retry at 22:30 hit the guard, and after `MAX_STORY_ATTEMPTS` the story was
+gone.
+
+Exceptions are now split by what is actually known (`editorial/jobs.py`):
+
+- **Refused (HTTP 4xx, `provider_rejection_status`)** — the provider answered
+  before doing any work. The operation is closed as `failed` with cost 0 and
+  can be retried; the daily ledger settles it at 0 (`outcome="rejected"`).
+- **Paid but unusable (`ModelReplyUnusable`)** — e.g. a reply that is not
+  JSON. Closed as `failed` at its real price; the price still counts against
+  the run budget (`reserved_cost_usd`) and the daily ledger.
+- **Unknown (timeout, connection loss, 5xx, anything else)** — unchanged:
+  `reconcile_required`, no automatic retry.
+
+An account-level refusal (`provider_account_unusable`: 4xx *and*
+`classify_error` = quota/auth) ends the run with `provider_unavailable`. The
+story is reported as `waiting_for_provider` and is not recorded in
+`ProcessedStories`, so an empty balance no longer burns retry attempts.
+Operations left in `reconcile_required` by earlier runs are not touched
+automatically.

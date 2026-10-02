@@ -26,12 +26,14 @@ OUTCOME_LABELS = {
     RunOutcome.ERROR.value: ("Teknik hata", "error"),
     RunOutcome.ALREADY_RUNNING.value: ("Zaten çalışıyor", "idle"),
     RunOutcome.NEEDS_EDITORIAL_DECISION.value: ("Editör kararı bekleniyor", "blocked"),
+    RunOutcome.PROVIDER_UNAVAILABLE.value: ("Model hesabı kullanılamıyor", "blocked"),
 }
 
 STORY_LABELS = {
     "drafted": "Taslak oluşturuldu",
     "failed": "Başarısız",
     "waiting_for_budget": "Bütçe bekliyor",
+    "waiting_for_provider": "Model hesabı bekleniyor",
     "needs_decision": "Editör kararı bekliyor",
 }
 

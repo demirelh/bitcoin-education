@@ -638,6 +638,43 @@ def test_one_failing_story_does_not_block_the_others(db_session, tmp_path):
     assert report.outcome == RunOutcome.SUCCESS.value
 
 
+def test_an_empty_model_account_stops_the_run_without_spending_retries(db_session, tmp_path):
+    """No credits is the account's problem, not the story's: the story waits."""
+    import httpx2
+    import openai
+
+    outputs = _outputs(tmp_path, count=2)
+    paths, settings, caller, _, publisher = _harness(db_session, tmp_path)
+    attempts = []
+    request = httpx2.Request("POST", "https://api.openai.com/v1/chat/completions")
+    error = {"message": "You have no credits remaining.", "code": "credit_balance_exhausted"}
+
+    def no_credits(**kwargs):
+        attempts.append(kwargs["selected"].key)
+        raise openai.RateLimitError(
+            "Error code: 429",
+            response=httpx2.Response(429, request=request, json={"error": error}),
+            body=error,
+        )
+
+    report = run_daily(
+        paths=paths,
+        limits=DailyLimits(budget_usd=1.0, max_calls=40, max_stories=2),
+        outputs_dir=outputs,
+        settings_factory=lambda _p: settings,
+        model_factory=lambda _s: caller,
+        drafter=no_credits,
+        publisher=publisher,
+        today=date(2026, 9, 11),
+        now=datetime(2026, 9, 11, 21, 30),
+    )
+
+    assert report.outcome == RunOutcome.PROVIDER_UNAVAILABLE.value
+    assert [item.status for item in report.stories] == ["waiting_for_provider"]
+    assert len(attempts) == 1
+    assert ProcessedStories(paths.processed).status(attempts[0]) == ("", 0)
+
+
 def test_a_story_that_keeps_failing_is_eventually_left_alone(tmp_path):
     """Retrying a deterministic rejection forever is the expensive way to fail."""
     outputs = _outputs(tmp_path, count=1)

@@ -33,6 +33,52 @@ class ProviderCallNotAttempted(RuntimeError):
     """
 
 
+class ModelReplyUnusable(RuntimeError):
+    """The provider answered and billed, but the answer could not be used.
+
+    The outcome is known -- a reply arrived and its cost with it -- so there is
+    nothing to reconcile. Calling it uncertain would block every later attempt
+    on a call whose bill is already on record.
+    """
+
+    def __init__(self, message: str, *, cost_usd: float) -> None:
+        super().__init__(message)
+        self.cost_usd = cost_usd
+
+
+def provider_rejection_status(exc: BaseException) -> int | None:
+    """HTTP status of a request the provider answered with a refusal.
+
+    A 4xx answer means the provider received the request and declined it: no
+    completion was produced and nothing was billed, so a later retry can
+    neither duplicate work nor a charge. Timeouts, dropped connections and 5xx
+    answers return ``None`` -- their outcome is genuinely unknown.
+    """
+    for candidate in (exc, exc.__cause__):
+        if candidate is None:
+            continue
+        status = getattr(candidate, "status_code", None)
+        if status is None:
+            status = getattr(getattr(candidate, "response", None), "status_code", None)
+        if isinstance(status, int) and 400 <= status < 500:
+            return status
+    return None
+
+
+def provider_account_unusable(exc: BaseException) -> bool:
+    """The provider refused because of the account, not the request.
+
+    An empty balance or a rejected key fails every following call the same
+    way, so the right response is to stop the run, not to spend each story's
+    retry allowance on it.
+    """
+    from btcedu.services.errors import ErrorCategory, classify_error
+
+    if provider_rejection_status(exc) is None:
+        return False
+    return classify_error(exc) in {ErrorCategory.PERMANENT_QUOTA, ErrorCategory.PERMANENT_AUTH}
+
+
 _BUDGETED_STATUSES = frozenset(
     {
         ProviderOperationStatus.RESERVED.value,
@@ -108,11 +154,18 @@ def reserved_cost_usd(session: Session, research_run_id: int) -> float:
         .filter(ProviderOperation.research_run_id == research_run_id)
         .all()
     )
+    # A failed call that was nevertheless billed (an unusable reply) still
+    # spent the money; a refused or never-sent one carries no actual cost.
     return float(
         sum(
             actual if actual is not None else estimate
             for status, estimate, actual in rows
             if status in _BUDGETED_STATUSES
+        )
+        + sum(
+            actual
+            for status, _estimate, actual in rows
+            if status == ProviderOperationStatus.FAILED.value and actual
         )
     )
 

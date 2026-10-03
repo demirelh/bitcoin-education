@@ -372,3 +372,32 @@ story is reported as `waiting_for_provider` and is not recorded in
 `ProcessedStories`, so an empty balance no longer burns retry attempts.
 Operations left in `reconcile_required` by earlier runs are not touched
 automatically.
+
+## Bekannter Defekt: themenfremde Treffer aus der freien Quellensuche (2026-10-03)
+
+Im Lauf vom 2026-10-03 (`research_run_id` 100) lieferte die Suche für den Claim
+`filialen_bleiben_geoeffnet` der Galleria-Insolvenz zwei Wikipedia-Artikel über
+eine Turiner Gemäldegalerie (*Hans Memling*) und ein Triester Museum (*Triest*).
+Die Belegprüfung hat beide korrekt als `inconclusive` eingestuft und das auch
+begründet — das Belegtor arbeitet also richtig. Der Defekt sitzt davor, in
+`btcedu/services/free_search.py`:
+
+1. Die Volltextsuche der MediaWiki-API trifft auf das beiläufige italienische
+   Wort „Galleria". Die Lockerungsschleife in `FreeNewsSearchProvider.search()`
+   bricht ab, sobald ein **zweiter Herausgeber überhaupt etwas** geantwortet
+   hat. Ein themenfremder Lexikonartikel beendet damit die Suche und erscheint
+   als unabhängige Zweitquelle.
+2. `_wikipedia()` schreibt den MediaWiki-`timestamp` — den Zeitpunkt der
+   **letzten Bearbeitung** — in `published_at`, dasselbe Feld, in dem ein
+   Nachrichtenartikel sein Erscheinungsdatum führt. Ein Artikel über ein Museum
+   des 19. Jahrhunderts, zuletzt vor zehn Tagen bearbeitet, sieht nachgelagert
+   aus wie zehn Tage alte Berichterstattung.
+
+Der Fall ist in `tests/test_free_search.py` offline reproduzierbar festgehalten:
+`test_the_galleria_query_really_does_return_unrelated_wikipedia_articles`
+sichert die Reproduktion selbst, die beiden `xfail(strict=True)`-Tests
+beschreiben das gewünschte Verhalten. Wird einer der Defekte behoben, schlägt
+sein strikter `xfail` um und der Marker ist zu entfernen.
+
+Die Behebung steht aus; sie erfordert keine Modellaufrufe, aber eine
+inhaltliche Entscheidung über Trefferfilterung und Datumssemantik.

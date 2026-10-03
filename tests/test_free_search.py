@@ -154,3 +154,108 @@ def test_the_adapter_costs_nothing(tmp_path):
 
     provider = FreeNewsSearchProvider(_Fetcher(tmp_path, responses))
     assert provider.search("Thema", count=4).cost_usd == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Recorded defect: the Galleria query answered with unrelated encyclopedia
+# articles.
+#
+# Live run 2026-10-03, research_run_id 100, news_research_queries rows 674/675.
+# The claim under research was `filialen_bleiben_geoeffnet` from the Galleria
+# insolvency story. Both the support and the counter query came back with two
+# de.wikipedia.org hits about a Turin picture gallery ("Hans Memling") and a
+# Trieste museum ("Triest"). The payloads below are those recorded responses,
+# so the reproduction needs no network and no provider call.
+#
+# The evaluator did the right thing with them and recorded `inconclusive`, so
+# the evidence gate is not what is broken here. Two separate defects in this
+# adapter are:
+#
+#   1. Wikipedia's full-text index matches the incidental Italian word
+#      "Galleria", and the loosening loop in `search()` stops as soon as a
+#      second publisher has answered *anything*. An off-topic encyclopedia hit
+#      therefore ends the search and is presented as an independent second
+#      source.
+#   2. `_wikipedia()` maps MediaWiki's `timestamp` -- the last *revision* time
+#      -- onto `published_at`, the same field a news article fills with its
+#      publication date. A 19th-century museum article last edited ten days
+#      ago is handed downstream looking like ten-day-old reporting.
+#
+# The two xfail tests below state the intended behaviour. When either is
+# fixed, its strict xfail turns into a failure and must be removed.
+# ---------------------------------------------------------------------------
+
+#: `news_research_queries` row 674, verbatim.
+_GALLERIA_WIKIPEDIA_HITS = {
+    "query": {
+        "search": [
+            {
+                "title": "Triest",
+                "snippet": (
+                    "Museum Revoltella – Galerie für Moderne Kunst (Civico Museo "
+                    "Revoltella – Galleria d’Arte Moderna) ist eines der größten "
+                    "und bedeutendsten Museen der Stadt"
+                ),
+                "timestamp": "2026-09-23T11:04:00Z",
+            },
+            {
+                "title": "Hans Memling",
+                "snippet": (
+                    "den Flügeln der Stifter Bürgermeister Moreel mit seiner Familie "
+                    "In der Galleria Sabauda in Turin befindet sich eine Tafel, die in "
+                    "verschiedenen kleinen"
+                ),
+                "timestamp": "2026-10-03T08:12:00Z",
+            },
+        ]
+    }
+}
+
+_GALLERIA_CLAIM = "Galleria-Filialen Vorerst bleiben die Filialen geöffnet."
+
+
+def _galleria_responses(url, term):
+    """tagesschau has nothing on it; Wikipedia answers every variant."""
+    if "tagesschau" in url:
+        return {"searchResults": []}
+    return _GALLERIA_WIKIPEDIA_HITS
+
+
+def test_the_galleria_query_really_does_return_unrelated_wikipedia_articles(tmp_path):
+    """Pins the reproduction itself, so it cannot rot away unnoticed."""
+    provider = FreeNewsSearchProvider(_Fetcher(tmp_path, _galleria_responses))
+    result = provider.search(_GALLERIA_CLAIM, language="de", count=8)
+
+    titles = {hit.title for hit in result.hits}
+    assert titles == {"Triest", "Hans Memling"}
+    assert all(hit.publisher == "de.wikipedia.org" for hit in result.hits)
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Defect: a Wikipedia hit that matches only on the incidental word "
+        "'Galleria' is handed to the research step as evidence for a German "
+        "department-store insolvency."
+    ),
+)
+def test_an_off_topic_encyclopedia_hit_is_not_offered_as_evidence(tmp_path):
+    provider = FreeNewsSearchProvider(_Fetcher(tmp_path, _galleria_responses))
+    result = provider.search(_GALLERIA_CLAIM, language="de", count=8)
+
+    assert result.hits == ()
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Defect: MediaWiki's last-revision timestamp is written into "
+        "published_at, so an encyclopedia article looks like recent reporting."
+    ),
+)
+def test_a_wikipedia_revision_date_is_not_passed_off_as_a_publication_date(tmp_path):
+    provider = FreeNewsSearchProvider(_Fetcher(tmp_path, _galleria_responses))
+    result = provider.search(_GALLERIA_CLAIM, language="de", count=8)
+
+    by_title = {hit.title: hit for hit in result.hits}
+    assert by_title["Triest"].published_at is None

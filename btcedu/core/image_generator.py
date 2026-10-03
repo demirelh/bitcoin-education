@@ -1,4 +1,4 @@
-"""Image generation: Create visual assets from chapter JSON via DALL-E 3."""
+"""Image generation: Create visual assets from chapter JSON via gpt-image-1 (formerly DALL-E 3)."""
 
 import fcntl
 import hashlib
@@ -21,7 +21,7 @@ from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
 from btcedu.models.media_asset import MediaAsset, MediaAssetType
 from btcedu.services.claude_service import call_claude
-from btcedu.services.errors import ErrorCategory, PipelineError
+from btcedu.services.errors import ErrorCategory, PipelineError, classify_error, is_transient
 from btcedu.services.image_gen_service import (
     ImageGenRequest,
     ImageGenResponse,
@@ -289,6 +289,51 @@ def _failed_image_entry(chapter, error: str) -> "ImageEntry":
         mime_type="image/png",
         size_bytes=0,
         metadata={"error": error},
+    )
+
+
+def _generate_pexels_fallback(chapter, output_dir: Path, settings: Settings) -> "ImageEntry":
+    """Download one attributed stock photo when a generative provider is unavailable."""
+    from btcedu.core.stock_images import _derive_search_query
+    from btcedu.services.pexels_service import PexelsService
+
+    service = PexelsService(api_key=settings.pexels_api_key)
+    query = _derive_search_query(chapter, domain_tag="news")
+    result = service.search(
+        query=query,
+        per_page=1,
+        orientation=settings.pexels_orientation,
+    )
+    if not result.photos:
+        raise RuntimeError(f"Pexels returned no fallback image for query {query!r}")
+
+    photo = result.photos[0]
+    filename = f"{chapter.chapter_id}_{_slugify_filename_part(chapter.title)}_pexels.jpg"
+    target_path = output_dir / filename
+    service.download_photo(photo, target_path, size=settings.pexels_download_size)
+
+    return ImageEntry(
+        chapter_id=chapter.chapter_id,
+        chapter_title=chapter.title,
+        visual_type=chapter.visual.type,
+        file_path=f"images/{filename}",
+        prompt=query,
+        generation_method="pexels",
+        model=None,
+        size=f"{photo.width}x{photo.height}",
+        mime_type="image/jpeg",
+        size_bytes=target_path.stat().st_size,
+        metadata={
+            "pexels_id": photo.id,
+            "photographer": photo.photographer,
+            "photographer_url": photo.photographer_url,
+            "source_url": photo.url,
+            "license": "Pexels License (free for commercial use)",
+            "search_query": query,
+            "alt_text": photo.alt,
+            "downloaded_at": _utcnow().isoformat(),
+            "cost_usd": 0.0,
+        },
     )
 
 
@@ -736,16 +781,21 @@ def generate_images(
                                 _fallback_provider,
                             )
                             _check_cost_limit(before_call=True)
-                            image_entry = _generate_single_image(
-                                chapter,
-                                image_prompt,
-                                _get_fallback_service(settings, provider=_fallback_provider),
-                                output_dir,
-                                settings,
-                                style_prefix_override=_profile_style_prefix,
-                                smart_routing=False,
-                                branding=_branding_cfg,
-                            )
+                            if _fallback_provider == "pexels":
+                                image_entry = _generate_pexels_fallback(
+                                    chapter, output_dir, settings
+                                )
+                            else:
+                                image_entry = _generate_single_image(
+                                    chapter,
+                                    image_prompt,
+                                    _get_fallback_service(settings, provider=_fallback_provider),
+                                    output_dir,
+                                    settings,
+                                    style_prefix_override=_profile_style_prefix,
+                                    smart_routing=False,
+                                    branding=_branding_cfg,
+                                )
                             total_cost += image_entry.metadata.get("cost_usd", 0.0)
                             _check_cost_limit(before_call=False)
                             generated_count += 1
@@ -858,7 +908,7 @@ def generate_images(
             "prompt_version": prompt_version.version,
             "prompt_hash": prompt_content_hash,
             "model": settings.claude_model,
-            "image_gen_model": getattr(settings, "image_gen_model", "dall-e-3"),
+            "image_gen_model": getattr(settings, "image_gen_model", "gpt-image-1"),
             "input_files": [str(chapters_path)],
             "input_content_hash": chapters_hash,
             "output_files": [str(manifest_path)]
@@ -901,11 +951,37 @@ def generate_images(
             or not (output_dir.parent / entry.file_path).exists()
         ]
         if unresolved:
-            raise PipelineError(
-                "Image generation left chapter(s) without a usable picture: "
-                f"{', '.join(sorted(set(unresolved)))}. Rerun imagegen to regenerate them.",
-                ErrorCategory.TRANSIENT_SERVER,
+            unresolved_ids = sorted(set(unresolved))
+            # The per-chapter error (provider auth failure, quota exhaustion,
+            # transient 5xx, ...) is recorded in the failed entry's metadata.
+            # Re-classify it instead of always reporting a transient server
+            # error: a 401/403 from every provider needs a credential fix, not
+            # an automatic retry that will fail identically forever.
+            failure_messages = {
+                entry.chapter_id: entry.metadata.get("error")
+                for entry in image_entries
+                if entry.chapter_id in unresolved_ids and entry.generation_method == "failed"
+            }
+            category = ErrorCategory.TRANSIENT_SERVER
+            for message in failure_messages.values():
+                if not message:
+                    continue
+                chapter_category = classify_error(RuntimeError(message))
+                if not is_transient(chapter_category):
+                    category = chapter_category
+                    break
+            detail = "; ".join(
+                f"{chapter_id}: {message}"
+                for chapter_id, message in sorted(failure_messages.items())
+                if message
             )
+            message = (
+                "Image generation left chapter(s) without a usable picture: "
+                f"{', '.join(unresolved_ids)}. Rerun imagegen to regenerate them."
+            )
+            if detail:
+                message += f" Details — {detail}"
+            raise PipelineError(message, category)
 
         # Create ContentArtifact record
         artifact = ContentArtifact(
@@ -1330,7 +1406,7 @@ def _generate_single_image(
 
     request = ImageGenRequest(
         prompt=image_prompt,
-        model=getattr(settings, "image_gen_model", "dall-e-3"),
+        model=getattr(settings, "image_gen_model", "gpt-image-1"),
         size=getattr(settings, "image_gen_size", "1792x1024"),
         quality=getattr(settings, "image_gen_quality", "standard"),
         style_prefix=effective_prefix,

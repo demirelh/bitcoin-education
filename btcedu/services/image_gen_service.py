@@ -1,5 +1,8 @@
-"""Image generation service abstraction with DALL-E 3 implementation."""
+"""Image generation service abstraction. Primary generation uses gpt-image-1
+(OpenAI retired dall-e-3 for image generation; see class docstring below).
+"""
 
+import base64
 import logging
 import time
 from dataclasses import dataclass
@@ -12,16 +15,58 @@ from btcedu.services.retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
 
-# DALL-E 3 pricing (as of 2025)
-DALLE3_COST_STANDARD_1024 = 0.040  # $0.040 per image (1024x1024)
-DALLE3_COST_STANDARD_1792 = 0.080  # $0.080 per image (1792x1024 or 1024x1792)
-DALLE3_COST_HD_1024 = 0.080  # $0.080 per image (1024x1024 HD)
-DALLE3_COST_HD_1792 = 0.120  # $0.120 per image (1792x1024 or 1024x1792 HD)
+# gpt-image-1 is billed by token, not by a flat per-image price. These
+# per-token rates come straight from the "usage" block OpenAI returns with
+# every response, so cost tracking survives future per-token price changes
+# without a code edit (only these three constants would need updating).
+GPT_IMAGE_OUTPUT_COST_PER_TOKEN = 40.0 / 1_000_000  # image (output) tokens
+GPT_IMAGE_TEXT_INPUT_COST_PER_TOKEN = 5.0 / 1_000_000  # text prompt tokens
+GPT_IMAGE_IMAGE_INPUT_COST_PER_TOKEN = 10.0 / 1_000_000  # reference image tokens
 
-# DALL-E 2 edit pricing (as of 2025)
+# gpt-image-1 quality values, keyed by the legacy dall-e-3 "standard"/"hd"
+# vocabulary still used throughout the profile configs and Settings defaults.
+_GPT_IMAGE_QUALITY_MAP = {"standard": "medium", "hd": "high"}
+_GPT_IMAGE_VALID_QUALITIES = {"low", "medium", "high", "auto"}
+
+# gpt-image-1 only accepts these three sizes (plus "auto"); anything else
+# (e.g. the legacy dall-e-3 "1792x1024") is mapped to the closest orientation.
+_GPT_IMAGE_VALID_SIZES = {"1024x1024", "1024x1536", "1536x1024", "auto"}
+
+# Approximate flat-rate fallback (USD/image) if a response ever lacks a usage
+# block; the token-based _compute_cost_from_usage() above is preferred.
+_GPT_IMAGE_FALLBACK_COST_BY_QUALITY = {
+    "low": 0.011,
+    "medium": 0.042,
+    "high": 0.167,
+    "auto": 0.042,
+}
+
+# DALL-E 2 edit pricing (as of 2025). The edit endpoint (frame_editor.py,
+# frame_extractor.py) is unaffected by the gpt-image-1 migration above.
 DALLE2_EDIT_COST_256 = 0.016  # $0.016 per image (256x256)
 DALLE2_EDIT_COST_512 = 0.018  # $0.018 per image (512x512)
 DALLE2_EDIT_COST_1024 = 0.020  # $0.020 per image (1024x1024)
+
+
+def _gpt_image_quality(quality: str) -> str:
+    """Map a "standard"/"hd" (or already-valid) quality value to gpt-image-1's."""
+    quality = (quality or "").lower()
+    if quality in _GPT_IMAGE_VALID_QUALITIES:
+        return quality
+    return _GPT_IMAGE_QUALITY_MAP.get(quality, "medium")
+
+
+def _gpt_image_size(size: str) -> str:
+    """Map a requested size to one gpt-image-1 actually supports."""
+    if size in _GPT_IMAGE_VALID_SIZES:
+        return size
+    try:
+        width, height = (int(part) for part in size.lower().split("x"))
+    except (ValueError, AttributeError):
+        return "auto"
+    if width == height:
+        return "1024x1024"
+    return "1536x1024" if width > height else "1024x1536"
 
 
 @dataclass
@@ -40,9 +85,9 @@ class ImageGenRequest:
     """Request for image generation."""
 
     prompt: str
-    model: str = "dall-e-3"
-    size: str = "1792x1024"  # DALL-E 3 landscape (closest to 1920x1080)
-    quality: str = "standard"  # "standard" or "hd"
+    model: str = "gpt-image-1"
+    size: str = "1536x1024"  # gpt-image-1 landscape (closest to 1920x1080)
+    quality: str = "standard"  # legacy vocabulary; mapped to gpt-image-1's own
     style_prefix: str = ""  # Brand guidelines prefix
 
 
@@ -70,21 +115,27 @@ class ImageGenService(Protocol):
 
 
 class DallE3ImageService:
-    """DALL-E 3 image generation service."""
+    """Primary generative image service (gpt-image-1). Kept as
+    ``DallE3ImageService`` — the pre-existing class name callers, the image
+    provider factory and tests all reference — even though OpenAI retired the
+    dall-e-3 model this class originally wrapped; only the API model id,
+    quality/size vocabulary and response decoding changed.
+    """
 
     def __init__(
         self,
         api_key: str,
-        default_size: str = "1792x1024",
+        default_size: str = "1536x1024",
         default_quality: str = "standard",
         style_prefix: str = "",
     ):
-        """Initialize DALL-E 3 service.
+        """Initialize the image generation service.
 
         Args:
             api_key: OpenAI API key
-            default_size: Default image size ("1792x1024", "1024x1792", or "1024x1024")
-            default_quality: Default quality ("standard" or "hd")
+            default_size: Default image size ("1536x1024", "1024x1536", or "1024x1024")
+            default_quality: Default quality ("standard" or "hd"; mapped to gpt-image-1's
+                own "medium"/"high" vocabulary)
             style_prefix: Optional prefix to prepend to all prompts for style consistency
         """
         self.api_key = api_key
@@ -93,7 +144,7 @@ class DallE3ImageService:
         self.style_prefix = style_prefix
 
     def generate_image(self, request: ImageGenRequest) -> ImageGenResponse:
-        """Generate image using DALL-E 3.
+        """Generate an image using gpt-image-1.
 
         Args:
             request: Image generation request
@@ -107,25 +158,33 @@ class DallE3ImageService:
         # Prepend style prefix if configured
         full_prompt = self.style_prefix + request.prompt if self.style_prefix else request.prompt
 
-        # Use request params or defaults
-        size = request.size or self.default_size
-        quality = request.quality or self.default_quality
+        # Use request params or defaults, translated to gpt-image-1's vocabulary
+        size = _gpt_image_size(request.size or self.default_size)
+        quality = _gpt_image_quality(request.quality or self.default_quality)
 
-        # Call DALL-E 3 with retry logic
+        # Call gpt-image-1 with retry logic
         response_data = self._call_dalle3_with_retry(
             prompt=full_prompt,
             size=size,
             quality=quality,
         )
 
-        # Extract response data
-        image_url = response_data["data"][0]["url"]
-        revised_prompt = response_data["data"][0].get("revised_prompt", request.prompt)
+        # Extract response data. gpt-image-1 only ever returns b64_json, never
+        # a hosted url; encode it as a data: URI so download_image() (which
+        # every provider shares) can write it out without a network request.
+        entry = response_data["data"][0]
+        image_url = entry.get("url")
+        if not image_url:
+            image_url = f"data:image/png;base64,{entry['b64_json']}"
+        revised_prompt = entry.get("revised_prompt", request.prompt)
 
-        # Compute cost
-        cost = self._compute_cost(size, quality)
+        # Compute cost from the token usage OpenAI actually billed, when
+        # present (gpt-image-1); otherwise fall back to the flat per-image
+        # table (older dall-e-3-style responses).
+        usage = response_data.get("usage")
+        cost = self._compute_cost_from_usage(usage) if usage else self._compute_cost(size, quality)
 
-        logger.info(f"DALL-E 3 generated image: size={size}, quality={quality}, cost=${cost:.3f}")
+        logger.info(f"gpt-image-1 generated image: size={size}, quality={quality}, cost=${cost:.3f}")
 
         return ImageGenResponse(
             image_url=image_url,
@@ -251,12 +310,12 @@ class DallE3ImageService:
     def _call_dalle3_with_retry(
         self, prompt: str, size: str, quality: str, max_retries: int = 3
     ) -> dict:
-        """Call DALL-E 3 API with exponential backoff retry.
+        """Call gpt-image-1 with exponential backoff retry.
 
         Args:
             prompt: Image generation prompt
-            size: Image size
-            quality: Image quality
+            size: Image size (already translated to a gpt-image-1 size)
+            quality: Image quality (already translated to a gpt-image-1 quality)
             max_retries: Maximum number of retry attempts
 
         Returns:
@@ -272,7 +331,7 @@ class DallE3ImageService:
         for attempt in range(max_retries):
             try:
                 response = client.images.generate(
-                    model="dall-e-3",
+                    model="gpt-image-1",
                     prompt=prompt,
                     size=size,
                     quality=quality,
@@ -283,57 +342,81 @@ class DallE3ImageService:
                 if attempt < max_retries - 1:
                     wait_time = 2**attempt  # Exponential backoff: 1s, 2s, 4s
                     logger.warning(
-                        f"DALL-E 3 rate limit hit (attempt {attempt + 1}/{max_retries}), "
+                        f"gpt-image-1 rate limit hit (attempt {attempt + 1}/{max_retries}), "
                         f"retrying in {wait_time}s..."
                     )
                     time.sleep(wait_time)
                 else:
                     raise RuntimeError(
-                        f"DALL-E 3 rate limit exceeded after {max_retries} retries"
+                        f"gpt-image-1 rate limit exceeded after {max_retries} retries"
                     ) from e
             except APIError as e:
                 error_msg = str(e).lower()
                 if "content_policy_violation" in error_msg or "safety system" in error_msg:
                     raise RuntimeError(
-                        f"DALL-E 3 rejected prompt due to content policy: {prompt[:100]}..."
+                        f"gpt-image-1 rejected prompt due to content policy: {prompt[:100]}..."
                     ) from e
-                raise RuntimeError(f"DALL-E 3 API error: {e}") from e
+                raise RuntimeError(f"gpt-image-1 API error: {e}") from e
 
-        raise RuntimeError(f"DALL-E 3 call failed after {max_retries} attempts")
+        raise RuntimeError(f"gpt-image-1 call failed after {max_retries} attempts")
+
+    def _compute_cost_from_usage(self, usage: dict) -> float:
+        """Compute the actually-billed cost from gpt-image-1's usage block.
+
+        Preferred over a flat per-image table: it reflects exactly what
+        OpenAI charged for this call and survives future per-token price
+        changes without a code edit (only the three GPT_IMAGE_*_COST_PER_TOKEN
+        constants would need updating).
+        """
+        output_tokens = usage.get("output_tokens", 0) or 0
+        input_details = usage.get("input_tokens_details") or {}
+        text_tokens = input_details.get("text_tokens", 0) or 0
+        image_tokens = input_details.get("image_tokens", 0) or 0
+        return (
+            output_tokens * GPT_IMAGE_OUTPUT_COST_PER_TOKEN
+            + text_tokens * GPT_IMAGE_TEXT_INPUT_COST_PER_TOKEN
+            + image_tokens * GPT_IMAGE_IMAGE_INPUT_COST_PER_TOKEN
+        )
 
     def _compute_cost(self, size: str, quality: str) -> float:
-        """Compute cost based on size and quality.
+        """Fallback flat-rate estimate, used only if a response has no usage
+        block (should not happen for gpt-image-1, kept defensively).
 
         Args:
-            size: Image size (e.g., "1792x1024")
-            quality: Image quality ("standard" or "hd")
+            size: Image size (e.g., "1536x1024")
+            quality: Image quality ("low", "medium", "high", or "auto")
 
         Returns:
             Cost in USD
         """
-        if quality == "hd":
-            return DALLE3_COST_HD_1792 if "1792" in size else DALLE3_COST_HD_1024
-        else:
-            return DALLE3_COST_STANDARD_1792 if "1792" in size else DALLE3_COST_STANDARD_1024
+        return _GPT_IMAGE_FALLBACK_COST_BY_QUALITY.get(quality, 0.042)
 
     @staticmethod
     @retry_on_transient(max_retries=3, base_delay=1.0)
     def download_image(url: str, target_path: Path) -> Path:
-        """Download image from URL to local file.
+        """Write an image to local disk from either a hosted URL or a
+        ``data:`` URI (gpt-image-1 only ever returns inline base64 data).
 
         Args:
-            url: Image URL from API
+            url: Image URL or ``data:image/...;base64,...`` URI from the API
             target_path: Local file path to save image
 
         Returns:
             Path to saved image file
 
         Raises:
-            requests.HTTPError: If download fails
+            requests.HTTPError: If a network download fails
         """
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        if url.startswith("data:"):
+            _, _, encoded = url.partition(",")
+            raw_bytes = base64.b64decode(encoded)
+            target_path.write_bytes(raw_bytes)
+            logger.info(f"Wrote inline image to {target_path} ({len(raw_bytes)} bytes)")
+            return target_path
+
         response = requests.get(url, timeout=30)
         response.raise_for_status()
-        target_path.parent.mkdir(parents=True, exist_ok=True)
         target_path.write_bytes(response.content)
         logger.info(f"Downloaded image to {target_path} ({len(response.content)} bytes)")
         return target_path

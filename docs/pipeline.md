@@ -66,7 +66,7 @@ türkische YouTube-Videos umwandeln.
 | 12 | review_gate_2      | ✅   | Python-Prüfer, danach **GPT-5.6 Sol** (via Copilot CLI) | Zuerst deterministische Translation-QA ohne API-Kosten; danach unabhängige LLM-Zweitmeinung TR vs. DE-Quelle. Findings fließen beim Re-Run in translate/adapt zurück |
 | 13 | **chapterize**     | ✅   | **Claude Sonnet 4.5**                    | Erzeugt ChapterDocument: Kapitel, Narrationstext, Visual-Vorgaben, Overlays |
 | 14 | **frameextract**   | –    | ffmpeg                                   | Keyframes aus dem Quellvideo |
-| 15 | **imagegen**       | ✅   | **Ideogram + Flux + DALL-E 3** (Routing) | Pro Kapitel ein Bild: Ideogram (Text/Karten/Infografik), Flux (photoreal b_roll), DALL-E 3 (Fallback) |
+| 15 | **imagegen**       | ✅   | **Ideogram / Flux, Pexels-Fallback** | Generiert pro Kapitel ein Bild; bei einem permanenten Providerfehler wird ein attribuiertes Pexels-Stockbild verwendet |
 | 16 | review_gate_stock  | –    | –                                        | Auto-approve |
 | 17 | **tts**            | ✅   | **ElevenLabs `eleven_turbo_v2_5`**, Stimme „Irem" | Türkische Sprachsynthese pro Kapitel |
 | 18 | **anchorgen**      | (✅) | **D-ID** (Talking-Head)                  | Avatar-Video — **aktuell No-Op** (kein D-ID-Key gesetzt) |
@@ -91,7 +91,8 @@ türkische YouTube-Videos umwandeln.
 - **GPT-5.6 Sol** (über Copilot CLI) → QA-Zweitmeinung (Stage 12) — bewusst ein
   **anderes** Modell als der Produzent, damit es dessen systematische Fehler
   unabhängig erkennt (Cross-Check)
-- **Ideogram / Flux / DALL-E 3** → Bildgenerierung (Stage 13)
+- **Ideogram / Flux** → primäre Bildgenerierung; **Pexels** → terminaler
+  Stockbild-Fallback (Stage 15)
 - **ElevenLabs turbo v2.5** (Stimme „Irem") → TTS (Stage 15)
 - **D-ID** → Avatar (Stage 16, deaktiviert)
 
@@ -100,10 +101,9 @@ türkische YouTube-Videos umwandeln.
 ## Wichtige Design-Hinweise
 
 - **Konfig-Präzedenz:** Das Profil (`btcedu/profiles/tagesschau_tr.yaml`)
-  überschreibt die `.env`. Deshalb ist imagegen **generativ**
-  (Ideogram/Flux/DALL-E), obwohl `.env` `pexels` sagt; Gemini-Frame-Editing ist
-  konfiguriert, aber für dieses Profil **inaktiv** (nur bei
-  `provider: gemini_frame_edit` aktiv).
+  überschreibt die `.env`. Imagegen verwendet für dieses Profil generatives
+  Flux-/Ideogram-Routing und fällt bei Providerfehlern auf Pexels zurück;
+  Gemini-Frame-Editing ist inaktiv.
 - **Kostenschutz:** Guard pro Episode (`max_episode_cost_usd`, Default $10).
 - **Robustheit:** Refusal-Retry (leerer/verweigerter LLM-Output → Reframe-Retry
   → Anthropic-Fallback), JSON-Korrektur-Retry (z. B. bei fehlerhaftem

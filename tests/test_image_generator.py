@@ -19,8 +19,6 @@ from btcedu.core.image_generator import (
 from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.episode import Episode, EpisodeStatus
 from btcedu.services.image_gen_service import (
-    DALLE3_COST_STANDARD_1024,
-    DALLE3_COST_STANDARD_1792,
     DallE3ImageService,
     ImageGenRequest,
 )
@@ -372,18 +370,27 @@ class TestMarkDownstreamStale:
 
 
 class TestDallE3Service:
-    def test_cost_standard_1024(self):
-        service = DallE3ImageService(api_key="test_key")
-        assert service._compute_cost("1024x1024", "standard") == DALLE3_COST_STANDARD_1024
+    """Despite the historical class name, generation now calls gpt-image-1:
+    OpenAI retired dall-e-3 for image generation (401/403-adjacent — a hard
+    400 "model does not exist" — forced the migration)."""
 
-    def test_cost_standard_1792(self):
+    def test_cost_from_usage_prefers_billed_tokens(self):
         service = DallE3ImageService(api_key="test_key")
-        assert service._compute_cost("1792x1024", "standard") == DALLE3_COST_STANDARD_1792
+        usage = {
+            "output_tokens": 272,
+            "input_tokens_details": {"text_tokens": 13, "image_tokens": 0},
+        }
+        cost = service._compute_cost_from_usage(usage)
+        assert cost > 0
+        # 272 output tokens * $40/1M + 13 text tokens * $5/1M
+        assert cost == pytest.approx(272 * 40e-6 + 13 * 5e-6)
 
-    def test_hd_costs_more(self):
+    def test_fallback_cost_by_quality(self):
         service = DallE3ImageService(api_key="test_key")
-        assert service._compute_cost("1024x1024", "hd") > DALLE3_COST_STANDARD_1024
-        assert service._compute_cost("1792x1024", "hd") > DALLE3_COST_STANDARD_1792
+        assert service._compute_cost("1024x1024", "medium") > 0
+        assert service._compute_cost("1024x1024", "high") > service._compute_cost(
+            "1024x1024", "medium"
+        )
 
     @patch("openai.OpenAI")
     def test_generate_image_mock(self, mock_openai_class):
@@ -394,31 +401,48 @@ class TestDallE3Service:
         mock_response.model_dump.return_value = {
             "data": [
                 {
-                    "url": "https://example.com/generated_image.png",
+                    "b64_json": "aGVsbG8=",
                     "revised_prompt": "A professional diagram showing...",
                 }
-            ]
+            ],
+            "usage": {
+                "output_tokens": 272,
+                "input_tokens_details": {"text_tokens": 13, "image_tokens": 0},
+            },
         }
         mock_client.images.generate.return_value = mock_response
 
         service = DallE3ImageService(api_key="test_key")
         request = ImageGenRequest(
             prompt="Generate a Bitcoin diagram",
-            model="dall-e-3",
-            size="1792x1024",
+            size="1536x1024",
             quality="standard",
         )
 
         response = service.generate_image(request)
-        assert response.image_url == "https://example.com/generated_image.png"
+        # gpt-image-1 never returns a hosted url, only base64 — encoded as a
+        # data: URI so the shared download_image() can write it without a
+        # network request.
+        assert response.image_url == "data:image/png;base64,aGVsbG8="
         assert response.revised_prompt == "A professional diagram showing..."
-        assert response.cost_usd == DALLE3_COST_STANDARD_1792
-        assert response.model == "dall-e-3"
+        assert response.cost_usd == pytest.approx(272 * 40e-6 + 13 * 5e-6)
+        assert response.model == "gpt-image-1"
 
         mock_client.images.generate.assert_called_once()
         call_args = mock_client.images.generate.call_args[1]
-        assert call_args["model"] == "dall-e-3"
+        assert call_args["model"] == "gpt-image-1"
         assert call_args["prompt"] == "Generate a Bitcoin diagram"
+        # "standard" (legacy dall-e-3 vocabulary) must be translated to a
+        # quality value gpt-image-1 actually accepts.
+        assert call_args["quality"] == "medium"
+        assert call_args["size"] == "1536x1024"
+
+    def test_download_image_writes_data_uri_without_network_call(self, tmp_path):
+        target = tmp_path / "out.png"
+        with patch("btcedu.services.image_gen_service.requests.get") as mock_get:
+            DallE3ImageService.download_image("data:image/png;base64,aGVsbG8=", target)
+            mock_get.assert_not_called()
+        assert target.read_bytes() == b"hello"
 
 
 # ---------------------------------------------------------------------------
@@ -430,8 +454,8 @@ class TestImageGenRequest:
     def test_defaults(self):
         request = ImageGenRequest(prompt="Test prompt")
         assert request.prompt == "Test prompt"
-        assert request.model == "dall-e-3"
-        assert request.size == "1792x1024"
+        assert request.model == "gpt-image-1"
+        assert request.size == "1536x1024"
         assert request.quality == "standard"
         assert request.style_prefix == ""
 
@@ -757,12 +781,58 @@ def test_unresolved_chapter_image_fails_the_stage(db_session, tmp_path):
     assert manifest["images"][0]["generation_method"] == "failed"
 
 
+def test_unresolved_chapter_image_reports_auth_error_not_transient(db_session, tmp_path):
+    """A 401/403 from every provider is a credential problem, not a transient
+    server hiccup: it must be classified as PERMANENT_AUTH so the pipeline
+    stops auto-retrying an error that cannot resolve on its own, and the
+    underlying provider error is included so an operator can find it.
+    """
+    from btcedu.core.image_generator import generate_images
+    from btcedu.services.errors import ErrorCategory, PipelineError, is_transient
+
+    episode_id = "ep_unresolved_auth"
+    settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+
+    with (
+        patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
+        patch("btcedu.core.image_generator._create_media_asset_record"),
+        patch(
+            "btcedu.core.image_generator._generate_single_image",
+            side_effect=RuntimeError(
+                "Ideogram API failed after 3 retries: 401 Client Error: Unauthorized "
+                "for url: https://api.ideogram.ai/generate"
+            ),
+        ),
+        pytest.raises(PipelineError) as excinfo,
+    ):
+        generate_images(db_session, episode_id, settings, force=True)
+
+    assert excinfo.value.category == ErrorCategory.PERMANENT_AUTH
+    assert not is_transient(excinfo.value.category)
+    assert "401" in str(excinfo.value)
+    assert "ch01" in str(excinfo.value)
+
+
 def test_fallback_provider_rescues_a_failed_chapter_image(db_session, tmp_path):
     """The profile's fallback_provider must actually be used, not just configured."""
+    from types import SimpleNamespace
+
     from btcedu.core.image_generator import generate_images
 
     episode_id = "ep_fallback"
     settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+    profile = SimpleNamespace(
+        stage_config={
+            "imagegen": {
+                "provider": "generative",
+                "fallback_provider": "ideogram",
+            },
+            "render": {},
+        },
+        branding={},
+    )
+    registry = MagicMock()
+    registry.get.return_value = profile
     images_dir = Path(settings.outputs_dir) / episode_id / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
     (images_dir / "ch01_rescued.png").write_bytes(b"rescued")
@@ -782,6 +852,7 @@ def test_fallback_provider_rescues_a_failed_chapter_image(db_session, tmp_path):
     )
 
     with (
+        patch("btcedu.profiles.get_registry", return_value=registry),
         patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
         patch("btcedu.core.image_generator._create_media_asset_record"),
         patch(
@@ -795,3 +866,46 @@ def test_fallback_provider_rescues_a_failed_chapter_image(db_session, tmp_path):
     assert result.failed_count == 0
     manifest = json.loads((images_dir / "manifest.json").read_text())
     assert manifest["images"][0]["generation_method"] == "ideogram"
+
+
+def test_pexels_fallback_rescues_failed_generative_provider(db_session, tmp_path):
+    """A healthy stock provider is the terminal fallback for generative auth failures."""
+    from types import SimpleNamespace
+
+    from btcedu.core.image_generator import generate_images
+
+    episode_id = "ep_pexels_fallback"
+    settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+    settings.pexels_api_key = "pexels-key"
+    photo = SimpleNamespace(
+        id=123,
+        width=1920,
+        height=1080,
+        photographer="Photographer",
+        photographer_url="https://example.com/photographer",
+        url="https://example.com/photo",
+        alt="News photo",
+    )
+    pexels = MagicMock()
+    pexels.search.return_value = SimpleNamespace(photos=[photo])
+    pexels.download_photo.side_effect = lambda _photo, path, size: path.write_bytes(b"stock")
+
+    with (
+        patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
+        patch("btcedu.core.image_generator._create_media_asset_record"),
+        patch(
+            "btcedu.core.image_generator._generate_single_image",
+            side_effect=RuntimeError("Flux API rejected the request [auth_error]"),
+        ),
+        patch("btcedu.services.pexels_service.PexelsService", return_value=pexels),
+    ):
+        result = generate_images(db_session, episode_id, settings, force=True)
+
+    assert result.failed_count == 0
+    manifest = json.loads(
+        (Path(settings.outputs_dir) / episode_id / "images" / "manifest.json").read_text()
+    )
+    entry = manifest["images"][0]
+    assert entry["generation_method"] == "pexels"
+    assert entry["metadata"]["pexels_id"] == 123
+    assert entry["metadata"]["license"] == "Pexels License (free for commercial use)"

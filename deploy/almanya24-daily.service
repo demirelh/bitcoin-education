@@ -14,15 +14,17 @@ WorkingDirectory=/home/pi/AI-Startup-Lab/almanya24-newsroom-dev
 # entitled to turn it on.
 Environment=NEWSROOM_DEV_AUTO_RELEASE=true
 
-# Hard consumption limits, locked shut until a daily budget is approved.
-# A zero budget and zero calls is a complete stop, not a small allowance: the
-# run still discovers transcripts, selects stories and reports what it would
-# have written, and cannot contact a paid provider at all.
+# Hard consumption limits. The editorial model runs on the operator's Copilot
+# subscription, which reports no price per call, so ALMANYA24_DAILY_BUDGET_USD
+# no longer restrains anything and ALMANYA24_DAILY_MAX_CALLS is the single
+# effective daily ceiling. Zero calls is a complete stop, not a small
+# allowance: the run still discovers transcripts, selects stories and reports
+# what it would have written, and cannot contact the model at all.
 Environment=ALMANYA24_DAILY_BUDGET_USD=0
 Environment=ALMANYA24_DAILY_MAX_CALLS=0
 Environment=ALMANYA24_DAILY_MAX_STORIES=6
 
-# Optional override, not in version control, for when a budget is granted.
+# Optional override, not in version control, for when a ceiling is granted.
 # The leading '-' means a missing file is not an error.
 EnvironmentFile=-/home/pi/AI-Startup-Lab/almanya24-newsroom-dev/data/almanya24-preview/daily-budget.env
 

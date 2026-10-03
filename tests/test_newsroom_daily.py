@@ -443,6 +443,97 @@ def test_a_task_without_a_token_ceiling_is_refused(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# A subscription provider, which reports no price per call
+# ---------------------------------------------------------------------------
+
+
+def test_a_subscription_run_is_approved_by_its_call_ceiling_alone(tmp_path):
+    """A zero budget is not a stop when nothing is billed in dollars.
+
+    Demanding a non-zero USD budget from a Copilot subscription would ask the
+    operator for a number nothing ever compares against, and the honest limit —
+    the call ceiling — would look like a formality next to it.
+    """
+    path = tmp_path / "ledger.sqlite"
+    limits = DailyLimits(budget_usd=0.0, max_calls=3, max_stories=3)
+    guarded = LedgerGuardedModel(
+        lambda payload: ModelReply(result={}, cost_usd=0.0, model="copilot"),
+        ledger=DailyLedger(path),
+        limits=limits,
+        max_tokens_by_task={"draft_article": 100},
+        usd_metered=False,
+    )
+
+    guarded({"task": "draft_article"})
+
+    assert DailyLedger(path).call_count(today_key()) == 1
+    # Nothing was billed, so nothing is booked: the ledger must not read like
+    # an invoice that nobody receives.
+    assert DailyLedger(path).spent_usd(today_key()) == pytest.approx(0.0)
+
+
+def test_a_subscription_run_still_stops_at_the_call_ceiling(tmp_path):
+    """Without the USD axis the call count is the only thing left holding."""
+    path = tmp_path / "ledger.sqlite"
+    guarded = LedgerGuardedModel(
+        lambda payload: ModelReply(result={}, cost_usd=0.0, model="copilot"),
+        ledger=DailyLedger(path),
+        limits=DailyLimits(budget_usd=0.0, max_calls=2, max_stories=3),
+        max_tokens_by_task={"draft_article": 100},
+        usd_metered=False,
+    )
+
+    guarded({"task": "draft_article", "n": 1})
+    guarded({"task": "draft_article", "n": 2})
+    with pytest.raises(Exception) as exc:
+        guarded({"task": "draft_article", "n": 3})
+
+    assert "call guard" in str(exc.value)
+    assert DailyLedger(path).call_count(today_key()) == 2
+
+
+def test_a_subscription_run_still_refuses_a_task_without_a_token_ceiling(tmp_path):
+    """An unbounded reply stays unbounded on a subscription."""
+    guarded = LedgerGuardedModel(
+        lambda payload: None,
+        ledger=DailyLedger(tmp_path / "ledger.sqlite"),
+        limits=DailyLimits(budget_usd=0.0, max_calls=9, max_stories=3),
+        max_tokens_by_task={},
+        usd_metered=False,
+    )
+
+    with pytest.raises(Exception) as exc:
+        guarded({"task": "something_new"})
+    assert "token ceiling" in str(exc.value)
+
+
+def test_zero_calls_remains_a_complete_stop_on_a_subscription(tmp_path):
+    def model(payload):  # pragma: no cover - must never run
+        raise AssertionError("A call was attempted without an approved ceiling")
+
+    guarded = LedgerGuardedModel(
+        model,
+        ledger=DailyLedger(tmp_path / "ledger.sqlite"),
+        limits=DailyLimits(budget_usd=0.0, max_calls=0, max_stories=3),
+        max_tokens_by_task={"draft_article": 100},
+        usd_metered=False,
+    )
+
+    with pytest.raises(BudgetNotApproved):
+        guarded({"task": "draft_article"})
+
+
+def test_a_metered_provider_is_unaffected_by_the_subscription_path(tmp_path):
+    """The default is still the USD-metered guard, budget included."""
+    limits = DailyLimits(budget_usd=0.0, max_calls=5, max_stories=3)
+    assert limits.approves(usd_metered=True) is False
+    assert limits.approves(usd_metered=False) is True
+    assert DailyLimits(budget_usd=1.0, max_calls=0, max_stories=3).approves(
+        usd_metered=False
+    ) is False
+
+
+# ---------------------------------------------------------------------------
 # The lock
 # ---------------------------------------------------------------------------
 

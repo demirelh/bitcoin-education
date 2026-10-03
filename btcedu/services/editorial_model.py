@@ -1,10 +1,27 @@
-"""Explicit tool-free model adapter; no agent, shell or provider fallback."""
+"""Explicit model adapter for editorial work; no agent autonomy, no provider fallback.
+
+The task payloads here carry *untrusted* news text, so the adapter admits only
+providers whose call shape the repository fully controls. ``anthropic`` and
+``openai`` are plain tool-free API calls. ``copilot_cli`` is a subprocess, and
+it is admitted because ``claude_service._call_copilot_cli`` pins it shut:
+``--no-custom-instructions``, ``--no-ask-user``, ``--available-tools=view``,
+``--allow-tool=view`` and an ``--add-dir`` limited to the prompt tempfile's
+directory, which the systemd unit isolates further with ``PrivateTmp=true``.
+The single remaining tool exists only so the model can read the prompt it was
+handed. No shell, no network tool, no editing, no question back to an operator.
+"""
 
 import json
 
 from btcedu.core.editorial.jobs import ModelReplyUnusable
 from btcedu.core.editorial.workflow import ModelReply
 from btcedu.models.editorial_schema import ArticleDraft, ClaimDraft, EvidenceDraft
+
+#: Providers that bill per call and therefore report a price the daily ledger
+#: can reserve against. A subscription provider reports none, and inventing one
+#: would make the ledger read like a bill nobody receives.
+_USD_METERED_PROVIDERS = frozenset({"anthropic", "openai"})
+_ALLOWED_PROVIDERS = _USD_METERED_PROVIDERS | {"copilot_cli"}
 
 
 def _unwrapped(reply):
@@ -30,12 +47,20 @@ class EditorialModel:
         model: str,
         max_tokens_by_task: dict[str, int] | None = None,
     ):
-        if provider not in {"anthropic", "openai"}:
-            raise ValueError("Editorial documents require a tool-free API provider")
+        if provider not in _ALLOWED_PROVIDERS:
+            raise ValueError(
+                "Editorial documents require a controlled provider: "
+                + ", ".join(sorted(_ALLOWED_PROVIDERS))
+            )
         if not model.strip():
             raise ValueError("An explicit editorial model is required")
         self.settings, self.provider, self.model = settings, provider, model
         self.max_tokens_by_task = max_tokens_by_task or {}
+
+    @property
+    def usd_metered(self) -> bool:
+        """Whether this provider reports a per-call price the ledger can book."""
+        return self.provider in _USD_METERED_PROVIDERS
 
     def __call__(self, payload) -> ModelReply:
         from btcedu.services.claude_service import call_claude

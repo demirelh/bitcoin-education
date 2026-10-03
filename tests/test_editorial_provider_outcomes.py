@@ -239,3 +239,45 @@ def test_a_reply_that_is_not_json_is_reported_with_its_cost(monkeypatch):
     with pytest.raises(ModelReplyUnusable) as raised:
         model(PAYLOAD)
     assert raised.value.cost_usd == pytest.approx(0.002)
+
+
+def test_the_copilot_subscription_is_an_admitted_editorial_provider():
+    """Admitted because the bridge pins the subprocess shut, not by trust.
+
+    ``claude_service._call_copilot_cli`` passes ``--no-custom-instructions``,
+    ``--no-ask-user`` and a single read-only tool. Asserting the flags here is
+    what keeps a later convenience edit from quietly handing untrusted news
+    text to an agent that can run commands.
+    """
+    import inspect
+
+    from btcedu.services import claude_service
+    from btcedu.services.editorial_model import EditorialModel
+
+    model = EditorialModel(object(), provider="copilot_cli", model="claude-opus-5")
+    assert model.usd_metered is False
+
+    source = inspect.getsource(claude_service._call_copilot_cli)
+    for flag in (
+        "--no-custom-instructions",
+        "--no-ask-user",
+        "--available-tools=view",
+        "--allow-tool=view",
+    ):
+        assert flag in source
+
+
+def test_a_metered_provider_still_reports_a_price():
+    from btcedu.services.editorial_model import EditorialModel
+
+    assert EditorialModel(object(), provider="openai", model="m").usd_metered is True
+    assert EditorialModel(object(), provider="anthropic", model="m").usd_metered is True
+
+
+def test_an_uncontrolled_provider_is_refused():
+    """No shell-capable or fallback-capable provider may draft an article."""
+    from btcedu.services.editorial_model import EditorialModel
+
+    for provider in ("github_models", "ollama", ""):
+        with pytest.raises(ValueError):
+            EditorialModel(object(), provider=provider, model="m")

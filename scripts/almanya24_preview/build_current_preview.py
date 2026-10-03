@@ -55,8 +55,12 @@ SCREENSHOT_HTML_ROOT = ROOT / "screenshot-pages"
 MANIFEST_PATH = ROOT / "current-preview-manifest.json"
 ENV_PATH = REPO.parent / "bitcoin-education" / ".env"
 TOTAL_BUDGET_USD = 2.0
-PROVIDER = "openai"
-MODEL = "gpt-4o"
+#: Kept because the research run reports estimated cost in USD, but it no
+#: longer restrains anything: the Copilot subscription reports no price per
+#: call, so this cap can never be reached. The real limits in this manual
+#: script are the story count and the per-task token ceilings below.
+PROVIDER = "copilot_cli"
+MODEL = "claude-opus-5"
 TASK_MAX_TOKENS = {
     "extract_claims": 1400,
     "evaluate_claim_evidence": 1200,
@@ -331,8 +335,12 @@ def build(*, resume: bool = False, only_story=None, max_calls=None,
         max_retries=0,
         claude_temperature=0.1,
     )
-    if not settings.openai_api_key:
+    if PROVIDER == "openai" and not settings.openai_api_key:
         raise RuntimeError("OpenAI provider is not configured")
+    if PROVIDER == "copilot_cli" and not shutil.which(
+        getattr(settings, "copilot_cli_binary", "copilot")
+    ):
+        raise RuntimeError("The copilot CLI binary is not on PATH")
 
     engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
     Base.metadata.create_all(engine)

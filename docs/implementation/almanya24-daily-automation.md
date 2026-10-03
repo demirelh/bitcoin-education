@@ -50,23 +50,55 @@ korrekt.
 Ein Nachhollauf ist billig, weil bereits verarbeitete Geschichten in
 `daily-processed.sqlite` stehen und übersprungen werden.
 
+## Redaktionsmodell
+
+Der Modellpfad läuft über das **Copilot-Abonnement des Betreibers**
+(`copilot_cli`, Modell `claude-opus-5`), nicht über einen abgerechneten
+OpenAI-Schlüssel. Festgelegt in `scripts/almanya24_preview/daily_run.py`
+(`PROVIDER`, `MODEL`, `USD_METERED`).
+
+`EditorialModel` lässt diesen Anbieter zu, weil
+`claude_service._call_copilot_cli` den Teilprozess verschlossen hält:
+`--no-custom-instructions`, `--no-ask-user`, `--available-tools=view`,
+`--allow-tool=view` und ein `--add-dir`, das nur auf das Verzeichnis der
+Prompt-Temporärdatei zeigt — von der Unit zusätzlich durch `PrivateTmp=true`
+isoliert. Das eine verbliebene Werkzeug existiert ausschließlich, damit das
+Modell den ihm übergebenen Prompt lesen kann. Keine Shell, kein Netzwerkwerkzeug,
+keine Rückfrage an einen Operator. Ein Test in
+`tests/test_editorial_provider_outcomes.py` liest diese Flags aus dem Quelltext,
+damit eine spätere Bequemlichkeitsänderung ungeprüfte Nachrichtentexte nicht
+still an einen handlungsfähigen Agenten übergibt.
+
 ## Verbrauchsgrenzen
 
 `btcedu/core/editorial/limits.py`. Drei Grenzen, alle ohne Vorgabewert — ein
 Standardbudget, das niemand bewusst gesetzt hat, ist genau der Fehler, der Geld
 kostet:
 
-- `--budget-usd` Tagesbudget
+- `--budget-usd` Tagesbudget **(bei Copilot wirkungslos, siehe unten)**
 - `--max-calls` Anbieteraufrufe pro Tag
 - `--max-stories` Geschichten pro Tag
 
 Der Tag ist ein Kalendertag in Europe/Berlin.
 
-**Reserviert wird vor dem Aufruf, nicht nach der Antwort.** `DailyLedger`
-schätzt konservativ (inklusive `_HIDDEN_PROMPT_CHARS`, weil System- und
-Werkzeugtext in der Rechnung landet, aber nicht im übergebenen Prompt sichtbar
-ist), bucht die Reservierung, ruft dann auf und trägt anschließend die
-tatsächlichen Kosten nach. Verbraucht ist `COALESCE(actual_usd, reserved_usd)`.
+**Ein Abonnement meldet keinen Preis pro Aufruf.** Deshalb gibt `run_daily()`
+den Parameter `usd_metered` durch. Steht er auf `False`:
+
+- Die Freigabe hängt allein an `--max-calls`; ein Nullbudget ist kein Stopp
+  mehr. Ein verlangtes USD-Budget wäre eine Zahl, gegen die nie etwas
+  verglichen wird, und die echte Grenze sähe daneben wie eine Formalie aus.
+- Der Ledger bucht `0.00`. Eine geschätzte Zahl einzutragen hieße, die
+  Tagesübersicht wie eine Rechnung aussehen zu lassen, die niemand bekommt.
+- `--max-calls 0` bleibt ein vollständiger Stopp, und ein Task ohne Obergrenze
+  in `MAX_TOKENS_BY_TASK` bleibt abgelehnt: eine unbegrenzte Antwort ist auch
+  im Abonnement unbegrenzt.
+
+**Bei einem abgerechneten Anbieter wird vor dem Aufruf reserviert, nicht nach
+der Antwort.** `DailyLedger` schätzt konservativ (inklusive
+`_HIDDEN_PROMPT_CHARS`, weil System- und Werkzeugtext in der Rechnung landet,
+aber nicht im übergebenen Prompt sichtbar ist), bucht die Reservierung, ruft
+dann auf und trägt anschließend die tatsächlichen Kosten nach. Verbraucht ist
+`COALESCE(actual_usd, reserved_usd)`.
 
 Daraus folgen zwei Eigenschaften, die beide beabsichtigt sind:
 
@@ -77,13 +109,10 @@ Daraus folgen zwei Eigenschaften, die beide beabsichtigt sind:
 Der Ledger liegt in SQLite, nicht im Prozess. Ein Neustart setzt die Zähler
 deshalb nicht zurück.
 
-Ein Task ohne Obergrenze in `MAX_TOKENS_BY_TASK` wird abgelehnt statt geschätzt:
-eine unbegrenzte Antwort ist eine unbegrenzte Rechnung.
+### Grenzen freigeben
 
-### Budget freigeben
-
-Die Unit liefert `ALMANYA24_DAILY_BUDGET_USD=0` und `ALMANYA24_DAILY_MAX_CALLS=0`
-aus, also gesperrt. Die Freigabe geschieht über die nicht versionierte Datei
+Die Unit liefert `ALMANYA24_DAILY_MAX_CALLS=0` aus, also gesperrt. Die Freigabe
+geschieht über die nicht versionierte Datei
 
 ```
 data/almanya24-preview/daily-budget.env

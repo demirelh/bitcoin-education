@@ -328,6 +328,7 @@ def run_daily(
     lookback_days: int = 3,
     today: date | None = None,
     now: datetime | None = None,
+    usd_metered: bool = True,
 ) -> RunReport:
     """One unattended pass. Never raises for a single story's sake.
 
@@ -383,7 +384,7 @@ def run_daily(
                 report.outcome = RunOutcome.NO_SUITABLE_TOPICS.value
                 return _finish(report, ledger, day, paths, processed, moment)
 
-            if not limits.paid_calls_allowed:
+            if not limits.approves(usd_metered=usd_metered):
                 report.outcome = RunOutcome.BUDGET_NOT_APPROVED.value
                 report.stories = [
                     StoryResult(
@@ -403,6 +404,7 @@ def run_daily(
                 limits=limits,
                 max_tokens_by_task=MAX_TOKENS_BY_TASK,
                 day=day,
+                usd_metered=usd_metered,
             )
             exhausted = False
             for item in candidates:

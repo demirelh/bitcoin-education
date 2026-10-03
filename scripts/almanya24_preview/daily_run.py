@@ -6,8 +6,14 @@ lets the offline test drive the identical control flow with fixtures.
 
 Free by construction: the transcript comes from the video pipeline's own
 output, search uses public key-less endpoints, and pictures come from Wikimedia
-Commons. The only paid component is the editorial model, and it cannot be
-called at all unless a daily budget was explicitly granted.
+Commons. The editorial model is the only external component, and it cannot be
+called at all unless the daily call limit was explicitly raised above zero.
+
+The editorial model runs through the operator's GitHub Copilot subscription
+(``copilot_cli``), not a metered OpenAI key. That removes the per-call price
+the ledger used to reserve against, so the USD budget no longer restrains this
+run and ``--max-calls`` is the single effective daily ceiling. ``USD_METERED``
+below states that fact once, and the ledger is told rather than left to guess.
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -49,8 +56,11 @@ else:  # executed directly from the command line
 
 logger = logging.getLogger("almanya24.daily")
 
-PROVIDER = "openai"
-MODEL = "gpt-4o"
+PROVIDER = "copilot_cli"
+MODEL = "claude-opus-5"
+#: A Copilot subscription reports no per-call price, so the ledger books zero
+#: and the call ceiling carries the whole limit.
+USD_METERED = PROVIDER in {"anthropic", "openai"}
 PRODUCTION_OUTPUTS = Path("/home/pi/AI-Startup-Lab/bitcoin-education/data/outputs")
 PRODUCTION_ENV = Path("/home/pi/AI-Startup-Lab/bitcoin-education/.env")
 
@@ -114,8 +124,12 @@ def settings_factory(paths: DailyPaths) -> Settings:
 def model_factory(settings: Settings):
     from btcedu.core.editorial.daily import MAX_TOKENS_BY_TASK
 
-    if not settings.openai_api_key:
+    if PROVIDER == "openai" and not settings.openai_api_key:
         raise RuntimeError("No editorial model provider is configured")
+    if PROVIDER == "copilot_cli" and not shutil.which(
+        getattr(settings, "copilot_cli_binary", "copilot")
+    ):
+        raise RuntimeError("The copilot CLI binary is not on PATH")
     return EditorialModel(
         settings,
         provider=PROVIDER,
@@ -281,6 +295,7 @@ def main(argv: list[str] | None = None) -> int:
             drafter=make_drafter(session),
             publisher=make_publisher(session),
             lookback_days=args.lookback_days,
+            usd_metered=USD_METERED,
         )
     finally:
         session.close()

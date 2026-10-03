@@ -77,6 +77,19 @@ class DailyLimits:
         """
         return self.budget_usd > 0 and self.max_calls > 0
 
+    def approves(self, *, usd_metered: bool = True) -> bool:
+        """Whether this day may contact the model at all.
+
+        A subscription-billed provider returns no per-call price, so the USD
+        axis cannot restrain it and demanding a non-zero budget would only ask
+        the operator for a number that nothing would ever compare against. The
+        call ceiling is then the single real limit, and it still has no
+        default: zero calls remains a complete stop on either provider.
+        """
+        if usd_metered:
+            return self.paid_calls_allowed
+        return self.max_calls > 0
+
     def to_dict(self) -> dict:
         return {
             "budget_usd": self.budget_usd,
@@ -221,12 +234,17 @@ class LedgerGuardedModel:
         limits: DailyLimits,
         max_tokens_by_task: dict[str, int],
         day: str | None = None,
+        usd_metered: bool = True,
     ) -> None:
         self.model = model
         self.ledger = ledger
         self.limits = limits
         self.max_tokens_by_task = max_tokens_by_task
         self.day = day or today_key()
+        #: ``False`` for a subscription-billed provider, which reports no price
+        #: per call. Reserving an invented amount against a budget nobody is
+        #: charged would make the ledger read like a bill that does not exist.
+        self.usd_metered = usd_metered
         self._failed_payloads: set[str] = set()
 
     def maximum_cost_usd(self, payload: dict) -> float:
@@ -245,7 +263,7 @@ class LedgerGuardedModel:
         return json.dumps(payload, ensure_ascii=False, sort_keys=True)
 
     def __call__(self, payload: dict):
-        if not self.limits.paid_calls_allowed:
+        if not self.limits.approves(usd_metered=self.usd_metered):
             raise BudgetNotApproved(
                 "No daily budget is approved: "
                 f"budget {self.limits.budget_usd} USD, {self.limits.max_calls} calls"
@@ -256,14 +274,19 @@ class LedgerGuardedModel:
                 "Refusing to resend an identical payload that already failed; "
                 "the input has to change first"
             )
+        # Called on both paths: its first job is to refuse a task with no token
+        # ceiling, and an unbounded response is unbounded on a subscription too.
         maximum = self.maximum_cost_usd(payload)
-        spent = self.ledger.spent_usd(self.day)
-        if spent + maximum > self.limits.budget_usd:
-            raise ProviderCallNotAttempted(
-                f"Daily budget guard blocked {payload.get('task')!r}: "
-                f"{spent:.4f} spent + {maximum:.4f} maximum > "
-                f"{self.limits.budget_usd:.4f} USD"
-            )
+        if not self.usd_metered:
+            maximum = 0.0
+        else:
+            spent = self.ledger.spent_usd(self.day)
+            if spent + maximum > self.limits.budget_usd:
+                raise ProviderCallNotAttempted(
+                    f"Daily budget guard blocked {payload.get('task')!r}: "
+                    f"{spent:.4f} spent + {maximum:.4f} maximum > "
+                    f"{self.limits.budget_usd:.4f} USD"
+                )
         if self.ledger.call_count(self.day) >= self.limits.max_calls:
             raise ProviderCallNotAttempted(
                 f"Daily call guard blocked {payload.get('task')!r}: "

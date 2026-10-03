@@ -373,11 +373,15 @@ def draft_story(
         model_name=model_name,
         policy_version="newsroom-workflow-v2",
         repair_attempts=repair_attempts,
+        dev_auto_release=dev_auto_release,
     )
-    if dev_findings:
+    if dev_findings or article.block_reason:
         # Recorded on the revision, so the review view and the development
         # banner state what failed. This is not an approval and does not
-        # pretend the check passed.
-        article.block_reason = "; ".join(dict.fromkeys(dev_findings))[:1000]
+        # pretend the check passed. The drafter may already have recorded its
+        # own refusal here, so the findings are merged rather than replaced:
+        # overwriting them would drop the very verdict that explains the draft.
+        prior = [article.block_reason] if article.block_reason else []
+        article.block_reason = "; ".join(dict.fromkeys(prior + dev_findings))[:1000]
         session.commit()
     return article

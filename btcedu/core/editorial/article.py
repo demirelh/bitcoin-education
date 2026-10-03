@@ -533,6 +533,17 @@ def _draft_violations(draft, *, claims, by_key, assessments, keys) -> list[str]:
     return violations
 
 
+def _is_storable(draft, *, by_key) -> bool:
+    """Whether a refused draft could be written to the database at all.
+
+    The paragraph rows carry a foreign key per referenced claim. A draft that
+    names a claim outside this revision has no row to point at, so it is not a
+    negative editorial judgement about storable text — it is text that cannot
+    be stored. The development switch covers the former and never the latter.
+    """
+    return all(key in by_key for paragraph in draft.paragraphs for key in paragraph.claim_keys)
+
+
 def supporting_passages(
     session: Session,
     *,
@@ -587,12 +598,23 @@ def generate_article_revision(
     prompt_hash: str | None = None,
     estimated_cost_usd: float = 0.0,
     repair_attempts: int = 1,
+    dev_auto_release: bool = False,
     now: Callable[[], datetime] = lambda: datetime.now(UTC),
 ) -> ArticleRevision:
     """Draft the article for one editorial revision, once per input state.
 
     Redrafting the same state reuses the stored revision instead of paying for
     a second "finalisation" of text that has not changed.
+
+    ``dev_auto_release`` is the development switch. It does not weaken the gate
+    by one condition: the same validation runs, the same repair budget is
+    spent, and a draft that still fails is still refused as an article. What
+    changes is only what happens to a refused draft that is *storable* — every
+    claim it names belongs to this revision — instead of being discarded it is
+    written as a DRAFT whose ``block_reason`` names each violation, so the
+    review view and the development banner can show what failed. Nothing is
+    marked approved and no check is reported as passed. A draft that cannot be
+    stored coherently still raises, in development as in production.
     """
     claims = revision_claims(session, editorial_revision)
     assessments = _assessments(session, research_run, claims)
@@ -683,6 +705,7 @@ def generate_article_revision(
     attempt_payload = payload
     seen_payloads = {canonical_hash(payload)}
     reported: list[str] = []
+    dev_violations: list[str] = []
     for remaining in range(repair_attempts, -1, -1):
         try:
             draft = ArticleDraft.model_validate(drafter(attempt_payload))
@@ -731,9 +754,29 @@ def generate_article_revision(
                     continue
                 # Repeating an input that already produced this refusal would
                 # buy the same draft back from the ledger, so stop here.
+            if dev_auto_release and _is_storable(draft, by_key=by_key):
+                dev_violations = _draft_violations(
+                    draft, claims=claims, by_key=by_key, assessments=assessments, keys=keys
+                ) or [str(exc)]
+                break
             # The reply arrived and was judged: this is a decided outcome, not
             # an uncertain one. Leaving it in flight would make every later
             # attempt fail with "requires reconciliation before retry".
+            operation.status = ProviderOperationStatus.FAILED.value
+            operation.error_message = str(exc)
+            operation.completed_at = now()
+            session.commit()
+            raise
+        except UnsupportedClaimReferenced as exc:
+            # The draft asserts a claim whose evidence did not hold up. That is
+            # a negative editorial judgement about text that is otherwise
+            # storable, which is precisely what the development preview has to
+            # make visible rather than hide behind a vanished story.
+            if dev_auto_release and _is_storable(draft, by_key=by_key):
+                dev_violations = _draft_violations(
+                    draft, claims=claims, by_key=by_key, assessments=assessments, keys=keys
+                ) or [str(exc)]
+                break
             operation.status = ProviderOperationStatus.FAILED.value
             operation.error_message = str(exc)
             operation.completed_at = now()
@@ -793,6 +836,12 @@ def generate_article_revision(
                     claim_revision_id=by_key[key].id,
                 )
             )
+
+    if dev_violations:
+        # Development only. The revision stays DRAFT and carries the verdict so
+        # the review view and the preview banner state what failed; this is a
+        # record of a refusal, not an approval.
+        article.block_reason = "; ".join(dict.fromkeys(dev_violations))[:1000]
 
     operation.status = ProviderOperationStatus.COMPLETED.value
     operation.completed_at = now()

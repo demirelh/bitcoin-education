@@ -276,7 +276,17 @@ def _harness(
     return paths, settings, caller, drafter, publisher
 
 
-def _run(session, tmp_path, *, limits: DailyLimits, outputs: Path, drafter_override=None, **kwargs):
+def _run(
+    session,
+    tmp_path,
+    *,
+    limits: DailyLimits,
+    outputs: Path,
+    drafter_override=None,
+    usd_metered: bool = True,
+    model_requested: str = "",
+    **kwargs,
+):
     paths, settings, caller, drafter, publisher = _harness(session, tmp_path, **kwargs)
     report = run_daily(
         paths=paths,
@@ -288,6 +298,8 @@ def _run(session, tmp_path, *, limits: DailyLimits, outputs: Path, drafter_overr
         publisher=publisher,
         today=date(2026, 9, 11),
         now=datetime(2026, 9, 11, 21, 30),
+        usd_metered=usd_metered,
+        model_requested=model_requested,
     )
     return report, paths, caller
 
@@ -940,3 +952,82 @@ def test_an_editorial_question_is_not_cleared_as_a_failure(tmp_path):
     processed.record("ep:s01", episode_id="ep", status="needs_decision", detail="topic")
 
     assert processed.clear_failures_before("2999-01-01T00:00:00+01:00") == 0
+
+
+# ---------------------------------------------------------------------------
+# Telling the truth about what was spent
+# ---------------------------------------------------------------------------
+
+
+def test_a_subscription_run_records_that_usd_was_never_measured(db_session, tmp_path):
+    """0.00 USD on a subscription is an absence of data, not a price."""
+    outputs = _outputs(tmp_path, count=1)
+
+    report, paths, _ = _run(
+        db_session,
+        tmp_path,
+        limits=DailyLimits(budget_usd=0.0, max_calls=40, max_stories=1),
+        outputs=outputs,
+        usd_metered=False,
+    )
+
+    stored = load_report(paths.report)
+    assert stored["usage"]["usd_metered"] is False
+    assert report.usd_metered is False
+    # The call count is the limit that actually bound the run, so it has to be
+    # there for the zero to be readable at all.
+    assert stored["usage"]["calls"] > 0
+
+
+def test_a_metered_run_still_reports_usd_as_measured(db_session, tmp_path):
+    outputs = _outputs(tmp_path, count=1)
+
+    _, paths, _ = _run(
+        db_session,
+        tmp_path,
+        limits=DailyLimits(budget_usd=1.0, max_calls=40, max_stories=1),
+        outputs=outputs,
+    )
+
+    assert load_report(paths.report)["usage"]["usd_metered"] is True
+
+
+def test_the_status_page_does_not_present_an_unmeasured_run_as_free(db_session, tmp_path):
+    from scripts.almanya24_preview.build_status_page import render
+
+    outputs = _outputs(tmp_path, count=1)
+    _, paths, _ = _run(
+        db_session,
+        tmp_path,
+        limits=DailyLimits(budget_usd=0.0, max_calls=40, max_stories=1),
+        outputs=outputs,
+        usd_metered=False,
+        model_requested="claude-opus-5",
+    )
+
+    page = render(load_report(paths.report))
+
+    assert "USD kaydedilmiyor" in page
+    assert "0.0000 / 0.0000 USD" not in page
+    # A zero budget is normal under a subscription and must not read as a lock.
+    assert "Ücretli çağrılar kilitli" not in page
+    assert "claude-opus-5" in page
+
+
+def test_the_status_page_separates_the_requested_model_from_the_served_one(db_session, tmp_path):
+    from scripts.almanya24_preview.build_status_page import render
+
+    outputs = _outputs(tmp_path, count=1)
+    _, paths, _ = _run(
+        db_session,
+        tmp_path,
+        limits=DailyLimits(budget_usd=1.0, max_calls=40, max_stories=1),
+        outputs=outputs,
+        model_requested="claude-opus-5",
+    )
+    report = load_report(paths.report)
+
+    assert report["model_requested"] == "claude-opus-5"
+    page = render(report)
+    assert "İstenen model" in page
+    assert "Sağlayıcının yanıtladığı model" in page

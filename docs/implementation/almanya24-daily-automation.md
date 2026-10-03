@@ -109,6 +109,34 @@ Daraus folgen zwei Eigenschaften, die beide beabsichtigt sind:
 Der Ledger liegt in SQLite, nicht im Prozess. Ein Neustart setzt die Zähler
 deshalb nicht zurück.
 
+### `0.00 USD` heißt „nicht erfasst", nicht „kostenlos"
+
+Das ist der Punkt, an dem eine Übersicht am leichtesten lügt. Bei
+`usd_metered=False` bucht der Ledger `0.00`, weil der Anbieter keinen Preis
+meldet — nicht, weil der Aufruf nichts gekostet hätte. Er verbraucht weiterhin
+Kontingent des Abonnements. Eine Anzeige „0,0000 / 2,0000 USD" neben einem
+Fortschrittsbalken behauptet das Gegenteil.
+
+Deshalb trägt der Bericht `usd_metered` direkt neben der Zahl, die es
+qualifiziert (`RunReport.usd_metered`, gespiegelt in `usage`), und die
+Statusseite ersetzt die USD-Zeile in diesem Fall durch „USD kaydedilmiyor"
+mit der Begründung. Ein Nullbudget liest sich dort dann auch nicht mehr als
+Sperre — gesperrt ist der Lauf im Abonnement erst bei `--max-calls 0`. Die
+bindende Grenze, die Zahl der Anbieteraufrufe, steht unverändert daneben.
+
+### Angefordertes und bestätigtes Modell
+
+`LedgerGuardedModel.confirmed_models` sammelt die Modellkennung, mit der der
+Anbieter tatsächlich geantwortet hat; `RunReport.model_requested` hält fest,
+was verlangt wurde. Die beiden fallen auseinander (angefordert
+`claude-opus-5`, geliefert `copilot/claude-opus-5`), und GitHub zieht
+Modell-IDs ohne Vorwarnung zurück. Nur das Angeforderte zu berichten wäre eine
+Behauptung, die niemand geprüft hat.
+
+Eine leere Liste heißt „in diesem Lauf hat kein Anbieter etwas bestätigt" —
+etwa weil alle Antworten aus `news_provider_operations` wiederverwendet wurden.
+Das ist eine Aussage über den Lauf, keine über das Modell.
+
 ### Grenzen freigeben
 
 Die Unit liefert `ALMANYA24_DAILY_MAX_CALLS=0` aus, also gesperrt. Die Freigabe
@@ -174,6 +202,41 @@ bleiben fatal. Ohne den Schalter ist das Freigabeverhalten unverändert.
 
 Eine menschliche Freigabe wird dabei nicht vorgetäuscht: die Version trägt
 `decision_id="dev-auto-release"`, und es existiert keine `EditorialDecision`.
+
+### Auch der Entwurfsprüfung gegenüber (2026-10-03)
+
+Der Schalter wirkte zunächst auf die Gates *um* die Texterzeugung herum
+(Themenkontinuität, Belegstärke, semantische Prüfung), nicht auf die
+deterministische Prüfung des Entwurfs gegen die geprüften Aussagen in
+`generate_article_revision()`. Ein Entwurf, der eine Aussage mit dem Verdikt
+`insufficient` behauptete, scheiterte deshalb mit `UnsupportedClaimReferenced`,
+**bevor** die Revision gespeichert wurde — im Entwicklungsmodus verschwand die
+Geschichte dadurch vollständig, statt ihre Ablehnung zu zeigen. Genau das sollte
+die Vorschau sichtbar machen.
+
+`generate_article_revision(..., dev_auto_release=True)` ändert daran genau eine
+Sache: Ein Entwurf, der die Prüfung endgültig nicht besteht, wird nicht mehr
+verworfen, sondern als `draft` gespeichert, dessen `block_reason` **jede**
+Verletzung benennt (`_draft_violations()`, nicht nur die erste). Die Prüfung
+selbst, das Reparaturbudget und das Verhalten ohne den Schalter sind unverändert.
+
+Die Grenze verläuft bei der Speicherbarkeit, nicht beim Urteil: Nennt ein
+Entwurf eine Aussage, die nicht zu dieser Revision gehört, gibt es keine Zeile,
+auf die der Fremdschlüssel des Absatzes zeigen könnte. `UnknownClaimReferenced`
+bleibt deshalb auch im Entwicklungsmodus fatal — das ist kein negatives
+redaktionelles Urteil über speicherbaren Text, sondern nicht speicherbarer Text.
+
+`workflow.py` führt die Befunde des Entwurfs und die der umgebenden Gates
+zusammen, statt sie zu überschreiben.
+
+### Gezielter Retry einer einzelnen Geschichte
+
+`ALMANYA24_RETRY_STORY=<story_key>` löscht genau einen aufgezeichneten
+Fehlschlag und protokolliert das. Gedacht für die Überprüfung einer Korrektur:
+`ALMANYA24_RETRY_FAILED_BEFORE` gibt alle Fehlschläge vor einem Zeitpunkt frei
+und verbraucht damit das Tagesbudget an denselben Sackgassen. Nur ein `failed`
+wird entfernt; eine Geschichte mit `needs_decision` wartet auf einen Menschen und
+wird nicht hinter dessen Rücken neu gestartet. Die Unit setzt den Schalter nicht.
 
 ## Installation
 

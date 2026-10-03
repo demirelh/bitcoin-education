@@ -1123,3 +1123,52 @@ def test_repair_stops_instead_of_rebuying_an_identical_payload(db_session, tmp_p
         )
 
     assert len(calls) == 2
+
+
+def test_dev_switch_stores_a_refused_draft_with_the_verdict_on_it(db_session, tmp_path):
+    """The development preview must show the refusal, not an absent story."""
+    revision, run, _ = _pipeline(db_session, tmp_path, relation="contradicts")
+
+    article = generate_article_revision(
+        db_session,
+        editorial_revision=revision,
+        research_run=run,
+        drafter=lambda payload: _draft(),
+        dev_auto_release=True,
+    )
+
+    assert db_session.query(ArticleRevision).count() == 1
+    # Stored, but not approved and not reported as having passed.
+    assert article.status == ArticleStatus.DRAFT.value
+    assert "contradicted" in article.block_reason
+
+
+def test_dev_switch_still_refuses_a_draft_that_cannot_be_stored(db_session, tmp_path):
+    """An unknown claim key has no row to point at; that is not a judgement."""
+    revision, run, _ = _pipeline(db_session, tmp_path)
+
+    with pytest.raises(UnknownClaimReferenced):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=lambda payload: _draft(
+                paragraphs=[{"text": "Berlin 100 yeni konut bildirdi.", "claim_keys": ["invented"]}]
+            ),
+            dev_auto_release=True,
+        )
+    assert db_session.query(ArticleRevision).count() == 0
+
+
+def test_without_the_dev_switch_a_refused_draft_is_still_discarded(db_session, tmp_path):
+    """The regular release behaviour must be unchanged by the switch."""
+    revision, run, _ = _pipeline(db_session, tmp_path, relation="contradicts")
+
+    with pytest.raises(UnsupportedClaimReferenced):
+        generate_article_revision(
+            db_session,
+            editorial_revision=revision,
+            research_run=run,
+            drafter=lambda payload: _draft(),
+        )
+    assert db_session.query(ArticleRevision).count() == 0

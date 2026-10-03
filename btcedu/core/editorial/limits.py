@@ -245,6 +245,11 @@ class LedgerGuardedModel:
         #: per call. Reserving an invented amount against a budget nobody is
         #: charged would make the ledger read like a bill that does not exist.
         self.usd_metered = usd_metered
+        #: Every model identifier the provider actually answered with. The
+        #: requested identifier is a request; this is what was served, and the
+        #: two differ often enough that reporting only the request is a claim
+        #: nobody checked.
+        self.confirmed_models: list[str] = []
         self._failed_payloads: set[str] = set()
 
     def maximum_cost_usd(self, payload: dict) -> float:
@@ -310,4 +315,7 @@ class LedgerGuardedModel:
             self._failed_payloads.add(fingerprint)
             raise
         self.ledger.settle(call_id, actual_usd=float(getattr(reply, "cost_usd", 0.0) or 0.0))
+        served = str(getattr(reply, "model", "") or "")
+        if served and served not in self.confirmed_models:
+            self.confirmed_models.append(served)
         return reply

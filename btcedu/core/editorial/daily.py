@@ -90,6 +90,15 @@ class RunReport:
     attribution: str = ""
     limits: dict = field(default_factory=dict)
     usage: dict = field(default_factory=dict)
+    #: ``False`` when the provider bills by subscription and reports no price.
+    #: It means "USD not recorded", never "free": provider calls still consume
+    #: a quota, and reporting 0.00 USD as a cost would state the opposite.
+    usd_metered: bool = True
+    #: What was asked for, and what the provider answered with. A provider may
+    #: serve a different model than the one requested, so the two are kept
+    #: apart instead of being reported as one confirmed fact.
+    model_requested: str = ""
+    models_confirmed: list = field(default_factory=list)
     stories: list = field(default_factory=list)
     published: int = 0
     errors: list = field(default_factory=list)
@@ -203,6 +212,24 @@ class ProcessedStories:
             )
             db.commit()
             return cursor.rowcount
+
+    def retry_story(self, story_key: str) -> bool:
+        """Forget one named failure so exactly that story is attempted again.
+
+        The timestamp-bounded reset above is the blunt instrument: it frees
+        every failure at once and spends the day's budget re-running dead ends.
+        This frees a single story an operator named, which is what verifying a
+        fix actually needs. Only a ``failed`` row is removed — a story awaiting
+        an editorial decision is not a failure and must not be restarted behind
+        the reviewer's back.
+        """
+        with closing(sqlite3.connect(self.path)) as db:
+            cursor = db.execute(
+                "DELETE FROM processed_stories WHERE story_key = ? AND status = 'failed'",
+                (story_key,),
+            )
+            db.commit()
+            return cursor.rowcount > 0
 
     def record(self, story_key: str, *, episode_id: str, status: str, detail: str = "") -> None:
         now = datetime.now(BERLIN).isoformat()
@@ -329,6 +356,7 @@ def run_daily(
     today: date | None = None,
     now: datetime | None = None,
     usd_metered: bool = True,
+    model_requested: str = "",
 ) -> RunReport:
     """One unattended pass. Never raises for a single story's sake.
 
@@ -344,6 +372,8 @@ def run_daily(
         started_at=moment.isoformat(),
         day=day,
         limits=limits.to_dict(),
+        usd_metered=usd_metered,
+        model_requested=model_requested,
     )
     ledger = DailyLedger(paths.ledger)
     processed = ProcessedStories(paths.processed)
@@ -357,6 +387,20 @@ def run_daily(
         cleared = processed.clear_failures_before(retry_before)
         if cleared:
             logger.info("Cleared %d failure(s) recorded before %s", cleared, retry_before)
+
+    # One named story, for verifying a fix without paying to re-run 60 dead
+    # ends. Deliberately not a list: a single key keeps the blast radius and
+    # the log line unambiguous.
+    retry_story = os.environ.get("ALMANYA24_RETRY_STORY", "").strip()
+    if retry_story:
+        if processed.retry_story(retry_story):
+            logger.info("Targeted retry: cleared the recorded failure for story %s", retry_story)
+        else:
+            logger.info(
+                "Targeted retry requested for story %s, but no failed attempt is recorded "
+                "for it; nothing was cleared",
+                retry_story,
+            )
 
     try:
         with RunLock(paths.lock):
@@ -489,6 +533,7 @@ def run_daily(
                 )
 
             offered = publisher(settings=settings, paths=paths)
+            report.models_confirmed = list(model.confirmed_models)
             report.published = offered.get("articles", 0)
             for entry in report.stories:
                 if entry.status == "drafted":
@@ -557,6 +602,9 @@ def _finish(
 ) -> RunReport:
     report.finished_at = datetime.now(BERLIN).isoformat()
     report.usage = ledger.summary(day)
+    # Carried next to the figure it qualifies, so no reader of the report can
+    # see "0.00 USD" without also seeing that USD was never recorded.
+    report.usage["usd_metered"] = report.usd_metered
     report.usage["processed_total"] = processed.counts()
     write_report(paths.report, report)
     return report

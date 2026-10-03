@@ -296,6 +296,7 @@ def main(argv: list[str] | None = None) -> int:
             publisher=make_publisher(session),
             lookback_days=args.lookback_days,
             usd_metered=USD_METERED,
+            model_requested=MODEL,
         )
     finally:
         session.close()

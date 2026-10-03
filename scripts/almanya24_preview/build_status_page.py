@@ -107,6 +107,7 @@ def render(report: dict | None, *, next_run: str = "") -> str:
     limits = report.get("limits", {})
     usage = report.get("usage", {})
     spent = float(usage.get("spent_usd", 0.0))
+    metered = bool(usage.get("usd_metered", report.get("usd_metered", True)))
     budget = float(limits.get("budget_usd", 0.0))
     calls = int(usage.get("calls", 0))
     max_calls = int(limits.get("max_calls", 0))
@@ -126,20 +127,40 @@ def render(report: dict | None, *, next_run: str = "") -> str:
         "</table></section>"
     ]
 
+    spend_row = (
+        f"<tr><th>Harcama</th><td>{spent:.4f} / {budget:.4f} USD{_bar(spent, budget)}</td></tr>"
+        if metered
+        else (
+            "<tr><th>Harcama</th><td><strong>USD kaydedilmiyor</strong> "
+            "(abonelik faturalandırması). Bu “ücretsiz” demek değildir: "
+            "sağlayıcı çağrıları aboneliğin kontenjanından düşer; yalnızca "
+            "USD tutarı ölçülmez. Sınır, aşağıdaki çağrı sayısıdır.</td></tr>"
+        )
+    )
+    locked = max_calls <= 0 or (metered and budget <= 0)
+
+    requested = str(report.get("model_requested", "") or "")
+    confirmed = [str(name) for name in report.get("models_confirmed", []) if name]
+    model_rows = (
+        f"<tr><th>İstenen model</th><td>{_e(requested or '—')}</td></tr>"
+        "<tr><th>Sağlayıcının yanıtladığı model</th>"
+        f"<td>{_e(', '.join(confirmed) if confirmed else 'onaylanmadı')}</td></tr>"
+    )
+
     blocks.append(
         "<section><h2>Günlük tüketim ve sınırlar</h2>"
         "<table>"
         f"<tr><th>Gün</th><td>{_e(usage.get('day', ''))}</td></tr>"
-        f"<tr><th>Harcama</th><td>{spent:.4f} / {budget:.4f} USD"
-        f"{_bar(spent, budget)}</td></tr>"
-        f"<tr><th>Sağlayıcı çağrısı</th><td>{calls} / {max_calls}"
+        + spend_row
+        + f"<tr><th>Sağlayıcı çağrısı</th><td>{calls} / {max_calls}"
         f"{_bar(calls, max_calls)}</td></tr>"
         f"<tr><th>Azami haber</th><td>{_e(limits.get('max_stories', 0))}</td></tr>"
-        "</table>"
+        + model_rows
+        + "</table>"
         + (
             "<p><strong>Ücretli çağrılar kilitli.</strong> Günlük bütçe veya çağrı "
             "sınırı sıfır olduğu için model çağrısı yapılmaz.</p>"
-            if budget <= 0 or max_calls <= 0
+            if locked
             else ""
         )
         + "</section>"

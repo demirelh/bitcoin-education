@@ -45,6 +45,31 @@ _STOPWORDS = frozenset(
 )
 
 
+#: Terms that survive the capitalised-noun filter but say nothing about what a
+#: story is *about*. Dates, counts and currency nouns appear in almost every
+#: German news sentence, so counting them as topical overlap lets an unrelated
+#: document look relevant purely by sharing a calendar word.
+_GENERIC = frozenset(
+    """
+    jahr jahre jahren jahrzehnt mal monat monate monaten woche wochen tag tage
+    tagen stunde stunden uhr minute minuten prozent euro cent dollar million
+    millionen milliarde milliarden anfang ende mitte montag dienstag mittwoch
+    donnerstag freitag samstag sonntag januar februar maerz märz april juni
+    juli august september oktober november dezember zahl zahlen teil teile
+    """.split()
+)
+
+#: How many distinct topic terms a result has to share with the query before it
+#: counts as being about the same story. One is not enough: a single shared
+#: word is exactly how an encyclopedia article about an Italian art gallery
+#: ended up offered as evidence for a German department-store insolvency.
+_MIN_TOPIC_TERMS = 2
+
+#: Compound-tolerant matching: German glues nouns together, so "Rekordpreise"
+#: in a query should still match "Rekord" in a headline.
+_STEM = 6
+
+
 def _keywords(query: str, limit: int) -> str:
     """Reduce a query to the terms that actually carry it.
 
@@ -64,6 +89,56 @@ def _keywords(query: str, limit: int) -> str:
     return " ".join(kept[:limit])
 
 
+def _topic_terms(query: str) -> set[str]:
+    """The distinct terms a result has to share to be about the same story.
+
+    Hyphenated compounds are split, because "Galleria-Filialen" retrieves
+    documents that contain only one of the two halves.
+    """
+    terms: set[str] = set()
+    for word in _keywords(query, limit=12).split():
+        for part in word.split("-"):
+            part = part.strip().lower()
+            if len(part) >= 3 and part not in _STOPWORDS and part not in _GENERIC:
+                terms.add(part)
+    return terms
+
+
+def _matched_terms(item: _Item, terms: set[str]) -> set[str]:
+    """Which topic terms the result's own title and summary actually contain.
+
+    Matching is on whole words with a compound-tolerant prefix, never on raw
+    substrings: "Ketterer" must not be read as a hit for "Kette".
+    """
+    haystack = f"{item.title} {item.snippet}".lower()
+    words = set(re.findall(r"[\wäöüß]+", haystack))
+    matched: set[str] = set()
+    for term in terms:
+        for word in words:
+            if word == term:
+                matched.add(term)
+                break
+            if len(term) >= _STEM and word.startswith(term[:_STEM]):
+                matched.add(term)
+                break
+            if len(word) >= _STEM and term.startswith(word[:_STEM]):
+                matched.add(term)
+                break
+    return matched
+
+
+def _is_on_topic(item: _Item, terms: set[str]) -> bool:
+    """Whether the result may be offered as evidence for this query at all.
+
+    Applied before independent publishers are counted. A publisher that
+    answered with something off topic has not corroborated anything, so it must
+    not satisfy the loop's "a second publisher replied" condition either.
+    """
+    if not terms:
+        return True
+    return len(_matched_terms(item, terms)) >= min(_MIN_TOPIC_TERMS, len(terms))
+
+
 def _query_variants(query: str) -> list[str]:
     """The query itself, then progressively looser keyword forms."""
     variants = [query.strip()]
@@ -81,6 +156,7 @@ class _Item:
     snippet: str
     publisher: str
     published_at: str | None
+    modified_at: str | None = None
 
 
 class FreeNewsSearchProvider:
@@ -103,25 +179,42 @@ class FreeNewsSearchProvider:
         self.timeout = timeout
 
     def search(self, query: str, *, language: str = "de", count: int = 8) -> SearchResponse:
+        terms = _topic_terms(query)
         items: list[_Item] = []
+        off_topic = 0
         errors: list[str] = []
         for variant in _query_variants(query):
             for source in (self._tagesschau, self._wikipedia):
                 try:
-                    items.extend(source(variant, language=language))
+                    returned = source(variant, language=language)
                 except Exception as exc:  # noqa: BLE001 - one channel failing is not fatal
                     errors.append(
                         f"{source.__name__.lstrip('_')}: {type(exc).__name__}: {exc}"
                     )
-            # Keep loosening while only one publisher answers. A single
-            # publisher is exactly the case the independence check has to
-            # reject, so stopping there would manufacture that verdict.
+                    continue
+                for item in returned:
+                    if _is_on_topic(item, terms):
+                        items.append(item)
+                    else:
+                        off_topic += 1
+            # Keep loosening while only one publisher answered *on topic*. A
+            # single publisher is exactly the case the independence check has
+            # to reject, so stopping there would manufacture that verdict --
+            # and stopping on an off-topic reply would manufacture the
+            # opposite one, out of a document about a different subject.
             if len({item.publisher for item in items}) >= 2:
                 break
         if not items:
+            detail = []
+            if off_topic:
+                detail.append(
+                    f"{off_topic} result(s) were discarded as off topic for "
+                    f"{sorted(terms)}"
+                )
+            detail.extend(errors)
             raise SearchProviderError(
                 "No free search channel returned a usable result"
-                + (f" ({'; '.join(errors)})" if errors else "")
+                + (f" ({'; '.join(detail)})" if detail else "")
             )
         hits = [
             SearchHit(
@@ -130,6 +223,7 @@ class FreeNewsSearchProvider:
                 snippet=item.snippet,
                 publisher=item.publisher,
                 published_at=item.published_at,
+                modified_at=item.modified_at,
             )
             for item in _deduplicate(items)[: max(1, count)]
         ]
@@ -190,7 +284,13 @@ class FreeNewsSearchProvider:
                     ),
                     snippet=_strip_tags(str(row.get("snippet") or "")),
                     publisher=f"{host}.wikipedia.org",
-                    published_at=_iso_date(row.get("timestamp")),
+                    # MediaWiki reports the last *revision* time. An article
+                    # about a 19th-century museum edited yesterday is not
+                    # yesterday's reporting, and a wiki page has no
+                    # publication date in the sense this field carries
+                    # everywhere else, so it stays unknown.
+                    published_at=None,
+                    modified_at=_iso_date(row.get("timestamp")),
                 )
             )
         return items

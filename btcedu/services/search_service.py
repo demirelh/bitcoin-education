@@ -17,6 +17,10 @@ class SearchHit:
     snippet: str = ""
     publisher: str | None = None
     published_at: str | None = None
+    #: When the document was last changed, if the endpoint reports it. A wiki
+    #: revision time is not a publication date and must not be written into
+    #: ``published_at``, where a news article carries the day it was reported.
+    modified_at: str | None = None
 
 
 @dataclass(frozen=True)

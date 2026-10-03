@@ -373,31 +373,57 @@ story is reported as `waiting_for_provider` and is not recorded in
 Operations left in `reconcile_required` by earlier runs are not touched
 automatically.
 
-## Bekannter Defekt: themenfremde Treffer aus der freien Quellensuche (2026-10-03)
+## Behobener Defekt: themenfremde Treffer aus der freien Quellensuche (2026-10-03)
 
 Im Lauf vom 2026-10-03 (`research_run_id` 100) lieferte die Suche für den Claim
 `filialen_bleiben_geoeffnet` der Galleria-Insolvenz zwei Wikipedia-Artikel über
 eine Turiner Gemäldegalerie (*Hans Memling*) und ein Triester Museum (*Triest*).
-Die Belegprüfung hat beide korrekt als `inconclusive` eingestuft und das auch
-begründet — das Belegtor arbeitet also richtig. Der Defekt sitzt davor, in
-`btcedu/services/free_search.py`:
+Die Belegprüfung hat beide korrekt als `inconclusive` eingestuft — das Belegtor
+arbeitete also richtig. Der Defekt saß davor, in
+`btcedu/services/free_search.py`, und hatte zwei unabhängige Ursachen.
 
-1. Die Volltextsuche der MediaWiki-API trifft auf das beiläufige italienische
-   Wort „Galleria". Die Lockerungsschleife in `FreeNewsSearchProvider.search()`
-   bricht ab, sobald ein **zweiter Herausgeber überhaupt etwas** geantwortet
-   hat. Ein themenfremder Lexikonartikel beendet damit die Suche und erscheint
-   als unabhängige Zweitquelle.
-2. `_wikipedia()` schreibt den MediaWiki-`timestamp` — den Zeitpunkt der
-   **letzten Bearbeitung** — in `published_at`, dasselbe Feld, in dem ein
-   Nachrichtenartikel sein Erscheinungsdatum führt. Ein Artikel über ein Museum
-   des 19. Jahrhunderts, zuletzt vor zehn Tagen bearbeitet, sieht nachgelagert
-   aus wie zehn Tage alte Berichterstattung.
+**1. Unabhängigkeit wurde vor Relevanz gezählt.** Die Lockerungsschleife in
+`FreeNewsSearchProvider.search()` brach ab, sobald ein zweiter Herausgeber
+*überhaupt etwas* geantwortet hatte. Die MediaWiki-Volltextsuche trifft auf das
+beiläufige italienische Wort „Galleria", und dieser Treffer beendete die Suche,
+bevor das Nachrichtenarchiv eine beantwortbare Abfrage gesehen hatte.
 
-Der Fall ist in `tests/test_free_search.py` offline reproduzierbar festgehalten:
-`test_the_galleria_query_really_does_return_unrelated_wikipedia_articles`
-sichert die Reproduktion selbst, die beiden `xfail(strict=True)`-Tests
-beschreiben das gewünschte Verhalten. Wird einer der Defekte behoben, schlägt
-sein strikter `xfail` um und der Marker ist zu entfernen.
+Jetzt wird jeder Treffer zuerst gegen die **Themenbegriffe der Abfrage**
+geprüft (`_topic_terms` / `_is_on_topic`). Ein Treffer gilt nur dann als zur
+Geschichte gehörig, wenn er mindestens zwei verschiedene Themenbegriffe
+enthält. Erst danach werden unabhängige Herausgeber gezählt. Drei Details
+machen das belastbar:
 
-Die Behebung steht aus; sie erfordert keine Modellaufrufe, aber eine
-inhaltliche Entscheidung über Trefferfilterung und Datumssemantik.
+* Bindestrich-Komposita werden aufgetrennt, weil „Galleria-Filialen" Dokumente
+  findet, die nur eine der beiden Hälften enthalten.
+* Kalender-, Mengen- und Währungswörter (`_GENERIC`: Jahren, Mal, Prozent,
+  Euro, Monatsnamen …) zählen nicht als Themenüberschneidung. Sie stehen in
+  fast jedem deutschen Nachrichtensatz; ohne diese Liste genügte „Galleria" plus
+  „Jahren", um einen Artikel über die Belle Époque relevant erscheinen zu lassen.
+* Verglichen wird auf **Wortgrenzen** mit kompositatolerantem Präfix, nicht auf
+  Teilzeichenketten — sonst wäre „Ketterer" ein Treffer für „Kette".
+
+Bleibt nach allen Abfragevarianten kein themenbezogener Treffer übrig, meldet
+der Adapter einen `SearchProviderError` und nennt, wie viele Treffer er als
+themenfremd verworfen hat. Keine Belege sind das ehrlichere Ergebnis als
+themenfremde Belege; die Belegprüfung selbst wurde nicht gelockert.
+
+**2. Bearbeitungszeit wurde als Veröffentlichungszeit ausgegeben.**
+`_wikipedia()` schrieb den MediaWiki-`timestamp` — den Zeitpunkt der letzten
+**Bearbeitung** — in `published_at`, dasselbe Feld, in dem ein
+Nachrichtenartikel sein Erscheinungsdatum führt. Ein Artikel über ein Museum
+des 19. Jahrhunderts, zuletzt vor zehn Tagen bearbeitet, sah nachgelagert aus
+wie zehn Tage alte Berichterstattung.
+
+`SearchHit` hat jetzt ein eigenes Feld `modified_at`. Wikipedia-Treffer tragen
+`published_at=None` und die Revisionszeit in `modified_at`; ein
+tagesschau-Artikel trägt weiterhin sein echtes `published_at` und
+`modified_at=None`. Eine unbekannte Veröffentlichungszeit bleibt damit
+unbekannt, statt durch eine andere Größe ersetzt zu werden.
+
+**Regressionsnachweis:** `tests/test_free_search.py` spielt die tatsächlich
+aufgezeichneten Antworten aus `news_research_queries` 672 und 674 offline ab —
+ohne Netzwerk und ohne Modellaufruf. Abgedeckt sind beide Fehlerbilder, die
+Gegenprobe (ein *themenbezogener* Wikipedia-Treffer wird weiterhin
+angenommen), das Weiterlockern trotz antwortendem Zweitherausgeber und beide
+Datumsfälle.

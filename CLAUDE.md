@@ -197,7 +197,7 @@ times, completion times, summed retry duration/cost and attempt counts.
 
 ## Config (.env)
 
-Key settings: transcription primary/secondary providers, transcript QA
+Key settings: transcription primary/fallback/secondary providers, transcript QA
 thresholds, `qa_review_enabled`, `qa_model`, LLM/provider credentials,
 `default_content_profile`, `dry_run`, `max_episode_cost_usd`,
 `episode_retention_days`, image/TTS/render providers,
@@ -208,6 +208,9 @@ and may override applicable `.env` values. Full list: `btcedu/config.py`.
 Credentials never reach a log: `Settings` masks them in its own `repr`, and
 `utils/secrets.install_log_redaction()` strikes the configured values out of
 every log record (a library can quote a rejected key back in its error text).
+The `tagesschau_tr` transcription stage normally uses OpenAI, but a permanent
+OpenAI credit-quota error falls back to local `faster_whisper/small`; other
+provider errors retain their existing failure behavior.
 
 ## Notifications
 

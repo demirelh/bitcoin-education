@@ -22,6 +22,9 @@ stage_config:
     primary:
       provider: openai
       model: whisper-1
+    fallback:
+      provider: faster_whisper
+      model: small
     secondary:
       enabled: true
       provider: openai

@@ -14,6 +14,7 @@ from btcedu.models.transcript_schema import (
     TranscriptSegment,
     TranscriptUsage,
 )
+from btcedu.services.errors import ErrorCategory, PipelineError
 
 
 def _make_settings(tmp_path: Path) -> Settings:
@@ -46,11 +47,17 @@ def _seed_downloaded_episode(db_session, tmp_path, episode_id="ep001"):
     return ep
 
 
-def _structured_transcript(episode_id: str, text: str) -> TranscriptDocument:
+def _structured_transcript(
+    episode_id: str,
+    text: str,
+    *,
+    provider: str = "openai",
+    model: str = "whisper-1",
+) -> TranscriptDocument:
     return TranscriptDocument(
         episode_id=episode_id,
-        provider="openai",
-        model="whisper-1",
+        provider=provider,
+        model=model,
         language="de",
         text=text,
         segments=[
@@ -184,6 +191,51 @@ class TestTranscribeEpisode:
         mock_whisper.assert_called_once()
         content = (transcript_dir / "transcript.clean.de.txt").read_text()
         assert content == "New transcript."
+
+    @patch("btcedu.services.transcription_service.get_transcription_provider")
+    @patch("btcedu.services.transcription_service.transcribe_audio_structured")
+    def test_quota_exhaustion_uses_configured_fallback(
+        self, mock_transcribe, mock_get_provider, db_session, tmp_path
+    ):
+        settings = _make_settings(tmp_path)
+        _seed_downloaded_episode(db_session, tmp_path)
+        primary_provider = object()
+        fallback_provider = object()
+        mock_get_provider.side_effect = [primary_provider, fallback_provider]
+        quota_error = PipelineError(
+            "OpenAI credits exhausted",
+            ErrorCategory.PERMANENT_QUOTA,
+        )
+        mock_transcribe.side_effect = [
+            quota_error,
+            _structured_transcript(
+                "ep001",
+                "Lokales Transkript.",
+                provider="faster_whisper",
+                model="small",
+            ),
+        ]
+
+        with patch(
+            "btcedu.core.transcriber._load_transcription_profile_config",
+            return_value={
+                "primary": {"provider": "openai", "model": "whisper-1"},
+                "fallback": {"provider": "faster_whisper", "model": "small"},
+            },
+        ):
+            transcribe_episode(db_session, "ep001", settings)
+
+        assert mock_transcribe.call_count == 2
+        assert mock_transcribe.call_args_list[0].kwargs["provider"] is primary_provider
+        assert mock_transcribe.call_args_list[1].kwargs["provider"] is fallback_provider
+        assert mock_transcribe.call_args_list[1].kwargs["model"] == "small"
+        provenance = json.loads(
+            (
+                tmp_path / "outputs" / "ep001" / "provenance" / "transcribe_provenance.json"
+            ).read_text(encoding="utf-8")
+        )
+        assert provenance["provider"] == "faster_whisper"
+        assert provenance["model"] == "small"
 
     def test_loads_legacy_text_without_structured_artifact(self, tmp_path):
         settings = _make_settings(tmp_path)

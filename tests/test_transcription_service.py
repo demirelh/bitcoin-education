@@ -86,6 +86,7 @@ def test_profile_transcription_config_overrides_settings():
         settings,
         {
             "primary": {"provider": "openai", "model": "primary-model"},
+            "fallback": {"provider": "faster_whisper", "model": "small"},
             "secondary": {
                 "enabled": True,
                 "provider": "openai",
@@ -99,6 +100,9 @@ def test_profile_transcription_config_overrides_settings():
     )
 
     assert config.primary.model == "primary-model"
+    assert config.fallback is not None
+    assert config.fallback.provider == "faster_whisper"
+    assert config.fallback.model == "small"
     assert config.secondary.enabled is True
     assert config.secondary.model == "secondary-model"
     assert config.secondary_minimum_severity == "major"

@@ -68,7 +68,8 @@ Each v2 stage module follows the same pattern:
 - **Pipeline debugging**: check `PipelineRun` records, `episode.error_message`, `episode.retry_count`
 - **Local transcription**: `faster_whisper` is a supported provider and needs no
   API key. Profiles still route transcription; `tagesschau_tr` uses OpenAI as
-  primary and as the independent suspicious-segment verifier.
+  primary and as the independent suspicious-segment verifier, but falls back to
+  local `faster_whisper/small` when the primary reports exhausted credits.
 - **Reboot debugging**: a stage writes and commits its `RUNNING` row before
   work; retry summaries aggregate all attempts instead of showing only the last
 - **Failover debugging**: `processing`/`publishing` are intentionally

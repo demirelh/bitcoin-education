@@ -187,8 +187,9 @@ lexicon output.
 
 Providers are selected by profile, not hard-coded business rules.
 `tagesschau_tr` currently configures OpenAI primary/secondary transcription,
-Copilot CLI producer/QA models, profile-routed generative images, and
-ElevenLabs TTS.
+a local `faster_whisper/small` fallback for primary credit-quota exhaustion,
+Copilot CLI producer/QA models, profile-routed generative images, and ElevenLabs
+TTS.
 
 Deterministic analysis and QA cost zero. Every paid call checks cumulative
 episode cost before invocation and records structured `cost_usd`. Partial

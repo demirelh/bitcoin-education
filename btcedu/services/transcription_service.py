@@ -42,9 +42,10 @@ class SecondaryTranscriptionSpec:
 
 @dataclass(frozen=True)
 class ResolvedTranscriptionConfig:
-    """Effective primary/secondary transcription configuration."""
+    """Effective primary/fallback/secondary transcription configuration."""
 
     primary: TranscriptionProviderSpec
+    fallback: TranscriptionProviderSpec | None
     secondary: SecondaryTranscriptionSpec
     secondary_minimum_severity: str
     suspicious_segment_context_seconds: float
@@ -210,6 +211,7 @@ def resolve_transcription_config(
     """Resolve profile transcription settings over global defaults."""
     config = profile_config or {}
     primary = config.get("primary") or {}
+    fallback = config.get("fallback") or {}
     secondary = config.get("secondary") or {}
 
     primary_provider = str(
@@ -234,6 +236,14 @@ def resolve_transcription_config(
         primary=TranscriptionProviderSpec(
             provider=primary_provider,
             model=primary_model,
+        ),
+        fallback=(
+            TranscriptionProviderSpec(
+                provider=str(fallback["provider"]),
+                model=str(fallback["model"]),
+            )
+            if fallback.get("provider") and fallback.get("model")
+            else None
         ),
         secondary=SecondaryTranscriptionSpec(
             enabled=bool(

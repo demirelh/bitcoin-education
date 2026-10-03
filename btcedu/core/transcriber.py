@@ -27,6 +27,7 @@ from btcedu.models.transcript_schema import (
     TranscriptUsage,
     make_segment_id,
 )
+from btcedu.services.errors import ErrorCategory, PipelineError
 
 logger = logging.getLogger(__name__)
 
@@ -121,14 +122,37 @@ def transcribe_episode(
     started = time.monotonic()
 
     try:
-        document = transcribe_audio_structured(
-            episode.audio_path,
-            episode_id=episode_id,
-            provider=provider,
-            model=resolved.primary.model,
-            language=settings.whisper_language,
-            max_chunk_mb=settings.max_audio_chunk_mb,
-        )
+        try:
+            document = transcribe_audio_structured(
+                episode.audio_path,
+                episode_id=episode_id,
+                provider=provider,
+                model=resolved.primary.model,
+                language=settings.whisper_language,
+                max_chunk_mb=settings.max_audio_chunk_mb,
+            )
+        except PipelineError as exc:
+            if exc.category != ErrorCategory.PERMANENT_QUOTA or resolved.fallback is None:
+                raise
+            logger.warning(
+                "Transcription quota exhausted for %s; falling back from %s to %s",
+                episode_id,
+                resolved.primary.provider,
+                resolved.fallback.provider,
+            )
+            fallback_provider = get_transcription_provider(
+                resolved.fallback.provider,
+                api_key=_provider_api_key(settings, resolved.fallback.provider),
+                openai_cost_per_minute_usd=settings.transcription_openai_cost_per_minute_usd,
+            )
+            document = transcribe_audio_structured(
+                episode.audio_path,
+                episode_id=episode_id,
+                provider=fallback_provider,
+                model=resolved.fallback.model,
+                language=settings.whisper_language,
+                max_chunk_mb=settings.max_audio_chunk_mb,
+            )
         cleaned = clean_transcript(document.text)
 
         transcript_dir.mkdir(parents=True, exist_ok=True)
@@ -274,6 +298,14 @@ def _transcription_config_hash(config) -> str:
                 "provider": config.primary.provider,
                 "model": config.primary.model,
             },
+            "fallback": (
+                {
+                    "provider": config.fallback.provider,
+                    "model": config.fallback.model,
+                }
+                if config.fallback is not None
+                else None
+            ),
             "secondary": {
                 "enabled": config.secondary.enabled,
                 "provider": config.secondary.provider,

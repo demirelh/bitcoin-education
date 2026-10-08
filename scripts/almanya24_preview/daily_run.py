@@ -151,8 +151,9 @@ def make_drafter(session):
     def drafter(*, settings, model, selected, published_at: datetime) -> DraftResult:
         from btcedu.core.editorial.media_collection import (
             CollectionCommonsProvider,
-            match_collection,
+            WikidataPortraitLookup,
             requirement_for,
+            select_entry,
         )
 
         # A search that failed on an earlier night left its operation blocked.
@@ -165,8 +166,9 @@ def make_drafter(session):
         fetcher = DocumentFetcher.from_settings(settings)
         # A free-text catalogue search with the whole headline never matched
         # anything; the curated collection pins one cleared picture per name.
-        entry = match_collection(
-            [(selected.story.headline_de, 3), (selected.story.text_de, 1)]
+        lookup = WikidataPortraitLookup(fetcher, learned_collection_path(settings))
+        entry = select_entry(
+            [(selected.story.headline_de, 3), (selected.story.text_de, 1)], lookup
         )
         requirement = requirement_for(entry) if entry is not None else None
         kwargs = dict(
@@ -177,7 +179,9 @@ def make_drafter(session):
             model_caller=model,
             search_provider=FreeNewsSearchProvider(fetcher),
             fetcher=fetcher,
-            media_provider=CollectionCommonsProvider(fetcher),
+            media_provider=CollectionCommonsProvider(
+                fetcher, extra=(entry,) if entry is not None else ()
+            ),
             media_requirement=requirement,
             provider_name=PROVIDER,
             model_name=MODEL,
@@ -200,6 +204,11 @@ def make_drafter(session):
         return DraftResult(title=article.title, section=selected.section)
 
     return drafter
+
+
+def learned_collection_path(settings: Settings) -> Path:
+    """People added to the picture collection automatically, kept across runs."""
+    return Path(settings.newsroom_data_dir) / "media-collection-learned.json"
 
 
 def make_publisher(session):

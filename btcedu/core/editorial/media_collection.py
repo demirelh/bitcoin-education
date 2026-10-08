@@ -11,10 +11,15 @@ change on Commons drops out instead of being published on stale metadata.
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from functools import cache
+from pathlib import Path
 from urllib.parse import urlencode
 
 from btcedu.core.editorial.media import MediaRequirement
@@ -24,6 +29,8 @@ from btcedu.services.commons_service import (
     MediaCatalogError,
     WikimediaCommonsProvider,
 )
+
+logger = logging.getLogger(__name__)
 
 #: Width of the Commons thumbnail that is downloaded instead of the original.
 THUMB_WIDTH = 1280
@@ -236,17 +243,18 @@ def _pattern(alias: str) -> re.Pattern[str]:
     return re.compile(r"(?<!\w)" + re.escape(alias) + r"(?!\w)")
 
 
-_PATTERNS = {
-    entry.key: tuple(_pattern(normalize(alias)) for alias in entry.aliases)
-    for entry in COLLECTION
-}
-_REQUIRES = {
-    entry.key: tuple(_pattern(normalize(alias)) for alias in entry.requires)
-    for entry in COLLECTION
-}
+@cache
+def _compiled(entry: CollectionEntry) -> tuple[tuple[re.Pattern[str], ...], ...]:
+    return (
+        tuple(_pattern(normalize(alias)) for alias in entry.aliases),
+        tuple(_pattern(normalize(alias)) for alias in entry.requires),
+    )
 
 
-def match_collection(fields: Sequence[tuple[str, int]]) -> CollectionEntry | None:
+def match_collection(
+    fields: Sequence[tuple[str, int]],
+    extra: Sequence[CollectionEntry] = (),
+) -> CollectionEntry | None:
     """The entry that best depicts a story, from ``(text, weight)`` fields.
 
     Higher weights mark more prominent text (headline over body). The best
@@ -257,12 +265,12 @@ def match_collection(fields: Sequence[tuple[str, int]]) -> CollectionEntry | Non
     everything = " ".join(text for text, _ in texts)
     best: tuple | None = None
     best_entry: CollectionEntry | None = None
-    for entry in COLLECTION:
-        requires = _REQUIRES[entry.key]
+    for entry in (*COLLECTION, *extra):
+        aliases, requires = _compiled(entry)
         if requires and not any(p.search(everything) for p in requires):
             continue
         for text, weight in texts:
-            positions = [m.start() for p in _PATTERNS[entry.key] if (m := p.search(text))]
+            positions = [m.start() for p in aliases if (m := p.search(text))]
             if not positions:
                 continue
             rank = (weight * _KIND_WEIGHT[entry.kind], bool(requires), -min(positions))
@@ -276,13 +284,270 @@ def requirement_for(entry: CollectionEntry) -> MediaRequirement:
     return MediaRequirement(subject=entry.label, role=entry.role, caption=entry.caption)
 
 
+# -- automatic growth -------------------------------------------------------
+
+WIKIDATA_API_URL = "https://www.wikidata.org/w/api.php"
+
+#: Capitalised at a sentence start or as German nouns, never a first name.
+_NOT_A_FIRST_NAME = frozenset(
+    """
+    der die das dem den des ein eine einer eines im am an auf aus bei mit nach
+    von vom zum zur für über unter vor in und oder aber auch nun heute gestern
+    bundeskanzler kanzler präsident präsidentin ministerin minister
+    ministerpräsident ministerpräsidentin chef chefin herr frau sprecher
+    sprecherin bundesminister bundesministerin cumhurbaşkanı başbakan bakan
+    başkanı başkan sayın
+    """.split()
+)
+_PARTICLES = frozenset({"von", "van", "de", "da", "der", "den", "di", "du", "le", "la"})
+_WORD = re.compile(r"[^\W\d_][\w-]*")
+_IMAGE_FILE = (".jpg", ".jpeg", ".png", ".webp")
+#: Description words that say nothing about *which* namesake is meant.
+_GENERIC_DESCRIPTION = frozenset(
+    """
+    und der die das des von vom seit bis für mit ehemaliger ehemalige ehem mdb
+    mdl mdep geboren person politiker politikerin the and of former politician
+    born
+    """.split()
+)
+#: How long a name is trusted before Wikidata is asked again.
+_CACHE_TTL = timedelta(days=30)
+
+
+def candidate_names(text: str) -> list[str]:
+    """Adjacent capitalised words that could be a person's full name.
+
+    Deliberately generous: Wikidata and the story context decide.
+    """
+    words = [(m.group(0).split("'")[0], m.start(), m.end()) for m in _WORD.finditer(text or "")]
+    words = [(w.rstrip("-"), s, e) for w, s, e in words]
+    names: list[str] = []
+    for i, (first, _, end) in enumerate(words):
+        if not first[:1].isupper() or first.lower() in _NOT_A_FIRST_NAME or len(first) < 2:
+            continue
+        parts, last_end = [first], end
+        for word, start, word_end in words[i + 1 : i + 4]:
+            if text[last_end:start].strip():
+                break
+            if word.lower() in _PARTICLES and word[:1].islower():
+                parts.append(word)
+                last_end = word_end
+                continue
+            if word[:1].isupper() and len(word) >= 2:
+                parts.append(word)
+                name = " ".join(parts)
+                if name not in names:
+                    names.append(name)
+            break
+    return names
+
+
+def description_terms(description: str) -> tuple[str, ...]:
+    """Words of a Wikidata description that can tie a namesake to a story."""
+    terms: list[str] = []
+    for word in re.findall(r"[\w-]+", normalize(description)):
+        for part in {word, *word.split("-")}:
+            if (
+                len(part) < 3
+                or part.isdigit()
+                or part in _GENERIC_DESCRIPTION
+                or part.startswith("deutsch")
+                or re.search(r"isch(e[nrs]?)?$", part)
+                or part in terms
+            ):
+                continue
+            terms.append(part)
+    return tuple(terms)
+
+
+def _term_pattern(term: str) -> re.Pattern[str]:
+    # Compound tolerant: "Fußballspieler" fits a story about "Fußball".
+    return _pattern(f"{term[:6]}*" if len(term) >= 6 else term)
+
+
+def fits_context(terms: Sequence[str], context: str) -> bool:
+    return any(_term_pattern(term).search(context) for term in terms)
+
+
+class WikidataPortraitLookup:
+    """Finds portraits of people the curated collection does not know yet.
+
+    For a name it records every human on Wikidata with exactly that label and a
+    portrait (P18), with the words of their description. Which of them a story
+    means is decided per story by :func:`select_entry`. Results persist in
+    ``cache_path``, so the collection grows with every new name and Wikidata is
+    asked about each name at most once a month.
+    """
+
+    def __init__(
+        self,
+        fetcher,
+        cache_path: str | Path,
+        *,
+        api_url: str = WIKIDATA_API_URL,
+        max_lookups: int = 6,
+        pause_seconds: float = 1.0,
+        now=lambda: datetime.now(UTC),
+        sleep=time.sleep,
+    ) -> None:
+        self.fetcher = fetcher
+        self.cache_path = Path(cache_path)
+        self.api_url = api_url
+        self.max_lookups = max_lookups
+        self.pause_seconds = pause_seconds
+        self.now = now
+        self.sleep = sleep
+        self._remaining = max_lookups
+        try:
+            self._cache: dict = json.loads(self.cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            self._cache = {}
+
+    def reset_budget(self) -> None:
+        self._remaining = self.max_lookups
+
+    def candidates(self, name: str) -> list[dict]:
+        key = normalize(name)
+        row = self._cache.get(key)
+        if row is not None and self.now() - datetime.fromisoformat(row["checked_at"]) < _CACHE_TTL:
+            return row["candidates"]
+        if self._remaining <= 0:
+            return row["candidates"] if row else []
+        self._remaining -= 1
+        try:
+            found = self._resolve(name)
+        except Exception as exc:  # noqa: BLE001 - a failed lookup means no picture
+            logger.warning("Wikidata lookup for %r failed: %s", name, exc)
+            return row["candidates"] if row else []
+        self._cache[key] = {"candidates": found, "checked_at": self.now().isoformat()}
+        self._save()
+        return found
+
+    def _get(self, params: dict) -> dict:
+        self.sleep(self.pause_seconds)
+        document = self.fetcher.fetch(f"{self.api_url}?{urlencode(params)}")
+        return json.loads(document.text or document.body.decode("utf-8"))
+
+    def _resolve(self, name: str) -> list[dict]:
+        wanted = normalize(name)
+        found = self._get(
+            {
+                "action": "wbsearchentities",
+                "search": name,
+                "language": "de",
+                "uselang": "de",
+                "type": "item",
+                "limit": "10",
+                "format": "json",
+            }
+        ).get("search", [])
+        ids = [
+            row["id"]
+            for row in found
+            if wanted
+            in {normalize(row.get("label", "")), normalize(row.get("match", {}).get("text", ""))}
+        ]
+        if not ids:
+            return []
+        entities = self._get(
+            {
+                "action": "wbgetentities",
+                "ids": "|".join(ids),
+                "props": "claims|labels|descriptions",
+                "languages": "de|en",
+                "format": "json",
+            }
+        ).get("entities", {})
+        people = []
+        for qid in ids:
+            entity = entities.get(qid) or {}
+            claims = entity.get("claims", {})
+            is_human = any(
+                (claim.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id")
+                == "Q5"
+                for claim in claims.get("P31", [])
+            )
+            portraits = claims.get("P18") or []
+            if not is_human or not portraits:
+                continue
+            file_name = portraits[0].get("mainsnak", {}).get("datavalue", {}).get("value", "")
+            if not file_name.lower().endswith(_IMAGE_FILE):
+                continue
+            labels, descriptions = entity.get("labels", {}), entity.get("descriptions", {})
+            description = " ".join(
+                (descriptions.get(lang) or {}).get("value", "") for lang in ("de", "en")
+            )
+            people.append(
+                {
+                    "qid": qid,
+                    "label": (labels.get("de") or labels.get("en") or {}).get("value") or name,
+                    "file": file_name,
+                    "description": description.strip(),
+                    "terms": list(description_terms(description)),
+                }
+            )
+        return people
+
+    def _save(self) -> None:
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.cache_path.with_suffix(self.cache_path.suffix + ".tmp")
+        temporary.write_text(
+            json.dumps(self._cache, ensure_ascii=False, indent=1, sort_keys=True),
+            encoding="utf-8",
+        )
+        temporary.replace(self.cache_path)
+
+
+def _learned_entry(person: dict) -> CollectionEntry:
+    return CollectionEntry(
+        key=f"wikidata:{person['qid']}",
+        label=person["label"],
+        kind="person",
+        commons_file=person["file"],
+        aliases=(normalize(person["label"]),),
+        caption_tr=person["label"],
+    )
+
+
+def select_entry(
+    fields: Sequence[tuple[str, int]],
+    lookup: WikidataPortraitLookup | None = None,
+) -> CollectionEntry | None:
+    """Best picture for a story: the collection first, then people it names.
+
+    A person found on Wikidata is used only if exactly one human of that name
+    has a portrait *and* a description that fits the story. Two namesakes, or
+    one whose description has nothing to do with the story, mean no picture:
+    the wrong face is worse than none.
+    """
+    entry = match_collection(fields)
+    if lookup is None or (entry is not None and entry.kind == "person"):
+        return entry
+    context = normalize(" ".join(text or "" for text, _ in fields))
+    known = {alias for item in COLLECTION if item.kind == "person" for alias in item.aliases}
+    lookup.reset_budget()
+    learned: list[CollectionEntry] = []
+    for text, _ in sorted(fields, key=lambda field: -field[1]):
+        for name in candidate_names(text):
+            if normalize(name) in known or any(e.label == name for e in learned):
+                continue
+            fitting = [p for p in lookup.candidates(name) if fits_context(p["terms"], context)]
+            if len(fitting) == 1:
+                learned.append(_learned_entry(fitting[0]))
+    return match_collection(fields, extra=learned) if learned else entry
+
+
 class CollectionCommonsProvider(WikimediaCommonsProvider):
     """Resolves a collection label to its pinned Commons file, never a free search."""
 
     name = "wikimedia_commons_collection"
 
+    def __init__(self, fetcher, *, extra: Sequence[CollectionEntry] = (), **kwargs):
+        super().__init__(fetcher, **kwargs)
+        self.extra = tuple(extra)
+
     def search(self, query: str, *, limit: int) -> tuple[MediaCandidate, ...]:
-        entry = next((item for item in COLLECTION if item.label == query), None)
+        entry = next((item for item in (*COLLECTION, *self.extra) if item.label == query), None)
         if entry is None:
             return ()
         params = {

@@ -24,8 +24,9 @@ from btcedu.core.editorial.media import (
 )
 from btcedu.core.editorial.media_collection import (
     CollectionCommonsProvider,
-    match_collection,
+    WikidataPortraitLookup,
     requirement_for,
+    select_entry,
 )
 from btcedu.models.article import ArticleParagraph, ArticleStatus
 from btcedu.models.editorial import EditorialRevision
@@ -36,6 +37,7 @@ if __package__:
         _latest_per_topic,
         _render_status,
         _session_for,
+        learned_collection_path,
         make_publisher,
         settings_factory,
     )
@@ -46,6 +48,7 @@ else:  # executed directly from the command line
         _latest_per_topic,
         _render_status,
         _session_for,
+        learned_collection_path,
         make_publisher,
         settings_factory,
     )
@@ -65,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = settings_factory(paths)
     session = _session_for(settings)
     fetcher = DocumentFetcher.from_settings(settings)
-    provider = CollectionCommonsProvider(fetcher)
+    lookup = WikidataPortraitLookup(fetcher, learned_collection_path(settings))
     store = MediaBlobStore.from_settings(settings)
     attached = 0
     try:
@@ -80,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
                     .filter_by(article_revision_id=article.id)
                     .order_by(ArticleParagraph.position)
                 )
-                entry = match_collection([(article.title, 3), (article.lede, 2), (body, 1)])
+                entry = select_entry([(article.title, 3), (article.lede, 2), (body, 1)], lookup)
                 if entry is None:
                     logger.info("No collection match: %s", article.title)
                     continue
@@ -91,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
                     session,
                     editorial_revision=revision,
                     requirement=requirement_for(entry),
-                    provider=provider,
+                    provider=CollectionCommonsProvider(fetcher, extra=(entry,)),
                     fetcher=fetcher,
                     blob_store=store,
                     decided_by="auto:collection",

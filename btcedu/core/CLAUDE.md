@@ -28,7 +28,8 @@ Each v2 stage module follows the same pattern:
 - `translation_qa.py` — deterministic checks + LLM cascade, GREEN/RED gate, bounded targeted retries
 - `adapter.py` — conditional per-story adaptation. Keep its returned-operation allowlist strict;
   `anchor_unify` selection checks Turkish markers and German first-person source markers because
-  Turkish may encode first person only in verb or possessive suffixes.
+  Turkish may encode first person only in verb or possessive suffixes. Prompt outputs must label
+  only operations performed by the current call, not matching features inherited from translation.
 - `narration_lock.py` — approved-narration invariant: `normalize_narration_text()`, `compose_chapter_narration()`, `check_narration_lock()`, plus deterministic repair of minor drift/truncation
 - `final_review.py` — deterministic weather video checks at `review_gate_3` (asset exists, 1920x1080, segment resolution, blank/freeze/stale frames, narration coverage). Fail-closed: a crash blocks the gate.
 - `retention.py` — `prune_expired_episodes()` (files + DB rows), called from `detector.py`. Honors `episode_retention_days` / profile `ingest.retention_days`.

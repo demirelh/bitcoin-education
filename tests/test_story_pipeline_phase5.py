@@ -483,6 +483,16 @@ def test_needed_adaptation_detects_german_first_person_with_implicit_turkish_per
     ) == ["anchor_unify", "institution_explanation"]
 
 
+def test_tagesschau_adapt_prompt_does_not_label_inherited_operations():
+    prompt = Path("btcedu/prompts/templates/tagesschau_tr/adapt.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "`allowed_operations` **tek yetki kaynağıdır**" in prompt
+    assert "zaten bulunan bir özellik veya" in prompt
+    assert "`operations_applied` listesine" in prompt
+
+
 def test_conditional_story_adaptation_allows_detected_german_first_person(tmp_path):
     source_de = (
         "Dem Ergebnis der laufenden Abstimmung möchte ich nicht vorgreifen. "

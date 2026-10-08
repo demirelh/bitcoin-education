@@ -29,7 +29,7 @@ from btcedu.core.editorial.media_collection import (
     select_entry,
 )
 from btcedu.models.article import ArticleParagraph, ArticleStatus
-from btcedu.models.editorial import EditorialRevision
+from btcedu.models.editorial import EditorialRevision, SourceRevision, TopicSource
 from btcedu.services.document_fetcher import DocumentFetcher
 
 if __package__:
@@ -83,7 +83,23 @@ def main(argv: list[str] | None = None) -> int:
                     .filter_by(article_revision_id=article.id)
                     .order_by(ArticleParagraph.position)
                 )
-                entry = select_entry([(article.title, 3), (article.lede, 2), (body, 1)], lookup)
+                # The German source keeps names and places a translation may drop.
+                sources = (
+                    session.query(SourceRevision)
+                    .join(TopicSource, TopicSource.source_revision_id == SourceRevision.id)
+                    .filter(TopicSource.topic_id == revision.topic_id)
+                    .all()
+                )
+                entry = select_entry(
+                    [
+                        (article.title, 3),
+                        *((source.title, 3) for source in sources),
+                        (article.lede, 2),
+                        (body, 1),
+                        *((source.source_text, 1) for source in sources),
+                    ],
+                    lookup,
+                )
                 if entry is None:
                     logger.info("No collection match: %s", article.title)
                     continue

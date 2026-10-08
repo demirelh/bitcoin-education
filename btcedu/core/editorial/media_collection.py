@@ -512,6 +512,8 @@ def _learned_entry(person: dict) -> CollectionEntry:
 def select_entry(
     fields: Sequence[tuple[str, int]],
     lookup: WikidataPortraitLookup | None = None,
+    *,
+    exclude: Sequence[str] = (),
 ) -> CollectionEntry | None:
     """Best picture for a story: the collection first, then people it names.
 
@@ -525,6 +527,8 @@ def select_entry(
         return entry
     context = normalize(" ".join(text or "" for text, _ in fields))
     known = {alias for item in COLLECTION if item.kind == "person" for alias in item.aliases}
+    # The reporter is named in the story but is not what it is about.
+    known |= {normalize(name) for name in exclude if name}
     lookup.reset_budget()
     learned: list[CollectionEntry] = []
     for text, _ in sorted(fields, key=lambda field: -field[1]):

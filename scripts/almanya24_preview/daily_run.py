@@ -168,7 +168,9 @@ def make_drafter(session):
         # anything; the curated collection pins one cleared picture per name.
         lookup = WikidataPortraitLookup(fetcher, learned_collection_path(settings))
         entry = select_entry(
-            [(selected.story.headline_de, 3), (selected.story.text_de, 1)], lookup
+            [(selected.story.headline_de, 3), (selected.story.text_de, 1)],
+            lookup,
+            exclude=[selected.story.reporter or ""],
         )
         requirement = requirement_for(entry) if entry is not None else None
         kwargs = dict(

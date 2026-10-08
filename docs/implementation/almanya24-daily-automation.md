@@ -403,10 +403,17 @@ machen das belastbar:
 * Verglichen wird auf **Wortgrenzen** mit kompositatolerantem Präfix, nicht auf
   Teilzeichenketten — sonst wäre „Ketterer" ein Treffer für „Kette".
 
-Bleibt nach allen Abfragevarianten kein themenbezogener Treffer übrig, meldet
-der Adapter einen `SearchProviderError` und nennt, wie viele Treffer er als
+Bleibt nach allen Abfragevarianten kein themenbezogener Treffer übrig, liefert
+der Adapter ein **leeres** Ergebnis und protokolliert, wie viele Treffer er als
 themenfremd verworfen hat. Keine Belege sind das ehrlichere Ergebnis als
-themenfremde Belege; die Belegprüfung selbst wurde nicht gelockert.
+themenfremde Belege; die Belegprüfung selbst wurde nicht gelockert. Ein
+`SearchProviderError` entsteht nur noch, wenn kein Kanal überhaupt geantwortet
+hat. Ursprünglich warf der Adapter auch bei beantworteter, aber themenfremder
+Suche — das brach ab 02.10. jede betroffene Meldung komplett ab (19 Meldungen),
+statt sie ohne Beleg als Entwurf weiterzuführen. Zusätzlich zählen die von der
+Gegensuche angehängten Wörter (`Widerspruch Korrektur Faktencheck`),
+Fragewörter/Demonstrativa (`Wer`, `Diese` …) und Tageszeitwörter (`Abend`,
+`morgen` …) nicht mehr als Themenwörter.
 
 **2. Bearbeitungszeit wurde als Veröffentlichungszeit ausgegeben.**
 `_wikipedia()` schrieb den MediaWiki-`timestamp` — den Zeitpunkt der letzten

@@ -18,12 +18,15 @@ assessed against tagesschau, and the evidence record will show that.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import urllib.parse
 from dataclasses import dataclass
 from datetime import datetime
 
 from btcedu.services.search_service import SearchHit, SearchProviderError, SearchResponse
+
+logger = logging.getLogger(__name__)
 
 TAGESSCHAU_SEARCH = "https://www.tagesschau.de/api2u/search/"
 WIKIPEDIA_SEARCH = "https://de.wikipedia.org/w/api.php"
@@ -41,6 +44,8 @@ _STOPWORDS = frozenset(
     durch ein eine einem einen einer eines er es fuer für gegen hat haben hier
     ihr im in ist ins kann mit nach nicht noch oder ohne sein sich sie sind so
     soll über um und uns unter vom von vor war werden wie wird wurde zu zum zur
+    wer was wo wann warum welche welcher welches welchem welchen diese dieser
+    dieses diesem diesen
     """.split()
 )
 
@@ -56,8 +61,13 @@ _GENERIC = frozenset(
     millionen milliarde milliarden anfang ende mitte montag dienstag mittwoch
     donnerstag freitag samstag sonntag januar februar maerz märz april juni
     juli august september oktober november dezember zahl zahlen teil teile
+    heute gestern morgen abend abends nacht vormittag nachmittag
     """.split()
 )
+
+#: Appended by the counter-search plan (``query_plans``); they describe the
+#: search, not the story, so no result has to contain them.
+_SEARCH_INTENT = frozenset({"widerspruch", "korrektur", "faktencheck"})
 
 #: How many distinct topic terms a result has to share with the query before it
 #: counts as being about the same story. One is not enough: a single shared
@@ -99,7 +109,12 @@ def _topic_terms(query: str) -> set[str]:
     for word in _keywords(query, limit=12).split():
         for part in word.split("-"):
             part = part.strip().lower()
-            if len(part) >= 3 and part not in _STOPWORDS and part not in _GENERIC:
+            if (
+                len(part) >= 3
+                and part not in _STOPWORDS
+                and part not in _GENERIC
+                and part not in _SEARCH_INTENT
+            ):
                 terms.add(part)
     return terms
 
@@ -182,6 +197,7 @@ class FreeNewsSearchProvider:
         terms = _topic_terms(query)
         items: list[_Item] = []
         off_topic = 0
+        answered = False
         errors: list[str] = []
         for variant in _query_variants(query):
             for source in (self._tagesschau, self._wikipedia):
@@ -192,6 +208,7 @@ class FreeNewsSearchProvider:
                         f"{source.__name__.lstrip('_')}: {type(exc).__name__}: {exc}"
                     )
                     continue
+                answered = True
                 for item in returned:
                     if _is_on_topic(item, terms):
                         items.append(item)
@@ -204,17 +221,20 @@ class FreeNewsSearchProvider:
             # opposite one, out of a document about a different subject.
             if len({item.publisher for item in items}) >= 2:
                 break
-        if not items:
-            detail = []
-            if off_topic:
-                detail.append(
-                    f"{off_topic} result(s) were discarded as off topic for "
-                    f"{sorted(terms)}"
-                )
-            detail.extend(errors)
+        if not items and not answered:
             raise SearchProviderError(
                 "No free search channel returned a usable result"
-                + (f" ({'; '.join(detail)})" if detail else "")
+                + (f" ({'; '.join(errors)})" if errors else "")
+            )
+        if not items:
+            # An answered search with nothing on topic is a finding (no
+            # corroboration), not an outage; raising here aborted whole stories.
+            logger.info(
+                "Free search found nothing on topic for %r (%d result(s) discarded as "
+                "off topic for %s)",
+                query[:120],
+                off_topic,
+                sorted(terms),
             )
         hits = [
             SearchHit(

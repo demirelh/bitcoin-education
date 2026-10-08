@@ -10,14 +10,11 @@ from __future__ import annotations
 
 import json
 
-import pytest
-
 from btcedu.services.free_search import (
     FreeNewsSearchProvider,
     _keywords,
     _query_variants,
 )
-from btcedu.services.search_service import SearchProviderError
 
 
 class _Doc:
@@ -138,10 +135,10 @@ def test_a_repeated_url_is_not_counted_twice_across_variants(tmp_path):
     assert len(result.hits) == 1
 
 
-def test_an_empty_result_after_every_variant_is_an_error(tmp_path):
+def test_an_answered_search_without_hits_is_an_empty_response(tmp_path):
     provider = FreeNewsSearchProvider(_Fetcher(tmp_path, _empty))
-    with pytest.raises(SearchProviderError):
-        provider.search("Eine Schlagzeile ohne jeden Treffer", count=8)
+    result = provider.search("Eine Schlagzeile ohne jeden Treffer", count=8)
+    assert result.hits == ()
 
 
 def test_the_adapter_costs_nothing(tmp_path):
@@ -264,8 +261,7 @@ def test_an_encyclopedia_hit_sharing_one_incidental_word_is_not_evidence(tmp_pat
     provider = FreeNewsSearchProvider(
         _Fetcher(tmp_path, _only_wikipedia(_GALLERIA_WIKIPEDIA_HITS))
     )
-    with pytest.raises(SearchProviderError, match="off topic"):
-        provider.search(_GALLERIA_CLAIM, language="de", count=8)
+    assert provider.search(_GALLERIA_CLAIM, language="de", count=8).hits == ()
 
 
 def test_a_shared_calendar_word_does_not_make_a_result_relevant(tmp_path):
@@ -273,8 +269,7 @@ def test_a_shared_calendar_word_does_not_make_a_result_relevant(tmp_path):
     provider = FreeNewsSearchProvider(
         _Fetcher(tmp_path, _only_wikipedia(_INSOLVENZ_WIKIPEDIA_HITS))
     )
-    with pytest.raises(SearchProviderError, match="off topic"):
-        provider.search(_INSOLVENZ_CLAIM, language="de", count=8)
+    assert provider.search(_INSOLVENZ_CLAIM, language="de", count=8).hits == ()
 
 
 def test_relevance_is_judged_before_a_second_publisher_is_counted(tmp_path):

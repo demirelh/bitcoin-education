@@ -142,6 +142,8 @@ def _media_markup(
         item.role, ""
     )
     media_url = _site_path(config, f"/media/{item.file_name}")
+    if item.role == "portrait":
+        class_name = f"{class_name} media-portrait"
     return (
         f'<figure class="{class_name}"><img src={quoteattr(media_url)} '
         f'alt={quoteattr(item.caption)}'
@@ -927,6 +929,8 @@ main {
   width: 100%;
 }
 .story-image figcaption { display: none; }
+/* Upright portraits: any 16:9 crop cuts off the head, so show them whole. */
+.story-image.media-portrait img { object-fit: contain; }
 .story-image-placeholder {
   align-items: end;
   aspect-ratio: 16 / 9;
@@ -1026,6 +1030,14 @@ main {
   aspect-ratio: 16 / 9;
   object-fit: cover;
   width: 100%;
+}
+.article-visual.media-portrait { text-align: center; }
+.article-visual.media-portrait img {
+  aspect-ratio: auto;
+  display: inline-block;
+  max-height: 32rem;
+  object-fit: contain;
+  width: auto;
 }
 figcaption {
   color: var(--muted);

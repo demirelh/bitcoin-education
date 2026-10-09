@@ -22,9 +22,13 @@ stage_config:
     primary:
       provider: openai
       model: whisper-1
+    # Tried in order once OpenAI reports its quota spent: large-v3-turbo on a
+    # GitHub runner (~6 min per bulletin), then small on the Pi (~45 min).
     fallback:
-      provider: faster_whisper
-      model: small
+      - provider: faster_whisper_github
+        model: large-v3-turbo
+      - provider: faster_whisper
+        model: small
     secondary:
       enabled: true
       provider: openai

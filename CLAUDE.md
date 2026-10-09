@@ -208,9 +208,12 @@ and may override applicable `.env` values. Full list: `btcedu/config.py`.
 Credentials never reach a log: `Settings` masks them in its own `repr`, and
 `utils/secrets.install_log_redaction()` strikes the configured values out of
 every log record (a library can quote a rejected key back in its error text).
-The `tagesschau_tr` transcription stage normally uses OpenAI, but a permanent
-OpenAI credit-quota error falls back to local `faster_whisper/small`; other
-provider errors retain their existing failure behavior.
+The `tagesschau_tr` transcription stage normally uses OpenAI. A permanent
+OpenAI credit-quota error walks the profile's fallback list in order:
+`faster_whisper_github/large-v3-turbo` on a GitHub runner (~6 min per bulletin,
+same provider class as local; see `docs/remote-render.md`), then local
+`faster_whisper/small` (~45 min on the Pi). Other primary errors retain their
+existing failure behavior.
 
 ## Notifications
 

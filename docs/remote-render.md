@@ -181,3 +181,35 @@ free minutes but leaves limited headroom for CI.
   a local render can be faster.
 - The Pi still has to upload ~33 MB and download ~480 MB, so a slow uplink
   eats into the speedup.
+
+## Remote transcription
+
+The same plumbing transcribes audio when OpenAI's transcription quota is spent.
+Provider `faster_whisper_github` (`btcedu/core/remote_transcribe.py`) packs only
+`job.json` and the audio file into a draft release, dispatches
+`.github/workflows/transcribe.yml`, and reads the segments back from the
+`transcribe-result` artifact. `scripts/transcribe_job.py` calls
+`FasterWhisperTranscriptionProvider` -- the class the Pi uses locally -- so
+there is no second implementation, only a runner with the CPU for
+`large-v3-turbo`. The commit check, release and artifact cleanup and work
+directory (`data/outputs/.transcribe-jobs/`) follow the render job.
+
+`tagesschau_tr` lists it as the first transcription fallback, before local
+`faster_whisper/small`; any runner failure moves on to the local model.
+
+Measured on the 2026-09-30 bulletin (16 MB audio):
+
+| | Pi (`small`) | GitHub runner (`large-v3-turbo`) |
+| --- | --- | --- |
+| Wall clock | ~45 min | ~6 min including setup and model download |
+| Difference to `whisper-1` | -- | 11 % words, almost entirely passages `whisper-1` had dropped |
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `GITHUB_TRANSCRIBE_WORKFLOW` | `transcribe.yml` | Workflow file name |
+| `GITHUB_TRANSCRIBE_TIMEOUT` | `2700` | Seconds to wait for the run |
+| `GITHUB_TRANSCRIBE_POLL_INTERVAL` | `15` | Seconds between status polls |
+
+The runner installs the `speechcheck` extra; `av` is held below 19 because
+faster-whisper 1.2.1 passes an argument PyAV 19 removed.
+

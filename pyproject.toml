@@ -57,6 +57,8 @@ frames = [
 # check never runs — install it wherever takes are actually bought.
 speechcheck = [
     "faster-whisper>=1.0",
+    # av 19 dropped open(metadata_errors=...), which faster-whisper 1.2.1 passes.
+    "av<19",
 ]
 dev = [
     "pytest>=8.0.0",

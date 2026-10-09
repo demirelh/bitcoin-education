@@ -51,6 +51,8 @@ class ResolvedTranscriptionConfig:
     suspicious_segment_context_seconds: float
     max_secondary_audio_seconds: float
     max_secondary_clips: int
+    #: Every fallback in the order they are tried; ``fallback`` is the first.
+    fallbacks: tuple[TranscriptionProviderSpec, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -162,6 +164,8 @@ class FasterWhisperTranscriptionProvider:
     """Local faster-whisper transcription provider."""
 
     name = "faster_whisper"
+    # The 25 MB limit is the OpenAI upload limit; a local model reads any size.
+    needs_chunking = False
 
     def __init__(self) -> None:
         self._models: dict[str, object] = {}
@@ -211,7 +215,12 @@ def resolve_transcription_config(
     """Resolve profile transcription settings over global defaults."""
     config = profile_config or {}
     primary = config.get("primary") or {}
-    fallback = config.get("fallback") or {}
+    raw_fallback = config.get("fallback") or []
+    fallbacks = tuple(
+        TranscriptionProviderSpec(provider=str(item["provider"]), model=str(item["model"]))
+        for item in (raw_fallback if isinstance(raw_fallback, list) else [raw_fallback])
+        if item.get("provider") and item.get("model")
+    )
     secondary = config.get("secondary") or {}
 
     primary_provider = str(
@@ -237,14 +246,8 @@ def resolve_transcription_config(
             provider=primary_provider,
             model=primary_model,
         ),
-        fallback=(
-            TranscriptionProviderSpec(
-                provider=str(fallback["provider"]),
-                model=str(fallback["model"]),
-            )
-            if fallback.get("provider") and fallback.get("model")
-            else None
-        ),
+        fallback=fallbacks[0] if fallbacks else None,
+        fallbacks=fallbacks,
         secondary=SecondaryTranscriptionSpec(
             enabled=bool(
                 secondary.get(
@@ -297,6 +300,7 @@ def get_transcription_provider(
     *,
     api_key: str,
     openai_cost_per_minute_usd: float,
+    settings=None,
 ) -> TranscriptionProvider:
     """Create the configured transcription provider."""
     normalized = provider.strip().lower()
@@ -304,6 +308,12 @@ def get_transcription_provider(
         return OpenAITranscriptionProvider(api_key, openai_cost_per_minute_usd)
     if normalized == "faster_whisper":
         return FasterWhisperTranscriptionProvider()
+    if normalized == "faster_whisper_github":
+        if settings is None:
+            raise ValueError("faster_whisper_github needs settings for the GitHub runner")
+        from btcedu.core.remote_transcribe import GitHubFasterWhisperProvider
+
+        return GitHubFasterWhisperProvider(settings)
     raise ValueError(f"Unsupported transcription provider: {provider}")
 
 
@@ -318,7 +328,7 @@ def transcribe_audio_structured(
 ) -> TranscriptDocument:
     """Transcribe audio and preserve provider timestamps across local chunks."""
     file_size_mb = Path(audio_path).stat().st_size / (1024 * 1024)
-    if file_size_mb <= max_chunk_mb:
+    if file_size_mb <= max_chunk_mb or not getattr(provider, "needs_chunking", True):
         result = provider.transcribe(audio_path, model=model, language=language)
     else:
         logger.info("Audio %.1f MB > %d MB limit, splitting...", file_size_mb, max_chunk_mb)

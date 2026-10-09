@@ -132,27 +132,42 @@ def transcribe_episode(
                 max_chunk_mb=settings.max_audio_chunk_mb,
             )
         except PipelineError as exc:
-            if exc.category != ErrorCategory.PERMANENT_QUOTA or resolved.fallback is None:
+            if exc.category != ErrorCategory.PERMANENT_QUOTA or not resolved.fallbacks:
                 raise
-            logger.warning(
-                "Transcription quota exhausted for %s; falling back from %s to %s",
-                episode_id,
-                resolved.primary.provider,
-                resolved.fallback.provider,
-            )
-            fallback_provider = get_transcription_provider(
-                resolved.fallback.provider,
-                api_key=_provider_api_key(settings, resolved.fallback.provider),
-                openai_cost_per_minute_usd=settings.transcription_openai_cost_per_minute_usd,
-            )
-            document = transcribe_audio_structured(
-                episode.audio_path,
-                episode_id=episode_id,
-                provider=fallback_provider,
-                model=resolved.fallback.model,
-                language=settings.whisper_language,
-                max_chunk_mb=settings.max_audio_chunk_mb,
-            )
+            for index, spec in enumerate(resolved.fallbacks):
+                logger.warning(
+                    "Transcription quota exhausted for %s; falling back from %s to %s/%s",
+                    episode_id,
+                    resolved.primary.provider,
+                    spec.provider,
+                    spec.model,
+                )
+                try:
+                    fallback_provider = get_transcription_provider(
+                        spec.provider,
+                        api_key=_provider_api_key(settings, spec.provider),
+                        openai_cost_per_minute_usd=settings.transcription_openai_cost_per_minute_usd,
+                        settings=settings,
+                    )
+                    document = transcribe_audio_structured(
+                        episode.audio_path,
+                        episode_id=episode_id,
+                        provider=fallback_provider,
+                        model=spec.model,
+                        language=settings.whisper_language,
+                        max_chunk_mb=settings.max_audio_chunk_mb,
+                    )
+                    break
+                except Exception as fallback_exc:  # noqa: BLE001 - the next fallback decides
+                    if index == len(resolved.fallbacks) - 1:
+                        raise
+                    logger.warning(
+                        "Fallback %s/%s failed for %s: %s",
+                        spec.provider,
+                        spec.model,
+                        episode_id,
+                        fallback_exc,
+                    )
         cleaned = clean_transcript(document.text)
 
         transcript_dir.mkdir(parents=True, exist_ok=True)
@@ -286,7 +301,7 @@ def _provider_api_key(settings: Settings, provider: str) -> str:
                 "No OpenAI transcription key configured. Set WHISPER_API_KEY or OPENAI_API_KEY."
             )
         return api_key
-    if normalized == "faster_whisper":
+    if normalized in {"faster_whisper", "faster_whisper_github"}:
         return ""
     raise ValueError(f"Unsupported transcription provider: {provider}")
 
@@ -305,6 +320,17 @@ def _transcription_config_hash(config) -> str:
                 }
                 if config.fallback is not None
                 else None
+            ),
+            # Only present for chains, so single-fallback hashes stay unchanged.
+            **(
+                {
+                    "additional_fallbacks": [
+                        {"provider": spec.provider, "model": spec.model}
+                        for spec in config.fallbacks[1:]
+                    ]
+                }
+                if len(getattr(config, "fallbacks", ())) > 1
+                else {}
             ),
             "secondary": {
                 "enabled": config.secondary.enabled,

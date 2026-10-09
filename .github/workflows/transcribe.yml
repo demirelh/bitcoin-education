@@ -1,0 +1,98 @@
+name: Transcribe Episode
+
+# Transcribes one audio file on a hosted runner instead of on the Raspberry Pi,
+# where large-v3-turbo would take hours. The Pi packs the audio and attaches it
+# to a temporary draft release; this job calls the same
+# FasterWhisperTranscriptionProvider the Pi uses locally -- there is no second
+# transcription implementation.
+#
+# Triggered by btcedu/core/remote_transcribe.py, not by hand.
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: "Unique id; also used to find this run again"
+        required: true
+      release_id:
+        description: "Draft release holding the transcription payload"
+        required: true
+      model:
+        description: "faster-whisper model, e.g. large-v3-turbo"
+        required: true
+      commit:
+        description: "Commit the Pi expects; the run aborts on a mismatch"
+        required: false
+        default: ""
+
+# workflow_dispatch returns no run id; the Pi finds its run by this name.
+run-name: "transcribe ${{ inputs.model }} (${{ inputs.job_id }})"
+
+# A draft release is invisible to a token with only `contents: read`.
+permissions:
+  contents: write
+
+jobs:
+  transcribe:
+    name: Transcribe ${{ inputs.job_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify the runner has the code the Pi expects
+        if: inputs.commit != ''
+        run: |
+          actual=$(git rev-parse HEAD)
+          if [ "$actual" != "${{ inputs.commit }}" ]; then
+            echo "::error::Expected ${{ inputs.commit }} but checked out $actual"
+            exit 1
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install btcedu
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Restore the whisper model
+        # large-v3-turbo is ~1.6 GB; downloading it on every run would cost
+        # more time than some transcriptions take.
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: faster-whisper-${{ inputs.model }}
+
+      - name: Download transcription payload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset_id=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}/assets" \
+            --jq '.[] | select(.name == "transcribe-job.tar.gz") | .id')
+          if [ -z "$asset_id" ]; then
+            echo "::error::No transcribe-job.tar.gz on release ${{ inputs.release_id }}"
+            exit 1
+          fi
+          gh api "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}" \
+            -H "Accept: application/octet-stream" > transcribe-job.tar.gz
+          ls -lh transcribe-job.tar.gz
+
+      - name: Transcribe
+        run: |
+          python scripts/transcribe_job.py \
+            --job transcribe-job.tar.gz \
+            --out result/transcript.json
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: transcribe-result
+          path: result/transcript.json
+          # The Pi deletes the artifact right after downloading it.
+          retention-days: 1

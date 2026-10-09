@@ -270,6 +270,10 @@ class Settings(BaseSettings):
     github_render_timeout: int = 5400  # seconds to wait for the run (90 min)
     github_render_poll_interval: int = 20  # seconds between run status polls
     github_render_fallback_local: bool = True  # render locally if the offload fails
+    # Transcription on a GitHub runner (provider "faster_whisper_github").
+    github_transcribe_workflow: str = "transcribe.yml"
+    github_transcribe_timeout: int = 2700  # seconds to wait for the run (45 min)
+    github_transcribe_poll_interval: int = 15
 
     # YouTube Publishing
     youtube_default_target: Literal["test", "production"] = "test"

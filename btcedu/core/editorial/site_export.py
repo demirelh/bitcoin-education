@@ -142,6 +142,12 @@ def _media_markup(
         item.role, ""
     )
     media_url = _site_path(config, f"/media/{item.file_name}")
+    # build_attribution() already ends with the licence for catalogue pictures.
+    credit = (
+        item.attribution
+        if item.license and item.license in item.attribution
+        else " · ".join(part for part in (item.attribution, item.license) if part)
+    )
     if item.role == "portrait":
         class_name = f"{class_name} media-portrait"
     return (
@@ -151,7 +157,7 @@ def _media_markup(
         + (f' height="{item.height}"' if item.height else "")
         + ' loading="lazy">'
         f"<figcaption>{_e(notice)} {_e(item.caption)} "
-        f'<span class="credit">{_e(item.attribution)} · {_e(item.license)}</span>'
+        f'<span class="credit">{_e(credit)}</span>'
         "</figcaption></figure>"
     )
 

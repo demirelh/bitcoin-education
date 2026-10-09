@@ -924,6 +924,23 @@ def save_metadata_edits(
     return current
 
 
+def _image_credits(settings: Settings, episode_id: str) -> list[str]:
+    """Credit lines the licences of library photographs require (CC BY / BY-SA)."""
+    manifest_path = Path(settings.outputs_dir) / episode_id / "images" / "manifest.json"
+    try:
+        images = json.loads(manifest_path.read_text(encoding="utf-8")).get("images", [])
+    except (OSError, ValueError):
+        return []
+    credits: list[str] = []
+    for image in images:
+        attribution = (image.get("metadata") or {}).get("attribution")
+        if image.get("generation_method") == "commons" and attribution:
+            line = f"- {attribution}"
+            if line not in credits:
+                credits.append(line)
+    return credits
+
+
 def _build_youtube_metadata(
     episode: Episode,
     settings: Settings,
@@ -1080,6 +1097,10 @@ def _build_youtube_metadata(
         if description_parts:
             description_parts.append("")
         description_parts.append(attribution)
+
+    credits = _image_credits(settings, episode.episode_id)
+    if credits:
+        description_parts.extend(["", "Görseller / Images:", *credits, ""])
 
     description_parts.append(hashtags_str)
     description = "\n".join(description_parts)

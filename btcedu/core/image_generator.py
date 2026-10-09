@@ -337,6 +337,45 @@ def _generate_pexels_fallback(chapter, output_dir: Path, settings: Settings) -> 
     )
 
 
+def _free_media_entry(chapter, output_dir: Path, settings: Settings) -> "ImageEntry | None":
+    """A cleared library photograph for the chapter, or None to generate one."""
+    from btcedu.core.free_media import FRAME, find_free_picture
+
+    stem = f"{chapter.chapter_id}_{_slugify_filename_part(chapter.title)}"
+    try:
+        found = find_free_picture(chapter, output_dir, settings, stem)
+    except Exception as exc:  # noqa: BLE001 - the generative path still follows
+        logger.warning("Free picture lookup failed for %s: %s", chapter.chapter_id, exc)
+        return None
+    if found is None:
+        return None
+    logger.info("Chapter %s uses %s (%s)", chapter.chapter_id, found["label"], found["license"])
+    return ImageEntry(
+        chapter_id=chapter.chapter_id,
+        chapter_title=chapter.title,
+        visual_type=chapter.visual.type,
+        file_path=f"images/{found['filename']}",
+        prompt=None,
+        generation_method="commons",
+        model=None,
+        size=f"{FRAME[0]}x{FRAME[1]}",
+        mime_type="image/jpeg",
+        size_bytes=found["size_bytes"],
+        metadata={
+            "subject": found["label"],
+            "collection_key": found["collection_key"],
+            "role": found["role"],
+            "attribution": found["attribution"],
+            "license": found["license"],
+            "license_url": found["license_url"],
+            "source_url": found["source_page"],
+            "author": found["author"],
+            "downloaded_at": _utcnow().isoformat(),
+            "cost_usd": 0.0,
+        },
+    )
+
+
 @dataclass
 class ImageEntry:
     """Metadata for a single generated or placeholder image."""
@@ -622,6 +661,8 @@ def generate_images(
         # The profile names a second provider for exactly this case; without it
         # a single provider outage turned into a dangling manifest entry.
         _fallback_provider = str(_imagegen_cfg.get("fallback_provider", "") or "").lower()
+        # A real, freely licensed photograph beats a generated or stock one.
+        _free_media_first = bool(_imagegen_cfg.get("free_media_first", False))
 
         for chapter in chapters_to_process:
             # Skip if no visual or processing only a specific chapter
@@ -705,6 +746,13 @@ def generate_images(
                 if image_entry.generation_method != "failed":
                     _create_media_asset_record(session, episode_id, image_entry, prompt_version.id)
                 continue
+
+            if _free_media_first and str(getattr(visual.type, "value", visual.type)) == "b_roll":
+                free_entry = _free_media_entry(chapter, output_dir, settings)
+                if free_entry is not None:
+                    image_entries.append(free_entry)
+                    _create_media_asset_record(session, episode_id, free_entry, prompt_version.id)
+                    continue
 
             # Check if generation is needed for this visual type
             if _needs_generation(visual.type) or (

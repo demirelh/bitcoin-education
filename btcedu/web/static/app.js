@@ -292,6 +292,13 @@
       const commit = stage.git_commit ? `commit ${stage.git_commit}` : "";
       const started = formatStageStart(stage.started_at);
       const attempts = stage.attempt_count > 1 ? `${stage.attempt_count} attempts` : "";
+      const nr = stage.newsroom;
+      const newsroomNote = nr
+        ? [
+            nr.articles.length ? `${nr.articles.length} Artikel` : "",
+            nr.stories.failed ? `${nr.stories.failed} fehlgeschlagen` : "",
+          ].filter(Boolean).join(" \u00b7 ")
+        : "";
       const copilotFix = stage.copilot_fix
         ? (stage.copilot_fix.automatic
           ? "automatic copilot fix attempted"
@@ -318,6 +325,7 @@
           ${attempts ? `<div class="ps-started">${esc(attempts)}</div>` : ""}
           ${dur ? `<div class="ps-duration">${dur}</div>` : ""}
           ${copilotFix ? `<div class="ps-started">${copilotFix}</div>` : ""}
+          ${newsroomNote ? `<div class="ps-started">${esc(newsroomNote)}</div>` : ""}
         </div>`;
     });
     html += "</div>";
@@ -2063,6 +2071,25 @@
     "review_gate_stock", "review_gate_3",
   ]);
 
+  function renderNewsroomDetailHTML(nr) {
+    if (!nr) return "<p>No newsroom data for this episode.</p>";
+    const when = (iso) => (iso ? new Date(iso).toLocaleString("de-DE") : "");
+    const articles = nr.articles.length
+      ? `<ul>${nr.articles.map(a => `<li><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.title)}</a>
+          <span class="ps-started">${esc(when(a.published_at))}${a.built ? "" : " \u00b7 not built yet"}</span></li>`).join("")}</ul>`
+      : "<p>No article published from this episode yet.</p>";
+    const counts = Object.entries(nr.stories || {})
+      .map(([status, n]) => `${esc(status)}: ${n}`).join(" \u00b7 ");
+    const failures = (nr.failures || []).length
+      ? `<h4>Failed stories</h4><ul>${nr.failures.map(f => `<li><code>${esc(f.story)}</code> ${esc(f.detail)}</li>`).join("")}</ul>`
+      : "";
+    return `<h3>Publish Newsroom (ALMANYA24)</h3>
+      <p>State: <strong>${esc(nr.state)}</strong>${nr.built_at ? ` \u00b7 site built ${esc(when(nr.built_at))}` : ""}
+        \u00b7 <a href="${esc(nr.site_url)}" target="_blank" rel="noopener">open site</a></p>
+      ${counts ? `<p>Stories: ${counts}</p>` : ""}
+      <h4>Articles</h4>${articles}${failures}`;
+  }
+
   window.showStageDetail = async function (stageName) {
     if (!selected) return;
     const viewer = document.getElementById("viewer");
@@ -2070,6 +2097,13 @@
 
     // Deselect tabs
     document.querySelectorAll(".tab").forEach(t => t.classList.remove("active"));
+
+    if (stageName === "publish_newsroom") {
+      const stage = ((selected.stage_progress || {}).stages || [])
+        .find(s => s.name === "publish_newsroom");
+      viewer.innerHTML = renderNewsroomDetailHTML(stage && stage.newsroom);
+      return;
+    }
 
     try {
       const data = await GET(`/episodes/${selected.episode_id}/stage-runs`);

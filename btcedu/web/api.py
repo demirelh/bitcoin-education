@@ -1445,6 +1445,37 @@ _STAGE_TO_PIPELINE_STAGE = {
 }
 
 
+def _newsroom_stage(episode: Episode) -> dict | None:
+    """ALMANYA24 articles built from this broadcast, shown after Publish."""
+    if getattr(episode, "content_profile", None) != "tagesschau_tr":
+        return None
+    from btcedu.core.editorial.newsroom_status import episode_newsroom_status
+
+    try:
+        status = episode_newsroom_status(episode.episode_id)
+    except Exception:
+        logger.exception("Newsroom status failed for %s", episode.episode_id)
+        return None
+    if status is None:
+        return None
+    published = [a["published_at"] for a in status["articles"] if a["published_at"]]
+    return {
+        "name": "publish_newsroom",
+        "label": "Publish Newsroom",
+        "state": status["state"],
+        "is_gate": False,
+        "duration_seconds": None,
+        "cost_usd": None,
+        "git_commit": None,
+        "started_at": min(published) if published else None,
+        "completed_at": status["built_at"] if published else None,
+        "run_status": None,
+        "attempt_count": 0,
+        "copilot_fix": None,
+        "newsroom": status,
+    }
+
+
 def _build_stage_progress(
     session,
     episode: Episode,
@@ -1581,6 +1612,10 @@ def _build_stage_progress(
             s["attempt_count"] = summary["attempt_count"]
             if summary["git_commit"]:
                 latest_commit = summary["git_commit"]
+
+    newsroom_stage = _newsroom_stage(episode)
+    if newsroom_stage is not None:
+        stages.append(newsroom_stage)
 
     # Compute summary fields
     current_stage = None

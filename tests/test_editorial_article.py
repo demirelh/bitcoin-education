@@ -899,7 +899,10 @@ def test_rejected_draft_closes_the_provider_operation_and_allows_a_retry(db_sess
 
 
 def test_a_refused_draft_call_can_be_retried_but_a_lost_one_cannot(db_session, tmp_path):
-    import httpx2
+    try:
+        import httpx2
+    except ImportError:  # openai < 3 still builds on httpx
+        import httpx as httpx2
     import openai
 
     revision, run, _ = _pipeline(db_session, tmp_path)

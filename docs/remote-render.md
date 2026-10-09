@@ -201,8 +201,8 @@ Measured on the 2026-09-30 bulletin (16 MB audio):
 
 | | Pi (`small`) | GitHub runner (`large-v3-turbo`) |
 | --- | --- | --- |
-| Wall clock | ~45 min | ~6 min including setup and model download |
-| Difference to `whisper-1` | -- | 11 % words, almost entirely passages `whisper-1` had dropped |
+| Wall clock | 60 min (Pi otherwise busy; ~45 min idle) | ~6 min including setup and model download |
+| Word difference to `whisper-1` (corrected) | 14.9 % | 11.0 %, almost entirely passages `whisper-1` had dropped |
 
 | Setting | Default | Meaning |
 | --- | --- | --- |

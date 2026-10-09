@@ -743,7 +743,10 @@ def test_one_failing_story_does_not_block_the_others(db_session, tmp_path):
 
 def test_an_empty_model_account_stops_the_run_without_spending_retries(db_session, tmp_path):
     """No credits is the account's problem, not the story's: the story waits."""
-    import httpx2
+    try:
+        import httpx2
+    except ImportError:  # openai < 3 still builds on httpx
+        import httpx as httpx2
     import openai
 
     outputs = _outputs(tmp_path, count=2)

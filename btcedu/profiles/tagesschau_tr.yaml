@@ -57,7 +57,7 @@ stage_config:
     escalation:
       enabled: true
       provider: copilot_cli
-      model: claude-opus-4.8
+      model: claude-opus-5
       trigger_on:
         - suspected_hallucination
         - missing_story

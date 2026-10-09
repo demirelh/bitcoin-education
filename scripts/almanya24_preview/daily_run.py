@@ -55,9 +55,9 @@ else:  # executed directly from the command line
 logger = logging.getLogger("almanya24.daily")
 
 PROVIDER = "copilot_cli"
-MODEL = "claude-opus-5"
+MODEL = "claude-opus-5.5"
 #: The consistency check reviews MODEL's draft, so it runs on another model family.
-CHECK_MODEL = "gpt-5.6-sol"
+CHECK_MODEL = "gpt-6.1-sol"
 #: A Copilot subscription reports no per-call price, so the ledger books zero
 #: and the call ceiling carries the whole limit.
 USD_METERED = PROVIDER in {"anthropic", "openai"}

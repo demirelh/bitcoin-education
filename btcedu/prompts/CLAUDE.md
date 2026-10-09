@@ -43,11 +43,11 @@ These build prompts programmatically for v1 pipeline. Do not modify unless fixin
   never features already present in the translated input.
 - `correct_transcript.md` supports `{{ reviewer_feedback }}` injection for re-correction after review
 - Most templates target `claude-sonnet-4-20250514`. Exceptions: `gemini_frame_edit.md`
-  (`gemini-2.0-flash-exp`), `qa_review.md` (`gpt-5.6-sol`),
+  (`gemini-2.0-flash-exp`), `qa_review.md` (`gpt-6.1-sol`),
   `tagesschau_tr/qa_review.md` and `tagesschau_tr/script_broadcast.md`
-  (`gpt-5.6-sol`), `bitcoin_podcast/chapterize.md`
+  (`gpt-6.1-sol`), `bitcoin_podcast/chapterize.md`
   (`claude-sonnet-4-5-20250929`)
-- Automatic gate adjudication is configured in the profile YAML (provider `copilot_cli`, model `gpt-5.6-sol`), not in a prompt template
+- Automatic gate adjudication is configured in the profile YAML (provider `copilot_cli`, model `gpt-6.1-sol`), not in a prompt template
 
 <!--
 Documentation sync

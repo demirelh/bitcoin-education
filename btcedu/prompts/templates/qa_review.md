@@ -1,6 +1,6 @@
 ---
 name: qa_review
-model: gpt-5.6-sol
+model: gpt-6.1-sol
 temperature: 0.1
 max_tokens: 4000
 description: Independent factual QA of an adapted target-language script against the source. Restricted context. Produces structured findings only.

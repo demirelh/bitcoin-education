@@ -56,7 +56,7 @@ Ein Nachhollauf ist billig, weil bereits verarbeitete Geschichten in
 ## Redaktionsmodell
 
 Der Modellpfad läuft über das **Copilot-Abonnement des Betreibers**
-(`copilot_cli`, Modell `claude-opus-5`), nicht über einen abgerechneten
+(`copilot_cli`, Modell `claude-opus-5.5`), nicht über einen abgerechneten
 OpenAI-Schlüssel. Festgelegt in `scripts/almanya24_preview/daily_run.py`
 (`PROVIDER`, `MODEL`, `USD_METERED`).
 
@@ -132,7 +132,7 @@ bindende Grenze, die Zahl der Anbieteraufrufe, steht unverändert daneben.
 `LedgerGuardedModel.confirmed_models` sammelt die Modellkennung, mit der der
 Anbieter tatsächlich geantwortet hat; `RunReport.model_requested` hält fest,
 was verlangt wurde. Die beiden fallen auseinander (angefordert
-`claude-opus-5`, geliefert `copilot/claude-opus-5`), und GitHub zieht
+`claude-opus-5.5`, geliefert `copilot/claude-opus-5.5`), und GitHub zieht
 Modell-IDs ohne Vorwarnung zurück. Nur das Angeforderte zu berichten wäre eine
 Behauptung, die niemand geprüft hat.
 

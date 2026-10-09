@@ -107,7 +107,7 @@ def effective_model(settings, model_override: str | None = None) -> str:
         return model_override
     provider = _resolve_provider(settings)
     if provider == "copilot_cli":
-        return f"copilot/{getattr(settings, 'copilot_cli_model', 'claude-sonnet-5')}"
+        return f"copilot/{getattr(settings, 'copilot_cli_model', 'claude-sonnet-5.5')}"
     if provider == "openai":
         return getattr(settings, "openai_llm_model", "gpt-4o")
     if provider == "github_models":
@@ -310,7 +310,7 @@ def _call_copilot_cli(
 
     Routes LLM calls through the user's Copilot subscription (unlimited quota
     on paid plans). Model selected via settings.copilot_cli_model (default
-    'claude-sonnet-5').
+    'claude-sonnet-5.5').
 
     Requires `copilot` binary on PATH. Uses JSONL output stream to reliably
     extract only the assistant's final text (no footer stats or stray output).
@@ -319,7 +319,7 @@ def _call_copilot_cli(
     import tempfile
     import time as _time
 
-    model = model_override or getattr(settings, "copilot_cli_model", "claude-sonnet-5")
+    model = model_override or getattr(settings, "copilot_cli_model", "claude-sonnet-5.5")
     binary = getattr(settings, "copilot_cli_binary", "copilot")
 
     # Copilot CLI treats obvious system/user framing as prompt injection.

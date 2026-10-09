@@ -95,7 +95,7 @@ class Settings(BaseSettings):
     # Copilot retires model ids without notice; a stage then fails with
     # 'Model "..." from --model flag is not available'. Keep this on a current
     # id and verify a new value with `copilot --model <id> -p ok` before use.
-    copilot_cli_model: str = "claude-sonnet-5"  # e.g. "claude-sonnet-5", "gpt-5.6-sol"
+    copilot_cli_model: str = "claude-sonnet-5.5"  # e.g. "claude-sonnet-5.5", "gpt-6.1-sol"
     copilot_cli_binary: str = "copilot"
     copilot_cli_timeout: int = 900  # seconds per call
 
@@ -103,13 +103,13 @@ class Settings(BaseSettings):
     # session. Started at most once per distinct automatic error and never in
     # dry-run mode.
     copilot_auto_fix_enabled: bool = True
-    copilot_auto_fix_model: str = "gpt-5.6-sol"
+    copilot_auto_fix_model: str = "gpt-6.1-sol"
 
     # Independent second-opinion QA of the adapted script (after adapt, before
     # Review Gate 2). Profile configuration controls routing, escalation, and
     # whether unresolved findings block the pipeline.
     qa_review_enabled: bool = True
-    qa_model: str = "gpt-5.6-sol"  # Copilot CLI model id for the QA second opinion
+    qa_model: str = "gpt-6.1-sol"  # Copilot CLI model id for the QA second opinion
     claude_max_tokens: int = 16384
     claude_temperature: float = 0.3
     max_retries: int = 3

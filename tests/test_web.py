@@ -467,7 +467,7 @@ class TestPipelineActions:
         assert r.status_code == 200
         data = r.get_json()
         assert data["session"] == "copilotfix"
-        assert data["model"] == "gpt-5.6-sol"
+        assert data["model"] == "gpt-6.1-sol"
         assert data["stage"] == "adapt"
         assert data["already_running"] is False
         assert mock_start.call_args.args[3] == "adapt"
@@ -500,7 +500,7 @@ class TestPipelineActions:
             test_settings.outputs_dir,
             "ep003",
             "adapt",
-            "gpt-5.6-sol",
+            "gpt-6.1-sol",
             tmp_path,
         )
 

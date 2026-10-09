@@ -1,6 +1,6 @@
 ---
 name: tagesschau_tr/script_broadcast
-model: gpt-5.6-sol
+model: gpt-6.1-sol
 temperature: 0.3
 max_tokens: 16384
 description: Turns approved Turkish story translations into a dual-presenter broadcast script

@@ -136,8 +136,8 @@ def test_copilot_cli_uses_current_default_model(mock_run):
     response = _call_copilot_cli("system", "user", SimpleNamespace())
 
     command = mock_run.call_args.args[0]
-    assert command[command.index("--model") + 1] == "claude-sonnet-5"
-    assert response.model == "copilot/claude-sonnet-5"
+    assert command[command.index("--model") + 1] == "claude-sonnet-5.5"
+    assert response.model == "copilot/claude-sonnet-5.5"
 
 
 @patch("btcedu.services.claude_service._copilot_cli_fallback_text")

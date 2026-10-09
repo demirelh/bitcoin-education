@@ -20,7 +20,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 SESSION_NAME = "copilotfix"
-DEFAULT_MODEL = "gpt-5.6-sol"
+DEFAULT_MODEL = "gpt-6.1-sol"
 _SAFE_ID = re.compile(r"^[A-Za-z0-9_.-]+$")
 _FILENAME = "copilot_fixes.json"
 

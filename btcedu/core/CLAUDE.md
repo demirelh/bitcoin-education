@@ -82,7 +82,7 @@ Each v2 stage module follows the same pattern:
   translator's `json_repair` fallback; malformed quoting may be repaired, but
   structurally or factually invalid story translations must still fail.
 - **Automatic repair**: the failure branch calls `_trigger_automatic_copilot_fix()`,
-  which launches one `gpt-5.6-sol` repair in tmux. The error fingerprint is
+  which launches one `gpt-6.1-sol` repair in tmux. The error fingerprint is
   persisted before launch, so the same failure is never retried automatically,
   and a launch error is logged but never replaces the reported stage failure.
   Before any automatic or manually triggered Copilot fix may be committed,
@@ -94,7 +94,7 @@ Each v2 stage module follows the same pattern:
   never reached chapterize cannot validate imagegen and are excluded.
 - **Copilot model ids expire**: GitHub retires ids without notice and the CLI
   then aborts with `Model "..." from --model flag is not available`, failing the
-  stage. The active producer default is `claude-sonnet-5`. Verify any new id in
+  stage. The active producer default is `claude-sonnet-5.5`. Verify any new id in
   `.env`, `config.py` or a profile with
   `copilot --model <id> -p ok` before committing it.
 

@@ -1,6 +1,6 @@
 ---
 name: tagesschau_tr/qa_review
-model: gpt-5.6-sol
+model: gpt-6.1-sol
 temperature: 0.1
 max_tokens: 4000
 description: Independent factual QA of the adapted Turkish news script against the German source. Restricted context. Produces structured findings only.

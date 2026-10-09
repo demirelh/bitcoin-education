@@ -60,7 +60,7 @@ TOTAL_BUDGET_USD = 2.0
 #: call, so this cap can never be reached. The real limits in this manual
 #: script are the story count and the per-task token ceilings below.
 PROVIDER = "copilot_cli"
-MODEL = "claude-opus-5"
+MODEL = "claude-opus-5.5"
 TASK_MAX_TOKENS = {
     "extract_claims": 1400,
     "evaluate_claim_evidence": 1200,

@@ -52,12 +52,12 @@ stage_config:
     # Standard independent second-opinion model (different from the producer).
     standard:
       provider: copilot_cli
-      model: gpt-5.6-sol
+      model: gpt-6.1-sol
     # Stronger escalation model, only invoked for high-risk triggers.
     escalation:
       enabled: true
       provider: copilot_cli
-      model: claude-opus-5
+      model: claude-opus-5.5
       trigger_on:
         - suspected_hallucination
         - missing_story
@@ -78,7 +78,7 @@ stage_config:
     gate_adjudication:
       enabled: true
       provider: copilot_cli
-      model: gpt-5.6-sol
+      model: gpt-6.1-sol
       block_on_hold: false
   segment:
     enabled: true
@@ -109,12 +109,12 @@ stage_config:
     validation_adjudication:
       enabled: true
       provider: copilot_cli
-      model: gpt-5.6-sol
+      model: gpt-6.1-sol
   script:
     # Turns the approved translation into a two-presenter broadcast script.
     enabled: true
     provider: copilot_cli
-    model: gpt-5.6-sol
+    model: gpt-6.1-sol
     prompt_template: script_broadcast.md
     # QA reads the *_total_seconds keys; the programme aims at 9-11 minutes.
     target_total_seconds: 600

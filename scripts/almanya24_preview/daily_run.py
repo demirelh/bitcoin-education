@@ -34,7 +34,6 @@ from sqlalchemy.orm import sessionmaker
 from btcedu.config import Settings
 from btcedu.core.editorial.daily import DailyPaths, RunOutcome, run_daily
 from btcedu.core.editorial.limits import DailyLimits
-from btcedu.core.editorial.media import MediaRequirement
 from btcedu.core.editorial.public import publish_article
 from btcedu.core.editorial.reconcile import reconcile_operations
 from btcedu.core.editorial.site_export import SiteConfig, build_site, switch_release
@@ -43,7 +42,6 @@ from btcedu.db import Base
 from btcedu.models.article import ArticleRevision
 from btcedu.models.editorial import EditorialRevision
 from btcedu.models.media_asset import Base as MediaBase
-from btcedu.models.media_rights import MediaRole
 from btcedu.services.document_fetcher import DocumentFetcher
 from btcedu.services.editorial_model import EditorialModel
 from btcedu.services.free_search import FreeNewsSearchProvider
@@ -151,7 +149,12 @@ def make_drafter(session):
     """Run one broadcast story through the full editorial workflow."""
 
     def drafter(*, settings, model, selected, published_at: datetime) -> DraftResult:
-        from btcedu.services.commons_service import WikimediaCommonsProvider
+        from btcedu.core.editorial.media_collection import (
+            CollectionCommonsProvider,
+            WikidataPortraitLookup,
+            requirement_for,
+            select_entry,
+        )
 
         # A search that failed on an earlier night left its operation blocked.
         # Clearing only the demonstrably effect-free ones keeps the guard on
@@ -161,16 +164,15 @@ def make_drafter(session):
             logger.info("Reconciled %d effect-free operations", len(report.resolved))
 
         fetcher = DocumentFetcher.from_settings(settings)
-        requirement = MediaRequirement(
-            subject=selected.story.headline_de[:120],
-            # Commons holds library pictures, not pictures of tonight's event.
-            # Declaring them symbolic is what puts the notice on the page.
-            role=MediaRole.SYMBOLIC,
-            caption=(
-                f"Sembol görsel · {selected.story.headline_de[:110]} "
-                f"({selected.broadcast_date.isoformat()})"
-            ),
+        # A free-text catalogue search with the whole headline never matched
+        # anything; the curated collection pins one cleared picture per name.
+        lookup = WikidataPortraitLookup(fetcher, learned_collection_path(settings))
+        entry = select_entry(
+            [(selected.story.headline_de, 3), (selected.story.text_de, 1)],
+            lookup,
+            exclude=[selected.story.reporter or ""],
         )
+        requirement = requirement_for(entry) if entry is not None else None
         kwargs = dict(
             session=session,
             episode_id=selected.episode_id,
@@ -179,7 +181,9 @@ def make_drafter(session):
             model_caller=model,
             search_provider=FreeNewsSearchProvider(fetcher),
             fetcher=fetcher,
-            media_provider=WikimediaCommonsProvider(fetcher),
+            media_provider=CollectionCommonsProvider(
+                fetcher, extra=(entry,) if entry is not None else ()
+            ),
             media_requirement=requirement,
             provider_name=PROVIDER,
             model_name=MODEL,
@@ -202,6 +206,11 @@ def make_drafter(session):
         return DraftResult(title=article.title, section=selected.section)
 
     return drafter
+
+
+def learned_collection_path(settings: Settings) -> Path:
+    """People added to the picture collection automatically, kept across runs."""
+    return Path(settings.newsroom_data_dir) / "media-collection-learned.json"
 
 
 def make_publisher(session):

@@ -1,9 +1,12 @@
 # ALMANYA24 — tägliche Transkript→News-Automation
 
-Betrifft ausschließlich den Entwicklungs-Worktree
-`/home/pi/AI-Startup-Lab/almanya24-newsroom-dev` und die geschützte Vorschau
-unter `https://sahimi.app/almanya24-dev/`. Produktion, YouTube, TTS und Avatar
-sind nicht beteiligt.
+Läuft seit 2026-10-09 aus dem `main`-Checkout
+`/home/pi/AI-Startup-Lab/bitcoin-education` mit dessen `.venv`; Laufzeitdaten
+liegen in `data/almanya24-preview/` (git-ignoriert, einziger beschreibbarer Pfad
+der Unit). Betrifft ausschließlich die geschützte Vorschau unter
+`https://sahimi.app/almanya24-dev/`. Produktion, YouTube, TTS und Avatar sind
+nicht beteiligt. Der frühere Worktree `almanya24-newsroom-dev` wird nicht mehr
+verwendet.
 
 ## Was der Lauf tut
 
@@ -241,7 +244,7 @@ wird nicht hinter dessen Rücken neu gestartet. Die Unit setzt den Schalter nich
 ## Installation
 
 ```
-sudo /home/pi/AI-Startup-Lab/almanya24-newsroom-dev/deploy/activate-almanya24-dev.sh
+sudo /home/pi/AI-Startup-Lab/bitcoin-education/deploy/activate-almanya24-dev.sh
 ```
 
 installiert Vorschaudienst und Timer, prüft danach den Zugriffsschutz und nennt

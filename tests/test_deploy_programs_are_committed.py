@@ -206,4 +206,8 @@ def test_production_data_is_mounted_read_only():
         for line in unit.splitlines()
         if line.startswith("ReadWritePaths=")
     ]
-    assert all("almanya24-newsroom-dev" in target for target in write_targets)
+    assert write_targets
+    assert all(
+        target == "/home/pi/AI-Startup-Lab/bitcoin-education/data/almanya24-preview"
+        for target in write_targets
+    )

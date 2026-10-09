@@ -5,8 +5,8 @@ After=network.target
 [Service]
 Type=simple
 User=pi
-WorkingDirectory=/home/pi/AI-Startup-Lab/almanya24-newsroom-dev
-ExecStart=/home/pi/.venvs/almanya24-newsroom-dev/bin/python scripts/almanya24_preview/serve_preview.py --port 8765
+WorkingDirectory=/home/pi/AI-Startup-Lab/bitcoin-education
+ExecStart=/home/pi/AI-Startup-Lab/bitcoin-education/.venv/bin/python scripts/almanya24_preview/serve_preview.py --port 8765
 Restart=on-failure
 RestartSec=5
 NoNewPrivileges=true

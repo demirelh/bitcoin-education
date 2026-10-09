@@ -1,13 +1,13 @@
 [Unit]
 Description=ALMANYA24 daily transcript-to-news run (development only)
-Documentation=file:///home/pi/AI-Startup-Lab/almanya24-newsroom-dev/docs/implementation/almanya24-daily-automation.md
+Documentation=file:///home/pi/AI-Startup-Lab/bitcoin-education/docs/implementation/almanya24-daily-automation.md
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=oneshot
 User=pi
-WorkingDirectory=/home/pi/AI-Startup-Lab/almanya24-newsroom-dev
+WorkingDirectory=/home/pi/AI-Startup-Lab/bitcoin-education
 
 # The approved development bypass. Deliberately set here and nowhere else:
 # the switch is off by default everywhere, and this is the only unit that is
@@ -26,9 +26,9 @@ Environment=ALMANYA24_DAILY_MAX_STORIES=6
 
 # Optional override, not in version control, for when a ceiling is granted.
 # The leading '-' means a missing file is not an error.
-EnvironmentFile=-/home/pi/AI-Startup-Lab/almanya24-newsroom-dev/data/almanya24-preview/daily-budget.env
+EnvironmentFile=-/home/pi/AI-Startup-Lab/bitcoin-education/data/almanya24-preview/daily-budget.env
 
-ExecStart=/home/pi/.venvs/almanya24-newsroom-dev/bin/python -m scripts.almanya24_preview.daily_run \
+ExecStart=/home/pi/AI-Startup-Lab/bitcoin-education/.venv/bin/python -m scripts.almanya24_preview.daily_run \
     --budget-usd ${ALMANYA24_DAILY_BUDGET_USD} \
     --max-calls ${ALMANYA24_DAILY_MAX_CALLS} \
     --max-stories ${ALMANYA24_DAILY_MAX_STORIES} \
@@ -40,7 +40,7 @@ PrivateTmp=true
 ProtectSystem=full
 # Production output is read for transcripts and never written.
 ReadOnlyPaths=/home/pi/AI-Startup-Lab/bitcoin-education
-ReadWritePaths=/home/pi/AI-Startup-Lab/almanya24-newsroom-dev/data
+ReadWritePaths=/home/pi/AI-Startup-Lab/bitcoin-education/data/almanya24-preview
 
 [Install]
 WantedBy=multi-user.target

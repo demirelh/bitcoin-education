@@ -46,6 +46,7 @@ class EditorialModel:
         provider: str,
         model: str,
         max_tokens_by_task: dict[str, int] | None = None,
+        model_by_task: dict[str, str] | None = None,
     ):
         if provider not in _ALLOWED_PROVIDERS:
             raise ValueError(
@@ -56,6 +57,8 @@ class EditorialModel:
             raise ValueError("An explicit editorial model is required")
         self.settings, self.provider, self.model = settings, provider, model
         self.max_tokens_by_task = max_tokens_by_task or {}
+        # A check run by the model that wrote the draft is not independent.
+        self.model_by_task = model_by_task or {}
 
     @property
     def usd_metered(self) -> bool:
@@ -100,7 +103,7 @@ class EditorialModel:
             max_tokens=self.max_tokens_by_task.get(payload["task"], 4096),
             json_mode=True,
             provider_override=self.provider,
-            model_override=self.model,
+            model_override=self.model_by_task.get(payload["task"], self.model),
         )
         try:
             result = json.loads(response.text)

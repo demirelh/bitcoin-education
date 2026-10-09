@@ -56,6 +56,8 @@ logger = logging.getLogger("almanya24.daily")
 
 PROVIDER = "copilot_cli"
 MODEL = "claude-opus-5"
+#: The consistency check reviews MODEL's draft, so it runs on another model family.
+CHECK_MODEL = "gpt-5.6-sol"
 #: A Copilot subscription reports no per-call price, so the ledger books zero
 #: and the call ceiling carries the whole limit.
 USD_METERED = PROVIDER in {"anthropic", "openai"}
@@ -133,6 +135,7 @@ def model_factory(settings: Settings):
         provider=PROVIDER,
         model=MODEL,
         max_tokens_by_task=MAX_TOKENS_BY_TASK,
+        model_by_task={"check_article_consistency": CHECK_MODEL},
     )
 
 
@@ -305,7 +308,7 @@ def main(argv: list[str] | None = None) -> int:
             publisher=make_publisher(session),
             lookback_days=args.lookback_days,
             usd_metered=USD_METERED,
-            model_requested=MODEL,
+            model_requested=f"{MODEL}, check: {CHECK_MODEL}",
         )
     finally:
         session.close()

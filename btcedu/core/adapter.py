@@ -25,7 +25,7 @@ from btcedu.models.episode import (
     PipelineStage,
     RunStatus,
 )
-from btcedu.services.claude_service import ClaudeResponse, call_claude
+from btcedu.services.claude_service import ClaudeResponse, call_claude, effective_model
 
 logger = logging.getLogger(__name__)
 
@@ -384,7 +384,7 @@ def adapt_script(
             "prompt_name": "adapt",
             "prompt_version": prompt_version.version,
             "prompt_hash": prompt_content_hash,
-            "model": settings.claude_model,
+            "model": effective_model(settings),
             "model_params": {
                 "temperature": settings.claude_temperature,
                 "max_tokens": settings.claude_max_tokens,
@@ -426,7 +426,7 @@ def adapt_script(
             episode_id=episode_id,
             artifact_type="adapt",
             file_path=str(adapted_path),
-            model=settings.claude_model,
+            model=effective_model(settings),
             prompt_hash=prompt_content_hash,
             retrieval_snapshot_path=None,
         )

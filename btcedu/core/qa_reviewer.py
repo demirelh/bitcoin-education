@@ -53,6 +53,7 @@ from btcedu.services.claude_service import (
     ClaudeResponse,
     _extract_json_object,
     call_claude,
+    effective_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -1984,7 +1985,7 @@ def resolve_translation_quality_gate(
                 "target_story_ids": repaired,
                 "finding_ids": [fid for fid in finding_ids if fid],
                 "provider": getattr(settings, "llm_provider", None),
-                "model": getattr(settings, "claude_model", None),
+                "model": effective_model(settings),
                 "cost_usd": max(0.0, repair_cost_after - repair_cost_before),
                 "resulting_status": None,
             }

@@ -563,7 +563,7 @@ def rank_candidates(
 
     Skips chapters with locked selections unless force=True.
     """
-    from btcedu.services.claude_service import call_claude
+    from btcedu.services.claude_service import call_claude, effective_model
 
     _get_episode(session, episode_id)
     chapters_doc = _load_chapters(episode_id, settings)
@@ -801,7 +801,7 @@ def rank_candidates(
 
     # Update manifest metadata
     manifest["ranked_at"] = _utcnow().isoformat()
-    manifest["ranking_model"] = settings.claude_model
+    manifest["ranking_model"] = effective_model(settings)
     manifest["ranking_cost_usd"] = total_cost - intent_result.cost_usd  # ranking cost only
     manifest["intent_analysis_cost_usd"] = intent_result.cost_usd
     manifest["schema_version"] = "3.0"
@@ -837,7 +837,7 @@ def extract_chapter_intents(
     Makes a single LLM call for the entire episode. Produces intent_analysis.json
     with per-chapter intents, allowed/disallowed motifs, literal traps, and search hints.
     """
-    from btcedu.services.claude_service import call_claude
+    from btcedu.services.claude_service import call_claude, effective_model
 
     chapters_doc = _load_chapters(episode_id, settings)
     chapters_hash = _compute_chapters_hash(chapters_doc)
@@ -984,7 +984,7 @@ def extract_chapter_intents(
             "episode_id": episode_id,
             "schema_version": "1.0",
             "analyzed_at": _utcnow().isoformat(),
-            "model": settings.claude_model,
+            "model": effective_model(settings),
             "cost_usd": cost,
             "chapters_hash": chapters_hash,
             "chapters": parsed,
@@ -997,7 +997,7 @@ def extract_chapter_intents(
             "episode_id": episode_id,
             "schema_version": "1.0",
             "analyzed_at": _utcnow().isoformat(),
-            "model": settings.claude_model,
+            "model": effective_model(settings),
             "cost_usd": 0.0,
             "chapters_hash": chapters_hash,
             "chapters": {

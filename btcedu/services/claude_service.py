@@ -97,6 +97,24 @@ def _resolve_provider(settings, provider_override: str | None = None) -> str:
     return provider
 
 
+def effective_model(settings, model_override: str | None = None) -> str:
+    """The model a default-routed ``call_claude`` actually reaches, for provenance.
+
+    ``settings.claude_model`` only applies to the Anthropic provider; recording it
+    for Copilot or OpenAI calls names a model that never ran.
+    """
+    if model_override:
+        return model_override
+    provider = _resolve_provider(settings)
+    if provider == "copilot_cli":
+        return f"copilot/{getattr(settings, 'copilot_cli_model', 'claude-sonnet-5')}"
+    if provider == "openai":
+        return getattr(settings, "openai_llm_model", "gpt-4o")
+    if provider == "github_models":
+        return getattr(settings, "github_models_model", "") or settings.claude_model
+    return settings.claude_model
+
+
 def call_claude(
     system_prompt: str,
     user_message: str,

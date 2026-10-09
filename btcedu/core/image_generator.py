@@ -20,7 +20,7 @@ from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.content_artifact import ContentArtifact
 from btcedu.models.episode import Episode, EpisodeStatus, PipelineRun, RunStatus
 from btcedu.models.media_asset import MediaAsset, MediaAssetType
-from btcedu.services.claude_service import call_claude
+from btcedu.services.claude_service import call_claude, effective_model
 from btcedu.services.errors import ErrorCategory, PipelineError, classify_error, is_transient
 from btcedu.services.image_gen_service import (
     ImageGenRequest,
@@ -907,7 +907,7 @@ def generate_images(
             "prompt_name": "imagegen",
             "prompt_version": prompt_version.version,
             "prompt_hash": prompt_content_hash,
-            "model": settings.claude_model,
+            "model": effective_model(settings),
             "image_gen_model": getattr(settings, "image_gen_model", "gpt-image-1"),
             "input_files": [str(chapters_path)],
             "input_content_hash": chapters_hash,

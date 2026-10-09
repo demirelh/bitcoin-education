@@ -833,6 +833,7 @@ class JobManager:
             target_story_ids_from_gate,
         )
         from btcedu.models.episode import Episode
+        from btcedu.services.claude_service import effective_model as _effective_model
 
         self._update(job, stage="qa")
         self._log(job, "QA-Re-Run: aktuelles Qualitätsgate wird geladen...")
@@ -879,7 +880,7 @@ class JobManager:
                             and finding.get("story_id") in targets
                         ],
                         "provider": getattr(settings, "llm_provider", None),
-                        "model": getattr(settings, "claude_model", None),
+                        "model": _effective_model(settings),
                         "cost_usd": max(0.0, after_cost - before_cost),
                         "resulting_status": None,
                     }

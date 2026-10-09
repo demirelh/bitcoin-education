@@ -24,7 +24,7 @@ from btcedu.models.episode import (
 )
 from btcedu.models.story_schema import Story, StoryDocument
 from btcedu.models.transcript_schema import CorrectedTranscriptDocument
-from btcedu.services.claude_service import ClaudeResponse, call_claude
+from btcedu.services.claude_service import ClaudeResponse, call_claude, effective_model
 
 logger = logging.getLogger(__name__)
 
@@ -277,7 +277,7 @@ def segment_broadcast(
             "prompt_name": "segment_broadcast",
             "prompt_version": prompt_version.version,
             "prompt_hash": prompt_content_hash,
-            "model": settings.claude_model,
+            "model": effective_model(settings),
             "model_params": {
                 "temperature": settings.claude_temperature,
                 "max_tokens": 32768,
@@ -308,7 +308,7 @@ def segment_broadcast(
             episode_id=episode_id,
             artifact_type="segment",
             file_path=str(stories_path),
-            model=settings.claude_model,
+            model=effective_model(settings),
             prompt_hash=prompt_content_hash,
             retrieval_snapshot_path=None,
         )

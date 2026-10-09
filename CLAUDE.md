@@ -220,6 +220,13 @@ OpenAI credit-quota error walks the profile's fallback list in order:
 same provider class as local; see `docs/remote-render.md`), then local
 `faster_whisper/small` (~45 min on the Pi). Other primary errors retain their
 existing failure behavior.
+Selective verification has its own profile-owned `transcription.secondary.fallback`:
+on permanent OpenAI quota exhaustion, `tagesschau_tr` uses local
+`faster_whisper/small` for the selected clips, without retrying the spent account.
+It must not reuse the provider/model that produced the primary transcript
+(local and GitHub faster-whisper count as the same provider). A matching primary,
+a failed fallback, authentication errors and ordinary rate limits remain failures.
+Successful regions retain their actual provider/model and billed cost.
 
 ## Notifications
 

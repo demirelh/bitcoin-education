@@ -55,7 +55,7 @@ türkische YouTube-Videos umwandeln.
 | 1  | **download**       | –    | –                                        | yt-dlp lädt Quellvideo + Audio |
 | 2  | **transcribe**     | ✅   | **OpenAI Whisper `whisper-1`** (DE, konfigurierbar) | Audio → strukturiertes Transkript mit Segmenten, Zeitstempeln und Legacy-Textdateien |
 | 3  | **transcript_analyze** | – | Deterministische Heuristiken              | Markiert konservativ verdächtige ASR-Segmente; keine externe API |
-| 4  | **transcript_verify** | ✅ | **OpenAI `gpt-4o-mini-transcribe`** (konfigurierbar) | Transkribiert nur verdächtige, zusammengeführte Audioausschnitte erneut und vergleicht kritische Fakten deterministisch |
+| 4  | **transcript_verify** | ✅ | **OpenAI `gpt-4o-mini-transcribe`**, bei verbrauchtem Guthaben lokal **faster-whisper `small`** | Transkribiert nur verdächtige, zusammengeführte Audioausschnitte erneut und vergleicht kritische Fakten deterministisch |
 | 5  | **correct**        | ✅   | **Claude Sonnet 4.5** (via Copilot CLI)  | Sichere segmentweise ASR-Korrektur als validiertes JSON; keine freie Rekonstruktion. Riskante Faktenänderungen werden deterministisch verworfen |
 | 6  | **transcript_qa**  | –    | Deterministische Regeln                  | Bewertet dauerhaft Namen-, Zahlen-, Datums-, Negations-, Opferzahl-, Ergebnis- und Rollenunsicherheiten als GREEN/YELLOW/RED |
 | 7  | review_gate_transcript_qa | – | –                                     | Setzt bei kritischen oder zu vielen schweren Findings einen blockierenden ReviewTask; Freigabe oder Änderungen anfordern |
@@ -83,6 +83,13 @@ türkische YouTube-Videos umwandeln.
 - **Deterministische Heuristiken** → Transkriptanalyse (Stage 3, keine KI/API)
 - **OpenAI `gpt-4o-mini-transcribe`** → selektive Zweittranskription
   verdächtiger Audioausschnitte (Stage 4)
+- **faster-whisper `small`** → lokaler, profilgesteuerter
+  `transcription.secondary.fallback` ausschließlich bei permanent erschöpftem
+  OpenAI-Guthaben. Bereits geprüfte Clips behalten Kosten und Modellzuordnung;
+  weitere Clips verwenden den Fallback. Dasselbe tatsächliche Provider/Modell
+  wie im Primärtranskript ist ausgeschlossen (lokal/GitHub zählen als derselbe
+  faster-whisper-Provider). Authentifizierungsfehler, normale Rate-Limits und
+  Fallback-Fehler stoppen weiterhin die Stage; alle Prüfgrenzen bleiben aktiv.
 - **Claude Sonnet 5** (über Copilot CLI, `llm_provider=copilot_cli`) →
   correct, segment, translate, adapt, chapterize (Stages 5, 9, 10, 11, 13) —
   das **inhaltliche Kernmodell**

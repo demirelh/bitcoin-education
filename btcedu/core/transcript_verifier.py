@@ -385,6 +385,7 @@ def verify_transcript(
     """Verify selected transcript regions with the configured secondary provider."""
     from btcedu.services.ffmpeg_service import extract_audio_clip, probe_media
     from btcedu.services.transcription_service import (
+        TranscriptionProviderSpec,
         get_transcription_provider,
         resolve_transcription_config,
     )
@@ -528,11 +529,15 @@ def verify_transcript(
         )
         _ensure_cost_budget(session, episode, settings, estimated_total_cost)
 
-        api_key = _provider_api_key(settings, resolved.secondary.provider)
+        active_spec = TranscriptionProviderSpec(
+            resolved.secondary.provider, resolved.secondary.model
+        )
+        api_key = _provider_api_key(settings, active_spec.provider)
         provider = get_transcription_provider(
-            resolved.secondary.provider,
+            active_spec.provider,
             api_key=api_key,
             openai_cost_per_minute_usd=settings.transcription_openai_cost_per_minute_usd,
+            settings=settings,
         )
 
         with tempfile.TemporaryDirectory(prefix="btcedu-transcript-verify-") as temp_dir:
@@ -556,18 +561,70 @@ def verify_transcript(
                 )
                 primary_text = _primary_text_for_clip(document, plan)
                 try:
-                    response = provider.transcribe(
-                        str(clip_path),
-                        model=resolved.secondary.model,
-                        language=document.language,
-                    )
+                    try:
+                        response = provider.transcribe(
+                            str(clip_path),
+                            model=active_spec.model,
+                            language=document.language,
+                        )
+                    except PipelineError as exc:
+                        fallback = resolved.secondary.fallback
+                        if (
+                            exc.category != ErrorCategory.PERMANENT_QUOTA
+                            or fallback is None
+                            or active_spec == fallback
+                        ):
+                            raise
+                        primary_provider = document.provider.replace(
+                            "faster_whisper_github", "faster_whisper"
+                        )
+                        fallback_provider = fallback.provider.replace(
+                            "faster_whisper_github", "faster_whisper"
+                        )
+                        if (primary_provider, document.model) == (
+                            fallback_provider,
+                            fallback.model,
+                        ):
+                            logger.error(
+                                "Cannot verify %s with fallback %s/%s: it produced the primary "
+                                "transcript",
+                                episode_id,
+                                fallback.provider,
+                                fallback.model,
+                            )
+                            raise
+                        logger.warning(
+                            "Verification quota exhausted for %s; falling back from %s/%s to %s/%s",
+                            episode_id,
+                            active_spec.provider,
+                            active_spec.model,
+                            fallback.provider,
+                            fallback.model,
+                        )
+                        active_spec = fallback
+                        provider = get_transcription_provider(
+                            active_spec.provider,
+                            api_key=_provider_api_key(settings, active_spec.provider),
+                            openai_cost_per_minute_usd=(
+                                settings.transcription_openai_cost_per_minute_usd
+                            ),
+                            settings=settings,
+                        )
+                        response = provider.transcribe(
+                            str(clip_path),
+                            model=active_spec.model,
+                            language=document.language,
+                        )
                 except Exception as exc:
-                    verified_regions.append(_failed_region(index, plan, primary_text, str(exc)))
+                    failed_region = _failed_region(index, plan, primary_text, str(exc))
+                    failed_region.provider = active_spec.provider
+                    failed_region.model = active_spec.model
+                    verified_regions.append(failed_region)
                     _write_verification_artifact(
                         verification_path,
                         episode_id,
-                        resolved.secondary.provider,
-                        resolved.secondary.model,
+                        active_spec.provider,
+                        active_spec.model,
                         mode,
                         verified_regions,
                     )
@@ -589,6 +646,8 @@ def verify_transcript(
                         clip_end_seconds=round(plan.clip_end_seconds, 3),
                         primary_text=primary_text,
                         secondary_text=response.text.strip(),
+                        provider=active_spec.provider,
+                        model=active_spec.model,
                         agreement=comparison.agreement,
                         risk_types=list(comparison.risk_types),
                         severity=comparison.severity,
@@ -600,8 +659,8 @@ def verify_transcript(
         verification = _write_verification_artifact(
             verification_path,
             episode_id,
-            resolved.secondary.provider,
-            resolved.secondary.model,
+            active_spec.provider,
+            active_spec.model,
             mode,
             verified_regions,
         )
@@ -614,8 +673,8 @@ def verify_transcript(
                     "stage": "transcript_verify",
                     "episode_id": episode_id,
                     "timestamp": _utcnow().isoformat(),
-                    "provider": resolved.secondary.provider,
-                    "model": resolved.secondary.model,
+                    "provider": active_spec.provider,
+                    "model": active_spec.model,
                     "mode": mode,
                     "minimum_analysis_severity": resolved.secondary_minimum_severity,
                     "comparator_version": VERIFICATION_COMPARATOR_VERSION,
@@ -641,7 +700,7 @@ def verify_transcript(
                 episode_id=episode_id,
                 artifact_type="transcript_verification",
                 file_path=str(verification_path),
-                model=f"{resolved.secondary.provider}/{resolved.secondary.model}",
+                model=f"{active_spec.provider}/{active_spec.model}",
                 prompt_hash=config_hash,
                 retrieval_snapshot_path=None,
             )
@@ -995,6 +1054,8 @@ def _load_transcription_config(settings: Settings, episode: Episode) -> dict:
 
 
 def _provider_api_key(settings: Settings, provider: str) -> str:
+    if provider.strip().lower() in {"faster_whisper", "faster_whisper_github"}:
+        return ""
     if provider.strip().lower() == "openai":
         if not settings.effective_whisper_api_key:
             raise ValueError(
@@ -1041,6 +1102,14 @@ def _verification_config_hash(resolved) -> str:
         "model": resolved.secondary.model,
         "mode": resolved.secondary.mode,
         "enabled": resolved.secondary.enabled,
+        "fallback": (
+            {
+                "provider": resolved.secondary.fallback.provider,
+                "model": resolved.secondary.fallback.model,
+            }
+            if resolved.secondary.fallback
+            else None
+        ),
         "minimum_severity": resolved.secondary_minimum_severity,
         "context_seconds": resolved.suspicious_segment_context_seconds,
         "max_audio_seconds": resolved.max_secondary_audio_seconds,

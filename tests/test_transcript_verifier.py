@@ -7,7 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
+from openai import RateLimitError
 
 from btcedu.config import Settings
 from btcedu.core.transcript_analyzer import analyze_transcript
@@ -35,8 +37,12 @@ from btcedu.models.transcript_schema import (
     TranscriptVerificationDocument,
 )
 from btcedu.profiles import reset_registry
-from btcedu.services.errors import PipelineError
-from btcedu.services.transcription_service import ProviderTranscript
+from btcedu.services.errors import ErrorCategory, PipelineError
+from btcedu.services.transcription_service import (
+    OpenAITranscriptionProvider,
+    ProviderTranscript,
+    resolve_transcription_config,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -607,6 +613,192 @@ def test_provider_failure_fails_stage_and_records_region(db_session, tmp_path):
         .one()
     )
     assert run.status == RunStatus.FAILED
+
+
+def _quota_error():
+    body = {
+        "error": {
+            "message": "You have no credits remaining. Add credits to continue using the API.",
+            "type": "insufficient_quota",
+            "param": None,
+            "code": "credit_balance_exhausted",
+        }
+    }
+    return RateLimitError(
+        f"Error code: 429 - {body}",
+        response=httpx.Response(429, request=httpx.Request("POST", "https://example.com")),
+        body=body,
+    )
+
+
+def test_exact_openai_quota_error_uses_independent_fallback(db_session, tmp_path, caplog):
+    settings = _settings(tmp_path)
+    document = _document()
+    document.provider = "faster_whisper_github"
+    document.model = "large-v3-turbo"
+    episode = _seed(db_session, tmp_path, document, _analysis(document, "seg-0001", "seg-0003"))
+    episode.error_message = "previous quota failure"
+    db_session.commit()
+    fallback = _provider(document.text, cost=0)
+    fallback.name = "faster_whisper"
+
+    def _extract(_input, output, **_kwargs):
+        Path(output).write_bytes(b"clip")
+
+    with (
+        patch("btcedu.services.ffmpeg_service.probe_media", return_value=_media()),
+        patch("btcedu.services.ffmpeg_service.extract_audio_clip", side_effect=_extract),
+        patch("btcedu.services.transcription_service.OpenAI") as sdk,
+        patch(
+            "btcedu.services.transcription_service.get_transcription_provider",
+            side_effect=[OpenAITranscriptionProvider("test-key", 0.006), fallback],
+        ) as factory,
+    ):
+        sdk.return_value.audio.transcriptions.create.side_effect = _quota_error()
+        result = verify_transcript(db_session, document.episode_id, settings)
+
+    assert result.regions_checked == 2
+    assert result.cost_usd == 0
+    assert not result.skipped
+    assert sdk.return_value.audio.transcriptions.create.call_count == 1
+    assert fallback.transcribe.call_count == 2
+    assert [call.args[0] for call in factory.call_args_list] == ["openai", "faster_whisper"]
+    assert all(call.kwargs["model"] == "small" for call in fallback.transcribe.call_args_list)
+    assert factory.call_args_list[-1].kwargs["settings"] is settings
+    artifact = TranscriptVerificationDocument.model_validate_json(
+        Path(result.verification_path).read_text(encoding="utf-8")
+    )
+    assert (artifact.provider, artifact.model) == ("faster_whisper", "small")
+    assert all(region.provider == "faster_whisper" for region in artifact.verified_regions)
+    provenance = json.loads(Path(result.provenance_path).read_text(encoding="utf-8"))
+    assert (provenance["provider"], provenance["model"]) == ("faster_whisper", "small")
+    assert episode.error_message is None
+    assert "Verification quota exhausted" in caplog.text
+    run = db_session.query(PipelineRun).filter_by(stage=PipelineStage.TRANSCRIPT_VERIFY).one()
+    assert run.status == RunStatus.SUCCESS
+
+
+def test_quota_after_success_preserves_paid_region_and_attribution(db_session, tmp_path):
+    settings = _settings(tmp_path)
+    document = _document()
+    _seed(db_session, tmp_path, document, _analysis(document, "seg-0001", "seg-0003"))
+    primary = _provider()
+    first = primary.transcribe.return_value
+    primary.transcribe.side_effect = [
+        first,
+        PipelineError("credit_balance_exhausted", ErrorCategory.PERMANENT_QUOTA),
+    ]
+    fallback = _provider(cost=0)
+
+    with (
+        patch("btcedu.services.ffmpeg_service.probe_media", return_value=_media()),
+        patch("btcedu.services.ffmpeg_service.extract_audio_clip"),
+        patch(
+            "btcedu.services.transcription_service.get_transcription_provider",
+            side_effect=[primary, fallback],
+        ),
+    ):
+        result = verify_transcript(db_session, document.episode_id, settings)
+
+    assert result.regions_checked == 2
+    assert result.cost_usd == first.cost_usd
+    artifact = TranscriptVerificationDocument.model_validate_json(
+        Path(result.verification_path).read_text(encoding="utf-8")
+    )
+    assert [(region.provider, region.model) for region in artifact.verified_regions] == [
+        ("openai", "gpt-4o-mini-transcribe"),
+        ("faster_whisper", "small"),
+    ]
+    assert fallback.transcribe.call_count == 1
+
+
+@pytest.mark.parametrize(
+    "category",
+    [ErrorCategory.PERMANENT_AUTH, ErrorCategory.TRANSIENT_RATE_LIMIT],
+)
+def test_non_quota_errors_do_not_use_verification_fallback(db_session, tmp_path, category):
+    settings = _settings(tmp_path)
+    document = _document()
+    _seed(db_session, tmp_path, document, _analysis(document, "seg-0001"))
+    primary = _provider()
+    primary.transcribe.side_effect = PipelineError("provider refused", category)
+    with (
+        patch("btcedu.services.ffmpeg_service.probe_media", return_value=_media()),
+        patch("btcedu.services.ffmpeg_service.extract_audio_clip"),
+        patch(
+            "btcedu.services.transcription_service.get_transcription_provider",
+            return_value=primary,
+        ) as factory,
+        pytest.raises(PipelineError, match="provider refused"),
+    ):
+        verify_transcript(db_session, document.episode_id, settings)
+    assert factory.call_count == 1
+
+
+@pytest.mark.parametrize("primary_provider", ["faster_whisper", "faster_whisper_github"])
+def test_verification_fallback_cannot_reuse_primary_model(db_session, tmp_path, primary_provider):
+    settings = _settings(tmp_path)
+    document = _document()
+    document.provider = primary_provider
+    document.model = "small"
+    _seed(db_session, tmp_path, document, _analysis(document, "seg-0001"))
+    primary = _provider()
+    primary.transcribe.side_effect = PipelineError(
+        "credit_balance_exhausted", ErrorCategory.PERMANENT_QUOTA
+    )
+    with (
+        patch("btcedu.services.ffmpeg_service.probe_media", return_value=_media()),
+        patch("btcedu.services.ffmpeg_service.extract_audio_clip"),
+        patch(
+            "btcedu.services.transcription_service.get_transcription_provider",
+            return_value=primary,
+        ) as factory,
+        pytest.raises(PipelineError, match="credit_balance_exhausted"),
+    ):
+        verify_transcript(db_session, document.episode_id, settings)
+    assert factory.call_count == 1
+
+
+def test_verification_fallback_failure_remains_failed(db_session, tmp_path):
+    settings = _settings(tmp_path)
+    document = _document()
+    episode = _seed(db_session, tmp_path, document, _analysis(document, "seg-0001"))
+    primary = _provider()
+    primary.transcribe.side_effect = PipelineError(
+        "credit_balance_exhausted", ErrorCategory.PERMANENT_QUOTA
+    )
+    fallback = _provider()
+    fallback.transcribe.side_effect = RuntimeError("local model unavailable")
+    with (
+        patch("btcedu.services.ffmpeg_service.probe_media", return_value=_media()),
+        patch("btcedu.services.ffmpeg_service.extract_audio_clip"),
+        patch(
+            "btcedu.services.transcription_service.get_transcription_provider",
+            side_effect=[primary, fallback],
+        ) as factory,
+        pytest.raises(RuntimeError, match="local model unavailable"),
+    ):
+        verify_transcript(db_session, document.episode_id, settings)
+    assert factory.call_count == 2
+    assert "local model unavailable" in episode.error_message
+    artifact_path = (
+        tmp_path / "outputs" / document.episode_id / "transcript" / "transcript_verification.json"
+    )
+    artifact = TranscriptVerificationDocument.model_validate_json(artifact_path.read_text())
+    assert artifact.summary.regions_checked == 0
+    assert artifact.verified_regions[0].status == "failed"
+    assert artifact.verified_regions[0].provider == "faster_whisper"
+
+
+def test_verification_fallback_configuration_invalidates_cache(tmp_path):
+    from btcedu.core.transcript_verifier import _verification_config_hash
+
+    settings = _settings(tmp_path)
+    original = resolve_transcription_config(settings)
+    changed = resolve_transcription_config(
+        settings, {"secondary": {"fallback": {"provider": "faster_whisper", "model": "small"}}}
+    )
+    assert _verification_config_hash(original) != _verification_config_hash(changed)
 
 
 def test_idempotency_force_and_stale_invalidation(db_session, tmp_path):

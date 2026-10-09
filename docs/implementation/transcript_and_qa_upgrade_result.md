@@ -187,9 +187,17 @@ lexicon output.
 
 Providers are selected by profile, not hard-coded business rules.
 `tagesschau_tr` currently configures OpenAI primary/secondary transcription,
-a local `faster_whisper/small` fallback for primary credit-quota exhaustion,
+ordered GitHub `faster_whisper_github/large-v3-turbo` and local
+`faster_whisper/small` fallbacks for primary credit-quota exhaustion,
 Copilot CLI producer/QA models, profile-routed generative images, and ElevenLabs
 TTS.
+Verification has a separate `transcription.secondary.fallback`:
+local `faster_whisper/small` is selected only on permanent quota exhaustion.
+The switch is sticky for remaining bounded clips and refuses to reuse the actual
+primary provider/model (local and GitHub faster-whisper are equivalent).
+Authentication/rate-limit errors and fallback failures are not bypassed.
+Each region records its actual provider/model and cost; document/provenance
+provider/model identify the last active verifier.
 
 Deterministic analysis and QA cost zero. Every paid call checks cumulative
 episode cost before invocation and records structured `cost_usd`. Partial

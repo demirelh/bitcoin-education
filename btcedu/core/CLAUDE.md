@@ -73,6 +73,13 @@ Each v2 stage module follows the same pattern:
   reports exhausted credits, `transcription.fallback` (a list) is tried in
   order: `large-v3-turbo` on a GitHub runner (`core/remote_transcribe.py`),
   then local `faster_whisper/small`.
+- **Verification quota fallback**: `transcription.secondary.fallback` is separate
+  from the primary fallback list. `tagesschau_tr` uses local `faster_whisper/small`
+  for bounded suspicious clips only after permanent OpenAI quota exhaustion.
+  The switch stays active for the remaining clips; completed regions keep their
+  cost and provider/model. Never use the primary transcript's actual provider/model
+  as the fallback (local/GitHub faster-whisper are equivalent); fail closed instead.
+  Authentication/rate-limit errors and fallback failures still fail the stage.
 - **Reboot debugging**: a stage writes and commits its `RUNNING` row before
   work; retry summaries aggregate all attempts instead of showing only the last
 - **Failover debugging**: `processing`/`publishing` are intentionally

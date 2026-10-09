@@ -38,6 +38,7 @@ class SecondaryTranscriptionSpec:
     provider: str
     model: str
     mode: str
+    fallback: TranscriptionProviderSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -222,6 +223,7 @@ def resolve_transcription_config(
         if item.get("provider") and item.get("model")
     )
     secondary = config.get("secondary") or {}
+    secondary_fallback = secondary.get("fallback") or {}
 
     primary_provider = str(
         primary.get("provider") or getattr(settings, "transcription_primary_provider", "openai")
@@ -264,6 +266,14 @@ def resolve_transcription_config(
                     "transcription_secondary_mode",
                     "suspicious_segments_only",
                 )
+            ),
+            fallback=(
+                TranscriptionProviderSpec(
+                    provider=str(secondary_fallback["provider"]),
+                    model=str(secondary_fallback["model"]),
+                )
+                if secondary_fallback
+                else None
             ),
         ),
         secondary_minimum_severity=str(

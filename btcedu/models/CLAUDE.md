@@ -19,6 +19,10 @@ All use `Mapped[]` / `mapped_column()` with `Base` from `btcedu/db.py` **EXCEPT 
 
 Additional Pydantic schemas: `story_schema.py`, `script_schema.py`,
 `transcript_schema.py`, `schemas.py`.
+`TranscriptVerificationRegion` has optional `provider`/`model` fields for actual
+per-region ASR attribution when quota exhaustion switches providers mid-stage.
+Legacy artifacts without these fields remain valid; the document-level pair is
+the last active verifier, while region fields disambiguate mixed-provider runs.
 
 ## Pydantic Models (chapter_schema.py)
 

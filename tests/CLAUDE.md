@@ -55,6 +55,9 @@ job lifecycle tests, with every stage dependency mocked and the job awaited.
 - `test_failover_*.py` — control-plane auth, mode/health policy, lease CAS,
   fencing, reconciliation, pipeline gating and dashboard proxy tests
 - `test_tts_no_cache.py` — fresh synthesis regression coverage
+- `test_transcript_verifier.py` — quota-only independent secondary fallback,
+  sticky provider selection, mixed-region cost/attribution and fail-closed errors;
+  the exact OpenAI 429 `credit_balance_exhausted` response is mocked at the SDK
 - `conftest.py` — shared fixtures (db, episodes, transcripts)
 - `fixtures/` — static test data files
 

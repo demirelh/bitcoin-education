@@ -57,6 +57,24 @@ The deterministic analyze/QA commands accept `--force` and always cost zero.
 calls the secondary ASR provider. Other stage flags are shown by
 `btcedu COMMAND --help`.
 
+For `tagesschau_tr`, an exhausted OpenAI verification balance switches only the
+selected clips to the profile's `transcription.secondary.fallback`
+(`faster_whisper/small`, local). Verification limits and QA checks remain enabled.
+The fallback must differ from the actual primary transcript's provider/model;
+otherwise the stage fails closed. Authentication errors, ordinary rate limits
+and fallback errors are not bypassed. Regions record their actual verifier and
+cost, including successful OpenAI clips before a mid-stage switch.
+
+Before committing/pushing a verification fix or resuming the episode, require a
+successful isolated three-episode stage replay:
+
+```bash
+btcedu regression-run --from-stage transcript_verify --only-stage --profile tagesschau_tr --count 3
+btcedu retry --episode-id EPISODE_ID
+```
+
+`retry` resumes from the durable status without forcing completed stages.
+
 QA command exit codes are scriptable:
 
 - `0`: completed and non-blocking

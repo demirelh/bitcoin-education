@@ -93,6 +93,7 @@ def test_profile_transcription_config_overrides_settings():
                 "model": "secondary-model",
                 "mode": "suspicious_segments_only",
                 "minimum_severity": "major",
+                "fallback": {"provider": "faster_whisper", "model": "small"},
             },
             "suspicious_segment_context_seconds": 12,
             "max_secondary_audio_seconds": 240,
@@ -105,9 +106,20 @@ def test_profile_transcription_config_overrides_settings():
     assert config.fallback.model == "small"
     assert config.secondary.enabled is True
     assert config.secondary.model == "secondary-model"
+    assert config.secondary.fallback is not None
+    assert config.secondary.fallback.provider == "faster_whisper"
+    assert config.secondary.fallback.model == "small"
     assert config.secondary_minimum_severity == "major"
     assert config.suspicious_segment_context_seconds == 12
     assert config.max_secondary_audio_seconds == 240
+
+
+def test_secondary_fallback_does_not_inherit_primary_fallback():
+    config = resolve_transcription_config(
+        Settings(),
+        {"fallback": {"provider": "faster_whisper", "model": "small"}},
+    )
+    assert config.secondary.fallback is None
 
 
 @patch("btcedu.services.transcription_service.OpenAI")

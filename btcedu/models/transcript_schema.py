@@ -114,6 +114,8 @@ class TranscriptVerificationRegion(BaseModel):
     clip_end_seconds: float = Field(..., ge=0)
     primary_text: str
     secondary_text: str
+    provider: str | None = Field(default=None, min_length=1)
+    model: str | None = Field(default=None, min_length=1)
     agreement: Literal["high", "medium", "low"]
     risk_types: list[str]
     severity: Literal["none", "minor", "major", "critical"]

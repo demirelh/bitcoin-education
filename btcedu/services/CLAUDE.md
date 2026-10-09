@@ -76,6 +76,10 @@ Each service uses a Protocol for swappable implementations:
   decorator owns OpenAI retries; SDK retries are disabled to avoid multiplying paid
   or quota-rejected requests. Profiles may configure a local fallback that is used
   only when the primary reports permanent quota exhaustion.
+  `SecondaryTranscriptionSpec.fallback` resolves the separate profile-owned
+  `transcription.secondary.fallback` provider/model; it never inherits the primary
+  fallback list. `core/transcript_verifier.py` owns the quota-only sticky switch
+  and checks independence from the actual primary transcript.
 - `gemini_image_service.py` — Gemini 2.0 Flash image editing via raw HTTP REST API. `edit_image()` -> `GeminiEditResult(image_path, cost_usd)`
 
 ## Conventions

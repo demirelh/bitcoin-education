@@ -30,6 +30,11 @@ the narration but cannot rewrite it. Review gates create artifact-bound
 `tagesschau_tr` uses selective secondary transcription only for suspicious
 segments, conditional fact-preserving adaptation, profile-routed image/TTS
 providers, and `auto_publish: false`.
+If OpenAI verification credits are exhausted, its profile-owned
+`transcription.secondary.fallback` verifies the selected clips with local
+`faster_whisper/small`. This quota-only switch never reuses the primary
+transcript's provider/model; other errors and fallback failures still stop the
+stage. Per-region artifacts preserve the actual verifier and billed cost.
 
 `tagesschau_tr` is fed by the local `ard-recorder` capture
 (`/mnt/photo-backup/tagesschau/recordings/`), which is ready about twenty

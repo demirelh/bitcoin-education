@@ -196,6 +196,10 @@ directory (`data/outputs/.transcribe-jobs/`) follow the render job.
 
 `tagesschau_tr` lists it as the first transcription fallback, before local
 `faster_whisper/small`; any runner failure moves on to the local model.
+The selective verification stage has a separate quota-only fallback to local
+`faster_whisper/small` for its short clips. It does not inherit this primary
+fallback list or dispatch those clips to the runner, and refuses the fallback
+if the primary transcript already used the same model.
 
 Measured on the 2026-09-30 bulletin (16 MB audio):
 
@@ -212,4 +216,3 @@ Measured on the 2026-09-30 bulletin (16 MB audio):
 
 The runner installs the `speechcheck` extra; `av` is held below 19 because
 faster-whisper 1.2.1 passes an argument PyAV 19 removed.
-

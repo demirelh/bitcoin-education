@@ -33,6 +33,10 @@ stage_config:
       enabled: true
       provider: openai
       model: gpt-4o-mini-transcribe
+      # Independent of the large-v3-turbo primary fallback; only on spent credits.
+      fallback:
+        provider: faster_whisper
+        model: small
       mode: suspicious_segments_only
       minimum_severity: major
     suspicious_segment_context_seconds: 15

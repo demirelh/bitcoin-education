@@ -514,6 +514,12 @@ def _build_script_stories(
         summary = str(entry.get("display_summary") or "").strip()
         if not summary:
             summary = _first_sentence(_approved_text(source), max_words=15)
+        raw_facts = entry.get("key_facts")
+        key_facts = [
+            " ".join(item.split())
+            for item in (raw_facts if isinstance(raw_facts, list) else [])
+            if isinstance(item, str) and item.strip()
+        ][:6]
 
         result.append(
             ScriptStory(
@@ -531,6 +537,7 @@ def _build_script_stories(
                 is_weather=_is_weather_story(source, headline),
                 overlay_duration_seconds=6.0,
                 overlay_priority=1 if ranking.priority == StoryPriority.TOP else 0,
+                key_facts=key_facts,
             )
         )
     return result

@@ -213,6 +213,20 @@ Her haber için ekranda görünecek iki satır üret:
 tamamlayıcı bir bilgi versin. `display_headline` yalnızca ekranda görünür ve
 hiçbir sunucu tarafından okunmaz.
 
+## EKRAN MADDELERİ
+
+`brief` olmayan her haber için `key_facts` alanında 2–4 madde üret. Sunucu
+ilgili yeri okurken her madde ekranın sağında tek tek belirir.
+
+- Her madde, aynı haberin `speaker_sequence` metninden **harfi harfine
+  kopyalanmış** kesintisiz bir parçadır: 3–7 kelime, en fazla 45 karakter.
+  Kelime ekleme, çıkarma, sıra veya ek değiştirme yok; metinde aynen
+  bulunmayan madde otomatik olarak silinir.
+- Rakam, tutar, tarih, karar ya da kimin ne yaptığını taşıyan parçaları seç.
+  İzleyici yalnızca maddeleri okusa bile haberin özünü anlamalı.
+- Maddeler konuşma sırasını izler ve birbirini tekrar etmez.
+- `brief` haberlerde ve hava durumunda `key_facts` boş liste olur.
+
 ## ÇIKTI BİÇİMİ
 
 Yalnızca geçerli JSON döndür, başka hiçbir metin ekleme:
@@ -225,6 +239,7 @@ Yalnızca geçerli JSON döndür, başka hiçbir metin ekleme:
       "display_headline": "EMEKLİLİK REFORMU",
       "display_summary": "45 yıl prim ödeyenlerin emeklilik hakkı yeniden tartışılıyor.",
       "viewer_relevance": "Almanya'da uzun yıllardır çalışan Türkiye kökenli çalışanları doğrudan ilgilendiriyor.",
+      "key_facts": ["45 yıl prim ödeyenler", "erken emeklilik hakkı korunacak"],
       "speaker_sequence": [
         {"role": "anchor_female", "purpose": "introduction", "text": "..."},
         {"role": "reporter_male", "purpose": "report", "text": "..."},

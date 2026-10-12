@@ -5,7 +5,7 @@ import logging
 import re
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
 
@@ -30,6 +30,8 @@ class OverlaySpec:
     box: bool = True
     boxcolor: str = "black@0.6"
     boxborderw: int = 10
+    # key_facts only: (text, seconds into the segment at which it is spoken)
+    items: list[tuple[str, float]] = field(default_factory=list)
 
 
 @dataclass
@@ -353,6 +355,93 @@ def _build_animated_lower_third(
             f":x='{slide_x}':y={bar_y}+({bar_h}-text_h)/2:{enable}"
         )
 
+    return filters
+
+
+def _wrap_to_width(text: str, font_path: str | None, fontsize: int, max_width: int) -> list[str]:
+    """Break *text* into lines no wider than *max_width* pixels (drawtext never wraps)."""
+    try:
+        from PIL import ImageFont
+
+        measure = ImageFont.truetype(font_path, fontsize).getlength
+    except Exception:
+
+        def measure(line: str) -> float:
+            return len(line) * fontsize * 0.5
+
+    lines: list[str] = []
+    current = ""
+    for word in text.split():
+        candidate = f"{current} {word}".strip()
+        if current and measure(candidate) > max_width:
+            lines.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        lines.append(current)
+    return lines
+
+
+def _build_key_facts_card(
+    overlay: OverlaySpec,
+    font_path: str,
+    accent_color: str = "#F7931A",
+    fade_seconds: float = 0.3,
+) -> list[str]:
+    """Key facts panel on the right: a title bar, then one block per item.
+
+    Each block appears with its own background when its words are spoken, so
+    the panel grows with the narration instead of showing an empty box. Item
+    times may be negative (spoken before a cut); such an item is fully visible
+    from the first frame.
+    """
+    card_w, margin_r, top = 620, 64, 150
+    pad, head_h, gap = 24, 58, 16
+    title_size = 30
+    item_size = overlay.fontsize
+    line_h = int(item_size * 1.3)
+    bullet = 12
+    text_x_offset = pad + bullet + 16
+    max_text_w = card_w - text_x_offset - pad
+    end = overlay.end
+    box_x = f"iw-{card_w + margin_r}"
+    text_x = f"w-{card_w + margin_r - text_x_offset}"
+
+    filters = []
+    card_enable = f"enable='between(t\\,{overlay.start}\\,{end})'"
+    filters.append(
+        f"drawbox=x={box_x}:y={top}:w={card_w}:h={head_h}:color={accent_color}@0.95"
+        f":t=fill:{card_enable}"
+    )
+    filters.append(
+        f"drawtext=fontfile={font_path}:text='{_escape_drawtext(overlay.text)}'"
+        f":fontsize={title_size}:fontcolor=white"
+        f":x=w-{card_w + margin_r - pad}:y={top + (head_h - title_size) // 2}:{card_enable}"
+    )
+
+    y = top + head_h
+    for text, at in overlay.items:
+        lines = _wrap_to_width(text, font_path, item_size, max_text_w)
+        if len(lines) > 2:
+            lines = [lines[0], " ".join(lines[1:])]
+        block_h = gap + len(lines) * line_h + gap
+        enable = f"enable='between(t\\,{at}\\,{end})'"
+        alpha = f"alpha='min(1\\,max(0\\,(t-({at}))/{fade_seconds}))'"
+        filters.append(
+            f"drawbox=x={box_x}:y={y}:w={card_w}:h={block_h}:color=black@0.72:t=fill:{enable}"
+        )
+        filters.append(
+            f"drawbox=x={box_x}+{pad}:y={y + gap + (line_h - bullet) // 2}"
+            f":w={bullet}:h={bullet}:color={accent_color}:t=fill:{enable}"
+        )
+        for line_index, line in enumerate(lines):
+            filters.append(
+                f"drawtext=fontfile={font_path}:text='{_escape_drawtext(line)}'"
+                f":fontsize={item_size}:fontcolor={overlay.fontcolor}"
+                f":x={text_x}:y={y + gap + line_index * line_h}:{alpha}:{enable}"
+            )
+        y += block_h
     return filters
 
 
@@ -930,6 +1019,14 @@ def create_segment(
                     filter_parts.append(f"[{last_label}]{lt_f}[{out_label}]")
                     last_label = out_label
                     filter_idx += 1
+            elif overlay.overlay_type == "key_facts":
+                for kf_filter in _build_key_facts_card(
+                    overlay, font_path, accent_color=lower_third_accent_color
+                ):
+                    out_label = f"ov{filter_idx}"
+                    filter_parts.append(f"[{last_label}]{kf_filter}[{out_label}]")
+                    last_label = out_label
+                    filter_idx += 1
             else:
                 drawtext_filter = _build_drawtext_filter(overlay, font_path)
                 out_label = f"ov{filter_idx}"
@@ -1272,6 +1369,14 @@ def create_video_segment(
                 for lt_f in lt_filters:
                     out_label = f"ov{filter_idx}"
                     filter_parts.append(f"[{last_label}]{lt_f}[{out_label}]")
+                    last_label = out_label
+                    filter_idx += 1
+            elif overlay.overlay_type == "key_facts":
+                for kf_filter in _build_key_facts_card(
+                    overlay, font_path, accent_color=lower_third_accent_color
+                ):
+                    out_label = f"ov{filter_idx}"
+                    filter_parts.append(f"[{last_label}]{kf_filter}[{out_label}]")
                     last_label = out_label
                     filter_idx += 1
             else:

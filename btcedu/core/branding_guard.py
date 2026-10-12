@@ -229,6 +229,10 @@ def collect_chapter_texts(chapter_doc: Any) -> list[VisibleText]:
             subtext = getattr(overlay, "subtext", None)
             if subtext:
                 texts.append(VisibleText(f"{cid}.overlay[{index}].subtext", str(subtext)))
+            for item_index, item in enumerate(getattr(overlay, "items", None) or []):
+                texts.append(
+                    VisibleText(f"{cid}.overlay[{index}].items[{item_index}]", str(item))
+                )
     return texts
 
 

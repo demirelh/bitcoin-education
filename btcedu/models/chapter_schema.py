@@ -30,6 +30,7 @@ class OverlayType(str, Enum):
     TITLE = "title"
     QUOTE = "quote"
     STATISTIC = "statistic"
+    KEY_FACTS = "key_facts"
 
 
 class Narration(BaseModel):
@@ -108,6 +109,10 @@ class Overlay(BaseModel):
     )
     duration_seconds: float = Field(..., gt=0.0, description="Duration of overlay")
     priority: int = Field(0, ge=0, description="Higher priority overlays win when they collide")
+    items: list[str] = Field(
+        default_factory=list,
+        description="key_facts only: verbatim narration spans, shown as they are spoken",
+    )
 
 
 class Transitions(BaseModel):

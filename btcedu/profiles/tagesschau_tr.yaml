@@ -353,6 +353,9 @@ stage_config:
     # shows anyway. (RENDER_KEN_BURNS_ENABLED in .env stays on for other
     # profiles.)
     ken_burns_enabled: false
+    # Card on the right that repeats 2-4 verbatim narration spans per story,
+    # each appearing when it is spoken (script stage `key_facts`).
+    key_facts_enabled: true
     # Produces the caption track and a second video file with the lines burned
     # into the picture. The plain video keeps precedence — it is what gets
     # published, and a track can be switched off where a burned-in line cannot.

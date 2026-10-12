@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
+from btcedu.core import key_facts
 from btcedu.core.prompt_registry import TEMPLATES_DIR, PromptRegistry
 from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.content_artifact import ContentArtifact
@@ -352,6 +353,24 @@ def _chapters_from_script(script, show_name: str) -> list[dict]:
             if summary:
                 overlay["subtext"] = summary
             overlays.append(overlay)
+        facts = (
+            []
+            if is_frame or is_weather
+            else key_facts.verified_items(narration_text, getattr(story, "key_facts", []))
+        )
+        if facts:
+            times = key_facts.item_times(narration_text, facts, None, float(duration))
+            first = max(0.0, float(times[0] or 0.0))
+            overlays.append(
+                {
+                    "type": "key_facts",
+                    "text": key_facts.DEFAULT_TITLE,
+                    "items": facts,
+                    "start_offset_seconds": round(first, 2),
+                    "duration_seconds": round(max(1.0, float(duration) - first), 2),
+                    "priority": 0,
+                }
+            )
 
         chapters.append(
             {
@@ -1618,7 +1637,14 @@ def _chapter_component_hashes(doc: ChapterDocument) -> dict:
         for ch in doc.chapters
     ]
     overlays = [
-        {"id": ch.chapter_id, "overlays": [o.model_dump(mode="json") for o in ch.overlays]}
+        {
+            "id": ch.chapter_id,
+            # `items` is left out while empty so older documents keep their hash.
+            "overlays": [
+                o.model_dump(mode="json", exclude=None if o.items else {"items"})
+                for o in ch.overlays
+            ],
+        }
         for ch in doc.chapters
     ]
     structure = [{"id": ch.chapter_id, "order": ch.order} for ch in doc.chapters]

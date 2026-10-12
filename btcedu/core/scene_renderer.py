@@ -41,6 +41,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from btcedu.config import Settings
+from btcedu.core import key_facts
 from btcedu.core.anchor_fallback import PRESENTATION_AVATAR, PRESENTATION_VOICE_OVER
 from btcedu.core.avatar_integrity import require_intact
 from btcedu.core.scene_planner import (
@@ -567,7 +568,7 @@ def render_scene_chapter(
         shot_path = scenes_dir / f"{chapter.chapter_id}_{scene.scene_id}.mp4"
         # The lower third belongs to the story, so it is drawn once, on the
         # chapter's first shot. A speaker change is a cut, not a new caption.
-        shot_overlays = overlays if index == 0 else []
+        shot_overlays = key_facts.shot_overlays(overlays, index, cursor, cursor + shot_duration)
         fade_in = fade_in_duration if index == 0 else 0.0
         fade_out = fade_out_duration if index == len(scenes) - 1 else 0.0
 

@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from btcedu.config import Settings
-from btcedu.core import loudness
+from btcedu.core import key_facts, loudness
 from btcedu.core.render_inputs import RENDER_INPUTS_KEY
 from btcedu.models.chapter_schema import ChapterDocument
 from btcedu.models.content_artifact import ContentArtifact
@@ -270,6 +270,7 @@ def render_video(
     _eff_intro_episode_title = str(_rc("intro_episode_title", "") or "")
     _eff_intro_duration = float(_rc("intro_duration", settings.render_intro_duration))
     _eff_topic_intro_enabled = bool(_rc("topic_intro_enabled", False))
+    _eff_key_facts = bool(_rc("key_facts_enabled", False))
     _eff_subtitles = bool(
         _rc("subtitles_enabled", getattr(settings, "render_subtitles_enabled", True))
     )
@@ -682,11 +683,22 @@ def render_video(
                         )
 
             # Convert overlays to OverlaySpec (profile-aware accent color + font)
+            _tts_entry = next(
+                (
+                    seg
+                    for seg in tts_manifest.get("segments", [])
+                    if seg.get("chapter_id") == chapter.chapter_id
+                ),
+                {},
+            )
             overlay_specs = _chapter_to_overlay_specs(
                 chapter,
                 _eff_font or settings.render_font,
                 accent_color=_accent_color,
                 animated_lower_thirds=_eff_lower_thirds,
+                key_facts_enabled=_eff_key_facts,
+                word_timings=(_tts_entry.get("metadata") or {}).get("word_timings"),
+                duration=float(duration),
             )
 
             # Compute fade durations based on transition types (Sprint 10)
@@ -900,6 +912,7 @@ def render_video(
                         "position": spec.position,
                         "start": spec.start,
                         "end": spec.end,
+                        **({"items": [list(item) for item in spec.items]} if spec.items else {}),
                     }
                     for spec in overlay_specs
                 ],
@@ -1400,6 +1413,7 @@ def _compute_render_content_hash(
                         "text": ov.text,
                         "start": ov.start_offset_seconds,
                         "duration": ov.duration_seconds,
+                        **({"items": list(ov.items)} if ov.items else {}),
                     }
                     for ov in ch.overlays
                 ],
@@ -1648,6 +1662,9 @@ def _chapter_to_overlay_specs(
     font: str,
     accent_color: str = "#F7931A",
     animated_lower_thirds: bool = False,
+    key_facts_enabled: bool = False,
+    word_timings: list[dict] | None = None,
+    duration: float = 0.0,
 ) -> list:
     """Convert chapter overlays to OverlaySpec list.
 
@@ -1669,6 +1686,11 @@ def _chapter_to_overlay_specs(
 
     overlay_specs = []
     for overlay in chapter.overlays:
+        if overlay.type.value == "key_facts":
+            spec = _key_facts_spec(chapter, overlay, font, word_timings, duration)
+            if key_facts_enabled and spec is not None:
+                overlay_specs.append(spec)
+            continue
         # Get style defaults
         style = dict(OVERLAY_STYLES.get(overlay.type.value, OVERLAY_STYLES["lower_third"]))
 
@@ -1738,6 +1760,37 @@ def _chapter_to_overlay_specs(
         overlay_specs.append(spec)
 
     return overlay_specs
+
+
+def _key_facts_spec(chapter, overlay, font: str, word_timings, duration: float):
+    """The key facts card, each item timed to the moment it is spoken."""
+    from btcedu.services.ffmpeg_service import OverlaySpec
+
+    narration = (getattr(chapter.narration, "text", "") or "").strip()
+    items = key_facts.verified_items(narration, overlay.items)
+    if not items or duration <= 0:
+        return None
+    timed = [
+        (key_facts.display_text(item), at)
+        for item, at in zip(
+            items, key_facts.item_times(narration, items, word_timings, duration), strict=True
+        )
+        if at is not None and at < duration - 1.0
+    ]
+    window = key_facts.card_window([at for _, at in timed], duration)
+    if window is None:
+        return None
+    return OverlaySpec(
+        text=overlay.text,
+        overlay_type="key_facts",
+        fontsize=36,
+        fontcolor="white",
+        font=font,
+        position="right_panel",
+        start=window[0],
+        end=window[1],
+        items=timed,
+    )
 
 
 def _shorten_overlay_text(text: str, max_chars: int = 88) -> str:
@@ -2066,7 +2119,9 @@ def _render_beat_chapter(
             audio_path=str(silent_audio),
             output_path=str(shot_path),
             duration=shot_duration,
-            overlays=overlays if index == 0 else [],
+            overlays=key_facts.shot_overlays(
+                overlays, index, shot_start, shot_start + shot_duration
+            ),
             resolution=settings.render_resolution,
             fps=settings.render_fps,
             crf=settings.render_crf,

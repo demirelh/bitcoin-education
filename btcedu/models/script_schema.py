@@ -116,6 +116,9 @@ class ScriptStory(BaseModel):
     is_weather: bool = False
     overlay_duration_seconds: float = Field(6.0, gt=0.0)
     overlay_priority: int = Field(0, ge=0)
+    key_facts: list[str] = Field(
+        default_factory=list, description="Verbatim narration spans for the on-screen card"
+    )
 
     @property
     def narration(self) -> str:

@@ -271,6 +271,7 @@ def render_video(
     _eff_intro_duration = float(_rc("intro_duration", settings.render_intro_duration))
     _eff_topic_intro_enabled = bool(_rc("topic_intro_enabled", False))
     _eff_key_facts = bool(_rc("key_facts_enabled", False))
+    _eff_kb_zoom = float(_rc("ken_burns_zoom_ratio", settings.render_ken_burns_zoom_ratio))
     _eff_subtitles = bool(
         _rc("subtitles_enabled", getattr(settings, "render_subtitles_enabled", True))
     )
@@ -385,7 +386,9 @@ def render_video(
             "preset": settings.render_preset,
             "audio_bitrate": settings.render_audio_bitrate,
             "transition_duration": settings.render_transition_duration,
-            "ken_burns_zoom_ratio": settings.render_ken_burns_zoom_ratio,
+            "ken_burns_zoom_ratio": float(
+                _rc("ken_burns_zoom_ratio", settings.render_ken_burns_zoom_ratio)
+            ),
             "lower_third_slide_duration": settings.render_lower_thirds_slide_duration,
             "ticker_speed": settings.render_ticker_speed,
             "ticker_height": settings.render_ticker_height,
@@ -550,6 +553,7 @@ def render_video(
         def _enhancement_kwargs(
             asset_type: str,
             chapter_idx: int,
+            still_motion: bool = True,
         ) -> dict:
             kwargs: dict = {}
             # Color correction (both photo and video)
@@ -570,10 +574,10 @@ def render_video(
                 kwargs["ticker_height"] = settings.render_ticker_height
                 kwargs["ticker_fontsize"] = settings.render_ticker_fontsize
             # Ken Burns (photo only)
-            if _eff_ken_burns and asset_type == "photo":
+            if _eff_ken_burns and asset_type == "photo" and still_motion:
                 pattern = KEN_BURNS_PATTERNS[chapter_idx % len(KEN_BURNS_PATTERNS)]
                 kwargs["ken_burns_pattern"] = pattern
-                kwargs["ken_burns_zoom_ratio"] = settings.render_ken_burns_zoom_ratio
+                kwargs["ken_burns_zoom_ratio"] = _eff_kb_zoom
             return kwargs
 
         _chapters_total = len(chapters_doc.chapters)
@@ -797,7 +801,14 @@ def render_video(
             )
 
             # Build enhancement kwargs for this chapter
-            enh_kwargs = _enhancement_kwargs(asset_type, chapter.order - 1)
+            # Cards and data graphics are framed exactly; only photographs move.
+            enh_kwargs = _enhancement_kwargs(
+                asset_type,
+                chapter.order - 1,
+                still_motion=chapter.chapter_id not in _weather_ids
+                and chapter.visual.type.value == "b_roll"
+                and not chapter.visual.deterministic,
+            )
 
             beats = (chapter.metadata or {}).get("visual_beats") or []
             beat_image_paths = _beat_images(chapter.chapter_id, image_manifest) if beats else []
@@ -1586,7 +1597,9 @@ def _current_render_content_hash(session, episode_id: str, settings: Settings) -
             "preset": settings.render_preset,
             "audio_bitrate": settings.render_audio_bitrate,
             "transition_duration": settings.render_transition_duration,
-            "ken_burns_zoom_ratio": settings.render_ken_burns_zoom_ratio,
+            "ken_burns_zoom_ratio": float(
+                _rc("ken_burns_zoom_ratio", settings.render_ken_burns_zoom_ratio)
+            ),
             "lower_third_slide_duration": settings.render_lower_thirds_slide_duration,
             "ticker_speed": settings.render_ticker_speed,
             "ticker_height": settings.render_ticker_height,

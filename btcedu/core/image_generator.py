@@ -292,23 +292,56 @@ def _failed_image_entry(chapter, error: str) -> "ImageEntry":
     )
 
 
-def _generate_pexels_fallback(chapter, output_dir: Path, settings: Settings) -> "ImageEntry":
-    """Download one attributed stock photo when a generative provider is unavailable."""
+_STOCK_QUERY_SKIP = frozenset(
+    "a an the of in on at to for with and or from by into over under its their this that "
+    "is are be as it seen taken showing shows shown features featuring which where while "
+    "photo photograph photographs photojournalism photorealistic realistic image picture "
+    "shot wide medium close closing up establishing cinematic editorial style documentary "
+    "news scene view angle detail eye level distance quiet modern high quality lighting "
+    "natural soft light daylight background foreground frame framing composition".split()
+)
+
+
+def _stock_query_from_prompt(prompt: str, max_words: int = 6) -> str:
+    """Stock-photo search terms: the subject words of an image prompt's first sentence."""
+    sentence = re.split(r"(?<=[.!?])\s", prompt or "", maxsplit=1)[0]
+    words: list[str] = []
+    for word in re.findall(r"[A-Za-z][A-Za-z-]*", sentence):
+        key = word.lower().removesuffix("'s")
+        if key not in _STOCK_QUERY_SKIP and len(key) > 2 and key not in words:
+            words.append(key)
+    return " ".join(words[:max_words])
+
+
+def _generate_pexels_fallback(
+    chapter,
+    output_dir: Path,
+    settings: Settings,
+    beat_index: int = 0,
+    query: str | None = None,
+    exclude_ids: frozenset = frozenset(),
+) -> "ImageEntry":
+    """Download one attributed stock photo when a generative provider is unavailable.
+
+    A presenter block searches with its own English image prompt and skips
+    photos the chapter already shows.
+    """
     from btcedu.core.stock_images import _derive_search_query
     from btcedu.services.pexels_service import PexelsService
 
     service = PexelsService(api_key=settings.pexels_api_key)
-    query = _derive_search_query(chapter, domain_tag="news")
+    query = query or _derive_search_query(chapter, domain_tag="news")
     result = service.search(
         query=query,
-        per_page=1,
+        per_page=len(exclude_ids) + 1,
         orientation=settings.pexels_orientation,
     )
-    if not result.photos:
+    photo = next((p for p in result.photos if p.id not in exclude_ids), None)
+    if photo is None:
         raise RuntimeError(f"Pexels returned no fallback image for query {query!r}")
 
-    photo = result.photos[0]
-    filename = f"{chapter.chapter_id}_{_slugify_filename_part(chapter.title)}_pexels.jpg"
+    suffix = f"_b{beat_index}" if beat_index else ""
+    filename = f"{chapter.chapter_id}_{_slugify_filename_part(chapter.title)}{suffix}_pexels.jpg"
     target_path = output_dir / filename
     service.download_photo(photo, target_path, size=settings.pexels_download_size)
 
@@ -333,6 +366,7 @@ def _generate_pexels_fallback(chapter, output_dir: Path, settings: Settings) -> 
             "alt_text": photo.alt,
             "downloaded_at": _utcnow().isoformat(),
             "cost_usd": 0.0,
+            **({"beat_index": beat_index} if beat_index else {}),
         },
     )
 
@@ -747,15 +781,15 @@ def generate_images(
                     _create_media_asset_record(session, episode_id, image_entry, prompt_version.id)
                 continue
 
+            free_entry = None
             if _free_media_first and str(getattr(visual.type, "value", visual.type)) == "b_roll":
                 free_entry = _free_media_entry(chapter, output_dir, settings)
-                if free_entry is not None:
-                    image_entries.append(free_entry)
-                    _create_media_asset_record(session, episode_id, free_entry, prompt_version.id)
-                    continue
 
             # Check if generation is needed for this visual type
-            if _needs_generation(visual.type) or (
+            if free_entry is not None:
+                # Falls through to the presenter blocks below, which still need pictures.
+                image_entry = free_entry
+            elif _needs_generation(visual.type) or (
                 _generative_profile and visual.type in GENERATIVE_EXTRA_TYPES
             ):
                 # Reset per chapter: the fallback below must never reuse the
@@ -831,7 +865,10 @@ def generate_images(
                             _check_cost_limit(before_call=True)
                             if _fallback_provider == "pexels":
                                 image_entry = _generate_pexels_fallback(
-                                    chapter, output_dir, settings
+                                    chapter,
+                                    output_dir,
+                                    settings,
+                                    query=_stock_query_from_prompt(image_prompt) or None,
                                 )
                             else:
                                 image_entry = _generate_single_image(
@@ -879,6 +916,7 @@ def generate_images(
             if image_entry.generation_method != "failed":
                 for beat in _visual_beats(chapter)[1:]:
                     beat_index = int(beat.get("beat_index") or 0)
+                    beat_prompt = None
                     try:
                         _check_cost_limit(before_call=True)
                         (
@@ -914,6 +952,29 @@ def generate_images(
                     except PipelineError:
                         raise
                     except Exception as e:
+                        reason = e
+                        if _fallback_provider == "pexels":
+                            try:
+                                beat_entry = _generate_pexels_fallback(
+                                    chapter,
+                                    output_dir,
+                                    settings,
+                                    beat_index=beat_index,
+                                    query=_stock_query_from_prompt(beat_prompt) or None,
+                                    exclude_ids=frozenset(
+                                        entry.metadata.get("pexels_id")
+                                        for entry in image_entries
+                                        if entry.chapter_id == chapter.chapter_id
+                                    ),
+                                )
+                                image_entries.append(beat_entry)
+                                _create_media_asset_record(
+                                    session, episode_id, beat_entry, prompt_version.id
+                                )
+                                generated_count += 1
+                                continue
+                            except Exception as fallback_error:  # noqa: BLE001
+                                reason = fallback_error
                         # A missing beat picture is not fatal: the renderer holds
                         # the previous shot for that block instead.
                         logger.warning(
@@ -921,7 +982,7 @@ def generate_images(
                             "shot will be held",
                             beat_index,
                             chapter.chapter_id,
-                            e,
+                            reason,
                         )
 
         if chapter_id and existing_entries:

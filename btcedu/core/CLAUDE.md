@@ -41,7 +41,9 @@ Each v2 stage module follows the same pattern:
   system `/tmp` tmpfs used on the Raspberry Pi.
 - `copilot_fix.py` — `start_copilot_fix()`: one-shot autonomous repair of a failed stage in a detached tmux session (`copilotfix`). Called from the failure branch of `run_episode_pipeline()`, at most once per distinct error (marker `provenance/copilot_fixes.json`), never in dry-run and disabled via `copilot_auto_fix_enabled`
 - `weather/` — deterministic Tagesschau weather subsystem: `detector.py` (is this a weather chapter?), `extractor.py` (claims from approved narration), `scene_planner.py`, `renderer.py` (HTML/SVG → headless Chromium → PNG/MP4), `validator.py` (claims must be narration-backed), `models.py`, `lexicon.py`, `dates.py` (absolute Turkish date labels), `cities.py` (map projection), `templates/`, `assets/`
-- `image_generator.py` — per-chapter pictures. On a provider error the chapter is retried with the profile's `fallback_provider`; if it still has no file the stage **fails** instead of writing a `*_failed.png` entry. The failure is re-classified from the underlying provider error (via `classify_error()`) instead of being hardcoded to `server_error`: a 401/403 from every configured provider is reported as `auth_error` ("Check .env for correct API keys") and a 402 as `quota_exhausted` ("Add credits"), not as a transient error that auto-resolves, and the per-chapter error text is included in the message. When chapters fail for different reasons, an actionable credential/billing category outranks an `unknown` one. Manifest and provenance are written first, so a rerun regenerates only the missing chapters (`_chapters_needing_regen`).
+- `image_generator.py` — per-chapter pictures. On a provider error the chapter is retried with the profile's `fallback_provider`; if it still has no file the stage **fails** instead of writing a `*_failed.png` entry. The failure is re-classified from the underlying provider error (via `classify_error()`) instead of being hardcoded to `server_error`: a 401/403 from every configured provider is reported as `auth_error` ("Check .env for correct API keys") and a 402 as `quota_exhausted` ("Add credits"), not as a transient error that auto-resolves, and the per-chapter error text is included in the message. When chapters fail for different reasons, an actionable credential/billing category outranks an `unknown` one. Manifest and provenance are written first, so a rerun regenerates only the missing chapters (`_chapters_needing_regen`). A free-media chapter still gets its presenter-block pictures; a block whose
+  generation fails falls back to Pexels, searched with the subject words of its English image
+  prompt (`_stock_query_from_prompt`) and excluding photos the chapter already shows.
 - `stock_images.py` (60KB) — Pexels stock search, intent extraction, ranking, candidate finalization
 - `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro
   cards, ticker. A studio scene plan is ignored while `anchor_enabled=false`,
@@ -50,6 +52,10 @@ Each v2 stage module follows the same pattern:
   during render from the actual TTS duration and must be admitted to the render
   guard by exact path after successful creation; never widen the guard to all of
   `images/`.
+  Ken Burns (`render.ken_burns_enabled`, `ken_burns_zoom_ratio`) moves only `b_roll`
+  photographs, never cards, weather or deterministic graphics. It uses the sub-pixel
+  `perspective` filter (zoompan juddered); shots over 14 s loop through six framings,
+  one every 10 s, with a fixed-size expression. Costs ~10 fps on the Pi.
 - `key_facts.py` — on-screen key facts card (profile `render.key_facts_enabled`).
   The script stage proposes 2-4 `key_facts` per story; only spans found verbatim
   in the chapter narration survive (chapterize and again at render). Each item is

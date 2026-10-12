@@ -22,36 +22,42 @@ from btcedu.services.ffmpeg_service import (
 class TestKenBurns:
     def test_build_kenburns_filter_zoom_in(self):
         f = _build_kenburns_filter("zoom_in", 10.0, "1920x1080", 30, 0.04)
-        assert "zoompan=" in f
-        assert "s=1920x1080" in f
+        assert "perspective=" in f
+        assert "crop=1920:1080" in f
         assert "fps=30" in f
-        assert "d=300" in f  # 10s * 30fps
+        assert "on/299" in f  # last frame of 10s * 30fps
 
     def test_build_kenburns_filter_pan_left(self):
         f = _build_kenburns_filter("pan_left", 5.0, "1920x1080", 30, 0.04)
-        assert "zoompan=" in f
-        assert "1-on/" in f  # pan direction
+        assert "perspective=" in f
+        assert "*(1-(1-cos" in f  # moves from the right edge to the left
 
     def test_build_kenburns_filter_pan_right(self):
         f = _build_kenburns_filter("pan_right", 5.0, "1920x1080", 30, 0.04)
-        assert "zoompan=" in f
-        assert "on/" in f
+        assert "perspective=" in f
+        assert "on/149" in f
 
     def test_build_kenburns_filter_zoom_out(self):
         f = _build_kenburns_filter("zoom_out", 5.0, "1920x1080", 30, 0.04)
-        assert "zoompan=" in f
+        assert "perspective=" in f
         assert "cos" in f
 
     def test_build_kenburns_filter_pan_up(self):
         f = _build_kenburns_filter("pan_up", 5.0, "1920x1080", 30, 0.04)
-        assert "zoompan=" in f
+        assert "perspective=" in f
+
+    def test_build_kenburns_filter_long_shot_loops_framings(self):
+        f = _build_kenburns_filter("zoom_in", 120.0, "1920x1080", 25, 0.06)
+        assert "perspective=" in f
+        assert "mod(on,1500)" in f  # six framings of 10 s at 25 fps
+        assert f == _build_kenburns_filter("zoom_in", 300.0, "1920x1080", 25, 0.06)
 
     def test_patterns_list(self):
         assert len(KEN_BURNS_PATTERNS) == 5
         assert "zoom_in" in KEN_BURNS_PATTERNS
 
     def test_create_segment_ken_burns_dry_run(self, tmp_path):
-        """Ken Burns: zoompan in filter, no -loop 1 in command."""
+        """Ken Burns: perspective on a looped still image."""
         image = tmp_path / "img.png"
         audio = tmp_path / "aud.mp3"
         image.write_bytes(b"png")
@@ -69,9 +75,9 @@ class TestKenBurns:
         )
 
         cmd = result.ffmpeg_command
-        assert "-loop" not in cmd
+        assert "-loop" in cmd
         fc = cmd[cmd.index("-filter_complex") + 1]
-        assert "zoompan=" in fc
+        assert "perspective=" in fc
 
     def test_create_segment_no_ken_burns_by_default(self, tmp_path):
         """When ken_burns_pattern=None, use standard scale+pad with -loop 1."""

@@ -240,6 +240,60 @@ def _build_subtitles_filter(subtitle_path: str) -> str:
     return f"ass=filename='{_escape_subtitle_path(subtitle_path)}'"
 
 
+# A single move spread over a long shot is too slow to see, so longer shots
+# travel between several framings instead, one every ~10 s.
+KEN_BURNS_PATH_MIN_SECONDS = 14.0
+_KEN_BURNS_LEG_SECONDS = 10.0
+# (zoom steps, horizontal, vertical position within the free margin, 0..1)
+_KEN_BURNS_FRAMINGS = [
+    (0, 0.5, 0.5),
+    (2, 0.3, 0.35),
+    (1, 0.7, 0.5),
+    (2, 0.5, 0.65),
+    (1, 0.3, 0.55),
+    (2, 0.7, 0.35),
+]
+
+
+def _piecewise(values: list[float], frames: list[int], var: str) -> str:
+    """Eased interpolation through *values* at *frames*, as an ffmpeg expression."""
+    expr = f"{values[-1]:.5f}"
+    for k in range(len(values) - 2, -1, -1):
+        a, b = values[k], values[k + 1]
+        f0, f1 = frames[k], frames[k + 1]
+        leg = f"{a:.5f}+({b - a:.5f})*(1-cos(PI*({var}-{f0})/{f1 - f0}))/2"
+        expr = f"if(lt({var},{f1}),{leg},{expr})"
+    return expr
+
+
+def _build_kenburns_path(
+    pattern: str, duration: float, width: str, height: str, fps: int, zoom_ratio: float
+) -> str:
+    # The framings repeat in a loop, so the expression stays the same size
+    # however long the shot is.
+    leg = max(int(_KEN_BURNS_LEG_SECONDS * fps), 2)
+    count = len(_KEN_BURNS_FRAMINGS)
+    first = KEN_BURNS_PATTERNS.index(pattern) if pattern in KEN_BURNS_PATTERNS else 0
+    framings = [_KEN_BURNS_FRAMINGS[(first + k) % count] for k in range(count + 1)]
+    frames = [k * leg for k in range(count + 1)]
+    var = f"mod(on,{count * leg})"
+    # Crop rectangle as fractions of the frame. Each framing is a valid
+    # rectangle, and so is every blend of two of them.
+    sizes = [1 / (1 + zoom_ratio * steps) for steps, _, _ in framings]
+    xs = [(1 - size) * u for size, (_, u, _) in zip(sizes, framings, strict=True)]
+    ys = [(1 - size) * v for size, (_, _, v) in zip(sizes, framings, strict=True)]
+    size_e, x_e, y_e = (_piecewise(v, frames, var) for v in (sizes, xs, ys))
+    left, right = f"W*({x_e})", f"W*(({x_e})+({size_e}))"
+    top, bottom = f"H*({y_e})", f"H*(({y_e})+({size_e}))"
+    corners = [(left, top), (right, top), (left, bottom), (right, bottom)]
+    points = ":".join(f"x{i}='{cx}':y{i}='{cy}'" for i, (cx, cy) in enumerate(corners))
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={width}:{height},fps={fps},"
+        f"perspective={points}:interpolation=linear:sense=source:eval=frame"
+    )
+
+
 def _build_kenburns_filter(
     pattern: str,
     duration: float,
@@ -247,7 +301,13 @@ def _build_kenburns_filter(
     fps: int = 25,
     zoom_ratio: float = 0.04,
 ) -> str:
-    """Build zoompan filter string for Ken Burns effect.
+    """Ken Burns move for a looped still image, cropped to fill the frame.
+
+    zoompan crops at whole source pixels, so a slow move alternates between
+    standing still and jumping a pixel. ``perspective`` samples the source with
+    sub-pixel interpolation; measured on a 1920x1080 photo the frame-to-frame
+    jitter drops from ~1 px to 0.001 px. The move eases in and out and stops at
+    its end position instead of running past it.
 
     Args:
         pattern: Movement pattern (zoom_in, zoom_out, pan_left, pan_right, pan_up)
@@ -257,40 +317,43 @@ def _build_kenburns_filter(
         zoom_ratio: Total zoom range (e.g. 0.04 = 1.0 to 1.04)
 
     Returns:
-        zoompan filter string for filter_complex
+        filter chain for filter_complex (scale, crop, fps, perspective)
     """
     width, height = resolution.split("x")
-    total_frames = int(duration * fps)
-    d = max(total_frames, 1)
+    last_frame = max(int(duration * fps) - 1, 1)
     r = zoom_ratio
+    if duration > KEN_BURNS_PATH_MIN_SECONDS:
+        return _build_kenburns_path(pattern, duration, width, height, fps, zoom_ratio)
+    ease = f"(1-cos(PI*min(1,on/{last_frame})))/2"
 
-    if pattern == "zoom_in":
-        z_expr = f"1.0+{r}*(1-cos(PI*on/{d}))/2"
-        x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = "ih/2-(ih/zoom/2)"
-    elif pattern == "zoom_out":
-        z_expr = f"1.0+{r}*(1+cos(PI*on/{d}))/2"
-        x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = "ih/2-(ih/zoom/2)"
-    elif pattern == "pan_left":
-        z_expr = f"1.0+{r}/2"
-        x_expr = f"iw*{r}*(1-on/{d})"
-        y_expr = "ih/2-(ih/zoom/2)"
-    elif pattern == "pan_right":
-        z_expr = f"1.0+{r}/2"
-        x_expr = f"iw*{r}*on/{d}"
-        y_expr = "ih/2-(ih/zoom/2)"
-    elif pattern == "pan_up":
-        z_expr = f"1.0+{r}/2"
-        x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = f"ih*{r}*(1-on/{d})"
+    if pattern in ("zoom_in", "zoom_out"):
+        progress = ease if pattern == "zoom_in" else f"(1-{ease})"
+        scale = f"(1/(1+{r}*{progress}))"
+        x = f"(W-W*{scale})/2"
+        y = f"(H-H*{scale})/2"
     else:
-        # Fallback to zoom_in
-        z_expr = f"1.0+{r}*(1-cos(PI*on/{d}))/2"
-        x_expr = "iw/2-(iw/zoom/2)"
-        y_expr = "ih/2-(ih/zoom/2)"
-
-    return f"zoompan=z='{z_expr}':x='{x_expr}':y='{y_expr}':d={d}:s={width}x{height}:fps={fps}"
+        scale = f"(1/(1+{r}))"
+        x = f"(W-W*{scale})/2"
+        y = f"(H-H*{scale})/2"
+        if pattern == "pan_left":
+            x = f"(W-W*{scale})*(1-{ease})"
+        elif pattern == "pan_right":
+            x = f"(W-W*{scale})*{ease}"
+        elif pattern == "pan_up":
+            y = f"(H-H*{scale})*(1-{ease})"
+        else:
+            scale = f"(1/(1+{r}*{ease}))"
+            x = f"(W-W*{scale})/2"
+            y = f"(H-H*{scale})/2"
+    w = f"W*{scale}"
+    h = f"H*{scale}"
+    corners = [(x, y), (f"{x}+{w}", y), (x, f"{y}+{h}"), (f"{x}+{w}", f"{y}+{h}")]
+    points = ":".join(f"x{i}='{cx}':y{i}='{cy}'" for i, (cx, cy) in enumerate(corners))
+    return (
+        f"scale={width}:{height}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={width}:{height},fps={fps},"
+        f"perspective={points}:interpolation=linear:sense=source:eval=frame"
+    )
 
 
 def _build_animated_lower_third(
@@ -968,7 +1031,6 @@ def create_segment(
     width, height = resolution.split("x")
 
     if ken_burns_pattern:
-        # Ken Burns: zoompan generates frames from still image (no -loop 1)
         kb_filter = _build_kenburns_filter(
             ken_burns_pattern,
             duration,
@@ -976,7 +1038,9 @@ def create_segment(
             fps,
             ken_burns_zoom_ratio,
         )
-        filter_parts = [f"[0:v]scale=-1:-1,{kb_filter},format=yuv420p[raw]"]
+        filter_parts = [
+            f"[0:v]{kb_filter},settb=expr=1/{fps},format=yuv420p,setparams=range=limited[raw]"
+        ]
     else:
         # Standard: scale and pad image to exact resolution
         filter_parts = [
@@ -1073,39 +1137,22 @@ def create_segment(
     filter_complex = ";".join(filter_parts)
 
     # Build ffmpeg command
-    if ken_burns_pattern:
-        # Ken Burns: no -loop 1, zoompan generates frames
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-i",
-            image_path,
-            "-i",
-            audio_path,
-            "-filter_complex",
-            filter_complex,
-            "-map",
-            "[v]",
-            "-map",
-            "1:a",
-        ]
-    else:
-        cmd = [
-            "ffmpeg",
-            "-y",
-            "-loop",
-            "1",  # Loop image
-            "-i",
-            image_path,
-            "-i",
-            audio_path,
-            "-filter_complex",
-            filter_complex,
-            "-map",
-            "[v]",
-            "-map",
-            "1:a",
-        ]
+    cmd = [
+        "ffmpeg",
+        "-y",
+        "-loop",
+        "1",  # Loop image
+        "-i",
+        image_path,
+        "-i",
+        audio_path,
+        "-filter_complex",
+        filter_complex,
+        "-map",
+        "[v]",
+        "-map",
+        "1:a",
+    ]
 
     # Add audio fade filter (Sprint 10)
     if fade_in_duration > 0 or fade_out_duration > 0:

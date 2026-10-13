@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 FRAME = (1920, 1080)
 EDIT_NOTE = "16:9 formatına bulanık arka planla yerleştirildi"
+PAIR_EDIT_NOTE = "iki fotoğraf yan yana, bulanık arka planla yerleştirildi"
 
 
 def chapter_fields(chapter) -> list[tuple[str, int]]:
@@ -51,8 +52,46 @@ def fit_16x9(body: bytes) -> bytes:
     return out.getvalue()
 
 
-def find_free_picture(chapter, output_dir: Path, settings, filename_stem: str) -> dict | None:
-    """Download, check and frame a cleared picture, or ``None`` when there is none."""
+def fit_pair(left: bytes, right: bytes) -> bytes:
+    """Two pictures side by side, each whole on a blurred fill of itself."""
+    from PIL import Image, ImageDraw, ImageEnhance, ImageFilter
+
+    width, height = FRAME
+    half = width // 2
+    canvas = Image.new("RGB", FRAME)
+    for index, body in enumerate((left, right)):
+        with Image.open(io.BytesIO(body)) as source:
+            picture = source.convert("RGB")
+        scale = max(half / picture.width, height / picture.height)
+        fill = picture.resize((round(picture.width * scale), round(picture.height * scale)))
+        x0, y0 = (fill.width - half) // 2, (fill.height - height) // 2
+        fill = fill.crop((x0, y0, x0 + half, y0 + height)).filter(ImageFilter.GaussianBlur(40))
+        fill = ImageEnhance.Brightness(fill).enhance(0.55)
+        scale = min(half / picture.width, height / picture.height)
+        picture = picture.resize((round(picture.width * scale), round(picture.height * scale)))
+        fill.paste(picture, ((half - picture.width) // 2, (height - picture.height) // 2))
+        canvas.paste(fill, (index * half, 0))
+    ImageDraw.Draw(canvas).rectangle((half - 3, 0, half + 2, height), fill=(255, 255, 255))
+    out = io.BytesIO()
+    canvas.save(out, format="JPEG", quality=90)
+    return out.getvalue()
+
+
+def find_free_picture(
+    chapter,
+    output_dir: Path,
+    settings,
+    filename_stem: str,
+    *,
+    exclude: frozenset[str] = frozenset(),
+    alternate: bool = False,
+) -> dict | None:
+    """Download, check and frame a cleared picture, or ``None`` when there is none.
+
+    *exclude* holds Commons files the episode already shows. A person whose
+    pinned portrait is excluded, or for whom *alternate* asks for another shot,
+    is shown in a further photograph that depicts them (Commons P180).
+    """
     from btcedu.core.editorial.media import (
         ALLOWED_IMAGE_TYPES,
         MAX_IMAGE_BYTES,
@@ -62,7 +101,9 @@ def find_free_picture(chapter, output_dir: Path, settings, filename_stem: str) -
     from btcedu.core.editorial.media_collection import (
         CollectionCommonsProvider,
         WikidataPortraitLookup,
+        depicted_photos,
         match_collection,
+        persons_named,
         requirement_for,
         select_entry,
     )
@@ -79,15 +120,43 @@ def find_free_picture(chapter, output_dir: Path, settings, filename_stem: str) -
         # A place or topic named only in passing is too loose for the one picture
         # a chapter shows; a fuel-price sign once illustrated an EV subsidy.
         return None
-    candidates = CollectionCommonsProvider(fetcher, extra=(entry,)).search(entry.label, limit=1)
-    if not candidates:
-        return None
-    candidate = candidates[0]
+    pinned = (
+        ()
+        if alternate
+        else CollectionCommonsProvider(fetcher, extra=(entry,)).search(entry.label, limit=1)
+    )
     requirement = requirement_for(entry)
-    assessment = assess_candidate(candidate, requirement)
-    if not assessment.eligible:
-        logger.info("Free picture %s rejected: %s", entry.key, "; ".join(assessment.reasons))
+
+    def _usable(pool):
+        for candidate in pool:
+            if candidate.offer_key in exclude:
+                continue
+            assessment = assess_candidate(candidate, requirement)
+            if assessment.eligible:
+                return candidate, assessment
+            logger.info("Free picture %s rejected: %s", entry.key, "; ".join(assessment.reasons))
         return None
+
+    found = _usable(pinned) or _usable(depicted_photos(fetcher, entry))
+    if found is None:
+        return None
+    candidate, assessment = found
+    if not alternate and entry.kind == "person":
+        caption = f"{fields[0][0]} {getattr(chapter, 'display_summary', None) or ''}"
+        named = persons_named(caption)
+        partner = next((p for p in named if p.key != entry.key), None)
+        if partner is not None and entry in named:
+            pair = _pair_picture(
+                fetcher,
+                (entry, candidate, assessment),
+                partner,
+                exclude,
+                output_dir,
+                filename_stem,
+                left_first=named.index(entry) < named.index(partner),
+            )
+            if pair is not None:
+                return pair
     binary = fetcher.fetch_binary(
         candidate.file_url, allowed_content_types=ALLOWED_IMAGE_TYPES, max_bytes=MAX_IMAGE_BYTES
     )
@@ -105,4 +174,53 @@ def find_free_picture(chapter, output_dir: Path, settings, filename_stem: str) -
         "license_url": candidate.license_url,
         "source_page": candidate.page_url,
         "author": candidate.author,
+        "commons_file": candidate.offer_key,
+    }
+
+
+def _pair_picture(fetcher, first, partner, exclude, output_dir, filename_stem, *, left_first):
+    """Both people a story is about, side by side, or None if the partner has no cleared photo."""
+    from btcedu.core.editorial.media import (
+        ALLOWED_IMAGE_TYPES,
+        MAX_IMAGE_BYTES,
+        assess_candidate,
+        build_attribution,
+    )
+    from btcedu.core.editorial.media_collection import CollectionCommonsProvider, requirement_for
+
+    found = CollectionCommonsProvider(fetcher, extra=(partner,)).search(partner.label, limit=1)
+    if not found or found[0].offer_key in exclude:
+        return None
+    partner_assessment = assess_candidate(found[0], requirement_for(partner))
+    if not partner_assessment.eligible:
+        return None
+    sides = [first, (partner, found[0], partner_assessment)]
+    if not left_first:
+        sides.reverse()
+    bodies = [
+        fetcher.fetch_binary(
+            candidate.file_url, allowed_content_types=ALLOWED_IMAGE_TYPES, max_bytes=MAX_IMAGE_BYTES
+        ).body
+        for _, candidate, _ in sides
+    ]
+    framed = fit_pair(*bodies)
+    filename = f"{filename_stem}_commons.jpg"
+    (output_dir / filename).write_bytes(framed)
+    return {
+        "filename": filename,
+        "size_bytes": len(framed),
+        "label": " & ".join(entry.label for entry, _, _ in sides),
+        "collection_key": first[0].key,
+        "role": first[0].role.value,
+        "attribution": "; ".join(
+            build_attribution(candidate, assessment.policy, edit_note=PAIR_EDIT_NOTE)
+            for _, candidate, assessment in sides
+        ),
+        "license": " / ".join(
+            dict.fromkeys(assessment.policy.license_id for _, _, assessment in sides)
+        ),
+        "license_url": sides[0][1].license_url,
+        "source_page": sides[0][1].page_url,
+        "author": "; ".join(filter(None, (candidate.author for _, candidate, _ in sides))),
+        "commons_file": "|".join(candidate.offer_key for _, candidate, _ in sides),
     }

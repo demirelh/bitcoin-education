@@ -44,6 +44,11 @@ Each v2 stage module follows the same pattern:
 - `image_generator.py` — per-chapter pictures. On a provider error the chapter is retried with the profile's `fallback_provider`; if it still has no file the stage **fails** instead of writing a `*_failed.png` entry. The failure is re-classified from the underlying provider error (via `classify_error()`) instead of being hardcoded to `server_error`: a 401/403 from every configured provider is reported as `auth_error` ("Check .env for correct API keys") and a 402 as `quota_exhausted` ("Add credits"), not as a transient error that auto-resolves, and the per-chapter error text is included in the message. When chapters fail for different reasons, an actionable credential/billing category outranks an `unknown` one. Manifest and provenance are written first, so a rerun regenerates only the missing chapters (`_chapters_needing_regen`). A free-media chapter still gets its presenter-block pictures; a block whose
   generation fails falls back to Pexels, searched with the subject words of its English image
   prompt (`_stock_query_from_prompt`) and excluding photos the chapter already shows.
+  Person chapters alternate presenter blocks: even blocks get a further real photo of the
+  person (`media_collection.depicted_photos`: Commons files whose structured data depicts
+  them (P180), one per occasion, <= 10 years old, group shots last), odd blocks the topic.
+  No Commons file is shown twice per episode (`shown_free`). When the headline/summary
+  names two curated people, `free_media.fit_pair` shows both side by side and credits both.
 - `stock_images.py` (60KB) — Pexels stock search, intent extraction, ranking, candidate finalization
 - `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro
   cards, ticker. A studio scene plan is ignored while `anchor_enabled=false`,

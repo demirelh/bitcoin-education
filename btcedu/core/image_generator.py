@@ -371,13 +371,28 @@ def _generate_pexels_fallback(
     )
 
 
-def _free_media_entry(chapter, output_dir: Path, settings: Settings) -> "ImageEntry | None":
-    """A cleared library photograph for the chapter, or None to generate one."""
+def _free_media_entry(
+    chapter,
+    output_dir: Path,
+    settings: Settings,
+    *,
+    exclude: frozenset[str] = frozenset(),
+    beat_index: int = 0,
+) -> "ImageEntry | None":
+    """A cleared library photograph for the chapter, or None to generate one.
+
+    A presenter block (*beat_index* > 0) asks for a further photograph of the
+    chapter's person rather than the pinned portrait.
+    """
     from btcedu.core.free_media import FRAME, find_free_picture
 
     stem = f"{chapter.chapter_id}_{_slugify_filename_part(chapter.title)}"
+    if beat_index:
+        stem += f"_b{beat_index}"
     try:
-        found = find_free_picture(chapter, output_dir, settings, stem)
+        found = find_free_picture(
+            chapter, output_dir, settings, stem, exclude=exclude, alternate=bool(beat_index)
+        )
     except Exception as exc:  # noqa: BLE001 - the generative path still follows
         logger.warning("Free picture lookup failed for %s: %s", chapter.chapter_id, exc)
         return None
@@ -402,6 +417,8 @@ def _free_media_entry(chapter, output_dir: Path, settings: Settings) -> "ImageEn
             "attribution": found["attribution"],
             "license": found["license"],
             "license_url": found["license_url"],
+            "commons_file": found.get("commons_file"),
+            **({"beat_index": beat_index} if beat_index else {}),
             "source_url": found["source_page"],
             "author": found["author"],
             "downloaded_at": _utcnow().isoformat(),
@@ -661,6 +678,13 @@ def generate_images(
 
         # Process each chapter
         image_entries = []
+        # Commons files already on screen in this episode; none is shown twice.
+        shown_free = {
+            name
+            for entries in existing_entries.values()
+            for entry in entries
+            for name in ((entry.get("metadata") or {}).get("commons_file") or "").split("|")
+        } - {""}
         total_input_tokens = 0
         total_output_tokens = 0
         total_cost = 0.0
@@ -783,7 +807,11 @@ def generate_images(
 
             free_entry = None
             if _free_media_first and str(getattr(visual.type, "value", visual.type)) == "b_roll":
-                free_entry = _free_media_entry(chapter, output_dir, settings)
+                free_entry = _free_media_entry(
+                    chapter, output_dir, settings, exclude=frozenset(shown_free)
+                )
+                if free_entry is not None:
+                    shown_free.update(free_entry.metadata.get("commons_file", "").split("|"))
 
             # Check if generation is needed for this visual type
             if free_entry is not None:
@@ -917,6 +945,26 @@ def generate_images(
                 for beat in _visual_beats(chapter)[1:]:
                     beat_index = int(beat.get("beat_index") or 0)
                     beat_prompt = None
+                    # A person story alternates: another real photo of them, then the topic.
+                    if (
+                        free_entry is not None
+                        and free_entry.metadata.get("role") == "portrait"
+                        and beat_index % 2 == 0
+                    ):
+                        person_entry = _free_media_entry(
+                            chapter,
+                            output_dir,
+                            settings,
+                            exclude=frozenset(shown_free),
+                            beat_index=beat_index,
+                        )
+                        if person_entry is not None:
+                            shown_free.add(person_entry.metadata.get("commons_file"))
+                            image_entries.append(person_entry)
+                            _create_media_asset_record(
+                                session, episode_id, person_entry, prompt_version.id
+                            )
+                            continue
                     try:
                         _check_cost_limit(before_call=True)
                         (

@@ -280,6 +280,22 @@ def match_collection(
     return best_entry
 
 
+def persons_named(text: str) -> list[CollectionEntry]:
+    """Curated people named in *text*, in order of first mention."""
+    normalized = normalize(text or "")
+    found = []
+    for entry in COLLECTION:
+        if entry.kind != "person":
+            continue
+        aliases, requires = _compiled(entry)
+        if requires and not any(p.search(normalized) for p in requires):
+            continue
+        positions = [m.start() for p in aliases if (m := p.search(normalized))]
+        if positions:
+            found.append((min(positions), entry))
+    return [entry for _, entry in sorted(found, key=lambda row: row[0])]
+
+
 def requirement_for(entry: CollectionEntry) -> MediaRequirement:
     return MediaRequirement(subject=entry.label, role=entry.role, caption=entry.caption)
 
@@ -539,6 +555,201 @@ def select_entry(
             if len(fitting) == 1:
                 learned.append(_learned_entry(fitting[0]))
     return match_collection(fields, extra=learned) if learned else entry
+
+
+# Not a photograph of the person, or a photograph of something about them.
+_NOT_A_PHOTO_OF = re.compile(
+    r"signatur|unterschrift|logo|wappen|coat of arms|karikatur|caricature|cartoon|graffiti"
+    r"|plakat|poster|banner|meme|grave|grab|mural|statue|wax|sticker|flag",
+    re.IGNORECASE,
+)
+_depicted_cache: dict[str, tuple[MediaCandidate, ...]] = {}
+
+
+def _person_qid(
+    fetcher, entry: CollectionEntry, api_url: str, commons_api_url: str
+) -> str | None:
+    """The Wikidata item of the person the entry's pinned portrait shows.
+
+    Namesakes are common (a chemist is also called Friedrich Merz), so the
+    portrait decides: whom Commons says it depicts, else the namesake whose
+    Wikidata image it is, else the only namesake with an image at all.
+    """
+    if entry.key.startswith("wikidata:"):
+        return entry.key.split(":", 1)[1]
+    pinned = f"File:{entry.commons_file}"
+    media = json.loads(
+        _fetch_text(
+            fetcher,
+            f"{commons_api_url}?"
+            + urlencode(
+                {
+                    "action": "wbgetentities",
+                    "sites": "commonswiki",
+                    "titles": pinned,
+                    "format": "json",
+                }
+            ),
+        )
+    ).get("entities", {})
+    depicted = {
+        (claim.get("mainsnak", {}).get("datavalue", {}).get("value") or {}).get("id")
+        for item in media.values()
+        for claim in (item.get("statements") or {}).get("P180", [])
+    } - {None}
+    wanted = normalize(entry.label)
+    found = json.loads(
+        _fetch_text(
+            fetcher,
+            f"{api_url}?"
+            + urlencode(
+                {
+                    "action": "wbsearchentities",
+                    "search": entry.label,
+                    "language": "de",
+                    "type": "item",
+                    "limit": "10",
+                    "format": "json",
+                }
+            ),
+        )
+    ).get("search", [])
+    ids = [row["id"] for row in found if normalize(row.get("label", "")) == wanted]
+    if not ids:
+        return None
+    entities = json.loads(
+        _fetch_text(
+            fetcher,
+            f"{api_url}?"
+            + urlencode(
+                {
+                    "action": "wbgetentities",
+                    "ids": "|".join(ids),
+                    "props": "claims",
+                    "format": "json",
+                }
+            ),
+        )
+    ).get("entities", {})
+
+    def _values(qid: str, prop: str) -> list:
+        return [
+            claim.get("mainsnak", {}).get("datavalue", {}).get("value")
+            for claim in (entities.get(qid) or {}).get("claims", {}).get(prop, [])
+        ]
+
+    humans = [qid for qid in ids if any((v or {}).get("id") == "Q5" for v in _values(qid, "P31"))]
+    by_depiction = [qid for qid in humans if qid in depicted]
+    if len(by_depiction) == 1:
+        return by_depiction[0]
+    file_key = normalize(entry.commons_file.replace("_", " "))
+    by_image = [
+        qid
+        for qid in humans
+        if any(normalize(str(v).replace("_", " ")) == file_key for v in _values(qid, "P18"))
+    ]
+    if len(by_image) == 1:
+        return by_image[0]
+    with_image = [qid for qid in humans if _values(qid, "P18")]
+    # Two people of the same name and nothing to tell them apart: no picture.
+    return with_image[0] if len(with_image) == 1 else None
+
+
+def _fetch_text(fetcher, url: str) -> str:
+    document = fetcher.fetch(url)
+    return document.text or document.body.decode("utf-8")
+
+
+def _occasion(title: str) -> str:
+    """Files of one photo series differ only in their numbers."""
+    return re.sub(r"[\d\W_]+", " ", title).strip().casefold()
+
+
+def depicted_photos(
+    fetcher,
+    entry: CollectionEntry,
+    *,
+    commons_api_url: str = "https://commons.wikimedia.org/w/api.php",
+    wikidata_api_url: str = WIKIDATA_API_URL,
+) -> tuple[MediaCandidate, ...]:
+    """Further photographs of a person, one per occasion, best first.
+
+    Commons files whose structured data says they depict (P180) this person and
+    whose title names them. Category membership is not enough: a politician's
+    category also holds protest banners and parade crowds.
+    """
+    if entry.kind != "person":
+        return ()
+    if entry.key in _depicted_cache:
+        return _depicted_cache[entry.key]
+    qid = _person_qid(fetcher, entry, wikidata_api_url, commons_api_url)
+    if qid is None:
+        _depicted_cache[entry.key] = ()
+        return ()
+    payload = json.loads(
+        _fetch_text(
+            fetcher,
+            f"{commons_api_url}?"
+            + urlencode(
+                {
+                    "action": "query",
+                    "format": "json",
+                    "formatversion": "2",
+                    "generator": "search",
+                    "gsrsearch": f"haswbstatement:P180={qid} filetype:bitmap",
+                    "gsrnamespace": "6",
+                    "gsrlimit": "50",
+                    "prop": "imageinfo",
+                    "iiprop": "url|size|mime|extmetadata|user",
+                    "iiurlwidth": str(THUMB_WIDTH),
+                }
+            ),
+        )
+    )
+    provider = WikimediaCommonsProvider(fetcher)
+    surname = normalize(entry.label.split()[-1])
+    # A decade-old photo shows someone noticeably younger than the news is about.
+    oldest = datetime.now(UTC) - timedelta(days=3653)
+    ranked = []
+    seen: set[str] = set()
+    for page in payload.get("query", {}).get("pages", []) or []:
+        candidate = provider._to_candidate(page)
+        if candidate is None or candidate.mime_type not in ("image/jpeg", "image/png"):
+            continue
+        if (candidate.width or 0) < 1000:
+            continue
+        title = normalize(candidate.title)
+        context = f"{candidate.title} {candidate.metadata.get('Categories', '')}"
+        if surname not in title or _NOT_A_PHOTO_OF.search(context):
+            continue
+        captured = candidate.captured_at
+        if captured is not None and captured.tzinfo is None:
+            captured = captured.replace(tzinfo=UTC)
+        if captured is not None and captured < oldest:
+            continue
+        occasion = _occasion(candidate.title)
+        if occasion in seen:
+            continue
+        seen.add(occasion)
+        info = (page.get("imageinfo") or [{}])[0]
+        thumb = info.get("thumburl")
+        candidate = MediaCandidate(
+            **{
+                **candidate.__dict__,
+                "file_url": thumb or candidate.file_url,
+                "width": info.get("thumbwidth") or candidate.width,
+                "height": info.get("thumbheight") or candidate.height,
+                "byte_size": None if thumb else candidate.byte_size,
+                "depicted_subject": entry.label,
+            }
+        )
+        # Group shots last, then dated before undated, newest first.
+        group = len(re.findall(r",| - | and | und | ve ", candidate.title)) >= 2
+        newest = -(captured.timestamp() if captured else 0.0)
+        ranked.append((group, captured is None, newest, candidate))
+    ranked.sort(key=lambda row: row[:3])
+    _depicted_cache[entry.key] = tuple(row[3] for row in ranked)
+    return _depicted_cache[entry.key]
 
 
 class CollectionCommonsProvider(WikimediaCommonsProvider):

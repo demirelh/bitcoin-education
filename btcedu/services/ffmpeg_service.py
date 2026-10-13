@@ -560,6 +560,27 @@ def _build_topic_strip(
     return filters
 
 
+def _build_image_overlay(
+    overlay: OverlaySpec, input_index: int, in_label: str, out_label: str, fade: float = 0.3
+) -> list[str]:
+    """Composite a still image (``overlay.text`` is its path) for its time window.
+
+    ``overlay.position`` holds "x:y" in pixels. A start before 0 means the image
+    was already on screen before a cut, so it does not fade in again.
+    """
+    start, end = overlay.start, overlay.end
+    x, y = overlay.position.split(":")
+    fades = [f"fade=t=out:st={max(end - fade, 0):.3f}:d={fade}:alpha=1"]
+    if start > 0:
+        fades.insert(0, f"fade=t=in:st={start:.3f}:d={fade}:alpha=1")
+    image = f"img{input_index}"
+    return [
+        f"[{input_index}:v]format=rgba,{','.join(fades)}[{image}]",
+        f"[{in_label}][{image}]overlay=x={x}:y={y}"
+        f":enable='between(t\\,{max(start, 0):.3f}\\,{end:.3f})'[{out_label}]",
+    ]
+
+
 _PANEL_BUILDERS = {
     "key_facts": _build_key_facts_card,
     "topic_strip": _build_topic_strip,
@@ -1120,6 +1141,7 @@ def create_segment(
 
     # Build overlay chain
     font_path = find_font_path(font) if (overlays or ticker_text) else None
+    image_inputs: list[str] = []
     has_overlays = bool(overlays) or bool(ticker_text)
 
     if has_overlays:
@@ -1141,6 +1163,14 @@ def create_segment(
                     filter_parts.append(f"[{last_label}]{lt_f}[{out_label}]")
                     last_label = out_label
                     filter_idx += 1
+            elif overlay.overlay_type == "location_map":
+                out_label = f"ov{filter_idx}"
+                filter_parts.extend(
+                    _build_image_overlay(overlay, 2 + len(image_inputs), last_label, out_label)
+                )
+                image_inputs.append(overlay.text)
+                last_label = out_label
+                filter_idx += 1
             elif overlay.overlay_type in _PANEL_BUILDERS:
                 for kf_filter in _PANEL_BUILDERS[overlay.overlay_type](
                     overlay, font_path, accent_color=lower_third_accent_color
@@ -1204,6 +1234,7 @@ def create_segment(
         image_path,
         "-i",
         audio_path,
+        *[arg for path in image_inputs for arg in ("-loop", "1", "-i", path)],
         "-filter_complex",
         filter_complex,
         "-map",
@@ -1457,6 +1488,7 @@ def create_video_segment(
 
     # Build overlay chain
     font_path = find_font_path(font) if (overlays or ticker_text) else None
+    image_inputs: list[str] = []
     has_overlays = bool(overlays) or bool(ticker_text)
 
     if has_overlays:
@@ -1476,6 +1508,14 @@ def create_video_segment(
                     filter_parts.append(f"[{last_label}]{lt_f}[{out_label}]")
                     last_label = out_label
                     filter_idx += 1
+            elif overlay.overlay_type == "location_map":
+                out_label = f"ov{filter_idx}"
+                filter_parts.extend(
+                    _build_image_overlay(overlay, 2 + len(image_inputs), last_label, out_label)
+                )
+                image_inputs.append(overlay.text)
+                last_label = out_label
+                filter_idx += 1
             elif overlay.overlay_type in _PANEL_BUILDERS:
                 for kf_filter in _PANEL_BUILDERS[overlay.overlay_type](
                     overlay, font_path, accent_color=lower_third_accent_color
@@ -1535,6 +1575,7 @@ def create_video_segment(
         video_path,
         "-i",
         audio_path,
+        *[arg for path in image_inputs for arg in ("-loop", "1", "-i", path)],
         "-filter_complex",
         filter_complex,
         "-map",

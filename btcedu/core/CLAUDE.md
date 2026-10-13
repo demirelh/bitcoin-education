@@ -67,6 +67,13 @@ Each v2 stage module follows the same pattern:
   `render.topic_strip_enabled` adds a row of all topics (non-bumper chapters) along
   the top edge with the current one highlighted; it spans every shot of a chapter
   and is left off weather cards, whose header occupies that edge.
+- `location_map.py` — `render.location_map_enabled`: a small Germany map (Natural Earth
+  outline) marking the city a `b_roll` chapter is about, top-left for 7 s from its first
+  spoken mention. Cities come from `data/de_cities.tsv` (GeoNames, >= 50k, CC BY 4.0;
+  variants kept only if they start like the name). A headline city wins; otherwise the
+  first city in the first 80 words that the previous chapter did not name; Berlin only
+  from the headline. The PNG is an extra looped ffmpeg input under `render/maps/`,
+  which also makes `publisher._image_credits` add the GeoNames credit.
 - `frame_editor.py` — Gemini 2.0 Flash frame editing for tagesschau episodes (translates German text overlays to Turkish)
 - `tts.py` — fresh per-part ElevenLabs synthesis (no reusable take cache),
   750-character provider chunks, −15 LUFS normalization before quality checks,

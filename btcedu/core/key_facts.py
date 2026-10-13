@@ -151,6 +151,16 @@ def shot_overlays(overlays: list, index: int, start: float, end: float) -> list:
         if kind == "topic_strip":
             result.append(replace(spec, start=0.0, end=round(end - start, 3)))
             continue
+        if kind == "location_map":
+            if spec.start < end and spec.end > start:
+                result.append(
+                    replace(
+                        spec,
+                        start=round(spec.start - start, 3),
+                        end=round(min(spec.end, end) - start, 3),
+                    )
+                )
+            continue
         if kind != "key_facts":
             if index == 0:
                 result.append(spec)

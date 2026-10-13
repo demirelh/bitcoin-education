@@ -938,6 +938,9 @@ def _image_credits(settings: Settings, episode_id: str) -> list[str]:
             line = f"- {attribution}"
             if line not in credits:
                 credits.append(line)
+    # Reused segments carry no overlay record, so the maps the render drew are the evidence.
+    if any((Path(settings.outputs_dir) / episode_id / "render" / "maps").glob("*.png")):
+        credits.append("- Harita: GeoNames (CC BY 4.0), Natural Earth (kamu malı)")
     return credits
 
 

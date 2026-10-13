@@ -273,6 +273,7 @@ def render_video(
     _eff_key_facts = bool(_rc("key_facts_enabled", False))
     _eff_kb_zoom = float(_rc("ken_burns_zoom_ratio", settings.render_ken_burns_zoom_ratio))
     _eff_topic_strip = bool(_rc("topic_strip_enabled", False))
+    _eff_location_map = bool(_rc("location_map_enabled", False))
     _eff_subtitles = bool(
         _rc("subtitles_enabled", getattr(settings, "render_subtitles_enabled", True))
     )
@@ -543,6 +544,7 @@ def render_video(
         # the Bitcoin podcast, and then nothing below this line changes.
         scene_ctx = _load_scene_context(base_dir, settings, episode, image_manifest, tts_manifest)
         _weather_ids = _weather_chapter_ids(image_manifest)
+        _previous_narration = ""
         _strip_topics = [
             chapter
             for chapter in chapters_doc.chapters
@@ -710,6 +712,23 @@ def render_video(
                 word_timings=(_tts_entry.get("metadata") or {}).get("word_timings"),
                 duration=float(duration),
             )
+            if (
+                _eff_location_map
+                and chapter.visual.type.value == "b_roll"
+                and chapter.chapter_id not in _weather_ids
+            ):
+                _map_spec = _location_map_spec(
+                    chapter,
+                    _previous_narration,
+                    (_tts_entry.get("metadata") or {}).get("word_timings"),
+                    float(duration),
+                    render_dir / "maps",
+                    _eff_font or settings.render_font,
+                    _accent_color,
+                )
+                if _map_spec is not None:
+                    overlay_specs.append(_map_spec)
+            _previous_narration = chapter.narration.text
             # Weather cards carry their own header along the top edge.
             if (
                 _eff_topic_strip
@@ -1828,6 +1847,44 @@ def _key_facts_spec(chapter, overlay, font: str, word_timings, duration: float):
         start=window[0],
         end=window[1],
         items=timed,
+    )
+
+
+def _location_map_spec(
+    chapter, previous_narration: str, word_timings, duration: float, maps_dir: Path, font, accent
+):
+    """A small Germany map marking the chapter's city, from its first spoken mention."""
+    from btcedu.core import location_map
+    from btcedu.services.ffmpeg_service import OverlaySpec, find_font_path
+
+    place = location_map.find_place(chapter, previous_narration)
+    if place is None or duration <= 0:
+        return None
+    words = key_facts._timed_words(chapter.narration.text, word_timings, duration)
+    if place.word_index >= len(words):
+        return None
+    start = round(words[place.word_index].start, 2)
+    end = round(min(start + location_map.SHOW_SECONDS, duration - 0.3), 2)
+    if end - start < 2.0:
+        return None
+    try:
+        path = location_map.render_map(
+            place, maps_dir / f"{chapter.chapter_id}.png", find_font_path(font), accent
+        )
+    except Exception as exc:  # noqa: BLE001 - the chapter renders without its map
+        logger.warning("Location map for %s failed: %s", chapter.chapter_id, exc)
+        return None
+    x, y = location_map.PANEL_POSITION
+    return OverlaySpec(
+        text=str(path),
+        overlay_type="location_map",
+        fontsize=0,
+        fontcolor="",
+        font=font,
+        position=f"{x}:{y}",
+        start=start,
+        end=end,
+        items=[(place.city.name, start)],
     )
 
 

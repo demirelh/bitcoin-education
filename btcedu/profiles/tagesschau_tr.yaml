@@ -356,6 +356,8 @@ stage_config:
     key_facts_enabled: true
     # Row of all topics along the top edge, the current one highlighted.
     topic_strip_enabled: true
+    # Small Germany map marking the city a story is about, when it is named.
+    location_map_enabled: true
     # Produces the caption track and a second video file with the lines burned
     # into the picture. The plain video keeps precedence — it is what gets
     # published, and a track can be switched off where a burned-in line cannot.

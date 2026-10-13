@@ -31,6 +31,7 @@ class OverlayType(str, Enum):
     QUOTE = "quote"
     STATISTIC = "statistic"
     KEY_FACTS = "key_facts"
+    RUNDOWN = "rundown"
 
 
 class Narration(BaseModel):
@@ -112,6 +113,10 @@ class Overlay(BaseModel):
     items: list[str] = Field(
         default_factory=list,
         description="key_facts only: verbatim narration spans, shown as they are spoken",
+    )
+    anchors: list[str] = Field(
+        default_factory=list,
+        description="rundown only: the narration span that times each item",
     )
 
 

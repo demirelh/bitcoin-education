@@ -353,6 +353,29 @@ def _chapters_from_script(script, show_name: str) -> list[dict]:
             if summary:
                 overlay["subtext"] = summary
             overlays.append(overlay)
+        if story.source_story_id == "__opening__":
+            teased, anchors = key_facts.rundown(
+                narration_text,
+                [
+                    s
+                    for s in script.stories
+                    if s.source_story_id not in ("__opening__", "__closing__")
+                ],
+            )
+            if len(teased) >= 2:
+                times = key_facts.item_times(narration_text, anchors, None, float(duration))
+                first = max(0.0, float(times[0] or 0.0))
+                overlays.append(
+                    {
+                        "type": "rundown",
+                        "text": key_facts.RUNDOWN_TITLE,
+                        "items": teased,
+                        "anchors": anchors,
+                        "start_offset_seconds": round(first, 2),
+                        "duration_seconds": round(max(1.0, float(duration) - first), 2),
+                        "priority": 0,
+                    }
+                )
         facts = (
             []
             if is_frame or is_weather
@@ -1639,9 +1662,12 @@ def _chapter_component_hashes(doc: ChapterDocument) -> dict:
     overlays = [
         {
             "id": ch.chapter_id,
-            # `items` is left out while empty so older documents keep their hash.
+            # `items`/`anchors` are left out while empty so older documents keep their hash.
             "overlays": [
-                o.model_dump(mode="json", exclude=None if o.items else {"items"})
+                o.model_dump(
+                    mode="json",
+                    exclude={k for k in ("items", "anchors") if not getattr(o, k)} or None,
+                )
                 for o in ch.overlays
             ],
         }

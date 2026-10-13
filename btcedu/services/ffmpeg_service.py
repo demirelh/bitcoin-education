@@ -459,7 +459,8 @@ def _build_key_facts_card(
     times may be negative (spoken before a cut); such an item is fully visible
     from the first frame.
     """
-    card_w, margin_r, top = 620, 64, 150
+    centered = overlay.position == "center_panel"
+    card_w, top = (1100, 250) if centered else (620, 150)
     pad, head_h, gap = 24, 58, 16
     title_size = 30
     item_size = overlay.fontsize
@@ -468,11 +469,20 @@ def _build_key_facts_card(
     text_x_offset = pad + bullet + 16
     max_text_w = card_w - text_x_offset - pad
     end = overlay.end
-    box_x = f"iw-{card_w + margin_r}"
-    text_x = f"w-{card_w + margin_r - text_x_offset}"
+    if centered:
+        box_x = f"(iw-{card_w})/2"
+        text_x = f"(w-{card_w})/2+{text_x_offset}"
+        title_x = f"(w-{card_w})/2+{pad}"
+    else:
+        box_x = f"iw-{card_w + 64}"
+        text_x = f"w-{card_w + 64 - text_x_offset}"
+        title_x = f"w-{card_w + 64 - pad}"
 
     filters = []
     card_enable = f"enable='between(t\\,{overlay.start}\\,{end})'"
+    if centered:
+        # The list replaces the picture as the subject, so the picture recedes.
+        filters.append(f"drawbox=x=0:y=0:w=iw:h=ih:color=black@0.55:t=fill:{card_enable}")
     filters.append(
         f"drawbox=x={box_x}:y={top}:w={card_w}:h={head_h}:color={accent_color}@0.95"
         f":t=fill:{card_enable}"
@@ -480,7 +490,7 @@ def _build_key_facts_card(
     filters.append(
         f"drawtext=fontfile={font_path}:text='{_escape_drawtext(overlay.text)}'"
         f":fontsize={title_size}:fontcolor=white"
-        f":x=w-{card_w + margin_r - pad}:y={top + (head_h - title_size) // 2}:{card_enable}"
+        f":x={title_x}:y={top + (head_h - title_size) // 2}:{card_enable}"
     )
 
     y = top + head_h

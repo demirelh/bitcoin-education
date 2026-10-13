@@ -1425,6 +1425,7 @@ def _compute_render_content_hash(
                         "start": ov.start_offset_seconds,
                         "duration": ov.duration_seconds,
                         **({"items": list(ov.items)} if ov.items else {}),
+                        **({"anchors": list(ov.anchors)} if ov.anchors else {}),
                     }
                     for ov in ch.overlays
                 ],
@@ -1699,7 +1700,7 @@ def _chapter_to_overlay_specs(
 
     overlay_specs = []
     for overlay in chapter.overlays:
-        if overlay.type.value == "key_facts":
+        if overlay.type.value in ("key_facts", "rundown"):
             spec = _key_facts_spec(chapter, overlay, font, word_timings, duration)
             if key_facts_enabled and spec is not None:
                 overlay_specs.append(spec)
@@ -1780,26 +1781,32 @@ def _key_facts_spec(chapter, overlay, font: str, word_timings, duration: float):
     from btcedu.services.ffmpeg_service import OverlaySpec
 
     narration = (getattr(chapter.narration, "text", "") or "").strip()
-    items = key_facts.verified_items(narration, overlay.items)
-    if not items or duration <= 0:
+    if overlay.anchors:
+        # Rundown: a headline is shown when the teaser that announces it is spoken.
+        pairs = list(zip(overlay.items, overlay.anchors, strict=False))
+        shown, spans = [p[0] for p in pairs], [p[1] for p in pairs]
+    else:
+        shown = spans = key_facts.verified_items(narration, overlay.items)
+    if not shown or duration <= 0:
         return None
     timed = [
         (key_facts.display_text(item), at)
         for item, at in zip(
-            items, key_facts.item_times(narration, items, word_timings, duration), strict=True
+            shown, key_facts.item_times(narration, spans, word_timings, duration), strict=True
         )
         if at is not None and at < duration - 1.0
     ]
     window = key_facts.card_window([at for _, at in timed], duration)
     if window is None:
         return None
+    rundown = overlay.type.value == "rundown"
     return OverlaySpec(
         text=overlay.text,
         overlay_type="key_facts",
-        fontsize=36,
+        fontsize=46 if rundown else 36,
         fontcolor="white",
         font=font,
-        position="right_panel",
+        position="center_panel" if rundown else "right_panel",
         start=window[0],
         end=window[1],
         items=timed,

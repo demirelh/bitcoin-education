@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 MAX_ITEMS = 4
 MAX_ITEM_CHARS = 60
 DEFAULT_TITLE = "ÖNE ÇIKANLAR"
+RUNDOWN_TITLE = "BUGÜN"
 # How long the card stays after its last item appeared.
 CARD_HOLD_SECONDS = 10.0
 _END_MARGIN_SECONDS = 0.3
@@ -91,6 +92,33 @@ def item_times(
         else:
             times.append(round(words[position].start, 2))
     return times
+
+
+def rundown(opening: str, stories) -> tuple[list[str], list[str]]:
+    """Headlines of the stories the opening teases, with the teaser that times each.
+
+    The opening reads one teaser per top story, taken from its summary or its
+    first anchor sentence. A story counts as teased only if that text is found
+    word for word in the opening narration.
+    """
+    items: list[tuple[int, str, str]] = []
+    for story in stories:
+        headline = (getattr(story, "display_headline", "") or "").strip()
+        if not headline:
+            continue
+        candidates = [_clean(getattr(story, "display_summary", ""))]
+        candidates += [
+            " ".join(segment.text.split()[:8])
+            for segment in getattr(story, "speaker_sequence", [])[:1]
+            if segment.text.strip()
+        ]
+        for anchor in candidates:
+            position = find_span(opening, anchor) if len(anchor.split()) >= 3 else None
+            if position is not None:
+                items.append((position, headline, anchor))
+                break
+    items.sort(key=lambda entry: entry[0])
+    return [headline for _, headline, _ in items], [anchor for _, _, anchor in items]
 
 
 def display_text(item: str) -> str:

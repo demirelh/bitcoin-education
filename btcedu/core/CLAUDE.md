@@ -61,6 +61,9 @@ Each v2 stage module follows the same pattern:
   in the chapter narration survive (chapterize and again at render). Each item is
   timed to its first spoken word via the TTS `word_timings`; `shot_overlays()`
   carries the card across beat/scene cuts while the lower third stays on shot 0.
+  The opening chapter gets a `rundown` overlay ("BUGÜN"): chapterize finds each
+  story's teaser verbatim in the opening narration (`key_facts.rundown()`), shows
+  its headline when the teaser is spoken, centred over a dimmed title card.
 - `frame_editor.py` — Gemini 2.0 Flash frame editing for tagesschau episodes (translates German text overlays to Turkish)
 - `tts.py` — fresh per-part ElevenLabs synthesis (no reusable take cache),
   750-character provider chunks, −15 LUFS normalization before quality checks,

@@ -146,15 +146,19 @@ def find_free_picture(
         named = persons_named(caption)
         partner = next((p for p in named if p.key != entry.key), None)
         if partner is not None and entry in named:
-            pair = _pair_picture(
-                fetcher,
-                (entry, candidate, assessment),
-                partner,
-                exclude,
-                output_dir,
-                filename_stem,
-                left_first=named.index(entry) < named.index(partner),
-            )
+            try:
+                pair = _pair_picture(
+                    fetcher,
+                    (entry, candidate, assessment),
+                    partner,
+                    exclude,
+                    output_dir,
+                    filename_stem,
+                    left_first=named.index(entry) < named.index(partner),
+                )
+            except Exception as exc:  # noqa: BLE001 - the single portrait still serves
+                logger.warning("Pair picture for %s failed: %s", entry.key, exc)
+                pair = None
             if pair is not None:
                 return pair
     binary = fetcher.fetch_binary(

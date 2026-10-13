@@ -378,6 +378,8 @@ def _pinned_request(
             target,
             headers=headers,
             redirect=False,
+            # 429 must reach the caller as DocumentRateLimited, not a minutes-long sleep.
+            retries=urllib3.Retry(3, respect_retry_after_header=False),
             preload_content=False,
             decode_content=True,
         )

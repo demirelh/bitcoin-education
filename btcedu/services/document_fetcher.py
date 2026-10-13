@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
+from functools import partial
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit, urlunsplit
@@ -163,6 +164,9 @@ class DocumentSnapshotStore:
         )
 
 
+USER_AGENT = "ALMANYA24-Newsroom/1.0 (+editorial research)"
+
+
 class DocumentFetcher:
     """Fetch public HTML/text without proxies, scripts, unbounded bodies or private IPs."""
 
@@ -191,8 +195,14 @@ class DocumentFetcher:
 
     @classmethod
     def from_settings(cls, settings) -> DocumentFetcher:
+        contact = getattr(settings, "newsroom_fetch_contact", "")
         return cls(
             store=DocumentSnapshotStore(Path(settings.newsroom_data_dir) / "documents"),
+            transport=(
+                partial(_pinned_request, user_agent=f"{USER_AGENT[:-1]}; {contact})")
+                if contact
+                else None
+            ),
             connect_timeout_seconds=settings.newsroom_fetch_connect_timeout_seconds,
             read_timeout_seconds=settings.newsroom_fetch_read_timeout_seconds,
             max_redirects=settings.newsroom_fetch_max_redirects,
@@ -345,6 +355,7 @@ def _pinned_request(
     connect_timeout_seconds: float,
     read_timeout_seconds: float,
     max_bytes: int,
+    user_agent: str = USER_AGENT,
 ) -> RawDocumentResponse:
     parsed = _validated_url(url)
     port = parsed.port or (443 if parsed.scheme == "https" else 80)
@@ -353,7 +364,7 @@ def _pinned_request(
         "Accept": "text/html,application/xhtml+xml,text/plain,application/json",
         "Accept-Encoding": "gzip, deflate",
         "Host": parsed.netloc,
-        "User-Agent": "ALMANYA24-Newsroom/1.0 (+editorial research)",
+        "User-Agent": user_agent,
     }
     pool_class = (
         urllib3.HTTPSConnectionPool

@@ -346,6 +346,8 @@ class Settings(BaseSettings):
     newsroom_fetch_max_redirects: int = 3
     newsroom_fetch_max_bytes: int = 2 * 1024 * 1024
     newsroom_fetch_cache_ttl_seconds: int = 6 * 3600
+    # Wikimedia throttles clients whose User-Agent names no operator contact.
+    newsroom_fetch_contact: str = ""
     newsroom_media_provider: Literal["disabled", "wikimedia_commons"] = "disabled"
     newsroom_media_max_candidates: int = 8
     newsroom_site_dir: str = "data/newsroom/site"

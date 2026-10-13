@@ -671,6 +671,7 @@ def depicted_photos(
     *,
     commons_api_url: str = "https://commons.wikimedia.org/w/api.php",
     wikidata_api_url: str = WIKIDATA_API_URL,
+    qid: str | None = None,
 ) -> tuple[MediaCandidate, ...]:
     """Further photographs of a person, one per occasion, best first.
 
@@ -682,7 +683,7 @@ def depicted_photos(
         return ()
     if entry.key in _depicted_cache:
         return _depicted_cache[entry.key]
-    qid = _person_qid(fetcher, entry, wikidata_api_url, commons_api_url)
+    qid = qid or _person_qid(fetcher, entry, wikidata_api_url, commons_api_url)
     if qid is None:
         _depicted_cache[entry.key] = ()
         return ()

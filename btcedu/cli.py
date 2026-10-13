@@ -2981,6 +2981,26 @@ def notify_test(ctx: click.Context, message: str | None) -> None:
         )
 
 
+@cli.command(name="media-sync")
+@click.option("--entry", "only", default=None, help="Sync a single collection key.")
+@click.option("--pause", default=3.0, show_default=True, help="Seconds between downloads.")
+@click.pass_context
+def media_sync(ctx: click.Context, only: str | None, pause: float) -> None:
+    """Mirror the free-photo collection from Wikimedia Commons into data/media-library."""
+    from btcedu.core.media_library import library_root, sync_library
+
+    settings = ctx.obj["settings"]
+    summary = sync_library(settings, only=only, pause=pause)
+    click.echo(
+        f"[OK] {summary['entries']} entries synced, {summary['new_files']} new files "
+        f"in {library_root(settings)}"
+    )
+    if summary["failed"]:
+        click.echo(f"[WARN] failed: {', '.join(summary['failed'])}")
+    if summary["stopped"]:
+        raise click.ClickException(f"Stopped early, {summary['stopped']}")
+
+
 @cli.command(name="generate-password-hash")
 def generate_password_hash_command() -> None:
     """Create the dashboard operator password hash for WEB_OPERATOR_PASSWORD_HASH.

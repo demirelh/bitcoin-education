@@ -260,6 +260,8 @@ UNITS=(
     btcedu-detect.timer
     btcedu-run.service
     btcedu-run.timer
+    btcedu-media-sync.service
+    btcedu-media-sync.timer
 )
 for unit in "${UNITS[@]}"; do
   sudo cp "$DEPLOY/$unit" /etc/systemd/system/
@@ -275,6 +277,7 @@ echo "[5/7] Services aktivieren..."
 sudo systemctl enable btcedu-web.service
 sudo systemctl enable btcedu-detect.timer
 sudo systemctl enable btcedu-run.timer
+sudo systemctl enable btcedu-media-sync.timer
 ok "btcedu-web, btcedu-detect.timer, btcedu-run.timer enabled"
 
 # ═══════════════════════════════════════════════════════════════════
@@ -317,6 +320,7 @@ echo "[7/7] Services starten..."
 sudo systemctl start btcedu-web.service
 sudo systemctl start btcedu-detect.timer
 sudo systemctl start btcedu-run.timer
+sudo systemctl start btcedu-media-sync.timer
 ok "Alle Services gestartet"
 
 echo ""

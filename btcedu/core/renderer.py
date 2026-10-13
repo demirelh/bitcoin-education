@@ -272,6 +272,7 @@ def render_video(
     _eff_topic_intro_enabled = bool(_rc("topic_intro_enabled", False))
     _eff_key_facts = bool(_rc("key_facts_enabled", False))
     _eff_kb_zoom = float(_rc("ken_burns_zoom_ratio", settings.render_ken_burns_zoom_ratio))
+    _eff_topic_strip = bool(_rc("topic_strip_enabled", False))
     _eff_subtitles = bool(
         _rc("subtitles_enabled", getattr(settings, "render_subtitles_enabled", True))
     )
@@ -542,6 +543,11 @@ def render_video(
         # the Bitcoin podcast, and then nothing below this line changes.
         scene_ctx = _load_scene_context(base_dir, settings, episode, image_manifest, tts_manifest)
         _weather_ids = _weather_chapter_ids(image_manifest)
+        _strip_topics = [
+            chapter
+            for chapter in chapters_doc.chapters
+            if (chapter.story_type or "").lower() not in BUMPER_STORY_TYPES
+        ]
 
         # Build ticker text if enabled
         _ticker_text = None
@@ -704,6 +710,18 @@ def render_video(
                 word_timings=(_tts_entry.get("metadata") or {}).get("word_timings"),
                 duration=float(duration),
             )
+            # Weather cards carry their own header along the top edge.
+            if (
+                _eff_topic_strip
+                and len(_strip_topics) >= 2
+                and chapter in _strip_topics
+                and chapter.chapter_id not in _weather_ids
+            ):
+                overlay_specs.append(
+                    _topic_strip_spec(
+                        _strip_topics, chapter, _eff_font or settings.render_font, float(duration)
+                    )
+                )
 
             # Compute fade durations based on transition types (Sprint 10)
             fade_in_dur = 0.0
@@ -1810,6 +1828,23 @@ def _key_facts_spec(chapter, overlay, font: str, word_timings, duration: float):
         start=window[0],
         end=window[1],
         items=timed,
+    )
+
+
+def _topic_strip_spec(topics: list, current, font: str, duration: float):
+    from btcedu.services.ffmpeg_service import OverlaySpec
+
+    return OverlaySpec(
+        text="",
+        overlay_type="topic_strip",
+        fontsize=22,
+        fontcolor="white",
+        font=font,
+        position="top",
+        start=0.0,
+        end=duration,
+        items=[(chapter.display_headline or chapter.title, 0.0) for chapter in topics],
+        highlight=topics.index(current),
     )
 
 

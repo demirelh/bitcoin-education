@@ -147,7 +147,11 @@ def shot_overlays(overlays: list, index: int, start: float, end: float) -> list:
     """
     result = []
     for spec in overlays or []:
-        if getattr(spec, "overlay_type", "") != "key_facts":
+        kind = getattr(spec, "overlay_type", "")
+        if kind == "topic_strip":
+            result.append(replace(spec, start=0.0, end=round(end - start, 3)))
+            continue
+        if kind != "key_facts":
             if index == 0:
                 result.append(spec)
             continue

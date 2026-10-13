@@ -32,6 +32,8 @@ class OverlaySpec:
     boxborderw: int = 10
     # key_facts only: (text, seconds into the segment at which it is spoken)
     items: list[tuple[str, float]] = field(default_factory=list)
+    # topic_strip only: index of the current topic in ``items``
+    highlight: int = -1
 
 
 @dataclass
@@ -516,6 +518,52 @@ def _build_key_facts_card(
             )
         y += block_h
     return filters
+
+
+def _fit_label(text: str, font_path: str | None, fontsize: int, max_width: int) -> str:
+    """*text* cut at a word boundary, with an ellipsis, so it fits *max_width* pixels."""
+    words = text.split()
+    for count in range(len(words), 0, -1):
+        candidate = " ".join(words[:count]) + ("" if count == len(words) else "…")
+        if len(_wrap_to_width(candidate, font_path, fontsize, max_width)) == 1:
+            return candidate
+    return words[0] if words else ""
+
+
+def _build_topic_strip(
+    overlay: OverlaySpec,
+    font_path: str,
+    accent_color: str = "#F7931A",
+) -> list[str]:
+    """Row of all topics along the top edge, the current one highlighted."""
+    margin, height = 40, 44
+    labels = [text for text, _ in overlay.items]
+    if not labels:
+        return []
+    enable = f"enable='between(t\\,{overlay.start}\\,{overlay.end})'"
+    slot = (1920 - 2 * margin) // len(labels)
+    filters = [f"drawbox=x=0:y=0:w=iw:h={height}:color=black@0.55:t=fill:{enable}"]
+    for index, label in enumerate(labels):
+        x = margin + index * slot
+        current = index == overlay.highlight
+        if current:
+            filters.append(
+                f"drawbox=x={x}:y=0:w={slot - 4}:h={height}:color={accent_color}@0.95"
+                f":t=fill:{enable}"
+            )
+        text = _escape_drawtext(_fit_label(label, font_path, overlay.fontsize, slot - 24))
+        color = "white" if current else "white@0.6"
+        filters.append(
+            f"drawtext=fontfile={font_path}:text='{text}':fontsize={overlay.fontsize}"
+            f":fontcolor={color}:x={x}+({slot - 4}-text_w)/2:y=({height}-text_h)/2:{enable}"
+        )
+    return filters
+
+
+_PANEL_BUILDERS = {
+    "key_facts": _build_key_facts_card,
+    "topic_strip": _build_topic_strip,
+}
 
 
 def _build_ticker_filters(
@@ -1093,8 +1141,8 @@ def create_segment(
                     filter_parts.append(f"[{last_label}]{lt_f}[{out_label}]")
                     last_label = out_label
                     filter_idx += 1
-            elif overlay.overlay_type == "key_facts":
-                for kf_filter in _build_key_facts_card(
+            elif overlay.overlay_type in _PANEL_BUILDERS:
+                for kf_filter in _PANEL_BUILDERS[overlay.overlay_type](
                     overlay, font_path, accent_color=lower_third_accent_color
                 ):
                     out_label = f"ov{filter_idx}"
@@ -1428,8 +1476,8 @@ def create_video_segment(
                     filter_parts.append(f"[{last_label}]{lt_f}[{out_label}]")
                     last_label = out_label
                     filter_idx += 1
-            elif overlay.overlay_type == "key_facts":
-                for kf_filter in _build_key_facts_card(
+            elif overlay.overlay_type in _PANEL_BUILDERS:
+                for kf_filter in _PANEL_BUILDERS[overlay.overlay_type](
                     overlay, font_path, accent_color=lower_third_accent_color
                 ):
                     out_label = f"ov{filter_idx}"

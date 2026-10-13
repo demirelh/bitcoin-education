@@ -64,6 +64,9 @@ Each v2 stage module follows the same pattern:
   The opening chapter gets a `rundown` overlay ("BUGÜN"): chapterize finds each
   story's teaser verbatim in the opening narration (`key_facts.rundown()`), shows
   its headline when the teaser is spoken, centred over a dimmed title card.
+  `render.topic_strip_enabled` adds a row of all topics (non-bumper chapters) along
+  the top edge with the current one highlighted; it spans every shot of a chapter
+  and is left off weather cards, whose header occupies that edge.
 - `frame_editor.py` — Gemini 2.0 Flash frame editing for tagesschau episodes (translates German text overlays to Turkish)
 - `tts.py` — fresh per-part ElevenLabs synthesis (no reusable take cache),
   750-character provider chunks, −15 LUFS normalization before quality checks,

@@ -1,0 +1,198 @@
+# German cities with >= 50,000 inhabitants (no city districts).
+# Source: GeoNames cities15000, https://www.geonames.org/ - CC BY 4.0.
+# name	latitude	longitude	population	names (|-separated)
+Berlin	52.52437	13.41053	3426354	Beirlin|Beirlín|Belin|Berleno|Berlien|Berliin|Berliini|Berlijn|Berlim|Berlin|Berline|Berlini|Berlino|Berlyn|Berlynas|Berlëno|Berlín|Berlîn|Berlīne|Berolino|Berolinum|Birlinu|Bèrlîn|Estat de Berlin|Estat de Berlín|Perlin|bai lin|barlina|beleullin|berlini|berurin|bexrlin|brlyn|perlin
+Hamburg	53.55073	9.99302	1973896	Amborg|Ambourgo|Amburgo|Amburgu|Augusta Gambriviorum|Gamburg|Hamboarch|Hamboerg|Hamboerj|Hamborg|Hambourg|Hamburch|Hamburg|Hamburga|Hamburgas|Hamburgo|Hamburgu|Hamburgum|Hamburk|Hamburq|Hambuurich|Hambörg|Hambörj|Hambùrk|Hambûrg|Hamepuka|Hampuri|Hanburgo|Khamburg|haimabaraga|haimbarga|ham bur k|hambuleukeu|hamburgi|hambwrg|hambwrgh|han bao|han bao shi|hanburuku|hemburga|hmbwrg|hyambarg|hyambarga|Ħamburg
+Munich	48.13743	11.57549	1505005	Lungsod ng Muenchen|Lungsod ng München|Minca|Minche|Minga|Minhen|Minhene|Minkhen|Miunchenas|Miwnix|Mjunkhen|Mnichov|Mnichow|Mníchov|Monachium|Monacho|Monaco de Baviera|Monaco di Baviera|Monaco e Baviera|Monacu|Monacu di Baviera|Monacum|Muenchen|Muenegh|Muenhen|Muenih|Munchen|Munhen|Munic|Munich|Munich ed Baviera|Munih|Munike|Munique|Munix|Munkeno|Munkhen|Munîh|Mynihu|Myunxen|Myunxén|Mònacu|Mùnich ëd Baviera|Múnic|Múnich|München|Münegh|Münhen|Münih|mi wnik|mi'unika|mi'unikha|miunkheni|miyunik|miyuniki|mu ni hei|mwinhen|mwnkh|mwnykh|mynkn|myunhen|myunik|myunikha|myunsena|mywnkh|mywnykh
+Köln	50.93333	6.95	1024621	Augusta Ubiorum|Cologna|Cologne|Colonha|Colonia|Colonia Agrippina|Colonia Agrippinensis|Colonia Claudia Ara Agrippinensium|Colònia|Colônia|Cołogna|Culonia|Cwlen|K'oln|Kel'n|Keln|Kelnas|Kelne|Kelni|Keulen|Kiolns|Kjol'n|Koelle|Koeln|Kol'n|Kolin nad Rynem|Kolin nad Rynom|Koloin|Kolon|Kolonia|Kolonjo|Kolín nad Rýnem|Kolín nad Rýnom|Kyoln|Këlni|Kölle|Köln|Lungsod ng Cologne|Oppidum Ubiorum|gu long|kalana|kalon|ke long|kerun|kholoy|klwn|koelleun|koln|kolon|kwln|kwlwn|kwlwnya|kyolna|qlwnyt|quluniat|Ķelne
+Frankfurt am Main	50.11552	8.68417	650000	Francfort|Francfort - Frankfurt am Main|Francfort d'o Meno|Francfort del Meno|Francfort sul Main|Francfort-sur-le-Main|Francfòrt sul Main|Franckfurt|Francoforte|Francoforte sul Meno|Francofurtum ad Moenum|Francuforti supro Menu|Francuforti suprô Menu|Frankfet|Frankford-on-Main|Frankfort|Frankfort an'n Main|Frankfort on the Main|Frankfurt|Frankfurt am Main|Frankfurt del Main|Frankfurt na Majn|Frankfurt na Majni|Frankfurt nad Menem|Frankfurt nad Mohanem|Frankfurt nad Mohanom|Frankfurt-na-Majne|Frankfurtas prie Maino|Frankfurte pie Mainas|Frankfurto ce Majno|Frankfurto ĉe Majno|Fráncfort|Fráncfort d'o Meno|Fráncfort del Meno|Phran'kphourte|fa lan ke fu|frankfwrt|peulangkeupuleuteu|phryankapharta|prnqpwrt
+Düsseldorf	51.22319	6.77927	618685	Diseldorf|Diseldorfa|Disseldorf|Diuseldorfas|Djuseldorf|Djussel'dorf|Duesseldoerp|Duesseldorf|Duessldorf|Duseldorfo|Dusseldoerp|Dusseldorf|Dusseldorpium|Dusseldörp|Dyuseldorf|Dyzeldorfi|Dzjusel'dorf|Düsseldorf|Düsseldörp|Düssldorf|Ntiselntorph|Ntysselntorf|dasaladorapha|daseladorfa|deyusserudorufu|diao su duo er fu|diuseldorpi|du sai er duo fu|dus se ld xrf|duseladarapha|dwiseldoleupeu|dwsldwrf|dysldwrp|dyuseladorpha|tiyucaltorhpu
+Stuttgart	48.78232	9.17702	612663	Estugarda|Shhutgart|Shtutgart|Shtutgarti|Shtuttgart|Stocarda|Stoccarda|Stoutnkarde|Stucarda|Stuggart|Stutgardia|Stutgartas|Stutgarte|Stutgarto|Stutqart|Stuttgart|ashtwtgart|ch tuthth kar th|icututkart|satutagarata|shtwtgart|shtwtghart|shutouttogaruto|si tu jia te|situtigariti|stutagarta|stwtgrt|syututeugaleuteu|Ştutqart|Štutgartas|Štutgarte
+Essen	51.45657	7.01228	593085	Asnithi|Assindia|Ehsehn|Ehssen|Esen|Esenas|Esene|Eseno|Esse|Essen|ai sen|aisana|aysn|aysyn|ecan|esen|esena|eseni|essen|xes sein|Ésén
+Dortmund	51.51494	7.466	588462	Dortmund|Dortmundas|Dortmunde|Dortmundi|Dortmundo|Dueoerpm|Düörpm|Ntortmount|Throtmenni|Tremonia|d xr thmund|doleuteumunteu|dortamunda|dorutomunto|duo te meng de|dwrtmwnd
+Dresden	51.05089	13.73832	564904	Drazdany|Drazgany|Drehzdehn|Dresda|Dresde|Dresden|Dresdenas|Dresdeno|Dresdn|Drezda|Drezden|Drezdene|Drezno|Drjezdzany|Drježdźany|Drážďany|Drèsda|Drézdén|Drēzdene|de lei si dun|de rs dein|deuleseuden|diresideni|doresuden|dresadana|dresadena|dresdena|drezdeni|drsdn|drysdn|drzdn
+Bremen	53.07582	8.80717	546501	Brehmehn|Brehmen|Brema|Breme|Bremen|Bremen hiria|Bremenas|Bremene|Bremeni|Bremeno|Bremy|Brèma|Bréma|Brémy|Brémén|Brême|Brēmene|Brėmenas|Byen Bremen|ber mein|beulemen|biremeni|bremana|bremena|bremeni|brmn|brymn|bu lai mei|buremen|mdynt brymn
+Nuremberg	49.45421	11.07752	515543	Neurenberch|Neurenberg|Niamberg|Nirnberg|Nirnberga|Niurnbergas|Njurnberg|Norimberg|Norimberga|Norimberk|Norimbèrga|Norymberga|Nuernbarg|Nuernberg|Nuernberq|Nuremberg|Nuremberga|Nurembergo|Nuremburg|Nurembèrg|Nurenberg|Nurenbergo|Nurenburg|Nurnberg|Nyremberg|Nyremberge|Nyremvergi|Nyrëmberg|Nyurnberg|Nyurnbérg|Núremberg|Nürnbarg|Nürnberg|Nürnberq|n'yurnabarga|niu lun bao|niurnbergi|niyuramperk|nurem beirk|nwileunbeleukeu|nwrnbrg|nwrnbyrgh|nyrnbrg|nyurunberuku|nywrmbrg
+Hannover	52.37052	9.73322	515140	Annobero|Gannovehr|Gannover|Ganover|Hannauver|Hannober|Hannova|Hannover|Hannovera|Hannovere|Hannower|Hannóver|Hanobhar|Hanofer|Hanofér|Hanover|Hanoveri|Hanoveris|Hanovra|Hanovre|Hanovro|Hanower|Hanowery|Hanóver|Hanôver|Honovere|Hànobhar|IHanoveri|Khannover|Khanover|hainovara|han no wexr|han nuo wei|hanobeo|hanofa|hanophara|hanovara|hanoveri|hanwfr|hnwbr
+Leipzig	51.33962	12.37129	504971	Laeipcig|Lajpcig|Lajpcigu|Lajpcik|Leipciga|Leipcigas|Leipsia|Leipzig|Lejpcig|Lejpcyg|Leypsiq|Leypzig|Lipcse|Lipekika|Lipsca|Lipsia|Lipsk|Lipsko|Läipcig|Léypzig|Lípsia|la'ipajhisa|la'ipasisa|lai bi xi|laipcik|laipeuchihi|laiptsigi|laybzygh|laypzsh|laypzyg|lip sik|lipajiga|liph sik|lypzsh|lyypzyg|raiputsuihi
+Duisburg	51.43247	6.76516	504358	Disburga|Duisboerj|Duisborg|Duisbourg|Duisburch|Duisburg|Duisburg and Hamborn|Duisburg-Hamborn|Duisburgas|Duisburgo|Duisbörj|Duizburg|Dujsburg|Duusboerg|Duusbörg|Duysburg|Dīsburga|Ntouismpournk|Thuiscoburgum|deyusuburuku|du sburk|du yi si bao|du'isaburga|duisburgi|dwiseubuleukeu|dwysbwrg|dwysbwrgh|dysbwrg
+Bochum	51.48165	7.21648	385729	Baukem|Bochoum|Bochum|Bochumas|Bohuma|Bokhem|Bokhum|Bōkhêm|bo hong|bo khum|bofumu|bohum|bokhuma|bokhumi|bwkhm|bwkhwm|bwkwm
+Wuppertal	51.25627	7.14816	360797	Boupertal|Vupertal|Vupertal'|Vupertale|Vupertalis|Vupertāle|Vuppertal|Vuppertal'|Wupperdaal|Wuppertal|bupeotal|fwbrtal|vupartala|vuppataru|wu po ta er|wuph phe xrthal|wwprtal|wwprtl
+Bielefeld	52.03333	8.53333	331906	Bielefeld|Bilefel'd|Bilefeld|Bilefelde|Bilifeld|Bilivelda|Builefeld|Bylefeldas|Bīlefelde|Bīlifeld|Mpilephelnt|bi lei fei er de|bilephelda|bilepildi|billepelteu|bireferuto|bylyfyld
+Bonn	50.73438	7.09549	330579	Bona|Boni|Bonn|Bonna|Bono|Vonni|bo en|bona|boni|bxnn
+Münster	51.96236	7.62571	308258	Minster|Minstere|Miunsteris|Mjunstehr|Mjunster|Moenster|Monasterium|Muenster|Munistri|Munster|Mynster|Mönster|Münster|ming si te|mwinseuteo|mwnstr|mynstr|myunsuta
+Mannheim	49.4891	8.46694	307960	Man'chaim|Man'geym|Man'géym|Mangejm|Manhajmi|Manheima|Manheimas|Manhejmo|Manhemium|Mankhajm|Mannheim|Monnem|man hai mu|man him|manaha'ima|manhaim|manhaimi|manhaimu|manhaym|mnhyym
+Augsburg	48.37154	10.89851	301105	Agsborg|Aounksmpournk|Augsberg|Augsboerj|Augsborg|Augsbourg|Augsburg|Augsburg-Innenstadt|Augsburga|Augsburgas|Augsburgo|Augsbörj|Augschburg|Augusta|Augusta Vindelicorum|Augzburg|Auqsburq|a'ugsaburga|agzbrg|ao ge si bao|aucupurku|augsburga|augsburgi|augusuburuku|aukeuseubuleukeu|aukusuburuku|awghsbwrgh|awgsbwrg|xea k sburk|Ágsborg
+Wiesbaden	50.08601	8.24435	288850	Aquae Mattiacae|Aquae Mattiacorum|Aquae Matticae|Uisibada|Visbadehn|Visbaden|Visbadene|Vizmpanten|Vysbadenas|Vīsbādene|Wiasban|Wiasbån|Wiesbaden|Wisibada|Wissbade|bhisabadena|biseubaden|fysbadn|visabadena|visabaidana|visbadeni|vuisubaden|wayzbadn|wei si ba deng|wi sba dein|wisibadeni|wysbadn
+Karlsruhe	49.00937	8.40444	283799	Carlsruhe|Carolsruha|Kallsruh|Karlsroue|Karlsrue|Karlsrueh|Karlsruhe|Karlsruje|Karlsrūe|Karlsrūjė|ka er si lu e|kaleulseulue|karlsaruha|karlsrwh|karlsrwhh|karusurue|qrlsrwhh
+Gelsenkirchen	51.50508	7.09654	270028	Gel'zenkirkhen|Gelsenkiaerken|Gelsenkirchen|Gelsenkiärken|Gelzenkirchenas|Gelzenkirhene|Gelzenkirheni|Gelzenkirkhen|Helzenkirxen|Nkelzen'kirchen|gai er sen ji xing|geljenkileuhen|gelsanakarsana|geruzenkiruhyen|ghylsnkyrshn|glsnkrchn|glznkyrshn|glznqyrkn|kel sen kheiyr khein
+Aachen	50.77664	6.08342	265208	Aachen|Aakhen|Aaxen|Achen|Achenas|Ahene|Aix-la-Chapelle|Aken|Akhen|Akisgran|Akwizgran|Aoke|Aquae Grani|Aquisgra|Aquisgran|Aquisgrana|Aquisgrano|Aquisgranum|Aquisgrao|Aquisgrà|Aquisgrán|Aquisgrão|Axhe|Axin|Axın|Cachy|Cáchy|Kreisfreie Stadt Aachen|Lungsod ng Aachen|Oche|Oochen|a chen|aakheni|achn|ahen|ahkan|akhana|akhn|xa khein|ya chen|Åxhe|Āhene
+Mönchengladbach	51.18539	6.44172	261742	Jlabbach|M'onkhengladbakh|Men'chen'nklantmpach|Menchengladbachas|Menhengladbaha|Menkhengladbakh|Mjonkhengladbakh|Moenchengladbach|Monchengladbach|Muenchen-Gladbach|Mönchengladbach|mein chen klad bakh|men xing ge la de ba he|menhyenguratobahha|menkhengladbakhi|mnsngldbk|moenhengeullateubaheu|mwnshnghladbakh|myonsanagladabakha
+Kiel	54.32133	10.13489	252668	Kiel|Kielia|Kielo|Kil'|Kile|Kilo|Kilonia|Kyle|Kylis|ji er|khil|ki'ela|kila|kiru|Ķīle
+Chemnitz	50.8357	12.92922	247220	Chemnicas|Chemnicium|Chemnitz|Hemnica|Kamenica|Kamjenica|Karl-Marx-Stadt|Kemnic|Kemnits|Khemnic|Saska Kamenice|Saská Kamenice|chymntz|kai mu ni ci|kemnicheu|kemunittsu|khe mniths|kmnytz|kymnts|qmnyz
+Braunschweig	52.26594	10.52673	244715	Braounsvaich|Braunschweig|Braunshvajg|Braunshvejg|Braunshweyg|Braunshwéyg|Braunsveiga|Braunsveigas|Braunšveiga|Braunšveigas|Bronswiek|Brunsvicum|Brunsvik|Brunswick|Brunswik|Brunswyck|Brunswyk|Brunszwik|Brunšwik|Brúnsvík|beulaunsyubaikeu|bra'unasva'iga|branjavika|branshwyg|braunshvaigi|brawnshfaygh|brawnshwayg|bu lun rui ke|buraunshuvuaiku
+Magdeburg	52.13129	11.63189	244329	Dzewin|Dźěwin|Maagdenburg|Madeborch|Magdeboerj|Magdeborg|Magdeborgh|Magdebourg|Magdebourgo|Magdebuag|Magdeburg|Magdeburga|Magdeburgas|Magdeburgh|Magdeburgo|Magdeburgu|Magdeburgum|Magdeburk|Magdebörj|Magdehburg|Makekepuka|Maqdeburq|Meideborg|ma ge de bao|magadeburga|magdbwrg|magdeburgi|mageudebuleukeu|maghdybwrgh|maigadebaraga|mak de bur k|makdeburga|makudeburuku|mgdbwrg|myagadebarga|mygdybrg
+Krefeld	51.33645	6.55381	237984	Crefeld|Krefel'd|Krefeld|Krefeld-Uerdingen|Krefeldas|Krefelde|Krefelnt|Krehfel'd|Krieevel|Krievel|Krēfelde|Krėfeldas|ke lei fei er de|keulepelteu|kher fel d|krfld|kryfld|kureferuto|qrpld
+Halle (Saale)	51.48158	11.97947	237865	Galle|Halle|Halle (Saale)|Halle an der Saale|Halle sul Saale|Halle-on-the-Saale|Khale|hale|halh|hare
+Freiburg	47.9959	7.85222	237460	Frajburg|Frajburg-im-Brajsgau|Freiburg|Freiburg im Breisgau|Fribourg-en-Brisgau|Friburg de Brisgovia|Friburg de Brisgòvia|Friburgo de Brisgovia|Friburgo in Brisgovia|Fryburg Bryzgowijski|Phraimpournk|fraybwrg|fraybwrgh|fu lai bao|furaiburuku
+Mainz	49.98185	8.28008	222889	Maeaenz|Maganza|Magontia|Magonza|Maguncia|Maguntzia|Magunza|Magúncia|Maianca|Maiança|Maienta|Mainc|Mainca|Maincas|Maints|Mainz|Majenco|Majnc|Majnci|Mayence|Mayns|Meenz|Meginsborg|Ments|Mogontiacum|Moguncia|Moguncja|Moguntiacum|Mogúncia|Mohuc|Mohuč|Määnz|ma'intaja|ma'intsa|mainaza|maincheu|maintsi|maintsu|mainza|maynts|maynz|mei yin ci|mins|mynz|myynz
+Oberhausen	51.47805	6.8625	219176	Obergauzen|Oberhausen|Oberhauzen|Oberhauzenas|Oberhauzene|Oberkhauzen|Omperchaouzen|Overhus|ao bo hao sen|awbrhawzn|obahauzen|obeohaujen|oberhauzeni
+Erfurt	50.97734	11.03536	218793	Ehrfurt|Erfordia|Erfurt|Erfurtas|Erfurte|Erfurti|Erfurto|Erphourte|Erpisfurt|Jarobrod|ai er fu te|airapharata|arfwrt|ayrfrt|eafuruto|eleupuleuteu|erapharta|eraphurta|Érfurt
+Lübeck	53.86893	10.68729	212207	Libek|Libeka|Limpek|Liubekas|Ljubek|Lubeca|Lubecca|Lubeck|Lubeck Hansestadt|Lubeka|Lubeko|Lubëcca|Luebeca|Luebeck|Lybeku|Lyypekki|Lübeca|Lübeck|Lübeck Hansestadt|Lībeka|lu bei ke|lux bekh|lwbk|lwbyk|lwibekeu|lybq|lyubeka|ryubekku
+Hagen	51.36081	7.47168	198972	Hagen|Khagen|hagen|hageni|haghn|hagn|hajn|hajyn
+Rostock	54.0887	12.14049	198293	Roshhok|Roshtok|Rostak|Rostochium|Rostock|Rostok|Rostoka|Rostokas|Roztok|loseutokeu|luo si tuo ke|rosutokku|rwstwk|rwstwq|rxs thxkh
+Kassel	51.31667	9.5	197230	Cassala|Cassel|Castellum|Kasel|Kasel'|Kasele|Kaseli|Kaselis|Kaselo|Kassel|Kassel'|ka sai er|ka sai er shi|kasel|kasl|kasseru|khas seil|kysl
+Potsdam	52.39886	13.06566	184754	Poczdam|Podstupim|Postupim|Potsdam|Potsdamo|Poztupimi|bo ci tan|bwtsdam|patasadama|pocheudam|potasadama|potsadaima|potsudamu|ptsdam|pwtsdam|pwtsdm
+Saarbrücken	49.23262	7.00982	182971	Saarbrecken|Saarbrigge|Saarbrjuken|Saarbrjukken|Saarbrucken|Saarbruecken|Saarbruekken|Saarbruken|Saarbrécken|Saarbrücken|Saarbrükken|Saarmpryken|Saravipons|Sarbriken|Sarbriukenas|Sarbruch|Sarbrukeno|Sarebryken|Sarrebruck|Sarëbryken|Sárbrúch|Zaarbruekken|Zaarbrükken|Zarbrikene|Zārbrikene|jaleubeulwiken|jarabryukana|sa er bu lu ken|sar brkn|sar brukhkhein|sarabarukana|sarabrukena|sarbrkn|sarbrwkn|saribirukeni|sha bo qin|zarbrwkn|zaruburyukken
+Hamm	51.68033	7.82089	178967	Gamm|Hamas|Hamm|Hammona|Hamo|Kham|Khamm|ha mu|hami|hamu
+Mülheim	51.43218	6.87967	173050	Milchaim|Mjul'khajm-na-Rure|Moelm|Moeln|Muelheim|Muelheim (Ruhr)|Muelheim an der Ruhr|Mulheim|Mulheim-on-Ruhr|Mölm|Möln|Mülheim|Mülheim (Ruhr)|Mülheim an der Ruhr|Mülheim-on-Ruhr
+Herne	51.5388	7.22572	172108	Gerne|Herne|Hernė|Kherne|Kherneh|hei er ne|heleune|herne|herune|hrnh|hyrnh
+Darmstadt	49.87167	8.65027	167029	Darmshhat|Darmshtadi|Darmshtadt|Darmshtat|Darmstadium|Darmstadt|Darmstat|Darmstatas|Darmstate|Darmundestadt|Darmştat|Darmštatas|Darmštate|Ntarmstat|da mu shi ta te|daleumsyutateu|darmastata|darmshtat|darumushutatto|drmstdt
+Osnabrück	52.27264	8.0498	166462	Asnabruk|Osnabrik|Osnabrika|Osnabriukas|Osnabrjuk|Osnabruck|Osnabrueck|Osnabruga|Osnabrugensis|Osnabruko|Osnabrück|Ossenbruegge|Ossenbrügge|ao si na bu lu ke|asnabrwk|awsnabrwk|oseunabeulwikeu|osunaburyukku
+Solingen	51.17343	7.0845	164359	Solich|Solingen|Zolin'nken|Zolingen|Zolingenas|Zolingene|jolling-gen|so ling ngein|suo lin gen|swlngn|zolingeni|zoringen|zwlynghn|zwlyngn
+Ludwigshafen am Rhein	49.48121	8.44641	163196	Liudvigshafenas prie Reino|Ljudvigsgafen-na-Rejni|Ljudvigskhafen-na-Rejne|Lountvichschafen|Ludovici Portus Rhenanus|Ludvigskhafen|Ludvigskhafen na Rajni|Ludwichshafe|Ludwigshafen|Ludwigshafen am Rhein|Ludwigshafen sul Reno|Luedviqshafen|Lüdviqshafen|lu de wei xi gang|ludaviksahaphena|luteubihiseuhapen|lwdfyghshafn|lwdwygshafn|rainis ludvigshapeni|rutovuihhisuhafen|rutovuihisuhafen
+Leverkusen	51.0303	6.98432	162738	Laevverkuuse|Leberkouzen|Leverkusen|Leverkuzen|Leverkuzenas|Leverkuzene|Leverkūzene|Lävverkuuse|Lėverkuzenas|lbrqwzn|le fexr khu sein|lebeokujen|lei wo ku sen|lwrkwzn|lyfrkwzn|lywrkwsn|rebakuzen
+Oldenburg	53.14039	8.21479	159218	Aldenboarch|Aldinborg|Byen Oldenburg|Ol'dehnburg|Ol'denburg|Oldemburgh|Oldemburgo|Oldenboerj|Oldenbourg|Oldenburg|Oldenburg (Oldenburg)|Oldenburgas|Oldenburgo|Oldenburgum|Oldenbörj|Ollnborg|Ooldenbuurich|ao er deng bao|awldnbwrg|awldnbwrgh|oldenbuleukeu|oldenburgi|orudenburuku
+Neuss	51.19807	6.68504	152457	Neuss|Neuß|Noisas|Nojs|Novaesium|Nuess|Nueuess|Nuus|Nüss|Nüüß|noiseu|noisi|noisu|nuo yi si|nwys|nyws
+Regensburg	49.01513	12.10161	151389	Ratisbon|Ratisbona|Ratisbonne|Ratyzbona|Regensboerj|Regensburg|Regensburga|Regensburgas|Regensburgo|Regensbörj|Regenzburg|Rehgensburg|Rengschburg|Renkensmpournk|Rezno|Rēgensburga|Rėgensburgas|Rězno|legenseubuleukeu|lei gen si bao|regensburgi|regensuburuku|rgnsbwrg|ryghnsbwrgh|rygnzbrg|Řezno
+Heidelberg	49.40768	8.69079	143345	Chaidelvergi|Edelberga|Gajdel'berg|Gejdehl'berg|Gejdel'berg|Haidlbaersch|Haidlbärsch|Hajdelberg|Hajdelbergo|Heidelbaerg|Heidelbarg|Heidelberch|Heidelberg|Heidelberga|Heidelbergas|Heidelburg|Heidelbärg|Heidlbeag|Heidlberg|Hejdelbergo|Heydelberg|Heydelberq|Héydélbérg|Khajdel'berg|Khajdelberg|hai de bao|haidelbeleukeu|haidelbergi|haideruberuku|hayadelabarga|haydlbrg|haydlbrgh|hyydlbrg
+Paderborn	51.71905	8.75439	142161	Padehrborn|Paderborn|Paderborna|Paderbornas|Paderbronna|Patterbuorn|Pāderborna|badrbwrn|pa de bo en|pa de xr bxrn|padaborun|padeoboleun|padrbwrn
+Würzburg	49.79391	9.95121	133731	Birtsmpournk|Herbipolis|Herbopolis|Vircburg|Vircburga|Virtibriga|Viurcburgas|Vjurcburg|Wiazburg|Wirciburc|Wuerzboerj|Wuerzburg|Wurtzbourg|Wurtzburgo|Wurzburg|Wurzburgo|Wûrzburg|Würzburg|Würzbörj|bwileucheubuleukeu|fwrtsbwrgh|viurtsburgi|vuyurutsuburuku|wei er ci bao|weu xr sburk|wrzbrg|wwrtsbwrg|wyrzbwrg
+Fürth	49.47593	10.98856	132036	Firt|Fiurtas|Fjurt|Fuerth|Fürth|fei er te|fuyuruto|fwrt|fwrth|pwileuteu
+Wolfsburg	52.4236	10.77597	123064	Vol'fsburg|Volfsburg|Volfsburgas|Volfsmpournk|Wolfsboerj|Wolfsbourg|Wolfsburg|Wolfsburgo|Wolfsbuurich|Wolfsbörj|Wulfsborg|bolpeuseubuleukeu|fwlfsbwrgh|volpsburgi|vuorufusuburuku|wlfzbrg|wo er fu si bao|wwlfsbwrg|wwlfzbwrg|wwlpsbwrg
+Recklinghausen	51.61379	7.19738	122438	Recklinghausen|Recklinghusium|Reklinghauzenas|Reklingkhauzen|Riaekelhusen|Riäkelhusen|lei ke lin hao sen|lekeullinghaujen|rekkuringuhauzen|rklynghawzn
+Göttingen	51.53443	9.93228	122149	Choettingen|Chöttingen|G'otingen|Getingen|Getingenas|Getingene|Getynga|Gjottingen|Gjotyngen|Goettingen|Gotinga|Gottinga|Gottingen|Göttingen|Nketin'nken|gatingen|ge ting gen|gettingen|ghwtynghn|goeting-gen|gtyngn|gwtyngn|gyotingana|keiththing ngein
+Heilbronn	49.13995	9.22054	120733	Chailmpron|Gajl'bronn|Hailprunna|Hajlbrono|Heilbronas|Heilbronn|Heilbronn Neckar|Khajl'bronn|Khajlbron|hai er bu long|hailbeulon|hailbroni|hairuburon|haylbrwn|hyylbrwn
+Ingolstadt	48.76508	11.42372	120658	Ingol'shtadt|Ingolshhat|Ingolshtat|Ingolstadt|ingorushutatto
+Ulm	48.39841	9.99155	120451	Oulm|Owlm|Ul'm|Ulm|Ulma|Ulmas|awlm|ulleum|ulma|ulmi|urumu|wu er mu|xulm
+Bottrop	51.52392	6.9285	119909	Botrop|Botropas|Botropo|Bottrop|bo te luo pu|boteulopeu|botoroppu|bttrwp
+Pforzheim	48.88436	8.69892	119313	Pforcheimas|Pforckhajm|Pfortschaim|Pforzheim|Phorca|Porta Hercyneae|bfwrtshaym|fwrtshaym|poleucheuhaim|pu fu er ci hai mu|puforutsuhaimu
+Offenbach	50.10061	8.76647	119192	Frankfurt-Offenbach|Offenbach|Offenbach am Main|Offenbakh
+Bremerhaven	53.55357	8.57553	118610	Bremergafen|Bremerhafenas|Bremerhafene|Bremerhaven|Bremerhoawen|Bremerhoben|Bremerhuuwen|Bremerkhafen|Brēmerhāfene|Brėmerhafenas|Kreisfreie Stadt Bremerhaven|Stadtgemeinde Bremerhaven|Wesermuende|Wesermunde|Wesermünde|beulemeohapen|bremerhaveni|brmrhafn|bu lai mei ha fen|buremahafen
+Remscheid	51.17983	7.1925	117118	Remsaint|Remsayd|Remscheid|Remseidas|Remshajd|Remşayd|Remšeidas|lei mu sha yi de|lemsyaiteu|remshaidi|remushaito|rmshayd|rmsyyd
+Reutlingen	48.49144	9.20427	112627	Rejtlingen|Reutlingen|Roitlingenas|Roitlinken|Rojtlingen|loiteulling-gen|luo yi te lin gen|roitoringen|rwytlynghn|rwytlyngn
+Koblenz	50.35357	7.57883	107319	Coblenca|Coblence|Coblentz|Coblenz|Coblenza|Coblença|Confluentes|Koblenc|Koblencas|Koblenci|Koblencja|Koblenco|Koblentza|Koblenz|Komplents|ke bu lun ci|kobeullencheu|koburentsu|kwblns|kwblnts|kwblnz|qwblnz
+Siegen	50.87481	8.02431	107242	Siegen|Zigen|jigen
+Bergisch Gladbach	50.9856	7.13298	106184	Bergisch Gladbach|Bergish Gladbakh|Jlaebbisch|Jläbbisch
+Salzgitter	52.15705	10.4154	104970	Salzgitter|Zal'cgitehr|Zal'cgitter|Zalcgiter|Zalcgiteris|jalcheugiteo|sa er ci ji te|zaltsghytr|zaltsgytr|zarutsugitta
+Jena	50.92878	11.5899	104712	Iena|Iéna|Jena|Jena (Thueringen)|Jéna|Jēna|Jėna|iena|jena|jyna|ye na|yena|yyna|yynh
+Gera	50.88029	12.08187	104659	Gera|Gerapolis|Gėra|ge la|gela|gera|gyra
+Moers	51.45342	6.6326	103487	M'ors|Mers|Mersas|Meurs|Mjors|Moers|Mors|Mörs|Mėrsas|meirs|mo er si|moeleuseu|mwrz|mwyrs|myrs
+Hildesheim	52.15077	9.95112	103052	Chilnteschaim|Gil'dehsgajm|Gil'desgajm|Hildesheim|Hildesheima|Hildesheimas|Hildesia|Hilmessen|Khil'deskhajm|Khildeskhajm|hildeseuhaim|hirudesuhaimu|hyldshaym|hyldshyym|xi er de si hai mu
+Erlangen	49.59099	11.00783	102675	Ehrlangen|Erlanga|Erlangen|Erlangenas|Erlangene|Erlanken|ai er lan gen|ai er lang gen|arlangn|arlnjn|arlynjn|earangen|eleullang-gen
+Trier	49.75565	6.63935	100129	Augusta Treverorum|Treier|Trev|Trevere|Treveri|Treveris|Treves|Trevir|Treviri|Treviro|Trevèri|Trevír|Trewir|Trier|Trir|Trire|Triri|Tryr|Tryras|Trèveris|Trèves|Tréier|Tréveris|Trīre|te li er|teulieo|the riyr|toria|tryr
+Zwickau	50.72724	12.48839	98796	Cvikau|Cvikava|Cvikkau|Cygnea|Stadt Zwickau|Swikawa|Zwickau|atswkw|cheubikau|ci wei kao|tsfykaw|tsuvuikkau|tswykaw|Šwikawa
+Kaiserslautern	49.443	7.77161	98732	K-Town|Kaiserlautern|Kaiserslantern|Kaiserslautern|Kaizerslauternas|Kajzerslautern|Lutra|kai sa si lao teng|kaijeoseullauteleun|kaizasurauterun|ki se xrs lea theirn
+Schwerin	53.62937	11.41316	96641	Schwerin|Shverin|Shverini|Shveryn|Suerinum|Sverin|Sverinas|Sverine|Swerin|Zwerin|Zwěrin|ch weri n|saverina|sberina|shen wei lin|shfyryn|shiwerini|shuvuerin|shwryn|shwyryn|sverina|swwryn|syubelin|Şverin|Šverinas|Šverīne
+Gütersloh	51.90693	8.37853	96180	Giterslokh|Giuterslas|Giuterslo|Gjuterslo|Guetersloh|Gutersloh|Gütersloh|gwiteoseullo|gwtrzlwh|ju te si luo|kux the xrslo|kwtrslwh
+Düren	50.80434	6.49299	93440	Diren|Djuren|Dueren|Duren|Düren|di lun|dwilen
+Esslingen	48.73961	9.30473	92390	Ehslingen-am-Nekkar|Eslinga|Eslingen|Esslingen|Esslingen am Neckar|Eszlingen|Eszlingen am Neckar
+Tübingen	48.52266	9.05222	92322	Cjubingen|ITuebingen|ITübingen|Tibingen|Tibingene|Tiubingenas|Tjubingen|Tubinga|Tuebinga|Tuebingen|Tybinga|Tybingen|Tympinken|Tübinga|Tübingen|Tībingene|di bin gen|teyubingen|thu xbing ngein|tu bin gen|twbynghn|twbyngn|twibing-gen|tybyngn|tyubin'gana
+Iserlohn	51.37547	7.70281	91811	Iserlaun|Iserlohn|Iserlon|Izerlon|Izerlonas|ayzlwn|azrlwn|ijeollon|izaron|yi se long
+Witten	51.44362	7.35258	91808	Vitehn|Viten|Vitenas|Vitten|Witten|biten|fytn|vuitten|wei teng|wytn
+Ratingen	51.29724	6.84929	91606	Ratingen|la ting gen|lating-en|ratlyngn
+Marl	51.65671	7.09038	91398	Alt-Marl|Marl|Marl'|ma er|marl  alman
+Lünen	51.61634	7.52872	91009	Hliunon|Linen|Ljunen|Luenen|Lunen|Lünen|lu nen|lwinen|lwnn|ryunen
+Gießen	50.58727	8.67554	89179	Gieseni|Giessa|Giessen|Gießen|Gisen|Gissen|Gysenas|Nkisen|ghysn|gisen|giseni|gysn|ji sen|kis sein
+Hanau am Main	50.13423	8.91418	88648	Chanaou|Hanau|Hanau am Main|Khanau|hanau|hanaw|hanw
+Velbert	51.33537	7.04348	87669	Fel'bert|Felbert|Velbed|Velbert|Vèlbed|fei er bei te|flbrt
+Ludwigsburg	48.89731	9.19161	87603	Liudvigsburgas|Ljudvigsburg|Lountvinksmpournk|Ludoviciburgum|Ludvigsburg|Ludwigsbourg|Ludwigsburg|Ludwigsburgo|Luedviqsburq|Luisburgo|Lüdviqsburq|lu de wei xi bao|lud wics bur k|lwdfyghsbwrgh|lwdwygzwbwrg|rutovuihisuburuku
+Flensburg	54.78805	9.43722	85838	Flensboarch|Flensborag|Flensborg|Flensbourg|Flensburg|Flensburga|Flensburgas|Flensburgh|Flensburgo|Flensbuurich|Flensmpournk|Flenzburg|flnsbwrg|flnsbwrgh|flnzbrg|fu lun si bao|furensuburuku|peullenseubuleukeu|phlensaburga|plnsbwrg
+Cottbus	51.75769	14.32888	84754	Chocebuz|Chociebuz|Chociebuż|Chosebuz|Chotebuz|Chotěbuz|Choćebuz|Chóśebuz|Cotbusium|Cottbus|Kotbus|Kotbusa|Kotbusas|Kottbus|ke te bu si|khxthth bus|kosbuseu|kotobusu|ktbws|kwtbws|qwtbws
+Wilhelmshaven	53.5476	8.10395	84393	Vil'gel'msgafen|Vil'gel'mskhafen|Vilchelmschafen|Vilhelmshafenas|Vilkhelmskhafen|Wilhelmshaven|Willelmeshaefen|Willelmeshæfen|Willemshaven|Wuelmshoawen|Wülmshoawen|bilhelleumseuhapen|fylhlmshafn|vuiruherumusuhafen|wei lian gang|wylhmshafn
+Minden	52.28953	8.91455	82879	Minden|Mindeno|Minn|min dein|minden|ming deng|mndn|myndn
+Norderstedt	53.70177	9.99328	82844	Nordershtedt|Nordershtet|Norderstedt|Norderstedt Stadt|nrdrashtt|nuo de shi tai te|nwrdrshtyt|nwrdrstt
+Villingen-Schwenningen	48.06226	8.49358	81770	Filingen-Shveningen|Filingenas-Sveningenas|Filingenas-Šveningenas|Fillingen-Shvenningen|Villingen Schwenningen|Villingen-Schwenningen|Villingen-Shvenningen|fei lin gen-shi wen ning gen|fylynghn-shfnynghn|fylyngn-ashwnyngn
+Konstanz	47.66033	9.17582	81275	Constanca|Constance|Constanta|Constantia|Constanza|Constança|Costansa|Costanz|Costanza|Costnitz|Kanstanc|Konstanc|Konstanca|Konstancas|Konstancja|Konstanco|Konstantia|Konstantza|Konstanz|Kostnica|Kostnice|Kostnitz|kang si tan ci|knstants|konseutancheu|konstensa|konsutantsu|kwnstans|qwnstnz
+Worms	49.63278	8.35916	81099	Borbetomagus|Vormatia|Vorms|Vormsa|Vormsas|Woms|Wormacja|Wormatia|Worms|boleumseu|fwrms|vuorumusu|wo er mu si|wrmz  alman|wwrms
+Neumünster	54.07399	9.98456	80196	Naimuenster|Naimünster|Neumuenster|Neumunster|Neumünster|Niemuenster|Niemünster|Nojminster|Nojmjunster|Novum Monasterium|noimwinseuteo|noimyunsuta|nywmnstr|xin ming si te
+Dorsten	51.66166	6.96514	79981	Doessen|Dorsten|Dössen|duo si teng|dwrstn
+Lüdenscheid	51.21977	7.6273	79386	Leudenscheid|Lidenshajd|Liudolvescetha|Ljudenshajd|Ludenscheid|Luedenscheid|Luensche|Lüdenscheid|Lünsche|lu deng sha yi de|lwdnshayd
+Marburg an der Lahn	50.80904	8.77069	78895	Marbourg|Marburg|Marburg an der Lahn|Marburgo|Marmpournk|maruburuku
+Castrop-Rauxel	51.55657	7.31155	77924	Castrop-Rauxel|Kastrop-Rauksel|Kastrop-Rauksel'|Stadt Castrop-Rauxel|ka si te luo pu-lao ke sai er|kastrwb rawksl|kastrwp-rawksl|khas thrx ph-rea seil
+Rheine	52.28509	7.44055	76491	Rajn|Rajne|Rene|Rheine|lai nei|laine|raynh
+Viersen	51.25435	6.39441	76153	Firzen|Veeese|Veeëse|Viersen|fei er sen|fyrzn
+Delmenhorst	53.0511	8.63091	75893	Dehl'menkhorst|Del'menkhorst|Delmenhorst|Delmenkhorst|Demost|dai er men huo si te|derumenhorusuto|dlmnhwrst
+Gladbeck	51.57077	6.98593	75499	Gladbeck|Gladbek|Gladbeki|Gladbėki|ge la de bei ke|geullateubekeu|ghladbyk|gladbk
+Arnsberg	51.38333	8.08333	74879	Arensperg|Arnsberg|Arnsberga|Arnsbergas|Arnsberge|a en si bei ge|arnsbrg|arnsbrgh
+Troisdorf	50.80901	7.14968	74749	Troisdorf|Trojsdorf|te luo si duo fu|trwysdwrf|trwyzdwrf
+Wattenscheid	51.48057	7.14251	73965	Bochum-Wattenscheid|Vatenseidas|Vatenšeidas|Vattenshajd|Vattenstadt|Wattenscheid|Wattsche|hua deng shu te|vuattenshaito|wa teng sha yi de|wwtnsyyd
+Bocholt	51.83879	6.61531	73943	Bocholt|Bokelt|Bokhol't|Bokholt|Bōkholt|bo huo er te|bwshwlt  alman
+Detmold	51.93855	8.87318	73680	Detmol'd|Detmold|Detmolda|Detmoldas|dai te mo er de|deteumolteu|deth mx ld|detomoruto|dtmwld
+Bayreuth	49.94782	11.57893	72940	Bairoit|Bajrojt|Baruthum|Bayreith|Bayreuth|bai luo yi te|bailoiteu|bairoito|bayrwyt|byyrwyt
+Landshut	48.52961	12.16179	71863	Landishuta|Landsgut|Landshuad|Landshut|Landshutas|Landskhut|Lantschout|lan ci hu te|lan dshuth|lancheuhuteu|landshwt|rantsufuto
+Lüneburg	53.25122	10.41548	71260	Glain|Lineburg|Ljuneburg|Luemborg|Lueneburg|Luneberg|Lunebourg|Luneburg|Luneburgo|Luneburgum|Luneburk|Lyneburgu|Lynempournk|Lümborg|Lüneburg|lu ne bao|lu nei bao|lwinebuleukeu|lwnbwrg|lwnbwrgh|lynbwrg|ryuneburuku
+Celle	52.62264	10.08047	71010	Cehle|Cele|Cella|Celle|Celle i Tyskland|Celė|ce lei|chelle|sel lex|syly|tsuere
+Bamberg	49.89873	10.90067	70047	Bambarg|Bamberg|Bamberga|Bambergas|Bamberk|Bampernk|ba mu bei ge|bambeleukeu|bambergi|bambrg|bambrgh|ban bao|banberuku|bmbrg
+Aschaffenburg	49.97704	9.15214	68551	A-Burg|Asafenburga|Asafenmpournk|Aschaffenbourg|Aschaffenburg|Aschaffenburgum|Ashafenburg|Ashaffenburg|Auscheffenburg|Ašafenburga|a sha fen bao|ashaffenburuku|ashafnbwrg|ashafnbwrgh|asshyfnbrg|asyapenbuleukeu
+Neubrandenburg	53.55735	13.26105	68082	Neibrandenburga|Neubrandenbourg|Neubrandenburg|Noibrandenburgas|Nojbrandenburg|Nojbrandenburge|Nuevo Brandeburgo|noibeulandenbuleukeu|noiburandenburuku|nwybrndnbwrg|xin bo lan deng bao
+Dessau	51.83864	12.24555	67747	Desau|Desava|Dessau|Dessau-Rosslau|Dessau-Roßlau|Dessavia|Ntesaou|de shao|desau|dessau|dsayw|dysaw
+Lippstadt	51.67369	8.34482	67219	Lip'stant|Lippshtadt|Lippshtadte|Lippstadt|Lipshhat|Lipshtat|li pu shi ta te|lybshtat
+Aalen	48.83777	10.0933	67085	Aalen|Alen|Alenas|Alene|a lun|aaleni|allen|alyn|aren|Ālene
+Dinslaken	51.56227	6.7434	66993	Dinslaken|Dinslakena|Dinslakeno|Ntinslaken|ding si la ken|dynslakn|dynzlakn
+Neuwied	50.4336	7.47057	66805	Langendorf|Neuweid|Neuwied|Nojvid|Nojvido|noivuito|nwyfyd|nwywwyd|nwywyd|xin wei de
+Unna	51.53795	7.68969	66734	Unna|awna|weng na
+Plauen	50.4973	12.13782	66412	Plauehn|Plauen|Plauenas|Plauene|Plavia Variscorum|Plavno|Plawno|Pławno|blawyn|peullauen|phe la xein|plauehn|plawyn|pu lao en|purauen
+Herten	51.59638	7.14387	65306	Gerten|Heritono|Herten|Hiaetten|Hiätten|Hėritono|Kherten|hei er teng|hrtn|hyrtn
+Herford	52.11457	8.67343	64879	Herford|Herfordo|Hiarwede|Kherford|hei er fu de|heruforuto|hrfwrd
+Grevenbroich	51.09102	6.5827	64779	Grefenbrojkh|Grevenbroich|Grevenbroichas|Grevenbroikh|Grevenbrokh|ge lei wen bu luo yi xi|ghrfnbrwysh|grfnbrwysh|gurevuenburoho
+Weimar	50.9803	11.32903	64727	Vaimari|Vajmar|Vajmaro|Veimar|Veimara|Veimaras|Veimāra|Vejmar|Veymar|Vimaria|Vymar|Výmar|Wehimala|Weimar|baimaleu|faymr|va'imara|vaimari|vuaimaru|waymar|waymr|wei ma|wi mar
+Kerpen	50.86991	6.69691	64226	Kerpe|Kerpen|ke er peng|krbn|kyrbn
+Fulda	50.55162	9.67518	63760	Foulnta|Ful'da|Fulda|fu er da|furuda|fwlda|pulda|pwldh
+Dormagen	51.09683	6.83167	63582	Dormagen|Dormaje|duo er ma gen|dwrmaghn|dwrmagn
+Bergheim	50.95572	6.63986	63558	Bergem|Bergheim|Bergheim an der Erft
+Garbsen	52.41961	9.6033	63355	Garbsen|Garbseno|Garbzen|Olengarbsen|garbzn|jia bu sen
+Wesel	51.6669	6.62037	61685	Vezel|Vezel'|Wesel|wei sai er
+Kempten (Allgäu)	47.72674	10.31389	61399	Kempten|Kempten (Allgaeu)|Kempten (Allgäu)
+Sindelfingen	48.7	9.01667	61311	Sindelfingen|Zindel'fingen|Zindelfingen|Zintelfinken|jinderufingen|xin de er fen gen|zindelpingeni|zyndlfynghn|zyndlfyngn
+Schwäbisch Gmünd	48.79947	9.79809	61216	Gamundia|Gmund|Gmünd|Schwaebisch Gmuend|Schwäbisch Gmünd|Shvebish Gmind|Shvebish Gmjund|Shvebish-Gmjund|Svabijos Gmiundas|chwe bi chk mun d|shfaybysh ghmwnd|shi wa ben ge ming de|shvebish-gmiundi|shwbysh gmwnd|Švabijos Gmiundas
+Rosenheim	47.85637	12.12247	60167	Pons Aeni|Rosenheim|Rousnam|Rozengajm|Rozenkhajm|lojenhaim|luo sen hai mu|rozenhaimu|rznhaym
+Brandenburg an der Havel	52.41667	12.55	59826	Brandebourg-sur-la-Havel|Brandeburgas|Brandeburgo sulla Havel|Brandenburg|Brandenburg an der Havel|Brandenburg na Khafelu|Brandenburg un der Havel|Brandenburg-na-Khafele|Brandenburg-na-Khafeli|Brandenburgas|Brandenburgum|Brannenborg an de Havel|beulandenbuleukeuandeeohapel|brandenburgi|brndnbwrg|brndnbwrg an dr hawl|ha fu er he pan bo lan deng bao
+Rüsselsheim am Main	49.98955	8.42251	59730	Riselsheima|Riselskhajm|Rjussel'sgajm-am-Majn|Rjussel'skhajm|Rjusselskhajm|Rouselschaim|Ruesselsheim|Ruesselsheim am Main|Rusel'sgajm|Russelsheim|Rüsselsheim|Rüsselsheim am Main|lu sai er si hai mu|rwslshaym|rwslshyym|rwslzhaym|ryusserusuhaimu
+Offenburg	48.47377	7.94495	59238	Ofenburg|Offenbourg|Offenburg|Offenburgum|ao fen bao|awfnbwrg|awfnbwrgh|offenburuku
+Langenfeld	51.10821	6.94831	59112	Langefaeael|Langefääl|Langenfel'd|Langenfeld|lang gen fei er de|langnfld
+Stralsund	54.30911	13.0818	58976	Shhralzund|Shtral'zund|Shtralzund|Stralsund|Stralsunda|Stralzunde|Strzalowo|Strzałowò|ashtralzwnd|shi te la er song|shi te la er song de|shutoraruzunto|strlzwnd|syuteulaljunteu|Štrālzunde
+Hameln	52.10397	9.35623	58666	Gamel'n|Hamala|Hamelen|Hamelin|Hameln|Hamelín|Khamel'n|Khameln|ha mo er en|hamelleun|hamerun|hamln|hmlyn
+Friedrichshafen	47.65689	9.47554	58403	Fridrikhsgafen|Fridrikhskhafen|Fridrixshafen|Friedrichshafen|Frydrykhsgafen|fei te lie gang|frydryshshafn|furidorihisuhafen|peulideulihiseuhapen|phridariksahaphena|pridrikhshapeni
+Göppingen	48.70354	9.65209	58040	G'opingen|Gepingen|Geppingen|Gjoppingen|Goeppingen|Göppingen|ge ping gen|geppingen|ghwbynghn|gwpyngn
+Görlitz	51.15518	14.98853	57751	G'orlic|Gerlic|Gerlica|Giorlicas|Gjorlic|Goerlitz|Gorlicium Germaniae|Gorlitz|Görlitz|Nkerlits|Zgorjelc|Zgórjelc|Zhorelec|Zhorjelc|Zhořelec|ge er li ci|gerlitsi|gerurittsu|ghrlts|ghrlytz|ghwrlts|ghwrlyts|goeleullicheu|grlytz|grlyz|jwrlyts|qrlytz
+Stolberg	50.77368	6.22595	57684	Shtol'berg|Shtolberg|Sjtolberg|Stolberg|Stolberg  Rheinland|Stolbersch|ashtwlbrg|shi tuo er bei ge|shtwlbrgh|shutoruberuku
+Frankfurt (Oder)	52.34714	14.55062	57107	Francfort|Francfort del Oder|Francfort del Odra|Francfort-sur-l'Oder|Francoforte sull'Oder|Frankfordt|Frankfort an de Oder|Frankfort on the Oder|Frankfurt|Frankfurt (Oder)|Frankfurt Oderi aeaeres|Frankfurt Oderi ääres|Frankfurt an der Oder|Frankfurt de l'Oder|Frankfurt len Oder|Frankfurt na Oder|Frankfurt na Odri|Frankfurt nad Odra|Frankfurt nad Odrą|Frankfurt pe Oder|Frankfurt-na-Odere|Frankfurtas prie Oderio|Frankfurto ce Odro|Frankfurto ĉe Odro|Frankurt na Odri|Fráncfort|Fráncfort del Odra|Fráncfort del Óder|furankufuruto
+Baden-Baden	48.7606	8.23975	56881	Aquae Aureliae|Badehn-Badehn|Baden|Baden-Baden|Badenas-Badenas|Badenbadene|Banten-Banten|Bādenbādene|ba deng-ba deng|badenbaden|badn badn|badn-badn
+Hattingen	51.39894	7.18557	56866	Chatin'nken|Hattingen|Khatingen|Khattingen|ha ting gen|hatyngn
+Hilden	51.16818	6.93093	56565	Gil'den|Hilde|Hilden|Khil'den|Khilden|hyldn|xi er deng
+Sankt Augustin	50.77538	7.197	56094	Sankt Augustin|Sankt-Avgustin|St. Augustin|Zankt-Augustin|sheng ao gu si ding|zankt agstyn|zankt awghstyn
+Eschweiler	50.81854	6.27184	55778	Aischwiele|Ascvilare|Ehshvajler|Eschweiler|Eshvajler|Esvayler|Esveilere|Esveileris|Esveilers|Eşvayler|Ešveilere|Ešveileris|Ešveilers|ai shi wei lei|ashwaylr|ayshfaylr|eshuvuaira|eshvaileri|esyubailleo
+Ahlen	51.76338	7.8887	55280	Ahlen|Alen|Alenas|Alene|Aleno|Alna|Alnon|Aulen|a lun|ahln|allen|aren|Ālene|Ālna|Ālnon
+Bad Salzuflen	52.0862	8.74434	54899	Bad Salzuflen|Bad Zalcuflen|Bad-Zal'cuflen|ba te sa er ci wu fu lun|bad zaltswfln
+Euskirchen	50.66057	6.78722	54889	Euskirchen|OEskerche|Ojskirkhen|ao yi si ji xing|aywskyrsh|Öskerche
+Meerbusch	51.25268	6.68807	54826	Meerbusch|Merbush|mei er bu shi|myrbwsh
+Wolfenbüttel	52.16442	10.54095	54740	Guelpherbytum|Vol'fenbjuttel'|Volfembutel|Volfenbitel|Volfenbjutel|Wolfenbuettel|Wolfenbuttel|Wolfenbüttel|Wulfenbuettel|Wulfenbüttel|fwlfnbwtl|wlfnbwtl|wo er fen bi te er
+Hürth	50.87079	6.86761	54678	Gjurt|Hiurtas|Huerth|Hürth|Khirt|Khjurt|hwrt|xu er te
+Schweinfurt	50.04937	10.22175	54012	Schweinfurt|Shvajnfurt|Suevofortum|shfaynfwrt|shi wei yin fu te|shwaynfwrt
+Neustadt an der Weinstraße	49.35009	8.13886	53984	Neustadt|Neustadt an der Haardt|Neustadt an der Weinstrasse|Neustadt an der Weinstraße|Neustadt ce la Vinstrato|Neustadt ĉe la Vinstrato|Nojshhat an der Vajnshhrase|Nojshtadt-an-der-Vajnshtrase|Nojshtadt-an-der-Vajnshtrasse|Nojshtat an der Vajnshtrase|pu tao jiu zhi lu shang de xin cheng
+Pulheim	50.99965	6.80632	53762	Pul'gajm|Pul'khajm|Pulheim|Pulkhajm|Pullem|bwlhaym|pu er hai mu|pwlhaym
+Gummersbach	51.02608	7.56473	53131	Gumersbakh|Gummersbach|Gummersbakh|ghwmrsbakh|gu mei er si ba he|gwmrzbakh
+Waiblingen	48.83241	9.31641	52945	Vajblingen|Vayblingen|Waiblinga|Waiblingen|fayblynghn|wayblyngn|wei bu lin gen
+Nordhorn	52.43081	7.06833	52803	Nordhorn|Nordkhorn|Nothoorn|nuo de huo en|nwrdhwrn
+Universitäts- und Hansestadt Greifswald	54.08905	13.40244	52731	Grajfsval'd|Grajfsvald|Greifsvaldas|Greifsvalde|Greifswald|Griefswald|Griepswohld|Gripiew Las|Universitats- und Hansestadt Greifswald|Universitäts- und Hansestadt Greifswald|ge lai fu si wa er de|geulaipeuseubalteu|ghrayfsfalt|graipsvaldi|grayfswald|guraifusuvuaruto
+Cuxhaven	53.86828	8.69902	52677	Cuxhaven|Cuxhoben|Cuxhuuwen|Kuksgafen|Kukskhafen|Kukskhaven|ku ke si gang|kugseuhapen|kukkusuhafen|kwkshafn|kwkshawn
+Wetzlar	50.56109	8.50495	52656	Betslar|Veclar|Veclara|Veclaras|Veclaro|Veclāra|Vetclar|Vetzlar|Weslar|Weslår|Wetzlar|Wetzlaria|becheulla-eo|ftslar|vetslari|vuettsura|wei ci la er|weth s lar|wtslar|wzlr
+Menden	51.44337	7.77825	52452	Menden|Mennen|men deng|mndn
+Bergkamen	51.61633	7.64451	52329	Bergkamen|Berkamen|Biaergkoamen|Biärgkoamen|bei ge ka men|brghkamn|brgkamn
+Frechen	50.91485	6.8118	52309	Frechem|Frechen|Frekhen|frshn|fryshn|fu lei xing
+Bad Homburg vor der Höhe	50.22683	8.61816	51859	Bad Homburg|Bad Homburg v.d. Hoehe|Bad Homburg v.d. Höhe|Bad Homburg vor der Hoehe|Bad Homburg vor der Höhe|Bad Khomburg|Bad-Gomburg|Bad-Khomburg|Bant Chompournk|Homburg vor der Hohe|Homburg vor der Höhe|ba te hong bao|bad h xm bur kf xrde xr hex xex|bad hwmbwrg fwr dr hwhh|bateuhombuleukeupo-eodeeohoee
+Willich	51.26371	6.54734	51843	Vilikh|Villikh|Villix|Willich|fylysh|wei li xi|wylysh
+Emden	53.36592	7.20846	51526	Ehmdehn|Ehmden|Emda|Emden|Oamde|ai mu deng|amdn|emden|emtan|emuden
+Neu-Ulm	48.39279	10.01112	51389	Nei-Ulm|Neu Ulm|Neu-Ulm|Noea Ulma|Noj-Ul'm|Noj-Ulm|Nova Ulma|Noy Owlm|Nuevo Ulm|Nuova Ulma|Nöa Ulma|Subdistrikto Neu-Ulm|noiulleum|noiurumu|nwy-awlm|xin wu er mu
+Lingen	52.52269	7.32555	51310	Lingen|Lingen (Ems)|lin gen|lynghn|lyngn|ringen
+Erftstadt	50.81481	6.79387	51207	Ehrftshtadt|Erftshtadt|Erftshtat|Erftstadt|ai er fu te shi ta te|arftshtat
+Neubrück	51.13434	6.63857	51109	Neubrueck|Neubrück
+Lahr	48.34042	7.86886	50775	Lahr|la er|lar  badn-wwrtmbrg
+Ibbenbueren	52.27964	7.71457	50577	Ibbenbjuren|Ibbenbueren|Ibbenbüren|Ibenbiren|aybnbwrn|aynnbwrnn|yi ben bi lun
+Passau	48.5665	13.43122	50560	Bassa|Batavia Bavariae|Båssa|Pasau|Pasavia|Pasawa|Pasov|Passaou|Passau|Passavia|pa shao|pasau|pasaw|passau|phas sea|psaw
+Gronau	52.21099	7.02238	50547	Gronau|ge luo nao|ghrwnaw|grwnaw  nwrdrayn-wstfaln
+Langenhagen	52.44219	9.73651	50439	Langenhagen|Langenhageno|Langenhogen|Langenkhagen|lang gen ha gen|langhnhaghn|langnhagn
+Schwerte	51.44387	7.5675	50399	Schweierte|Schwerte|Shverte|Sverte|shfyrth|shi wei te|shwrth|Švertė
+Speyer	49.32083	8.43111	50343	Espira|Noviomagus|Schbaya|Shpaer|Shpajer|Shpejer|Spaier|Speyer|Spira|Spire|Spires|Spyr|ashpyr|ch pi xexr|shi pai er|shupaia|spyyr|syupaieo|Špýr
+Heidenheim an der Brenz	48.67798	10.15162	50067	Chainten'chaim|Gajdengajm-na-Brenci|Haidenhaim Brencal|Heidenheim|Heidenheim an der Brenz|Heidenheim in Wurttemberg|Heidenheim in Württemberg|Hoana|Khajdenkhajm an der Brenc|Khajdenkhajm na Brencu|Khajdenkhajm-an-der-Brenc|Khajdenkhajm-na-Brence|hai deng hai mu|haydnhaym|haydnhaym an dr brnts

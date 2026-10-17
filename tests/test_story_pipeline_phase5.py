@@ -313,6 +313,78 @@ def test_translation_retries_missing_news_headline():
     assert len(responses) == 2
 
 
+@pytest.mark.parametrize("invalid_retry", [None, "redacted", "story_id", "numbers"])
+def test_translation_redacted_response_uses_independent_retry(invalid_retry, caplog):
+    story = _normalize_story_inventory(_story_document(), _corrected_document()).stories[1]
+    story.source_text = "Bei dem Unfall wurden 5 Menschen verletzt."
+    payload = {
+        "story_id": story.story_id,
+        "source_segment_ids": story.source_segment_ids,
+        "translated_headline": "Kaza",
+        "translated_text": "Kazada 5 kişi yaralandı.",
+    }
+    if invalid_retry == "story_id":
+        payload["story_id"] = "wrong-story"
+    elif invalid_retry == "numbers":
+        payload["translated_text"] = "Kazada 6 kişi yaralandı."
+    producer = MagicMock(text="******", input_tokens=10, output_tokens=5, cost_usd=0.01)
+    retry = MagicMock(
+        text="******" if invalid_retry == "redacted" else json.dumps(payload),
+        input_tokens=20,
+        output_tokens=15,
+        cost_usd=0.02,
+    )
+    checked_costs = []
+
+    def budget_check(cost):
+        checked_costs.append(cost)
+        return True
+
+    with (
+        patch("btcedu.core.translator.call_claude", side_effect=[producer, retry]) as call,
+        patch("btcedu.core.translator._adjudicate_story_translation") as adjudicate,
+    ):
+        kwargs = {
+            "adjudication_route": {"provider": "copilot_cli", "model": "gpt-6.1-sol"},
+            "budget_check": budget_check,
+        }
+        if invalid_retry is None:
+            output, responses = _call_story_translation(
+                story, "system", "user", MagicMock(), None, **kwargs
+            )
+            assert output.translated_text == payload["translated_text"]
+            assert responses == [producer, retry]
+        else:
+            # A redacted producer has no usable candidate. Neither invalid schema
+            # nor changed facts from the independent retry may be accepted.
+            with pytest.raises(ValueError):
+                _call_story_translation(story, "system", "user", MagicMock(), None, **kwargs)
+
+    assert call.call_count == 2
+    assert "provider_override" not in call.call_args_list[0].kwargs
+    assert call.call_args.kwargs["provider_override"] == "copilot_cli"
+    assert call.call_args.kwargs["model_override"] == "gpt-6.1-sol"
+    assert call.call_args.kwargs["system_prompt"] == "system"
+    assert call.call_args.kwargs["user_message"].startswith("user")
+    schema = json.loads(call.call_args.kwargs["user_message"].split("JSON schema:\n")[1])
+    for field in ("translator_flags", "omitted_uncertain_details", "glossary_terms_used"):
+        assert schema["properties"][field]["items"] == {"type": "string"}
+    assert checked_costs[:2] == [0, 0.01]
+    assert "redacted" in caplog.text
+    adjudicate.assert_not_called()
+
+
+def test_translation_redacted_response_without_independent_route_fails():
+    story = _normalize_story_inventory(_story_document(), _corrected_document()).stories[1]
+    response = MagicMock(text="******", input_tokens=10, output_tokens=5, cost_usd=0)
+    with patch("btcedu.core.translator.call_claude", return_value=response) as call:
+        with pytest.raises(ValueError, match="redacted story translation"):
+            _call_story_translation(story, "system", "user", MagicMock(), None)
+
+    assert call.call_count == 2
+    assert all("provider_override" not in entry.kwargs for entry in call.call_args_list)
+
+
 def test_translation_uses_independent_adjudicator_replacement(tmp_path):
     story = _normalize_story_inventory(_story_document(), _corrected_document()).stories[1]
     story.source_text = "Bei dem Unfall wurden 5 Menschen verletzt."

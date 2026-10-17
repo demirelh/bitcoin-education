@@ -58,6 +58,9 @@ job lifecycle tests, with every stage dependency mocked and the job awaited.
 - `test_transcript_verifier.py` — quota-only independent secondary fallback,
   sticky provider selection, mixed-region cost/attribution and fail-closed errors;
   the exact OpenAI 429 `credit_balance_exhausted` response is mocked at the SDK
+- `test_story_pipeline_phase5.py` — story identity/factual preservation, including
+  the `******` translation response: bounded independent-route retry, unchanged
+  schema/factual checks, cost accounting and fail-closed behavior without a route
 - `conftest.py` — shared fixtures (db, episodes, transcripts)
 - `fixtures/` — static test data files
 

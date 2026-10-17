@@ -856,7 +856,7 @@ def _call_story_translation(
     adjudication_path: "Path | None" = None,
     budget_check: Callable[[float], bool] | None = None,
 ):
-    """Request and validate one structured story translation, retrying factual mismatches."""
+    """Validate story output; retry redacted responses on the configured independent route."""
     from btcedu.models.story_schema import StoryTranslationOutput
 
     responses: list[ClaudeResponse] = []
@@ -864,6 +864,7 @@ def _call_story_translation(
     last_error: Exception | None = None
     last_translation = None
     last_risks: list[str] = []
+    retry_overrides: dict[str, str] = {}
     for attempt in range(2):
         last_translation = None
         last_risks = []
@@ -886,9 +887,13 @@ def _call_story_translation(
             settings=settings,
             dry_run_path=dry_run_path,
             json_mode=True,
+            **retry_overrides,
         )
         responses.append(response)
+        redacted = response.text.strip() == "******"
         try:
+            if redacted:
+                raise ValueError("Copilot CLI returned a redacted story translation (******)")
             data = _parse_structured_response(response.text)
             translation = StoryTranslationOutput.model_validate(data)
             _validate_story_translation_structure(story, translation)
@@ -920,13 +925,30 @@ def _call_story_translation(
         except (ValueError, json.JSONDecodeError) as exc:
             last_error = exc
             if attempt == 0:
+                if redacted and adjudication_route:
+                    retry_overrides = {
+                        "provider_override": adjudication_route["provider"],
+                        "model_override": adjudication_route["model"],
+                    }
+                    logger.warning(
+                        "Story %s: producer returned a redacted response; "
+                        "retrying fresh translation with independent route %s/%s",
+                        story.story_id,
+                        adjudication_route["provider"],
+                        adjudication_route["model"],
+                    )
                 active_message = (
                     user_message
                     + "\n\nThe previous output was invalid: "
                     + str(exc)
                     + "\nReturn corrected JSON only. Preserve every protected fact."
                 )
-    if last_translation is not None and last_risks and adjudication_route:
+                if retry_overrides:
+                    active_message += (
+                        "\nThe output must conform to this JSON schema:\n"
+                        + json.dumps(StoryTranslationOutput.model_json_schema(), ensure_ascii=False)
+                    )
+    if last_translation is not None and last_risks and adjudication_route and not retry_overrides:
         translation, adjudication_response = _adjudicate_story_translation(
             story=story,
             candidate=last_translation,

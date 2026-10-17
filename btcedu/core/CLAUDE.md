@@ -124,6 +124,13 @@ Each v2 stage module follows the same pattern:
 - **Structured translation output**: keep strict schema validation after the
   translator's `json_repair` fallback; malformed quoting may be repaired, but
   structurally or factually invalid story translations must still fail.
+  A Copilot response containing only `******` is redacted, not malformed JSON.
+  Use the profile's enabled `translate.validation_adjudication` route for the
+  existing bounded retry, requesting a fresh translation with the explicit
+  `StoryTranslationOutput` JSON schema (metadata arrays contain strings), and
+  the same identity, factual and budget checks. Never recover masked content from CLI
+  session files or let the independent retry adjudicate its own factual risks.
+  Without that route, repeated redaction remains a loud failure.
 - **Automatic repair**: the failure branch calls `_trigger_automatic_copilot_fix()`,
   which launches one `gpt-6.1-sol` repair in tmux. The error fingerprint is
   persisted before launch, so the same failure is never retried automatically,

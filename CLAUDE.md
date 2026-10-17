@@ -51,6 +51,11 @@ All v2-only stages are guarded in `_run_stage()` — v1 episodes cannot enter v2
 `copilot_cli`). With `block_on_hold: false` the pipeline continues unattended
 and records decisions in `gate_adjudication.json`. Unattended profiles also
 resume episodes that are parked on a pending gate.
+If the translation producer returns only Copilot's `******` redaction marker,
+the existing bounded translation retry uses the configured
+`translate.validation_adjudication` route for a fresh, fully validated translation;
+it does not read unredacted session data, accept the marker as narration or
+adjudicate its own retry's factual risks.
 
 **review_gate_3** additionally runs deterministic weather video checks
 (`core/final_review.py`: blank/freeze/stale frames, resolution, narration

@@ -38,7 +38,7 @@ from btcedu.services.errors import ErrorCategory, PipelineError
 
 logger = logging.getLogger(__name__)
 
-VERIFICATION_COMPARATOR_VERSION = "1.4"
+VERIFICATION_COMPARATOR_VERSION = "1.5"
 _VALID_MODES = {"disabled", "full", "suspicious_segments_only"}
 _SEVERITY_ORDER = {"minor": 0, "major": 1, "critical": 2}
 _TOKEN_RE = re.compile(r"[^\W_]+(?:['’-][^\W_]+)*|\d+(?:[.,:]\d+)*%?", re.UNICODE)
@@ -764,9 +764,9 @@ def build_verification_regions(
             raise ValueError(
                 f"Analysis references unknown transcript segment: {finding.segment_id}"
             )
-        original_start = segment.start_seconds
+        original_start = min(segment.start_seconds, audio_duration_seconds)
         original_end = min(segment.end_seconds, audio_duration_seconds)
-        clip_start = max(0.0, original_start - max(0.0, context_seconds))
+        clip_start = max(0.0, segment.start_seconds - max(0.0, context_seconds))
         clip_end = min(
             audio_duration_seconds,
             original_end + max(0.0, context_seconds),
@@ -806,8 +806,11 @@ def build_verification_regions(
             source_segment_ids=tuple(
                 segment.segment_id
                 for segment in document.segments
-                if segment.start_seconds >= region.original_start_seconds
-                and segment.end_seconds <= region.original_end_seconds
+                if segment.segment_id in region.source_segment_ids
+                or (
+                    segment.start_seconds >= region.original_start_seconds
+                    and segment.end_seconds <= region.original_end_seconds
+                )
             ),
             original_start_seconds=region.original_start_seconds,
             original_end_seconds=region.original_end_seconds,
@@ -1160,12 +1163,15 @@ def _primary_text_for_clip(
     document: TranscriptDocument,
     plan: VerificationRegionPlan,
 ) -> str:
-    """Build primary text from the same context interval sent to secondary ASR."""
+    """Include clip context and flagged text even when its timestamps exceed the audio."""
     return " ".join(
         segment.text
         for segment in document.segments
-        if segment.start_seconds >= plan.clip_start_seconds
-        and segment.end_seconds <= plan.clip_end_seconds
+        if segment.segment_id in plan.source_segment_ids
+        or (
+            segment.start_seconds >= plan.clip_start_seconds
+            and segment.end_seconds <= plan.clip_end_seconds
+        )
     ).strip()
 
 

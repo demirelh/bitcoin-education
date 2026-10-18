@@ -65,6 +65,12 @@ otherwise the stage fails closed. Authentication errors, ordinary rate limits
 and fallback errors are not bypassed. Regions record their actual verifier and
 cost, including successful OpenAI clips before a mid-stage switch.
 
+ASR tail repetitions can carry timestamps past the actual audio end. Verification
+clamps the audio ranges while preserving the flagged segment IDs and primary text
+for comparison. An empty `source_segment_ids` validation error in this case is a
+region-planning defect, not an API safety rejection; do not edit the prompt or
+discard the tail findings to bypass it.
+
 Before committing/pushing a verification fix or resuming the episode, require a
 successful isolated three-episode stage replay:
 

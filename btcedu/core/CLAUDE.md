@@ -114,6 +114,10 @@ Each v2 stage module follows the same pattern:
   cost and provider/model. Never use the primary transcript's actual provider/model
   as the fallback (local/GitHub faster-whisper are equivalent); fail closed instead.
   Authentication/rate-limit errors and fallback failures still fail the stage.
+- **Verification EOF bounds**: ASR may repeat tail segments past the audio duration.
+  Clamp original/clip ranges, but retain all selected source IDs and their primary text
+  when expanding merged regions. Out-of-range text must still be compared, not silently
+  dropped; a region with no usable context audio remains an explicit failure.
 - **Reboot debugging**: a stage writes and commits its `RUNNING` row before
   work; retry summaries aggregate all attempts instead of showing only the last
 - **Failover debugging**: `processing`/`publishing` are intentionally

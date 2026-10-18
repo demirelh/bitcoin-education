@@ -232,6 +232,9 @@ It must not reuse the provider/model that produced the primary transcript
 (local and GitHub faster-whisper count as the same provider). A matching primary,
 a failed fallback, authentication errors and ordinary rate limits remain failures.
 Successful regions retain their actual provider/model and billed cost.
+Verification clamps audio ranges to the media duration but retains every selected
+source segment ID and its text, including ASR tail repetitions timestamped past EOF.
+Never drop those findings or relax the nonempty `source_segment_ids` schema.
 
 ## Notifications
 

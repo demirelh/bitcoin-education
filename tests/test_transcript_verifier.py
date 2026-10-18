@@ -242,6 +242,80 @@ def test_suspicious_regions_are_clamped_and_merged():
     assert plans[0].original_end_seconds == 18
 
 
+@pytest.mark.parametrize("first_start", [911.05, 912.05])
+def test_verification_retains_flagged_segments_past_audio_end(db_session, tmp_path, first_start):
+    segments = [
+        _segment("seg-0001", 908.73, 911.05, "Ich wünsche Ihnen einen angenehmen Abend."),
+        _segment("seg-0002", first_start, 913.99, "Ich wünsche Ihnen einen angenehmen Tag."),
+        _segment("seg-0003", 913.99, 915.79, "Ich wünsche Ihnen einen angenehmen Tag."),
+    ]
+    document = _document().model_copy(
+        update={"segments": segments, "text": " ".join(segment.text for segment in segments)}
+    )
+    analysis = _analysis(document, "seg-0002", "seg-0003")
+    duration = 911.146667
+    plans = build_verification_regions(
+        document,
+        analysis,
+        mode="suspicious_segments_only",
+        audio_duration_seconds=duration,
+        context_seconds=15,
+    )
+
+    assert len(plans) == 1
+    plan = plans[0]
+    assert plan.source_segment_ids == ("seg-0002", "seg-0003")
+    assert plan.original_start_seconds == min(first_start, duration)
+    assert plan.original_end_seconds == duration
+    assert plan.clip_end_seconds == duration
+    assert plan.clip_start_seconds < plan.clip_end_seconds
+    assert _primary_text_for_clip(document, plan) == document.text
+
+    episode = _seed(db_session, tmp_path, document, analysis)
+    episode.error_message = "previous source_segment_ids validation failure"
+    db_session.commit()
+    provider = _provider(segments[0].text)
+    with (
+        patch("btcedu.services.ffmpeg_service.probe_media", return_value=_media(duration)),
+        patch("btcedu.services.ffmpeg_service.extract_audio_clip") as extract,
+        patch(
+            "btcedu.services.transcription_service.get_transcription_provider",
+            return_value=provider,
+        ),
+        patch(
+            "btcedu.core.transcript_verifier.compare_transcripts", wraps=compare_transcripts
+        ) as compare,
+    ):
+        result = verify_transcript(db_session, document.episode_id, _settings(tmp_path))
+
+    artifact = TranscriptVerificationDocument.model_validate_json(
+        Path(result.verification_path).read_text(encoding="utf-8")
+    )
+    assert result.regions_checked == 1
+    assert provider.transcribe.call_count == 1
+    assert extract.call_args.kwargs["end_seconds"] == duration
+    region = artifact.verified_regions[0]
+    assert region.source_segment_ids == ["seg-0002", "seg-0003"]
+    assert region.primary_text == document.text
+    assert region.secondary_text == segments[0].text
+    for segment in segments[1:]:
+        compare.assert_any_call(segment.text, segments[0].text)
+    assert episode.error_message is None
+    assert db_session.query(PipelineRun).one().status == RunStatus.SUCCESS
+
+
+def test_flagged_segment_without_usable_audio_still_fails():
+    document = _document()
+    with pytest.raises(ValueError, match="seg-0003 has no usable audio range"):
+        build_verification_regions(
+            document,
+            _analysis(document, "seg-0003"),
+            mode="suspicious_segments_only",
+            audio_duration_seconds=20,
+            context_seconds=15,
+        )
+
+
 def test_secondary_severity_filter_keeps_major_and_critical_findings():
     document = _document()
     analysis = _analysis(document, "seg-0001", "seg-0002", "seg-0003")

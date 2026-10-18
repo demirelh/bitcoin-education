@@ -132,6 +132,9 @@ Transcript analysis flags suspicious ASR regions without external calls.
 Selective verification merges nearby suspicious ranges, clamps clips to media
 bounds, enforces clip/audio/cost limits, and calls secondary ASR only for those
 ranges.
+Clamping must retain the selected source IDs and primary text even when ASR tail
+repetitions extend past the media end. These findings remain subject to comparison;
+they are not discarded or represented by an empty source ID list.
 
 Translation QA checks, per story and local context:
 

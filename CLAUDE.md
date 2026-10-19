@@ -234,6 +234,8 @@ a failed fallback, authentication errors and ordinary rate limits remain failure
 Successful regions retain their actual provider/model and billed cost.
 Verification clamps audio ranges to the media duration but retains every selected
 source segment ID and its text, including ASR tail repetitions timestamped past EOF.
+Apply context padding after clamping the source timestamps: even a finding more
+than one context window past EOF must use the final context window of real audio.
 Never drop those findings or relax the nonempty `source_segment_ids` schema.
 
 ## Notifications

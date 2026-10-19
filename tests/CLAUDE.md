@@ -59,7 +59,10 @@ job lifecycle tests, with every stage dependency mocked and the job awaited.
   sticky provider selection, mixed-region cost/attribution and fail-closed errors;
   the exact OpenAI 429 `credit_balance_exhausted` response is mocked at the SDK.
   EOF regression cases retain flagged source IDs/text for segments crossing or
-  entirely beyond the media end while keeping extracted audio and artifact ranges bounded.
+  entirely beyond the media end, including the selected 2026-10-19 episode's
+  timestamps more than a context window past EOF. Context is applied to clamped
+  timestamps; extracted audio and artifact ranges stay bounded, and wholly
+  out-of-range segments without context still fail.
 - `test_story_pipeline_phase5.py` — story identity/factual preservation, including
   the `******` translation response: bounded independent-route retry, unchanged
   schema/factual checks, cost accounting and fail-closed behavior without a route

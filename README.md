@@ -35,6 +35,9 @@ If OpenAI verification credits are exhausted, its profile-owned
 `faster_whisper/small`. This quota-only switch never reuses the primary
 transcript's provider/model; other errors and fallback failures still stop the
 stage. Per-region artifacts preserve the actual verifier and billed cost.
+Verification applies context padding to media-bounded timestamps, so ASR tail
+segments even more than a context window past EOF use the final real audio
+window without dropping their flagged IDs or text.
 
 `tagesschau_tr` is fed by the local `ard-recorder` capture
 (`/mnt/photo-backup/tagesschau/recordings/`), which is ready about twenty

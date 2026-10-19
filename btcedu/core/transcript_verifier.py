@@ -38,7 +38,7 @@ from btcedu.services.errors import ErrorCategory, PipelineError
 
 logger = logging.getLogger(__name__)
 
-VERIFICATION_COMPARATOR_VERSION = "1.5"
+VERIFICATION_COMPARATOR_VERSION = "1.6"
 _VALID_MODES = {"disabled", "full", "suspicious_segments_only"}
 _SEVERITY_ORDER = {"minor": 0, "major": 1, "critical": 2}
 _TOKEN_RE = re.compile(r"[^\W_]+(?:['’-][^\W_]+)*|\d+(?:[.,:]\d+)*%?", re.UNICODE)
@@ -766,7 +766,7 @@ def build_verification_regions(
             )
         original_start = min(segment.start_seconds, audio_duration_seconds)
         original_end = min(segment.end_seconds, audio_duration_seconds)
-        clip_start = max(0.0, segment.start_seconds - max(0.0, context_seconds))
+        clip_start = max(0.0, original_start - max(0.0, context_seconds))
         clip_end = min(
             audio_duration_seconds,
             original_end + max(0.0, context_seconds),

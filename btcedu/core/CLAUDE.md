@@ -116,8 +116,10 @@ Each v2 stage module follows the same pattern:
   Authentication/rate-limit errors and fallback failures still fail the stage.
 - **Verification EOF bounds**: ASR may repeat tail segments past the audio duration.
   Clamp original/clip ranges, but retain all selected source IDs and their primary text
-  when expanding merged regions. Out-of-range text must still be compared, not silently
-  dropped; a region with no usable context audio remains an explicit failure.
+  when expanding merged regions. Add context after clamping the source timestamps,
+  so findings more than a context window past EOF use the final real audio window.
+  Out-of-range text must still be compared, not silently dropped; without context,
+  a region wholly past EOF still fails explicitly.
 - **Reboot debugging**: a stage writes and commits its `RUNNING` row before
   work; retry summaries aggregate all attempts instead of showing only the last
 - **Failover debugging**: `processing`/`publishing` are intentionally

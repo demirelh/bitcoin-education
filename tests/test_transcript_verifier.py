@@ -242,12 +242,12 @@ def test_suspicious_regions_are_clamped_and_merged():
     assert plans[0].original_end_seconds == 18
 
 
-@pytest.mark.parametrize("first_start", [911.05, 912.05])
+@pytest.mark.parametrize("first_start", [911.05, 912.05, 930.0])
 def test_verification_retains_flagged_segments_past_audio_end(db_session, tmp_path, first_start):
     segments = [
         _segment("seg-0001", 908.73, 911.05, "Ich wünsche Ihnen einen angenehmen Abend."),
-        _segment("seg-0002", first_start, 913.99, "Ich wünsche Ihnen einen angenehmen Tag."),
-        _segment("seg-0003", 913.99, 915.79, "Ich wünsche Ihnen einen angenehmen Tag."),
+        _segment("seg-0002", first_start, first_start + 2, "Ich wünsche einen angenehmen Tag."),
+        _segment("seg-0003", first_start + 2, first_start + 4, "Ich wünsche einen angenehmen Tag."),
     ]
     document = _document().model_copy(
         update={"segments": segments, "text": " ".join(segment.text for segment in segments)}
@@ -304,7 +304,35 @@ def test_verification_retains_flagged_segments_past_audio_end(db_session, tmp_pa
     assert db_session.query(PipelineRun).one().status == RunStatus.SUCCESS
 
 
-def test_flagged_segment_without_usable_audio_still_fails():
+def test_verification_anchors_selected_episode_tail_context_at_audio_end():
+    segments = [
+        _segment("seg-0266", 928.44, 930.84, "Einen schönen Montagabend."),
+        _segment("seg-0267", 930.84, 936.1, "Einen schönen Montagabend."),
+        _segment("seg-0268", 936.26, 944.32, "Einen schönen Mittag."),
+        _segment("seg-0269", 946.52, 950.14, "Ein fehlerhaft erkannter Nachsatz."),
+    ]
+    document = _document().model_copy(
+        update={"segments": segments, "text": " ".join(segment.text for segment in segments)}
+    )
+    plans = build_verification_regions(
+        document,
+        _analysis(document, "seg-0267", "seg-0268", "seg-0269"),
+        mode="suspicious_segments_only",
+        audio_duration_seconds=931.008,
+        context_seconds=15,
+    )
+
+    assert len(plans) == 1
+    plan = plans[0]
+    assert plan.source_segment_ids == ("seg-0267", "seg-0268", "seg-0269")
+    assert plan.original_start_seconds == 930.84
+    assert plan.original_end_seconds == 931.008
+    assert plan.clip_start_seconds == 915.84
+    assert plan.clip_end_seconds == 931.008
+    assert _primary_text_for_clip(document, plan) == document.text
+
+
+def test_flagged_segment_without_context_or_usable_audio_still_fails():
     document = _document()
     with pytest.raises(ValueError, match="seg-0003 has no usable audio range"):
         build_verification_regions(
@@ -312,7 +340,7 @@ def test_flagged_segment_without_usable_audio_still_fails():
             _analysis(document, "seg-0003"),
             mode="suspicious_segments_only",
             audio_duration_seconds=20,
-            context_seconds=15,
+            context_seconds=0,
         )
 
 

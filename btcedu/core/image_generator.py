@@ -878,6 +878,7 @@ def generate_images(
                     raise
                 except Exception as e:
                     logger.error(f"Failed to generate image for chapter {chapter.chapter_id}: {e}")
+                    failure_error = e
                     image_entry = None
                     if _fallback_provider and image_prompt:
                         try:
@@ -921,9 +922,10 @@ def generate_images(
                                 chapter.chapter_id,
                                 fallback_error,
                             )
+                            failure_error = fallback_error
                             image_entry = None
                     if image_entry is None:
-                        image_entry = _failed_image_entry(chapter, str(e))
+                        image_entry = _failed_image_entry(chapter, str(failure_error))
                         failed_count += 1
 
             else:
@@ -1137,7 +1139,11 @@ def generate_images(
             elif permanent:
                 category = permanent[0]
             else:
-                category = ErrorCategory.TRANSIENT_SERVER
+                category = (
+                    chapter_categories[0]
+                    if chapter_categories
+                    else ErrorCategory.TRANSIENT_SERVER
+                )
             detail = "; ".join(
                 f"{chapter_id}: {message}"
                 for chapter_id, message in sorted(failure_messages.items())

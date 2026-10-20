@@ -54,6 +54,10 @@ Each v2 stage module follows the same pattern:
   re-lists every collection entry, downloads new files, drops vanished/no-longer-cleared ones and
   resumes with the longest-unsynced entry after a Commons 429. An entry the library has never
   seen is mirrored live once (`free_media._library_photos`).
+- Imagegen fallback failures retain the terminal provider's error, not the original
+  Flux/Ideogram refusal. An exhausted Pexels search timeout is reported as `network`,
+  not as the earlier Flux `quota_exhausted`; Pexels retries transport failures within
+  its existing three-attempt search budget.
 - `stock_images.py` (60KB) — Pexels stock search, intent extraction, ranking, candidate finalization
 - `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro
   cards, ticker. A studio scene plan is ignored while `anchor_enabled=false`,

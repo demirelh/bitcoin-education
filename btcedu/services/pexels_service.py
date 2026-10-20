@@ -388,9 +388,23 @@ class PexelsService:
         max_retries: int = 3,
         **kwargs,
     ) -> requests.Response:
-        """Make HTTP request with exponential backoff retry on 429."""
+        """Retry rate limits and transport failures within one bounded attempt budget."""
         for attempt in range(max_retries):
-            response = requests.request(method, url, timeout=30, **kwargs)
+            try:
+                response = requests.request(method, url, timeout=30, **kwargs)
+            except (requests.Timeout, requests.ConnectionError) as error:
+                if attempt == max_retries - 1:
+                    raise
+                wait_time = min(2 ** (attempt + 1), 60)
+                logger.warning(
+                    "Pexels transport failure (attempt %d/%d): %s, retrying in %ss...",
+                    attempt + 1,
+                    max_retries,
+                    error,
+                    wait_time,
+                )
+                time.sleep(wait_time)
+                continue
 
             if response.status_code == 429:
                 if attempt < max_retries - 1:

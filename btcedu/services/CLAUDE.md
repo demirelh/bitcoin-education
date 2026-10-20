@@ -50,7 +50,10 @@ Each service uses a Protocol for swappable implementations:
   `credit_balance_exhausted`**, so both retry loops classify the error and fail
   fast instead of treating it as a rate limit; SDK-internal retries are disabled
   (`max_retries=0`) so one refusal is not multiplied into nine requests.
-- `pexels_service.py` — Pexels stock photo/video search via raw HTTP
+- `pexels_service.py` — Pexels stock photo/video search via raw HTTP.
+  Search requests share a three-attempt budget for HTTP 429, timeouts and
+  connection failures (2 s / 4 s backoff). Exhausted transport failures retain
+  their original exception; other HTTP errors still fail immediately.
 - `meteo_service.py` — Open-Meteo / DWD ICON forecasts via urllib (`OpenMeteoService`, `MeteoService` Protocol). One multi-location request, never raises: failures degrade to an empty list. `_request()` is the seam patched in tests.
 - `notify_service.py` — WhatsApp push for pipeline failures via the local whatsapp-service REST API. Never raises, skipped when disabled or in dry-run.
 - `credits_service.py` — live provider balances plus locally tracked spend. OpenAI

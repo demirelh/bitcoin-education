@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 
 from btcedu.services.pexels_service import PexelsPhoto, PexelsSearchResult, PexelsService
 
@@ -49,6 +50,38 @@ class TestPexelsServiceInit:
 
 
 class TestPexelsSearch:
+    @pytest.mark.parametrize("error_type", [requests.ReadTimeout, requests.ConnectionError])
+    def test_search_retries_transport_failure(self, service, sample_response, error_type):
+        success = MagicMock(status_code=200)
+        success.json.return_value = sample_response
+        with (
+            patch(
+                "btcedu.services.pexels_service.requests.request",
+                side_effect=[error_type("read timeout=30"), success],
+            ) as request,
+            patch("btcedu.services.pexels_service.time.sleep") as sleep,
+        ):
+            result = service.search("military training bridge")
+
+        assert len(result.photos) == 3
+        assert request.call_count == 2
+        sleep.assert_called_once_with(2)
+
+    def test_search_transport_retries_are_bounded(self, service):
+        error = requests.ReadTimeout("read timeout=30")
+        with (
+            patch(
+                "btcedu.services.pexels_service.requests.request", side_effect=error
+            ) as request,
+            patch("btcedu.services.pexels_service.time.sleep") as sleep,
+            pytest.raises(requests.ReadTimeout) as excinfo,
+        ):
+            service.search("military training bridge")
+
+        assert excinfo.value is error
+        assert request.call_count == 3
+        assert [call.args[0] for call in sleep.call_args_list] == [2, 4]
+
     @patch("btcedu.services.pexels_service.requests.request")
     def test_search_returns_photos(self, mock_request, service, sample_response):
         mock_resp = MagicMock()
@@ -106,15 +139,17 @@ class TestPexelsSearch:
         assert len(result.photos) == 3
         assert mock_sleep.call_count == 1
 
+    @pytest.mark.parametrize("status_code", [401, 403, 500])
     @patch("btcedu.services.pexels_service.requests.request")
-    def test_search_api_error_raises(self, mock_request, service):
+    def test_search_api_error_raises(self, mock_request, service, status_code):
         mock_resp = MagicMock()
-        mock_resp.status_code = 500
-        mock_resp.text = "Internal Server Error"
+        mock_resp.status_code = status_code
+        mock_resp.text = "API error"
         mock_request.return_value = mock_resp
 
-        with pytest.raises(RuntimeError, match="Pexels API error 500"):
+        with pytest.raises(RuntimeError, match=f"Pexels API error {status_code}"):
             service.search("test")
+        mock_request.assert_called_once()
 
     @patch("btcedu.services.pexels_service.time.sleep")
     @patch("btcedu.services.pexels_service.requests.request")

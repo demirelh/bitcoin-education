@@ -66,6 +66,9 @@ routes primary generation through Flux or Ideogram and uses Pexels as the
 terminal fallback; other profiles may route among Flux, Ideogram, DALL-E,
 Gemini, or Pexels. Imagegen never reports success with a manifest entry
 pointing at a file that was never written.
+Pexels search retries timeouts and connection failures within its three-attempt
+budget. If fallback still fails, imagegen reports that terminal error rather
+than the earlier generative-provider failure.
 With `imagegen.free_media_first` (`tagesschau_tr`), a `b_roll` chapter first
 gets a freely licensed photograph from the curated collection or a Wikidata
 portrait (`core/free_media.py`, same rights check as the newsroom): a place or

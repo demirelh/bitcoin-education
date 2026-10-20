@@ -797,6 +797,10 @@ def test_unresolved_chapter_image_reports_auth_error_not_transient(db_session, t
         patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
         patch("btcedu.core.image_generator._create_media_asset_record"),
         patch(
+            "btcedu.core.image_generator._generate_pexels_fallback",
+            side_effect=RuntimeError("Pexels API error 401: Unauthorized"),
+        ),
+        patch(
             "btcedu.core.image_generator._generate_single_image",
             side_effect=RuntimeError(
                 "Ideogram API failed after 3 retries: 401 Client Error: Unauthorized "
@@ -826,6 +830,10 @@ def test_unresolved_chapter_image_reports_payment_required_as_quota(db_session, 
     with (
         patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
         patch("btcedu.core.image_generator._create_media_asset_record"),
+        patch(
+            "btcedu.core.image_generator._generate_pexels_fallback",
+            side_effect=RuntimeError("Pexels API error 402: Payment Required"),
+        ),
         patch(
             "btcedu.core.image_generator._generate_single_image",
             side_effect=RuntimeError(
@@ -938,3 +946,61 @@ def test_pexels_fallback_rescues_failed_generative_provider(db_session, tmp_path
     assert entry["generation_method"] == "pexels"
     assert entry["metadata"]["pexels_id"] == 123
     assert entry["metadata"]["license"] == "Pexels License (free for commercial use)"
+
+
+@pytest.mark.parametrize("recover", [True, False])
+def test_quota_fallback_retries_pexels_timeout(db_session, tmp_path, recover):
+    """The selected episode lost ch03 after one Pexels timeout behind a Flux quota lock."""
+    import requests
+
+    from btcedu.core.image_generator import generate_images
+    from btcedu.services.errors import ErrorCategory, PipelineError
+
+    episode_id = "ep_quota_timeout"
+    settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+    settings.pexels_api_key = "pexels-key"
+    response = MagicMock(status_code=200)
+    response.json.return_value = json.loads(
+        (Path(__file__).parent / "fixtures" / "pexels_search_response.json").read_text()
+    )
+    timeout = requests.ReadTimeout(
+        "HTTPSConnectionPool(host='api.pexels.com', port=443): "
+        "Read timed out. (read timeout=30)"
+    )
+    quota_error = RuntimeError(
+        "Flux API rejected the request permanently [quota_exhausted]: "
+        "403 Client Error: Forbidden for url: https://fal.run/fal-ai/flux/dev "
+        '— {"detail":"User is locked. Reason: TOP_UP."}'
+    )
+    with (
+        patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
+        patch("btcedu.core.image_generator._create_media_asset_record"),
+        patch("btcedu.core.image_generator._generate_single_image", side_effect=quota_error),
+        patch(
+            "btcedu.services.pexels_service.requests.request",
+            side_effect=[timeout, response] if recover else timeout,
+        ) as request,
+        patch("btcedu.services.pexels_service.time.sleep"),
+        patch(
+            "btcedu.services.pexels_service.PexelsService.download_photo",
+            side_effect=lambda photo, path, size: path.write_bytes(b"stock"),
+        ),
+    ):
+        if recover:
+            result = generate_images(db_session, episode_id, settings, force=True)
+            assert result.failed_count == 0
+        else:
+            with pytest.raises(PipelineError) as excinfo:
+                generate_images(db_session, episode_id, settings, force=True)
+            assert excinfo.value.category == ErrorCategory.TRANSIENT_NETWORK
+            assert "api.pexels.com" in str(excinfo.value)
+            assert "TOP_UP" not in str(excinfo.value)
+
+    assert request.call_count == (2 if recover else 3)
+    manifest = json.loads(
+        (Path(settings.outputs_dir) / episode_id / "images" / "manifest.json").read_text()
+    )
+    entry = manifest["images"][0]
+    assert entry["generation_method"] == ("pexels" if recover else "failed")
+    if recover:
+        assert (Path(settings.outputs_dir) / episode_id / entry["file_path"]).is_file()

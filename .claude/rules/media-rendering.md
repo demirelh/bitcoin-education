@@ -12,7 +12,7 @@ paths:
 
 # Media & Rendering Rules
 
-- imagegen dispatch: tagesschau_tr episodes → Gemini 2.0 Flash frame editing (~$0.003/image); all others → Pexels stock images
+- imagegen dispatch is profile-owned: tagesschau_tr uses Flux/Ideogram with Pexels fallback, not Gemini frame editing. Pexels search retries transport failures within three attempts; terminal fallback errors must not be masked by the earlier generative-provider error.
 - Gemini frame editor: translates German text overlays to Turkish on extracted video frames
 - ElevenLabs TTS: raw HTTP (not SDK), retry logic, text chunking for long narrations
 - ffmpeg rendering: per-chapter segments → concat → draft.mp4

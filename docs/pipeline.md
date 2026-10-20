@@ -111,6 +111,9 @@ türkische YouTube-Videos umwandeln.
   überschreibt die `.env`. Imagegen verwendet für dieses Profil generatives
   Flux-/Ideogram-Routing und fällt bei Providerfehlern auf Pexels zurück;
   Gemini-Frame-Editing ist inaktiv.
+  Pexels-Suchen wiederholen Timeouts und Verbindungsfehler innerhalb von maximal
+  drei Versuchen (2 s / 4 s Wartezeit). Scheitert auch der Fallback, meldet
+  Imagegen dessen letzten Fehler statt des vorherigen Flux-/Ideogram-Fehlers.
 - **Kostenschutz:** Guard pro Episode (`max_episode_cost_usd`, Default $10).
 - **Robustheit:** Refusal-Retry (leerer/verweigerter LLM-Output → Reframe-Retry
   → Anthropic-Fallback), JSON-Korrektur-Retry (z. B. bei fehlerhaftem

@@ -43,7 +43,7 @@ All via `btcedu/services/ffmpeg_service.py`:
 ## Raspberry Pi considerations
 
 - **Software encoding only**: no hardware H.264 encoder on Pi
-- **Config tuning**: `RENDER_PRESET=ultrafast` and `RENDER_TIMEOUT_SEGMENT=900` in `.env`
+- **Config tuning**: `RENDER_PRESET=veryfast`, `RENDER_CRF=16` and `RENDER_TIMEOUT_SEGMENT=3600` in `.env` (`ultrafast` needs ~3x the bitrate)
 - **Smoke test**: `btcedu smoke-test-video --keep` validates the full pipeline without real content
 
 ## Output

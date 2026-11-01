@@ -2218,10 +2218,12 @@ def _render_beat_chapter(
     durations[-1] = round(durations[-1] + _BEAT_TAIL_HEADROOM_SECONDS, 3)
 
     shot_paths: list[str] = []
+    silent_audios: list[Path] = []
     shot_start = 0.0
     for index, (beat, shot_duration) in enumerate(zip(beats, durations, strict=True)):
         silent_audio = beats_dir / f"{chapter.chapter_id}_beat{index:02d}.m4a"
         generate_silent_audio(str(silent_audio), duration=shot_duration)
+        silent_audios.append(silent_audio)
         shot_path = beats_dir / f"{chapter.chapter_id}_beat{index:02d}.mp4"
         # Each shot is its own encode, so it carries only the lines spoken
         # while it is on screen, re-timed to its own start. A cue crossing the
@@ -2258,13 +2260,17 @@ def _render_beat_chapter(
 
     silent_chapter = beats_dir / f"{chapter.chapter_id}_silent.mp4"
     concatenate_segments(shot_paths, str(silent_chapter))
-    return replace_audio_track(
+    result = replace_audio_track(
         video_path=str(silent_chapter),
         audio_path=str(audio_path),
         output_path=str(output_path),
         audio_bitrate=settings.render_audio_bitrate,
         timeout_seconds=settings.render_timeout_segment,
     )
+    # Shots are re-encoded on every render, so only the joined chapter is worth keeping.
+    for leftover in [*shot_paths, *silent_audios, silent_chapter]:
+        Path(leftover).unlink(missing_ok=True)
+    return result
 
 
 def title_card_texts(episode, settings: Settings) -> dict:

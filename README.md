@@ -157,9 +157,10 @@ All settings from `.env` (see `.env.example`):
 
 Full settings: `btcedu/config.py`.
 
-On the Raspberry Pi production host, `RENDER_PRESET=ultrafast` and
-`RENDER_TIMEOUT_SEGMENT=900` are recommended operational tuning values; they
-are not the generic defaults above.
+On the Raspberry Pi production host, `RENDER_PRESET=veryfast`, `RENDER_CRF=16`
+and `RENDER_TIMEOUT_SEGMENT=3600` are recommended operational tuning values; they
+are not the generic defaults above. `ultrafast` needs about three times the
+bitrate for the same picture and filled the SD card.
 
 Precedence is: code defaults → `.env`/environment → explicit `Settings(...)`
 values → profile-owned stage/provider settings → supported CLI overrides.

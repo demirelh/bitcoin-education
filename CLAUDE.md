@@ -206,8 +206,12 @@ times, completion times, summed retry duration/cost and attempt counts.
   path for `source == "local_recorder"`; `download_episode` extracts audio with
   ffmpeg and links the video instead. `_validate_url` would reject the path.
 - **Raspberry Pi**: ffmpeg uses software encoding (slow). Production
-  recommendation: `RENDER_PRESET=ultrafast`, `RENDER_TIMEOUT_SEGMENT=900`;
-  these are tuning values, not generic Settings defaults.
+  recommendation: `RENDER_PRESET=veryfast`, `RENDER_CRF=16`,
+  `RENDER_TIMEOUT_SEGMENT=3600`; these are tuning values, not generic Settings
+  defaults. `ultrafast` + CRF 18 wrote Ken Burns shots at ~27 Mbit/s (SSIM 0.990)
+  where `veryfast` + CRF 16 needs ~9 Mbit/s (SSIM 0.987) at ~30% more encode
+  time; the 25 Mbit/s videos filled the SD card. Beat shots are deleted once their
+  chapter is joined (they are re-encoded on every render anyway).
 
 ## Config (.env)
 

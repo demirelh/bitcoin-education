@@ -9,7 +9,10 @@ import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-from flask import Blueprint, jsonify, render_template
+from flask import Blueprint, current_app, jsonify, render_template, request
+
+from btcedu.core import roadmap_agent
+from btcedu.web.auth import operator_ref
 
 ROADMAP_PATH = Path(__file__).resolve().parents[2] / "docs" / "ROADMAP.md"
 
@@ -112,3 +115,37 @@ def roadmap_data():
     data = parse_roadmap(ROADMAP_PATH.read_text(encoding="utf-8"))
     data["updated_at"] = datetime.fromtimestamp(ROADMAP_PATH.stat().st_mtime, UTC).isoformat()
     return jsonify(data)
+
+
+@roadmap_api_bp.route("/chat")
+def chat_status():
+    return jsonify(roadmap_agent.chat_status(current_app.config["settings"]))
+
+
+@roadmap_api_bp.route("/chat", methods=["POST"])
+def chat_send():
+    body = request.get_json(silent=True) or {}
+    try:
+        started = roadmap_agent.start_message(
+            current_app.config["settings"],
+            str(body.get("message", "")),
+            operator_ref(),
+            autopilot=bool(body.get("autopilot")),
+        )
+    except roadmap_agent.ChatError as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify(started), 202
+
+
+@roadmap_api_bp.route("/chat/stop", methods=["POST"])
+def chat_stop():
+    return jsonify({"stopped": roadmap_agent.stop(current_app.config["settings"])})
+
+
+@roadmap_api_bp.route("/chat/reset", methods=["POST"])
+def chat_reset():
+    try:
+        session_id = roadmap_agent.reset(current_app.config["settings"])
+    except roadmap_agent.ChatError as exc:
+        return jsonify({"error": str(exc)}), 409
+    return jsonify({"session_id": session_id})

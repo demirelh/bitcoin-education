@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="csrf-token" content="{{ csrf_token_value|default('') }}">
   <title>Fahrplan — btcedu</title>
   <link rel="stylesheet" href="static/styles.css">
   <style>
@@ -26,6 +27,19 @@
     .rm-table td, .rm-table th { text-align: left; padding: 6px 8px; border-top: 1px solid var(--border, #2a3039);
                                  vertical-align: top; }
     .rm-next li { font-size: 14px; }
+    .rm-chat-log { max-height: 460px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;
+                   padding: 4px 2px 10px; }
+    .rm-msg { padding: 8px 12px; border-radius: 10px; font-size: 13px; line-height: 1.5; white-space: pre-wrap;
+              overflow-wrap: anywhere; max-width: 92%; }
+    .rm-msg.user { align-self: flex-end; background: #16304a; }
+    .rm-msg.assistant { align-self: flex-start; background: var(--border, #2a3039); }
+    .rm-msg.summary { align-self: flex-start; background: #16351f; }
+    .rm-msg.tool { align-self: flex-start; color: var(--muted, #9aa4b2); font-size: 12px; padding: 2px 12px;
+                   font-family: monospace; }
+    .rm-chat-form textarea { width: 100%; min-height: 70px; box-sizing: border-box; padding: 8px;
+                             background: var(--bg, #11151b); color: inherit; border: 1px solid var(--border, #2a3039);
+                             border-radius: 8px; font: inherit; }
+    .rm-chat-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
   </style>
 </head>
 <body>
@@ -45,6 +59,22 @@
     <div class="rm-card">
       <h2>Gesamtfortschritt <span class="rm-muted" id="rm-progress-text"></span></h2>
       <div class="rm-bar"><div id="rm-progress" style="width:0%"></div></div>
+    </div>
+    <div class="rm-card">
+      <h2>Koordinator <span class="rm-muted" id="rm-chat-state"></span></h2>
+      <div class="rm-chat-log" id="rm-chat-log"></div>
+      <div class="rm-chat-form">
+        <textarea id="rm-chat-input" placeholder="z. B. Wo stehen wir? · Arbeite den nächsten Agent-Punkt ab."></textarea>
+        <div class="rm-chat-actions">
+          <button class="btn" id="rm-chat-send" onclick="chatSend()">Senden</button>
+          <label class="rm-muted"><input type="checkbox" id="rm-chat-autopilot"> Autopilot (arbeitet mehrere Schritte selbstständig)</label>
+          <button class="btn btn-sm" onclick="chatStop()">Stoppen</button>
+          <button class="btn btn-sm" onclick="chatReset()">Neues Gespräch</button>
+          <button class="btn btn-sm" onclick="chatSuggest('Wo stehen wir? Fasse docs/ROADMAP.md zusammen und nenne meine offenen Aufgaben.')">Wo stehen wir?</button>
+          <button class="btn btn-sm" onclick="chatSuggest('Arbeite den nächsten Agent-Punkt aus docs/ROADMAP.md ab.', true)">Nächster Punkt</button>
+        </div>
+        <div class="rm-muted" id="rm-chat-hint"></div>
+      </div>
     </div>
     <div class="rm-card"><h2>Nächste Schritte</h2><ol class="rm-list rm-next" id="rm-next"></ol></div>
     <div class="rm-card"><h2>Meilensteine</h2><div class="rm-grid" id="rm-milestones"></div></div>
@@ -128,8 +158,70 @@
       fillTable('rm-log', ['Datum', 'Eintrag'], data.log.slice().reverse().map(l => [l.date, l.entry]));
     }
 
+    function postJson(url, payload) {
+      const token = document.querySelector('meta[name="csrf-token"]').content;
+      return fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': token },
+        body: JSON.stringify(payload || {})
+      });
+    }
+
+    let chatRunning = false;
+    let chatCount = -1;
+
+    async function chatLoad() {
+      const response = await fetch('api/roadmap/chat', { cache: 'no-store' });
+      if (!response.ok) return;
+      const data = await response.json();
+      chatRunning = data.running;
+      document.getElementById('rm-chat-state').textContent = data.running ? '· arbeitet …' : '· bereit';
+      document.getElementById('rm-chat-send').disabled = data.running;
+      document.getElementById('rm-chat-hint').textContent =
+        'Arbeitsverzeichnis: ' + data.worktree + ' (Branch roadmap) · kein Push, kein Ausrollen';
+      if (data.items.length === chatCount) return;
+      chatCount = data.items.length;
+      const log = document.getElementById('rm-chat-log');
+      log.replaceChildren(...data.items.map(item => el('div', item.text, 'rm-msg ' + item.role)));
+      log.scrollTop = log.scrollHeight;
+      if (!data.running) rmLoad();
+    }
+
+    async function chatSend() {
+      const input = document.getElementById('rm-chat-input');
+      const response = await postJson('api/roadmap/chat', {
+        message: input.value,
+        autopilot: document.getElementById('rm-chat-autopilot').checked
+      });
+      const data = await response.json();
+      if (!response.ok) { alert(data.error || 'Fehler'); return; }
+      input.value = '';
+      chatLoad();
+    }
+
+    function chatSuggest(text, autopilot) {
+      document.getElementById('rm-chat-input').value = text;
+      document.getElementById('rm-chat-autopilot').checked = !!autopilot;
+    }
+
+    async function chatStop() {
+      if (!confirm('Laufenden Koordinator abbrechen?')) return;
+      await postJson('api/roadmap/chat/stop');
+      chatLoad();
+    }
+
+    async function chatReset() {
+      if (!confirm('Neues Gespräch beginnen? Der bisherige Verlauf wird ausgeblendet.')) return;
+      const response = await postJson('api/roadmap/chat/reset');
+      if (!response.ok) { alert((await response.json()).error || 'Fehler'); return; }
+      chatCount = -1;
+      chatLoad();
+    }
+
     rmLoad();
+    chatLoad();
     setInterval(rmLoad, 60000);
+    setInterval(chatLoad, 4000);
   </script>
 </body>
 </html>

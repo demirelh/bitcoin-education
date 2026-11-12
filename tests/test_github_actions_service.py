@@ -5,11 +5,13 @@ Every HTTP call is mocked; these tests never touch the network.
 
 import io
 import zipfile
+from datetime import UTC, datetime
 from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
 from btcedu.services.github_actions_service import (
+    RUN_LOOKUP_TIMEOUT,
     GitHubActionsClient,
     GitHubActionsError,
     WorkflowRun,
@@ -83,13 +85,86 @@ def test_find_run_matches_marker_in_run_name(client):
     assert run.id == 2
 
 
-def test_find_run_gives_up_with_a_useful_message(client):
+def _run_item(run_id, title, created="2026-01-01T12:00:00Z", status="in_progress"):
+    return {
+        "id": run_id,
+        "display_title": title,
+        "name": "Render Episode",
+        "status": status,
+        "conclusion": None,
+        "created_at": created,
+        "run_started_at": created,
+        "html_url": f"https://example.invalid/{run_id}",
+    }
+
+
+def test_find_run_waits_far_beyond_two_minutes_for_a_late_run(client):
+    """GitHub creates the run asynchronously; 120s was not enough under load."""
+    late = {"workflow_runs": [_run_item(7, "render ep (job-xyz)")]}
+    responses = [_response(payload={"workflow_runs": []}) for _ in range(16)]
+    responses.append(_response(payload=late))
+    delays = []
     with (
-        patch("requests.request", return_value=_response(payload={"workflow_runs": []})),
-        patch("time.sleep"),
-        pytest.raises(GitHubActionsError, match="did not appear"),
+        patch("requests.request", side_effect=responses) as request,
+        patch("time.sleep", side_effect=delays.append),
     ):
-        client.find_run("render.yml", marker="nope", attempts=2, delay=0)
+        run = client.find_run("render.yml", marker="job-xyz")
+
+    assert run.id == 7
+    assert request.call_count == 17
+    # The old budget was 20 polls of a flat 6s: it gave up after 120s of waiting.
+    assert sum(delays) > 120
+    assert sum(delays) <= RUN_LOOKUP_TIMEOUT  # still inside the default budget
+    assert delays == sorted(delays) and max(delays) <= 30  # backing off, but capped
+
+
+def test_find_run_ignores_a_stale_run_with_the_same_marker(client):
+    """A re-dispatch must bind to its own run, not to the previous attempt."""
+    payload = {
+        "workflow_runs": [
+            _run_item(1, "render other (foreign-1)", created="2026-05-01T10:05:00Z"),
+            _run_item(2, "render ep (job-xyz)", created="2026-05-01T09:00:00Z"),
+            _run_item(3, "render other (foreign-2)", created="2026-05-01T10:06:00Z"),
+            _run_item(4, "render ep (job-xyz)", created="2026-05-01T10:04:00Z"),
+        ]
+    }
+    dispatched = datetime(2026, 5, 1, 10, 0, tzinfo=UTC)
+    with patch("requests.request", return_value=_response(payload=payload)):
+        run = client.find_run(
+            "render.yml", marker="job-xyz", ref="main", created_after=dispatched
+        )
+    assert run.id == 4
+
+
+def test_find_run_tolerates_a_transient_listing_error(client):
+    responses = [
+        _response(status=503),
+        _response(payload={"workflow_runs": [_run_item(9, "render ep (job-xyz)")]}),
+    ]
+    with patch("requests.request", side_effect=responses), patch("time.sleep"):
+        run = client.find_run("render.yml", marker="job-xyz", ref="main")
+    assert run.id == 9
+
+
+def test_find_run_gives_up_with_a_diagnosable_message(client):
+    """The failure must name ref, workflow file, criterion and waited time."""
+    responses = [
+        _response(payload={"workflow_runs": [_run_item(1, "render other (foreign)")]}),
+        _response(status=404),  # workflow file lookup on the target ref
+    ]
+    with (
+        patch("requests.request", side_effect=responses),
+        patch("time.sleep"),
+        pytest.raises(GitHubActionsError) as excinfo,
+    ):
+        client.find_run("render.yml", marker="nope", ref="roadmap", timeout=0)
+
+    message = str(excinfo.value)
+    assert "did not appear" in message
+    assert "roadmap" in message and "render.yml" in message and "acme/widgets" in message
+    assert "MISSING" in message  # workflow file absent on the target ref
+    assert "run-name" in message
+    assert "render other (foreign)" in message
 
 
 def test_wait_for_run_polls_until_finished(client):

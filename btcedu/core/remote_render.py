@@ -1066,6 +1066,7 @@ def render_video_remote(
                 "progress_pct": 8,
             }
         )
+        dispatched_at = _utcnow()
         client.dispatch_workflow(
             workflow,
             ref=branch,
@@ -1076,7 +1077,13 @@ def render_video_remote(
                 "commit": commit,
             },
         )
-        run = client.find_run(workflow, marker=job_id)
+        run = client.find_run(
+            workflow,
+            marker=job_id,
+            ref=branch,
+            timeout=settings.github_render_run_lookup_timeout,
+            created_after=dispatched_at,
+        )
         logger.info("Remote render run for %s: %s", episode_id, run.html_url)
         _emit(
             {

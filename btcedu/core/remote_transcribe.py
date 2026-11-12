@@ -26,6 +26,7 @@ from pathlib import Path
 from btcedu.config import Settings
 from btcedu.core.remote_render import (
     _safe_extract,
+    _utcnow,
     current_branch,
     current_git_commit,
     remote_branch_head,
@@ -156,6 +157,7 @@ class GitHubFasterWhisperProvider:
                 body=f"Transcription input for {audio.parent.name}. Deleted automatically.",
             )
             client.upload_release_asset(release["id"], archive, JOB_ARCHIVE_NAME)
+            dispatched_at = _utcnow()
             client.dispatch_workflow(
                 workflow,
                 ref=branch,
@@ -166,7 +168,13 @@ class GitHubFasterWhisperProvider:
                     "model": model,
                 },
             )
-            run = client.find_run(workflow, marker=job_id)
+            run = client.find_run(
+                workflow,
+                marker=job_id,
+                ref=branch,
+                timeout=settings.github_transcribe_run_lookup_timeout,
+                created_after=dispatched_at,
+            )
             logger.info("Remote transcription run for %s: %s", audio.parent.name, run.html_url)
             run = client.wait_for_run(
                 run.id,

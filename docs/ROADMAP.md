@@ -142,7 +142,7 @@ Verantwortlich: **Du** = Betreiber, **Agent** = Umsetzung im Repository.
 - [x] **Agent:** Chat mit dem Koordinator im Dashboard (Seite „Fahrplan“)
 - [x] **Agent:** Koordinator über WhatsApp (Selbst-Chat), mit Gedächtnis, Warteschlange und Live-Anzeige der Agenten; automatische Fehlermeldungen per WhatsApp abgeschaltet
 - [x] **Du:** WhatsApp neu verknüpfen (Dashboard → WhatsApp → QR-Code scannen) und den WhatsApp-Dienst neu starten: `sudo systemctl restart whatsapp`
-- [ ] **Agent:** Remote-Render-Fehler „did not appear within 120s" beheben (Workflow auf dem Ziel-Ref, Wartezeit, Fehlerbild)
+- [x] **Agent:** Remote-Render-Fehler „did not appear within 120s" beheben (Workflow auf dem Ziel-Ref, Wartezeit, Fehlerbild)
 
 ### M1 – Erste Veröffentlichung (größter Hebel)
 
@@ -264,6 +264,8 @@ Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
 1. **Du:** YouTube-Kanal, Google-Cloud-Projekt und OAuth einrichten (M1).
 2. **Du:** Entscheidungen E1–E3 treffen.
 3. **Agent:** KI-Kennzeichnung beim Upload umsetzen (M1), danach TTS parallelisieren (M4).
+4. **Du:** `roadmap` übernehmen (`git merge --ff-only roadmap`, push, `./run.sh`), dann beim
+   nächsten Remote-Render prüfen, ob der Lauf gefunden wird.
 
 ## Einordnung älterer Pläne
 
@@ -278,6 +280,7 @@ Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
 
 | Datum | Eintrag |
 |---|---|
+| 2026-11-12 | Remote-Render „did not appear within 120s" behoben (M0): Ursache war das starre Suchbudget 20×6 s in `GitHubActionsClient.find_run()` — GitHub legt den Lauf nach `workflow_dispatch` asynchron an und brauchte unter Last länger, der Pi gab zu früh auf und renderte lokal (⌀ 25 min). Jetzt Poll-Schleife mit Deadline (Default 420 s, `GITHUB_RENDER_RUN_LOOKUP_TIMEOUT`) und Backoff 3→30 s, Zuordnung über Marker plus `created_after`, transiente Listing-Fehler toleriert, Fehlermeldung nennt Repo, Workflow, Ref, Wartezeit und ob die Workflow-Datei auf dem Ref existiert. Lokaler Rückfall unverändert. 91 Tests grün (`tests/test_github_actions_service.py`, `test_remote_render.py`, `test_config.py`; 4 Flask-Importfehler umgebungsbedingt), `ruff check` sauber, QA-Prüfung freigegeben. |
 | 2026-11-12 | WhatsApp wieder gekoppelt (seit 19.10. getrennt): Ursache veraltete WhatsApp-Web-Version im Dienst, jetzt live von web.whatsapp.com; abgelaufene QR-Codes werden nicht mehr angezeigt; Signal-Schlüssel nicht mehr im Systemprotokoll. Vorgemerkte Antwort zugestellt. |
 | 2026-11-12 | Koordinator über WhatsApp: Selbst-Chat → `btcedu roadmap-chat inbound`, Antwort per WhatsApp, Gedächtnis `data/roadmap-chat/memory.md` (Test: Begriff „die Sendung“ nach neuem Gespräch korrekt aufgelöst), Live-Anzeige je Agent auf der Fahrplanseite. Fehlermeldungen aus (`NOTIFY_WHATSAPP_FAILURES=false`). Zustellung wartet auf neue WhatsApp-Verknüpfung. |
 | 2026-11-12 | Ausgerollt: Fahrplanseite und Koordinator-Chat im Dashboard (`/dashboard/roadmap`), Agententeam unter `.github/agents/`. Koordinator-Testlauf über denselben Codepfad wie das Dashboard: Antwort nach 17 s, Exit 0, keine Dateiänderung. |

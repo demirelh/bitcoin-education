@@ -12,6 +12,7 @@ import logging
 import time
 import zipfile
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 import requests
@@ -23,6 +24,17 @@ UPLOAD_ROOT = "https://uploads.github.com"
 
 # Runs that have not finished yet report one of these.
 _ACTIVE_STATES = {"queued", "in_progress", "waiting", "requested", "pending"}
+
+# How long a dispatched run may take to show up in the API before we give up.
+# GitHub creates the run asynchronously; under load (or while a concurrency
+# group is busy) it has repeatedly taken well over the two minutes this used to
+# allow, which turned a healthy offload into a 25-minute local render. The
+# budget is capped well below the remote render itself: a dispatch that really
+# failed must still leave the evening enough time for the local fallback.
+RUN_LOOKUP_TIMEOUT = 420
+# Clock skew / "created_at" rounding tolerance when rejecting older runs.
+_CREATED_AFTER_SLACK = 300.0
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 
 
 class GitHubActionsError(RuntimeError):
@@ -146,33 +158,164 @@ class GitHubActionsClient:
             json={"ref": ref, "inputs": inputs},
         )
 
+    def workflow_file_on_ref(self, workflow: str, ref: str) -> bool | None:
+        """Is ``.github/workflows/<workflow>`` present on ``ref``?
+
+        Purely diagnostic: ``workflow_dispatch`` happily accepts a ref whose
+        tree does not carry the workflow file, and the run then never appears.
+        Returns ``None`` when the question could not be answered.
+        """
+        if not ref:
+            return None
+        try:
+            self._request(
+                "GET",
+                f"/repos/{self.repo}/contents/.github/workflows/{workflow}",
+                params={"ref": ref},
+            )
+            return True
+        except GitHubActionsError as exc:
+            if exc.status_code == 404:
+                return False
+            return None
+
+    def _list_dispatch_runs(self, workflow: str) -> list[dict]:
+        """Recent ``workflow_dispatch`` runs of one workflow, newest first.
+
+        Deliberately not filtered by branch: ``workflow_dispatch`` may be
+        answered on a ref the ``branch`` filter does not match (tags, or a ref
+        GitHub reports under a different name), and an over-narrow query is
+        indistinguishable from "the run does not exist yet".
+        """
+        payload = self._request(
+            "GET",
+            f"/repos/{self.repo}/actions/workflows/{workflow}/runs",
+            params={"event": "workflow_dispatch", "per_page": 100},
+        ).json()
+        return payload.get("workflow_runs", []) or []
+
+    @staticmethod
+    def _run_title(item: dict) -> str:
+        return f"{item.get('display_title', '') or ''} {item.get('name', '') or ''}"
+
+    @staticmethod
+    def _run_created_at(item: dict) -> datetime | None:
+        raw = item.get("run_started_at") or item.get("created_at") or ""
+        try:
+            parsed = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed
+
     def find_run(
-        self, workflow: str, marker: str, attempts: int = 20, delay: int = 6
+        self,
+        workflow: str,
+        marker: str,
+        ref: str = "",
+        timeout: int = RUN_LOOKUP_TIMEOUT,
+        initial_delay: float = 3.0,
+        max_delay: float = 30.0,
+        created_after: datetime | None = None,
     ) -> WorkflowRun:
         """Locate the dispatched run by the marker carried in its run-name.
 
         ``workflow_dispatch`` does not return the run id, so the workflow puts a
-        unique job id into ``run-name`` and we search for it.
+        unique job id into ``run-name`` and we search for it. The marker is the
+        only matching criterion -- never the branch or a timestamp -- so a
+        foreign run dispatched at the same moment can never be mistaken for
+        ours. ``created_after`` is an extra guard (with slack for clock skew)
+        against matching a *previous* run that carried the same marker.
+
+        Polling backs off from ``initial_delay`` to ``max_delay`` until
+        ``timeout`` seconds have elapsed; a run that is merely slow to appear is
+        not a failure.
         """
-        for _ in range(attempts):
-            runs = self._request(
-                "GET",
-                f"/repos/{self.repo}/actions/workflows/{workflow}/runs",
-                params={"event": "workflow_dispatch", "per_page": 30},
-            ).json()
-            for item in runs.get("workflow_runs", []):
-                title = f"{item.get('display_title', '')} {item.get('name', '')}"
-                if marker in title:
-                    return WorkflowRun(
-                        id=item["id"],
-                        status=item.get("status", ""),
-                        conclusion=item.get("conclusion"),
-                        html_url=item.get("html_url", ""),
+        deadline = time.monotonic() + max(timeout, 0)
+        started = time.monotonic()
+        delay = max(initial_delay, 0.0)
+        attempts = 0
+        stale_ids: set[object] = set()
+        recent_titles: list[str] = []
+        while True:
+            attempts += 1
+            try:
+                items = self._list_dispatch_runs(workflow)
+            except GitHubActionsError as exc:
+                if not exc.transient or time.monotonic() + delay >= deadline:
+                    raise
+                logger.warning("Could not list runs of %s while searching: %s", workflow, exc)
+                items = []
+            recent_titles = [
+                (item.get("display_title") or item.get("name") or "").strip()
+                for item in items[:5]
+            ]
+            matches = [item for item in items if marker in self._run_title(item)]
+            if created_after is not None:
+                cutoff = created_after.timestamp() - _CREATED_AFTER_SLACK
+                fresh = []
+                for item in matches:
+                    created = self._run_created_at(item)
+                    if created is None or created.timestamp() >= cutoff:
+                        fresh.append(item)
+                    else:
+                        if item.get("id") not in stale_ids:
+                            logger.warning(
+                                "Ignoring run %s for marker %s: created %s, before dispatch",
+                                item.get("id"),
+                                marker,
+                                created,
+                            )
+                        stale_ids.add(item.get("id"))
+                matches = fresh
+            if matches:
+                # Newest first is the documented order; a re-run of the same
+                # job id must not resolve to the stale attempt.
+                item = max(
+                    matches,
+                    key=lambda i: (self._run_created_at(i) or EPOCH, i.get("id", 0)),
+                )
+                if len(matches) > 1:
+                    logger.warning(
+                        "Marker %s matched %d runs; using the newest (%s)",
+                        marker,
+                        len(matches),
+                        item.get("id"),
                     )
+                return WorkflowRun(
+                    id=item["id"],
+                    status=item.get("status", ""),
+                    conclusion=item.get("conclusion"),
+                    html_url=item.get("html_url", ""),
+                )
+            if time.monotonic() + delay >= deadline:
+                break
             time.sleep(delay)
+            delay = min(max_delay, delay * 1.5) if delay else max(initial_delay, 1.0)
+
+        waited = time.monotonic() - started
+        on_ref = self.workflow_file_on_ref(workflow, ref)
+        stale_hint = (
+            f"{len(stale_ids)} run(s) carried the marker but were created before the "
+            "dispatch (check the clock of this machine); "
+            if stale_ids
+            else ""
+        )
+        ref_hint = {
+            True: f".github/workflows/{workflow} exists on ref {ref!r}",
+            False: (
+                f".github/workflows/{workflow} is MISSING on ref {ref!r} -- "
+                "the dispatch can never produce a run there"
+            ),
+            None: f"could not verify .github/workflows/{workflow} on ref {ref!r}",
+        }[on_ref]
         raise GitHubActionsError(
-            f"Dispatched run for marker {marker} did not appear within "
-            f"{attempts * delay}s. Check the workflow file exists on the target ref."
+            f"Dispatched run for marker {marker!r} did not appear within {waited:.0f}s "
+            f"({attempts} polls). repo={self.repo} workflow={workflow} ref={ref or '?'}; "
+            f"searched event=workflow_dispatch runs whose run-name contains the marker; "
+            f"{stale_hint}{ref_hint}; most recent run names seen: {recent_titles or 'none'}. "
+            "If the run exists on github.com, its run-name does not carry the job id."
         )
 
     def get_run(self, run_id: int) -> WorkflowRun:

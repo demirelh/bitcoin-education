@@ -134,6 +134,7 @@ longer than a render takes, so a concurrent run is never disturbed.
 | `GITHUB_RENDER_WORKFLOW` | `render.yml` | Workflow file name |
 | `GITHUB_RENDER_TIMEOUT` | `5400` | Seconds to wait for the run |
 | `GITHUB_RENDER_POLL_INTERVAL` | `20` | Seconds between status polls |
+| `GITHUB_RENDER_RUN_LOOKUP_TIMEOUT` | `420` | Seconds the dispatched run may take to appear in the API (backoff 3s..30s) before the offload gives up |
 | `GITHUB_RENDER_FALLBACK_LOCAL` | `true` | Render locally when the offload fails |
 
 `GITHUB_TOKEN` needs the `repo` and `workflow` scopes.
@@ -213,6 +214,7 @@ Measured on the 2026-09-30 bulletin (16 MB audio):
 | `GITHUB_TRANSCRIBE_WORKFLOW` | `transcribe.yml` | Workflow file name |
 | `GITHUB_TRANSCRIBE_TIMEOUT` | `2700` | Seconds to wait for the run |
 | `GITHUB_TRANSCRIBE_POLL_INTERVAL` | `15` | Seconds between status polls |
+| `GITHUB_TRANSCRIBE_RUN_LOOKUP_TIMEOUT` | `420` | Seconds the dispatched run may take to appear in the API before the offload gives up |
 
 The runner installs the `speechcheck` extra; `av` is held below 19 because
 faster-whisper 1.2.1 passes an argument PyAV 19 removed.

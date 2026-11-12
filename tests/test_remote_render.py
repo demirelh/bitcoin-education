@@ -466,6 +466,44 @@ def test_remote_render_refuses_dry_run(db_session, episode, episode_dir):
         render_video_remote(db_session, episode.episode_id, settings)
 
 
+def test_remote_render_binds_the_run_by_marker_ref_and_dispatch_time(
+    db_session, episode, episode_dir
+):
+    """The run lookup must know the ref, its own dispatch time and a real budget."""
+    from btcedu.core.remote_render import render_video_remote
+
+    settings = Settings(
+        outputs_dir=str(episode_dir.parent),
+        github_render_repo="a/b",
+        github_token="t",
+        github_render_run_lookup_timeout=777,
+    )
+    client = MagicMock()
+    client.create_draft_release.return_value = {"id": 5}
+    client.find_run.side_effect = RuntimeError("stop here")
+
+    with (
+        patch("btcedu.core.renderer.render_is_current", return_value=(False, "changed")),
+        patch("btcedu.core.remote_render.current_git_commit", return_value="a" * 40),
+        patch("btcedu.core.remote_render.current_branch", return_value="roadmap"),
+        patch("btcedu.core.remote_render.remote_branch_head", return_value="a" * 40),
+        patch("btcedu.core.remote_render.build_job_package", return_value=episode_dir / "j.tar"),
+        patch(
+            "btcedu.services.github_actions_service.GitHubActionsClient",
+            return_value=client,
+        ),
+        pytest.raises(RuntimeError, match="stop here"),
+    ):
+        render_video_remote(db_session, episode.episode_id, settings)
+
+    dispatch_kwargs = client.dispatch_workflow.call_args.kwargs
+    lookup_kwargs = client.find_run.call_args.kwargs
+    assert lookup_kwargs["marker"] == dispatch_kwargs["inputs"]["job_id"]
+    assert lookup_kwargs["ref"] == dispatch_kwargs["ref"] == "roadmap"
+    assert lookup_kwargs["timeout"] == 777
+    assert lookup_kwargs["created_after"] is not None
+
+
 # ---------------------------------------------------------------------------
 # pipeline routing
 # ---------------------------------------------------------------------------

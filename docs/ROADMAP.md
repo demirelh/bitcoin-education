@@ -276,5 +276,5 @@ Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
 
 | Datum | Eintrag |
 |---|---|
-| 2026-11-12 | Ausgerollt: Fahrplanseite und Koordinator-Chat im Dashboard (`/dashboard/roadmap`), Agententeam unter `.github/agents/`. Koordinator-Testlauf erfolgreich (16 s, Exit 0). |
+| 2026-11-12 | Ausgerollt: Fahrplanseite und Koordinator-Chat im Dashboard (`/dashboard/roadmap`), Agententeam unter `.github/agents/`. Koordinator-Testlauf über denselben Codepfad wie das Dashboard: Antwort nach 17 s, Exit 0, keine Dateiänderung. |
 | 2026-11-12 | Bestandsaufnahme: Pipeline stabil, ≈ 3,30 USD/Folge, fertig 21:37–22:42; kein YouTube-Upload bisher; Avatar blockiert; Newsroom nur Vorschau (200 Artikel). Fahrplan angelegt, Agent-Anleitungen korrigiert, Copilot-Session-Flut behoben (`999f4fd`), 8.948 alte Pipeline-Sessions gelöscht. |

@@ -37,7 +37,8 @@ Intro audio: `GET/POST/DELETE /api/intro-audio`, `GET /api/intro-audio/file` (Ta
 Render mode: `GET/POST /api/render-mode` (local `app_settings` override)
 Failover: `GET /api/failover/status`, `POST /api/failover/mode` (proxy the
 external control plane; operator token required for mode changes)
-Roadmap: `GET /roadmap` page and `GET /api/roadmap` (read-only parse of
+Roadmap: `GET /api/roadmap/activity` (live agent panel, polled by the page and
+the Fahrplan button badge) plus `GET /roadmap` page and `GET /api/roadmap` (read-only parse of
 `docs/ROADMAP.md`, `roadmap_routes.py`); coordinator chat `GET/POST /api/roadmap/chat`,
 `POST /api/roadmap/chat/{stop,reset}` (`core/roadmap_agent.py`: Copilot CLI `--agent roadmap-lead`
 in tmux session `roadmap-lead`, worktree `../bitcoin-education-roadmap`, one shared Copilot session ID)

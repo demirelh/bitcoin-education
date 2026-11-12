@@ -324,6 +324,8 @@ class Settings(BaseSettings):
 
     # Notifications (WhatsApp via local whatsapp-service REST API)
     notify_whatsapp_enabled: bool = False
+    # Transport stays on for the roadmap coordinator; this only silences failure alerts.
+    notify_whatsapp_failures: bool = True
     notify_whatsapp_url: str = "http://127.0.0.1:3010"
     notify_whatsapp_token: str = ""
     notify_whatsapp_timeout: int = 15

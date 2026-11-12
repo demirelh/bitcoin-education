@@ -68,6 +68,14 @@ def send_notification(settings: Settings, message: str) -> bool:
     return _post(settings, message)
 
 
+def send_alert(settings: Settings, message: str) -> bool:
+    """Send an automatic failure alert unless NOTIFY_WHATSAPP_FAILURES is off."""
+    if not settings.notify_whatsapp_failures:
+        logger.debug("WhatsApp failure alerts disabled, skipping alert")
+        return False
+    return send_notification(settings, message)
+
+
 def _request_json(settings: Settings, path: str, method: str = "GET") -> dict:
     """Call the whatsapp-service and return its JSON body (or an error dict)."""
     url = f"{settings.notify_whatsapp_url.rstrip('/')}/{path.lstrip('/')}"
@@ -137,4 +145,4 @@ def notify_stage_failure(
         f"Zeit: {timestamp}\n\n"
         f"{error.strip()}"
     )
-    return send_notification(settings, message)
+    return send_alert(settings, message)

@@ -2981,6 +2981,33 @@ def notify_test(ctx: click.Context, message: str | None) -> None:
         )
 
 
+@cli.group(name="roadmap-chat")
+def roadmap_chat() -> None:
+    """Talk to the roadmap coordinator (dashboard and WhatsApp)."""
+
+
+@roadmap_chat.command(name="inbound")
+@click.argument("text")
+@click.pass_context
+def roadmap_chat_inbound(ctx: click.Context, text: str) -> None:
+    """Hand one WhatsApp message to the coordinator; prints the acknowledgement."""
+    from btcedu.core import roadmap_agent
+
+    try:
+        click.echo(roadmap_agent.handle_inbound(ctx.obj["settings"], text))
+    except roadmap_agent.ChatError as exc:
+        click.echo(str(exc))
+
+
+@roadmap_chat.command(name="status")
+@click.pass_context
+def roadmap_chat_status(ctx: click.Context) -> None:
+    """Show what the coordinator and its agents are doing."""
+    from btcedu.core import roadmap_agent
+
+    click.echo(roadmap_agent.status_text(ctx.obj["settings"]))
+
+
 @cli.command(name="media-sync")
 @click.option("--entry", "only", default=None, help="Sync a single collection key.")
 @click.option("--pause", default=3.0, show_default=True, help="Seconds between downloads.")

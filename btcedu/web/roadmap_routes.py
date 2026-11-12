@@ -122,6 +122,11 @@ def chat_status():
     return jsonify(roadmap_agent.chat_status(current_app.config["settings"]))
 
 
+@roadmap_api_bp.route("/activity")
+def chat_activity():
+    return jsonify(roadmap_agent.activity(current_app.config["settings"]))
+
+
 @roadmap_api_bp.route("/chat", methods=["POST"])
 def chat_send():
     body = request.get_json(silent=True) or {}

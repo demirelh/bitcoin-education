@@ -270,15 +270,24 @@ Apply context padding after clamping the source timestamps: even a finding more
 than one context window past EOF must use the final context window of real audio.
 Never drop those findings or relax the nonempty `source_segment_ids` schema.
 
-## Notifications
+## Notifications and the roadmap coordinator
 
-Failed pipeline stages are pushed to WhatsApp via the standalone
-`whatsapp-service` (Baileys linked device, REST API at
-`/home/pi/services/whatsapp-service`). Enable with `NOTIFY_WHATSAPP_ENABLED=true`
-and `NOTIFY_WHATSAPP_URL`. `btcedu/services/notify_service.py` swallows transport
-errors (returns `False` instead of raising) and is skipped in dry-run mode;
-`btcedu notify-test` sends a test message.
-The dashboard page `/whatsapp` shows the pairing QR code.
+WhatsApp runs through the standalone `whatsapp-service` (Baileys linked device,
+REST API, `/home/pi/services/whatsapp-service`, not in this repository).
+`NOTIFY_WHATSAPP_ENABLED` switches the transport; automatic failure alerts
+(failed stage, incomplete recording) go through `notify_service.send_alert()`
+and are off with `NOTIFY_WHATSAPP_FAILURES=false`. The service swallows
+transport errors and is skipped in dry-run mode; `btcedu notify-test` sends a
+test message; `/whatsapp` shows the pairing QR code.
+
+Every message in the owner's WhatsApp self-chat is handed to
+`btcedu roadmap-chat inbound -- <text>` (service `coordinator` config, argv
+only, no shell). `core/roadmap_agent.py` runs the `roadmap-lead` agent per
+message in its own tmux session in the `../bitcoin-education-roadmap` worktree,
+queues messages while a run is active, keeps one Copilot session for context
+plus `data/roadmap-chat/memory.md` as long-term memory, and sends the final
+answer back over WhatsApp. The dashboard page `/roadmap` shows the same chat
+and a live per-agent activity panel (`GET /api/roadmap/activity`).
 
 <!--
 Documentation sync

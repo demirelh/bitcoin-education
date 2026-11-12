@@ -4507,4 +4507,21 @@ async function setFailoverMode(mode) {
 
 document.addEventListener("DOMContentLoaded", loadRenderMode);
 document.addEventListener("DOMContentLoaded", loadFailoverStatus);
+
+async function loadRoadmapActivity() {
+  const badge = document.getElementById("roadmap-badge");
+  if (!badge) return;
+  try {
+    const response = await fetch("api/roadmap/activity", { cache: "no-store" });
+    if (!response.ok) return;
+    const data = await response.json();
+    const working = data.agents.filter((agent) => agent.state === "working").length;
+    badge.textContent = data.running ? `● ${working}` : "";
+    badge.title = data.running ? `${working} Agent(en) arbeiten gerade` : "";
+  } catch (_error) {
+    badge.textContent = "";
+  }
+}
+document.addEventListener("DOMContentLoaded", loadRoadmapActivity);
+setInterval(loadRoadmapActivity, 10 * 1000);
 setInterval(loadFailoverStatus, 60 * 1000);

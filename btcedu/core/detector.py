@@ -405,9 +405,9 @@ def _report_incomplete_recording(settings: Settings, recording) -> None:
         weather.evidence,
     )
     try:
-        from btcedu.services.notify_service import send_notification
+        from btcedu.services.notify_service import send_alert
 
-        send_notification(
+        send_alert(
             settings,
             "\u26a0\ufe0f Aufnahme unvollständig\n"
             f"Episode: {recording.slug}\n"

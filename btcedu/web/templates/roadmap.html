@@ -40,6 +40,25 @@
                              background: var(--bg, #11151b); color: inherit; border: 1px solid var(--border, #2a3039);
                              border-radius: 8px; font: inherit; }
     .rm-chat-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+    .rm-live-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px;
+                    flex-wrap: wrap; }
+    .rm-team { display: grid; grid-template-columns: repeat(auto-fill, minmax(165px, 1fr)); gap: 10px;
+               margin-top: 10px; }
+    .rm-agent { border: 1px solid var(--border, #2a3039); border-radius: 10px; padding: 10px 12px;
+                min-height: 86px; transition: border-color .3s, background .3s; }
+    .rm-agent .rm-agent-name { font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+    .rm-agent .rm-agent-role { font-size: 11px; color: var(--muted, #9aa4b2); }
+    .rm-agent .rm-agent-action { font-size: 12px; margin-top: 6px; line-height: 1.35; word-break: break-word;
+                                 color: var(--muted, #9aa4b2); }
+    .rm-dot { width: 9px; height: 9px; border-radius: 50%; background: #4a515c; flex: none; }
+    .rm-agent.working { border-color: #4c8fd6; background: rgba(76, 143, 214, .08); }
+    .rm-agent.working .rm-dot { background: #4c8fd6; animation: rm-pulse 1.2s infinite; }
+    .rm-agent.working .rm-agent-action { color: inherit; }
+    .rm-agent.done { border-color: #2f6b45; }
+    .rm-agent.done .rm-dot { background: #4caf7a; }
+    @keyframes rm-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(1.4); } }
+    .rm-memory { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto; margin: 8px 0 0;
+                 color: var(--muted, #9aa4b2); }
   </style>
 </head>
 <body>
@@ -56,6 +75,13 @@
   </div>
 
   <div class="rm-wrap">
+    <div class="rm-card">
+      <div class="rm-live-head">
+        <h2>Live: wer arbeitet woran</h2>
+        <span class="rm-muted" id="rm-live-run"></span>
+      </div>
+      <div class="rm-team" id="rm-team"></div>
+    </div>
     <div class="rm-card">
       <h2>Gesamtfortschritt <span class="rm-muted" id="rm-progress-text"></span></h2>
       <div class="rm-bar"><div id="rm-progress" style="width:0%"></div></div>
@@ -74,6 +100,8 @@
           <button class="btn btn-sm" onclick="chatSuggest('Arbeite den nächsten Agent-Punkt aus docs/ROADMAP.md ab.', true)">Nächster Punkt</button>
         </div>
         <div class="rm-muted" id="rm-chat-hint"></div>
+        <details><summary class="rm-muted">Gedächtnis des Koordinators</summary>
+          <pre class="rm-memory" id="rm-memory"></pre></details>
       </div>
     </div>
     <div class="rm-card"><h2>Nächste Schritte</h2><ol class="rm-list rm-next" id="rm-next"></ol></div>
@@ -178,7 +206,9 @@
       document.getElementById('rm-chat-state').textContent = data.running ? '· arbeitet …' : '· bereit';
       document.getElementById('rm-chat-send').disabled = data.running;
       document.getElementById('rm-chat-hint').textContent =
-        'Arbeitsverzeichnis: ' + data.worktree + ' (Branch roadmap) · kein Push, kein Ausrollen';
+        'Arbeitsverzeichnis: ' + data.worktree + ' (Branch roadmap) · kein Push, kein Ausrollen'
+        + (data.queued ? ' · wartend: ' + data.queued : '') + ' · auch per WhatsApp (Selbst-Chat)';
+      document.getElementById('rm-memory').textContent = data.memory || '(noch leer)';
       if (data.items.length === chatCount) return;
       chatCount = data.items.length;
       const log = document.getElementById('rm-chat-log');
@@ -195,6 +225,7 @@
       });
       const data = await response.json();
       if (!response.ok) { alert(data.error || 'Fehler'); return; }
+      if (data.queued) alert('Vorgemerkt: ' + data.queued + '. in der Warteschlange.');
       input.value = '';
       chatLoad();
     }
@@ -218,8 +249,48 @@
       chatLoad();
     }
 
+    function sinceText(iso) {
+      if (!iso) return '';
+      const seconds = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+      return seconds < 60 ? seconds + ' s' : Math.floor(seconds / 60) + ' min';
+    }
+
+    async function liveLoad() {
+      const response = await fetch('api/roadmap/activity', { cache: 'no-store' });
+      if (!response.ok) return;
+      const data = await response.json();
+      const runInfo = document.getElementById('rm-live-run');
+      if (data.running) {
+        const via = data.run.channel === 'whatsapp' ? 'WhatsApp' : 'Dashboard';
+        runInfo.textContent = 'Auftrag via ' + via + ' seit ' + sinceText(data.run.started_at)
+          + (data.run.autopilot ? ' · Autopilot' : '') + ': „' + (data.run.message || '') + '“'
+          + (data.queued ? ' · wartend: ' + data.queued : '');
+      } else if (data.last_run) {
+        runInfo.textContent = 'Alle bereit · letzter Auftrag vor ' + sinceText(data.last_run.finished_at || data.last_run.started_at)
+          + (data.last_run.exit_code ? ' (Exit ' + data.last_run.exit_code + ')' : '');
+      } else {
+        runInfo.textContent = 'Alle bereit';
+      }
+      const team = document.getElementById('rm-team');
+      team.replaceChildren(...data.agents.map(agent => {
+        const card = el('div', undefined, 'rm-agent ' + agent.state);
+        const name = el('div', undefined, 'rm-agent-name');
+        name.appendChild(el('span', undefined, 'rm-dot'));
+        name.appendChild(el('span', agent.name));
+        card.appendChild(name);
+        card.appendChild(el('div', agent.label, 'rm-agent-role'));
+        const status = agent.state === 'working'
+          ? (agent.action || 'arbeitet') + (agent.since ? ' · ' + sinceText(agent.since) : '')
+          : agent.state === 'done' ? 'fertig' : 'bereit';
+        card.appendChild(el('div', status, 'rm-agent-action'));
+        return card;
+      }));
+    }
+
     rmLoad();
     chatLoad();
+    liveLoad();
+    setInterval(liveLoad, 3000);
     setInterval(rmLoad, 60000);
     setInterval(chatLoad, 4000);
   </script>

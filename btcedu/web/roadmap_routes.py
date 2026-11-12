@@ -5,7 +5,9 @@ this module only parses it on every request. Registered after ``init_auth``,
 so the global login gate applies.
 """
 
+import logging
 import re
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,6 +17,10 @@ from btcedu.core import roadmap_agent
 from btcedu.web.auth import operator_ref
 
 ROADMAP_PATH = Path(__file__).resolve().parents[2] / "docs" / "ROADMAP.md"
+
+REPO_ROOT = ROADMAP_PATH.parents[1]
+
+logger = logging.getLogger(__name__)
 
 roadmap_bp = Blueprint("roadmap", __name__)
 roadmap_api_bp = Blueprint("roadmap_api", __name__)
@@ -103,6 +109,56 @@ def parse_roadmap(text: str) -> dict:
     }
 
 
+def _git(*args: str) -> subprocess.CompletedProcess | None:
+    """Run a read-only git command in the checkout; ``None`` when git is unusable."""
+    try:
+        return subprocess.run(
+            ["git", *args],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:  # git missing, repo broken, hang
+        logger.warning("Fahrplan: git nicht verfügbar (%s)", exc)
+        return None
+
+
+def _pending_commits() -> int:
+    """Commits on ``roadmap`` that the checkout's ``main`` does not have yet."""
+    proc = _git("rev-list", "--count", f"main..{roadmap_agent.BRANCH}")
+    if proc is None or proc.returncode != 0:
+        return 0
+    count = proc.stdout.strip()
+    return int(count) if count.isdigit() else 0
+
+
+def roadmap_source() -> tuple[str | None, str, int, str | None]:
+    """Which plan actually applies: the committed ``roadmap`` branch or the checkout file.
+
+    The coordinator commits to the ``roadmap`` branch in its own worktree. Until
+    that branch reaches ``main``, the checkout's file is stale and a ticked-off
+    item would look open to the operator. Only the *committed* branch state is
+    used, and only while the branch is genuinely ahead: a worktree that merely
+    sits behind ``main``, or a half-finished edit during a run, must never
+    replace the checkout. Read-only; any git problem falls back to the checkout.
+    """
+    checkout_text = ROADMAP_PATH.read_text(encoding="utf-8") if ROADMAP_PATH.is_file() else None
+    pending = _pending_commits()
+    if pending > 0:
+        shown = _git("show", f"{roadmap_agent.BRANCH}:docs/ROADMAP.md")
+        if shown is not None and shown.returncode == 0 and shown.stdout.strip():
+            if shown.stdout != checkout_text:
+                stamp = _git(
+                    "log", "-1", "--format=%cI", roadmap_agent.BRANCH, "--", "docs/ROADMAP.md"
+                )
+                ok = stamp is not None and stamp.returncode == 0
+                updated = stamp.stdout.strip() if ok else None
+                return shown.stdout, "branch", pending, updated
+    return checkout_text, "checkout", pending, None
+
+
 @roadmap_bp.route("/roadmap")
 def roadmap_page():
     return render_template("roadmap.html")
@@ -110,10 +166,15 @@ def roadmap_page():
 
 @roadmap_api_bp.route("")
 def roadmap_data():
-    if not ROADMAP_PATH.is_file():
+    text, source, pending, updated = roadmap_source()
+    if text is None:
         return jsonify({"error": "docs/ROADMAP.md fehlt"}), 404
-    data = parse_roadmap(ROADMAP_PATH.read_text(encoding="utf-8"))
-    data["updated_at"] = datetime.fromtimestamp(ROADMAP_PATH.stat().st_mtime, UTC).isoformat()
+    data = parse_roadmap(text)
+    if updated is None and ROADMAP_PATH.is_file():
+        updated = datetime.fromtimestamp(ROADMAP_PATH.stat().st_mtime, UTC).isoformat()
+    data["updated_at"] = updated
+    data["source"] = source
+    data["pending_commits"] = pending
     return jsonify(data)
 
 

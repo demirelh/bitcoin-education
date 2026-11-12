@@ -81,8 +81,14 @@ def worktree_path() -> Path:
     return REPOSITORY.parent / f"{REPOSITORY.name}-roadmap"
 
 
-def _git(*args: str, cwd: Path = REPOSITORY) -> subprocess.CompletedProcess:
-    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=False)
+def _git(*args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    # REPOSITORY is read per call, not bound as a default, so it stays overridable.
+    # The timeout matters in the finish hook: a hanging git call must not keep a
+    # run from being marked finished (and its reply from being sent).
+    target = REPOSITORY if cwd is None else cwd
+    return subprocess.run(
+        ["git", *args], cwd=target, capture_output=True, text=True, check=False, timeout=60
+    )
 
 
 def ensure_worktree() -> Path:
@@ -455,6 +461,82 @@ def handle_inbound(settings, text: str) -> str:
     return "Koordinator arbeitet …" + (" (Autopilot)" if autopilot else "")
 
 
+_PLAIN_FILE_MODES = {"100644", "100755", "000000"}
+
+
+def _is_plain_docs_change(raw_line: str) -> bool:
+    """Is this ``git diff --raw`` line an ordinary file below ``docs/``?
+
+    Three things have to hold, and anything unparseable counts as "no":
+    the path is below ``docs/``; the resulting entry is a regular file or a
+    deletion, never a symlink (``120000``) or a submodule (``160000``) that
+    could point at code; and the line really is raw diff output. ``--raw`` is
+    also what makes the path trustworthy — with rename detection
+    ``git mv btcedu/x.py docs/x.py`` would show up as ``docs/x.py`` alone and
+    the fast-forward would silently delete a module from the running checkout.
+    """
+    if not raw_line.startswith(":") or "\t" not in raw_line:
+        return False
+    meta, _, path = raw_line.partition("\t")
+    fields = meta.lstrip(":").split()
+    if len(fields) < 2:
+        return False
+    source_mode, target_mode = fields[0], fields[1]
+    if source_mode not in _PLAIN_FILE_MODES or target_mode not in _PLAIN_FILE_MODES:
+        return False
+    return path.startswith("docs/")
+
+
+def _auto_merge_docs(run: dict) -> None:
+    """Fast-forward the main checkout to ``roadmap`` when only ``docs/`` changed.
+
+    Pure documentation needs neither ``pip install`` nor a migration nor a
+    service restart, so it may reach the running checkout right away — that is
+    what makes a ticked-off roadmap item visible to the operator. Code must not:
+    ``pip install -e`` makes changed code effective for the next timer run
+    immediately, without any migration having run. Code changes are only
+    recorded as a pending rollout. Never ``--force``, never a non-fast-forward
+    merge, never a push, never a deploy.
+    """
+    try:
+        head = _git("rev-parse", "--abbrev-ref", "HEAD")
+        if head.returncode != 0 or head.stdout.strip() != "main":
+            return
+        if _git("status", "--porcelain").stdout.strip():
+            return  # the operator is working in the checkout
+        worktree = worktree_path()
+        if not (worktree / ".git").exists():
+            return
+        if _git("status", "--porcelain", cwd=worktree).stdout.strip():
+            return
+        if _git("merge-base", "--is-ancestor", "main", BRANCH).returncode != 0:
+            return  # main is not an ancestor: no fast-forward possible
+        changed = _git("diff", "--raw", "--no-renames", f"main..{BRANCH}")
+        if changed.returncode != 0:
+            print(f"Fahrplan-Merge: diff fehlgeschlagen: {changed.stderr.strip()}", file=sys.stderr)
+            return
+        files = [line.strip() for line in changed.stdout.splitlines() if line.strip()]
+        if not files:
+            return
+        count = _git("rev-list", "--count", f"main..{BRANCH}").stdout.strip()
+        commits = int(count) if count.isdigit() else 0
+        if not all(_is_plain_docs_change(line) for line in files):
+            run["rollout_pending"] = {"commits": commits, "reason": "code", "files": files[:20]}
+            return
+        merged = _git("merge", "--ff-only", BRANCH)
+        if merged.returncode == 0:
+            run["merged_to_main"] = commits
+        else:
+            run["rollout_pending"] = {
+                "commits": commits,
+                "reason": "merge_failed",
+                "error": (merged.stderr or merged.stdout).strip()[:300],
+            }
+            print(f"Fahrplan-Merge fehlgeschlagen: {merged.stderr.strip()}", file=sys.stderr)
+    except Exception as exc:  # git missing, hanging or unusable — the run stays finished
+        print(f"Fahrplan-Merge übersprungen: {exc}", file=sys.stderr)
+
+
 def _finish(state_dir: Path, run_id: str, exit_code: int) -> None:
     from btcedu.config import Settings
     from btcedu.services.notify_service import send_notification
@@ -464,7 +546,10 @@ def _finish(state_dir: Path, run_id: str, exit_code: int) -> None:
     if run is None or run.get("finished_at") is not None:
         return
     run.update(finished_at=_utcnow(), exit_code=exit_code)
-    _save(state_dir, state)
+    _save(state_dir, state)  # the run counts as finished before any git work is attempted
+    if exit_code == 0:
+        _auto_merge_docs(run)
+        _save(state_dir, state)
 
     settings = Settings()
     if not settings.notify_whatsapp_enabled and run.get("channel") == "whatsapp":

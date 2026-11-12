@@ -59,6 +59,8 @@
     @keyframes rm-pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .35; transform: scale(1.4); } }
     .rm-memory { white-space: pre-wrap; font-size: 12px; max-height: 240px; overflow: auto; margin: 8px 0 0;
                  color: var(--muted, #9aa4b2); }
+    .rm-source { display: none; border: 1px solid #4a4326; background: rgba(240, 198, 116, .08);
+                 color: #e2c98a; border-radius: 10px; padding: 10px 14px; font-size: 13px; line-height: 1.45; }
   </style>
 </head>
 <body>
@@ -75,6 +77,7 @@
   </div>
 
   <div class="rm-wrap">
+    <div class="rm-source" id="rm-source"></div>
     <div class="rm-card">
       <div class="rm-live-head">
         <h2>Live: wer arbeitet woran</h2>
@@ -152,6 +155,21 @@
       document.getElementById('rm-updated').textContent =
         'Stand der Datei: ' + new Date(data.updated_at).toLocaleString('de-DE');
 
+      const hint = document.getElementById('rm-source');
+      const commits = data.pending_commits || 0;
+      if (commits) {
+        const zahl = commits + (commits === 1 ? ' Commit' : ' Commits');
+        hint.textContent = data.source === 'branch'
+          ? 'Angezeigt wird der Stand des Koordinators (Branch roadmap), noch nicht in die '
+            + 'Produktion übernommen – ' + zahl + ' ausstehend.'
+          : 'Der Fahrplan ist aktuell. Auf dem Branch roadmap warten ' + zahl
+            + ' auf das Ausrollen (./run.sh).';
+        hint.style.display = 'block';
+      } else {
+        hint.textContent = '';
+        hint.style.display = 'none';
+      }
+
       const next = document.getElementById('rm-next');
       next.replaceChildren(...data.next_steps.map(step => el('li', step)));
 
@@ -206,7 +224,7 @@
       document.getElementById('rm-chat-state').textContent = data.running ? '· arbeitet …' : '· bereit';
       document.getElementById('rm-chat-send').disabled = data.running;
       document.getElementById('rm-chat-hint').textContent =
-        'Arbeitsverzeichnis: ' + data.worktree + ' (Branch roadmap) · kein Push, kein Ausrollen'
+        'Arbeitsverzeichnis: ' + data.worktree + ' (Branch roadmap) · reine Fahrplan-Änderungen werden nach jedem Lauf übernommen'
         + (data.queued ? ' · wartend: ' + data.queued : '') + ' · auch per WhatsApp (Selbst-Chat)';
       document.getElementById('rm-memory').textContent = data.memory || '(noch leer)';
       if (data.items.length === chatCount) return;

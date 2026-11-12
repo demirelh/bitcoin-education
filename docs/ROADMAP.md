@@ -269,8 +269,12 @@ Hand geht weiterhin: `git merge --ff-only roadmap`, dann `git push` und
 3. **Du:** einmalig `sudo -n systemctl is-active btcedu-web; echo $?` ausführen.
    Kommt nicht `0`, greift die NOPASSWD-Regel nicht und mein Deploy bricht beim
    Dienstneustart ab (statt auf eine Passwortabfrage zu warten).
-4. **Agent:** KI-Kennzeichnung beim Upload umsetzen (M1), danach TTS parallelisieren (M4).
-5. **Agent:** `deploy/setup-web.sh` für den unbeaufsichtigten Lauf absichern
+4. **Du:** diesen einen Rollout noch selbst anstoßen – `git merge --ff-only roadmap`,
+   `git push`, `./run.sh` im Produktions-Checkout. Erst danach starten neue
+   Koordinator-Läufe mit den freigegebenen Rechten; die laufende Sitzung hat sie
+   noch nicht. Beim nächsten Remote-Render prüfen, ob der Lauf gefunden wird.
+5. **Agent:** KI-Kennzeichnung beim Upload umsetzen (M1), danach TTS parallelisieren (M4).
+6. **Agent:** `deploy/setup-web.sh` für den unbeaufsichtigten Lauf absichern
    (`sudo -n`, `DEBIAN_FRONTEND=noninteractive`) und einen `pre-push`-Hook im
    Produktions-Checkout einrichten, der nur Commits mit maschinenlesbarer
    QA-Freigabe durchlässt. Beides vor dem ersten regelmäßigen Autopilot-Rollout.

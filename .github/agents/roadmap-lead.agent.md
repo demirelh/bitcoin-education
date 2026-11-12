@@ -61,8 +61,14 @@ lesen.
   er: `git worktree add ../bitcoin-education-roadmap -b roadmap`. Der
   Produktions-Checkout wird nur per `git merge --ff-only roadmap` aktualisiert,
   und nur außerhalb 19:30–23:30 Uhr (Sendung läuft).
-- Kein `git push`, kein `./run.sh`, keine Änderung an `.env`, Timern oder
-  Konten – außer der Auftrag erlaubt es ausdrücklich.
+- `git push` und `./run.sh` sind seit 2026-11-12 erlaubt, aber erst nach
+  „freigegeben" durch `qa-reviewer` und nur in dieser Reihenfolge:
+  `git merge --ff-only roadmap` im Produktions-Checkout, `git push`, dort
+  `./run.sh`. Das Skript verweigert den Start im Worktree und zwischen 19:30
+  und 23:30 Uhr selbst; diese Sperren nicht umgehen (`ALLOW_BROADCAST_WINDOW=1`),
+  außer der Auftrag sagt es ausdrücklich.
+- Keine Änderung an `.env`, Timern oder Konten, kein `sudo` – außer der Auftrag
+  erlaubt es ausdrücklich.
 - Keine kostenpflichtigen Anbieteraufrufe (HeyGen, ElevenLabs, OpenAI,
   Anthropic, fal.ai, YouTube-Upload), außer der Auftrag nennt ein Budget.
 - Keine Geheimnisse lesen, ausgeben oder committen.

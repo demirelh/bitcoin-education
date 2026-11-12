@@ -37,7 +37,9 @@ def test_launcher_allows_the_checkout_venv_interpreter(tmp_path):
     assert "--allow-all-paths" in shell
 
 
-def test_launcher_still_blocks_push_deploy_and_sudo(tmp_path):
+def test_launcher_blocks_sudo_but_not_push_or_deploy(tmp_path):
+    """Pushing and deploying are allowed now; root access is not."""
     shell = _launched_shell(tmp_path)
-    for tool in roadmap_agent.DENIED_TOOLS:
-        assert f"--deny-tool {shlex.quote(tool)}" in shell
+    assert f"--deny-tool {shlex.quote('shell(sudo)')}" in shell
+    assert shell.count("--deny-tool") == 1
+    assert "git push" not in shell and "run.sh" not in shell

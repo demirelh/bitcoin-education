@@ -196,7 +196,7 @@ restart_services() {
     log_info "Restarting services..."
 
     # Reload systemd in case unit files changed
-    sudo systemctl daemon-reload
+    sudo -n systemctl daemon-reload
 
     # Restart web service
     if ! systemctl cat "${SERVICE_NAME}.service" > /dev/null 2>&1; then
@@ -205,7 +205,7 @@ restart_services() {
         return 0
     fi
 
-    if ! sudo systemctl restart "${SERVICE_NAME}"; then
+    if ! sudo -n systemctl restart "${SERVICE_NAME}"; then
         error_exit "Failed to restart ${SERVICE_NAME} service."
     fi
 
@@ -213,7 +213,7 @@ restart_services() {
     sleep 2
 
     # Check service status
-    if sudo systemctl is-active --quiet "${SERVICE_NAME}"; then
+    if systemctl is-active "${SERVICE_NAME}" > /dev/null; then
         log_info "Service ${SERVICE_NAME} restarted successfully and is running."
 
         # Health check via API
@@ -233,10 +233,51 @@ restart_services() {
     # Restart pipeline timers (if installed)
     for timer in btcedu-detect.timer btcedu-run.timer; do
         if systemctl cat "${timer}" > /dev/null 2>&1; then
-            sudo systemctl restart "${timer}"
+            sudo -n systemctl restart "${timer}"
             log_info "Restarted ${timer}."
         fi
     done
+}
+
+# Refuse to deploy while the evening broadcast is produced (19:30-23:30).
+# Restarting the services then interrupts recording, pipeline or publishing of
+# the running episode. Now that the coordinator may deploy on its own, this is
+# enforced here instead of relying on everyone remembering the rule.
+check_broadcast_window() {
+    local now="${1:-$(date +%H%M)}"
+    if ! [[ "${now}" =~ ^[0-9]{4}$ ]]; then
+        error_exit "Cannot read the current time (${now}); refusing to deploy."
+    fi
+    # Strip a leading zero so 0930 is not read as octal.
+    local minutes
+    minutes=$((10#${now}))
+    if [ "${minutes}" -ge 1930 ] && [ "${minutes}" -le 2330 ]; then
+        if [ "${ALLOW_BROADCAST_WINDOW:-0}" = "1" ]; then
+            log_warn "Deploying inside the broadcast window on request (${now})."
+            return
+        fi
+        error_exit "$(cat <<MSG
+Refusing to deploy at ${now}: the evening broadcast runs between 19:30 and 23:30
+and restarting the services would interrupt it. Deploy afterwards, or override
+with: ALLOW_BROADCAST_WINDOW=1 ./run.sh
+MSG
+)"
+    fi
+}
+
+# Only the production checkout may deploy. A linked worktree (the coordinator
+# works in ../bitcoin-education-roadmap) has no .venv and no .env, which would
+# send check_initial_setup into deploy/setup-web.sh -- installing packages and
+# overwriting systemd units instead of updating the running system.
+check_production_checkout() {
+    if [ -f "${PROJECT_ROOT}/.git" ]; then
+        error_exit "$(cat <<MSG
+${PROJECT_ROOT} is a linked git worktree, not the production checkout.
+Merge the branch into the main checkout and deploy there:
+  cd \$(git rev-parse --path-format=absolute --git-common-dir)/.. && ./run.sh
+MSG
+)"
+    fi
 }
 
 # Main execution
@@ -246,6 +287,10 @@ main() {
 
     # Change to project root
     cd "${PROJECT_ROOT}"
+
+    # A linked worktree must never deploy, and never during the broadcast
+    check_production_checkout
+    check_broadcast_window
 
     # Run initial setup if needed (venv, .env, systemd missing)
     check_initial_setup
@@ -264,5 +309,8 @@ main() {
     log_info "View logs: sudo journalctl -u ${SERVICE_NAME} -f"
 }
 
-# Run main function
-main "$@"
+# Run main function. Sourcing the script (the tests do) only defines it, so the
+# guards can be exercised without ever starting a deployment.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+    main "$@"
+fi

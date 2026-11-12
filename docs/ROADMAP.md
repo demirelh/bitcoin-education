@@ -219,15 +219,17 @@ Designer für Logo und Studio, später Vertrieb für Sponsoren.
 ### Autopilot
 
 Ein Lauf erledigt **einen** Fahrplanpunkt im Worktree
-`../bitcoin-education-roadmap` (Branch `roadmap`). Er pusht nicht, rollt nicht
-aus und ruft keine kostenpflichtigen Dienste auf. Start in `tmux`, damit der
-Lauf eine getrennte SSH-Verbindung übersteht:
+`../bitcoin-education-roadmap` (Branch `roadmap`). Er ruft keine
+kostenpflichtigen Dienste auf. Seit 2026-11-12 darf er den geprüften Stand auch
+selbst übernehmen, pushen und ausrollen; `run.sh` verweigert den Start zwischen
+19:30 und 23:30 Uhr von sich aus. Start in `tmux`, damit der Lauf eine
+getrennte SSH-Verbindung übersteht:
 
 ```bash
 tmux new -s roadmap
 cd ~/AI-Startup-Lab/bitcoin-education
 copilot --agent roadmap-lead --autopilot --max-autopilot-continues 15 \
-  --deny-tool 'shell(git push)' --deny-tool 'shell(./run.sh)' \
+  --deny-tool 'shell(sudo)' \
   -p "Arbeite den nächsten Agent-Punkt aus docs/ROADMAP.md ab."
 ```
 
@@ -235,9 +237,10 @@ Bequemer: im Dashboard unter **Fahrplan** im Feld „Koordinator" schreiben
 (Haken „Autopilot" für selbstständiges Arbeiten). Das startet denselben Aufruf
 in der tmux-Sitzung `roadmap-lead`; alle Nachrichten gehören zu einem Gespräch.
 
-Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
-übernehmen: `git merge --ff-only roadmap`, dann `git push` und `./run.sh`
-(nicht zwischen 19:30 und 23:30 Uhr).
+Soll ein Lauf nichts übernehmen, die Sperren wieder mitgeben:
+`--deny-tool 'shell(git push)' --deny-tool 'shell(./run.sh)'`. Übernehmen von
+Hand geht weiterhin: `git merge --ff-only roadmap`, dann `git push` und
+`./run.sh` (nicht zwischen 19:30 und 23:30 Uhr).
 
 ### Prompts
 
@@ -263,9 +266,14 @@ Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
 
 1. **Du:** YouTube-Kanal, Google-Cloud-Projekt und OAuth einrichten (M1).
 2. **Du:** Entscheidungen E1–E3 treffen.
-3. **Agent:** KI-Kennzeichnung beim Upload umsetzen (M1), danach TTS parallelisieren (M4).
-4. **Du:** `roadmap` übernehmen (`git merge --ff-only roadmap`, push, `./run.sh`), dann beim
-   nächsten Remote-Render prüfen, ob der Lauf gefunden wird.
+3. **Du:** einmalig `sudo -n systemctl is-active btcedu-web; echo $?` ausführen.
+   Kommt nicht `0`, greift die NOPASSWD-Regel nicht und mein Deploy bricht beim
+   Dienstneustart ab (statt auf eine Passwortabfrage zu warten).
+4. **Agent:** KI-Kennzeichnung beim Upload umsetzen (M1), danach TTS parallelisieren (M4).
+5. **Agent:** `deploy/setup-web.sh` für den unbeaufsichtigten Lauf absichern
+   (`sudo -n`, `DEBIAN_FRONTEND=noninteractive`) und einen `pre-push`-Hook im
+   Produktions-Checkout einrichten, der nur Commits mit maschinenlesbarer
+   QA-Freigabe durchlässt. Beides vor dem ersten regelmäßigen Autopilot-Rollout.
 
 ## Einordnung älterer Pläne
 
@@ -280,6 +288,8 @@ Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
 
 | Datum | Eintrag |
 |---|---|
+| 2026-11-12 | Push- und Deploy-Rechte für den Koordinator freigegeben: `git push` und `./run.sh` sind erlaubt, `sudo` bleibt gesperrt (`DENIED_TOOLS = ("shell(sudo)",)`). Als Ersatz für die menschliche Vorsicht schützt sich `run.sh` jetzt selbst — Abbruch zwischen 19:30 und 23:30 Uhr (Sendefenster, Override `ALLOW_BROADCAST_WINDOW=1`) und Abbruch, wenn es aus einem verlinkten Worktree gestartet wird (dort fehlen `.venv`/`.env`, der Lauf hätte die Erstinstallation ausgelöst). Alle ausführenden `sudo systemctl`-Aufrufe laufen mit `-n`, scheitern also sofort statt auf eine Passworteingabe zu warten; die Statusabfrage braucht gar kein `sudo` mehr. 14 Tests grün (`tests/test_deploy_window.py`, `tests/test_roadmap_agent.py`), `ruff check` sauber, QA-Prüfung in zweiter Runde freigegeben. |
+| 2026-11-12 | Koordinator-Testläufe im Produktions-venv wieder möglich: Die Sperre kam nicht von fehlenden Rechten, sondern von der Pfadprüfung der Copilot CLI, die `.venv/bin/python` auf sein Symlink-Ziel unter `/usr` auflöst; der Starter übergibt jetzt `--allow-all-paths` (`67268fb`). |
 | 2026-11-12 | Remote-Render „did not appear within 120s" behoben (M0): Ursache war das starre Suchbudget 20×6 s in `GitHubActionsClient.find_run()` — GitHub legt den Lauf nach `workflow_dispatch` asynchron an und brauchte unter Last länger, der Pi gab zu früh auf und renderte lokal (⌀ 25 min). Jetzt Poll-Schleife mit Deadline (Default 420 s, `GITHUB_RENDER_RUN_LOOKUP_TIMEOUT`) und Backoff 3→30 s, Zuordnung über Marker plus `created_after`, transiente Listing-Fehler toleriert, Fehlermeldung nennt Repo, Workflow, Ref, Wartezeit und ob die Workflow-Datei auf dem Ref existiert. Lokaler Rückfall unverändert. 91 Tests grün (`tests/test_github_actions_service.py`, `test_remote_render.py`, `test_config.py`; 4 Flask-Importfehler umgebungsbedingt), `ruff check` sauber, QA-Prüfung freigegeben. |
 | 2026-11-12 | WhatsApp wieder gekoppelt (seit 19.10. getrennt): Ursache veraltete WhatsApp-Web-Version im Dienst, jetzt live von web.whatsapp.com; abgelaufene QR-Codes werden nicht mehr angezeigt; Signal-Schlüssel nicht mehr im Systemprotokoll. Vorgemerkte Antwort zugestellt. |
 | 2026-11-12 | Koordinator über WhatsApp: Selbst-Chat → `btcedu roadmap-chat inbound`, Antwort per WhatsApp, Gedächtnis `data/roadmap-chat/memory.md` (Test: Begriff „die Sendung“ nach neuem Gespräch korrekt aufgelöst), Live-Anzeige je Agent auf der Fahrplanseite. Fehlermeldungen aus (`NOTIFY_WHATSAPP_FAILURES=false`). Zustellung wartet auf neue WhatsApp-Verknüpfung. |

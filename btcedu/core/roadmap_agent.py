@@ -31,7 +31,11 @@ MAX_MESSAGE_CHARS = 8000
 MAX_QUEUED = 5
 MAX_REPLY_CHARS = 3000
 MAX_AUTOPILOT_CONTINUES = 15
-DENIED_TOOLS = ("shell(git push)", "shell(./run.sh)", "shell(bash run.sh)", "shell(sudo)")
+# The coordinator may push and deploy since 2026-11-12 (operator's decision).
+# sudo stays blocked: nothing in the roadmap work needs root. run.sh calls
+# `sudo -n systemctl` itself, which fails immediately when the NOPASSWD rule
+# is missing instead of waiting for a password nobody can type.
+DENIED_TOOLS = ("shell(sudo)",)
 REPOSITORY = Path(__file__).resolve().parents[2]
 
 TEAM = (

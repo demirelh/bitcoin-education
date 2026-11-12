@@ -140,6 +140,8 @@ Verantwortlich: **Du** = Betreiber, **Agent** = Umsetzung im Repository.
 - [x] Agententeam unter `.github/agents/` und Fahrplanseite `/roadmap` im Dashboard angelegt
 - [x] **Agent + Du:** Commits pushen und mit `./run.sh` ausrollen (nach Freigabe)
 - [x] **Agent:** Chat mit dem Koordinator im Dashboard (Seite „Fahrplan“)
+- [x] **Agent:** Koordinator über WhatsApp (Selbst-Chat), mit Gedächtnis, Warteschlange und Live-Anzeige der Agenten; automatische Fehlermeldungen per WhatsApp abgeschaltet
+- [ ] **Du:** WhatsApp neu verknüpfen (Dashboard → WhatsApp → QR-Code scannen) und den WhatsApp-Dienst neu starten: `sudo systemctl restart whatsapp`
 - [ ] **Agent:** Remote-Render-Fehler „did not appear within 120s" beheben (Workflow auf dem Ziel-Ref, Wartezeit, Fehlerbild)
 
 ### M1 – Erste Veröffentlichung (größter Hebel)
@@ -276,5 +278,6 @@ Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
 
 | Datum | Eintrag |
 |---|---|
+| 2026-11-12 | Koordinator über WhatsApp: Selbst-Chat → `btcedu roadmap-chat inbound`, Antwort per WhatsApp, Gedächtnis `data/roadmap-chat/memory.md` (Test: Begriff „die Sendung“ nach neuem Gespräch korrekt aufgelöst), Live-Anzeige je Agent auf der Fahrplanseite. Fehlermeldungen aus (`NOTIFY_WHATSAPP_FAILURES=false`). Zustellung wartet auf neue WhatsApp-Verknüpfung. |
 | 2026-11-12 | Ausgerollt: Fahrplanseite und Koordinator-Chat im Dashboard (`/dashboard/roadmap`), Agententeam unter `.github/agents/`. Koordinator-Testlauf über denselben Codepfad wie das Dashboard: Antwort nach 17 s, Exit 0, keine Dateiänderung. |
 | 2026-11-12 | Bestandsaufnahme: Pipeline stabil, ≈ 3,30 USD/Folge, fertig 21:37–22:42; kein YouTube-Upload bisher; Avatar blockiert; Newsroom nur Vorschau (200 Artikel). Fahrplan angelegt, Agent-Anleitungen korrigiert, Copilot-Session-Flut behoben (`999f4fd`), 8.948 alte Pipeline-Sessions gelöscht. |

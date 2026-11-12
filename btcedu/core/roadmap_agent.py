@@ -138,7 +138,8 @@ def _session_exists(name: str) -> bool:
 
 def _active_run(state: dict) -> dict | None:
     for run in reversed(state["runs"]):
-        if run.get("finished_at") is None and _session_exists(run.get("tmux", "")):
+        # Runs started before per-run sessions used the bare prefix as their session name.
+        if run.get("finished_at") is None and _session_exists(run.get("tmux", SESSION_PREFIX)):
             return run
     return None
 
@@ -303,6 +304,8 @@ def _launch(settings, state: dict, message: str, operator: str, autopilot: bool,
 
     copilot_cmd = [copilot, "--agent", AGENT_NAME, "--session-id", state["session_id"]]
     copilot_cmd += ["--allow-all-tools", "--no-ask-user", "--add-dir", str(directory)]
+    # Tests need the production checkout's .venv; the agent only reads there.
+    copilot_cmd += ["--add-dir", str(REPOSITORY)]
     for tool in DENIED_TOOLS:
         copilot_cmd += ["--deny-tool", tool]
     if autopilot:

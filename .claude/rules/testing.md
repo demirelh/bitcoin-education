@@ -6,7 +6,7 @@ paths:
 
 # Testing Rules
 
-- Run: `pytest` (full suite ~1189 tests), `pytest tests/test_X.py -x -q` (specific file)
+- Run: `pytest` (full suite ~4420 tests), `pytest tests/test_X.py -x -q` (specific file)
 - All external APIs must be mocked — no real API calls in tests
 - Mock at the **source module** for lazy imports (e.g., `btcedu.services.ffmpeg_service.normalize_video_clip`), not at the calling module
 - MediaAsset uses its own `declarative_base()` — tests must call `MediaBase.metadata.create_all(engine)` separately from `btcedu.db.Base.metadata.create_all(engine)`

@@ -20,6 +20,10 @@ chapterize (chapters.json)
 
 ## Key files
 
+Imagegen routing is profile-owned: `tagesschau_tr` uses free media first
+(`core/free_media.py`), then Flux/Ideogram (`core/image_generator.py`) with Pexels
+as terminal fallback. The Pexels stock flow below applies where a profile uses it.
+
 - `btcedu/core/stock_images.py` — search, rank, finalize orchestration (current provider: Pexels)
 - `btcedu/services/pexels_service.py` — current image/video provider API wrapper
 - `btcedu/prompts/templates/intent_extract.md` — LLM intent extraction prompt

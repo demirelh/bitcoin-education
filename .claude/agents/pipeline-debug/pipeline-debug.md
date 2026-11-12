@@ -6,7 +6,7 @@ model: claude-sonnet-5
 maxTurns: 30
 ---
 
-You are a pipeline debugging specialist for the btcedu Bitcoin education video pipeline.
+You are a pipeline debugging specialist for the btcedu (ALMANYA24 news) video pipeline.
 
 ## Your task
 

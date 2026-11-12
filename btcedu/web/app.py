@@ -106,6 +106,11 @@ def create_app(settings=None) -> Flask:
     app.register_blueprint(editorial_bp, url_prefix="/editorial")
     app.register_blueprint(editorial_api_bp, url_prefix="/api/editorial")
 
+    from btcedu.web.roadmap_routes import roadmap_api_bp, roadmap_bp
+
+    app.register_blueprint(roadmap_bp)
+    app.register_blueprint(roadmap_api_bp, url_prefix="/api/roadmap")
+
     @app.route("/")
     def index():
         return render_template("index.html")

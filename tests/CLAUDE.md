@@ -1,4 +1,4 @@
-# tests/ — Test Suite (~2655 tests)
+# tests/ — Test Suite (~4420 tests)
 
 ## Running Tests
 

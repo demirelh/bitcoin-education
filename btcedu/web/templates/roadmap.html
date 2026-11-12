@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fahrplan — btcedu</title>
+  <link rel="stylesheet" href="static/styles.css">
+  <style>
+    .rm-wrap { max-width: 1100px; margin: 24px auto; padding: 0 16px; display: grid; gap: 16px; }
+    .rm-card { background: var(--panel, #1b1f27); border: 1px solid var(--border, #2a3039);
+               border-radius: 12px; padding: 18px 20px; }
+    .rm-card h2 { margin: 0 0 12px; font-size: 17px; }
+    .rm-muted { color: var(--muted, #9aa4b2); font-size: 13px; }
+    .rm-bar { height: 10px; background: var(--border, #2a3039); border-radius: 999px; overflow: hidden; }
+    .rm-bar > div { height: 100%; background: #4caf7a; }
+    .rm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 12px; }
+    .rm-ms h3 { margin: 0 0 6px; font-size: 15px; }
+    .rm-ms ul, .rm-list { list-style: none; padding: 0; margin: 10px 0 0; }
+    .rm-ms li, .rm-list li { padding: 4px 0; font-size: 13px; line-height: 1.45; display: flex; gap: 8px; }
+    .rm-done { color: var(--muted, #9aa4b2); text-decoration: line-through; }
+    .rm-owner { flex: none; font-size: 11px; padding: 1px 7px; border-radius: 999px; height: fit-content; }
+    .rm-owner.du { background: #3a2f16; color: #f0c674; }
+    .rm-owner.agent { background: #16304a; color: #8cc4f0; }
+    .rm-owner.both { background: #2d1f3d; color: #c9a3f0; }
+    table.rm-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .rm-table td, .rm-table th { text-align: left; padding: 6px 8px; border-top: 1px solid var(--border, #2a3039);
+                                 vertical-align: top; }
+    .rm-next li { font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-row">
+      <h1>btcedu</h1>
+      <div class="channel-selector"><span>Fahrplan ALMANYA24</span></div>
+    </div>
+    <div class="topbar-row">
+      <button class="btn" onclick="location.href='./'">← Dashboard</button>
+      <button class="btn" onclick="rmLoad()">Aktualisieren</button>
+      <span class="rm-muted" id="rm-updated"></span>
+    </div>
+  </div>
+
+  <div class="rm-wrap">
+    <div class="rm-card">
+      <h2>Gesamtfortschritt <span class="rm-muted" id="rm-progress-text"></span></h2>
+      <div class="rm-bar"><div id="rm-progress" style="width:0%"></div></div>
+    </div>
+    <div class="rm-card"><h2>Nächste Schritte</h2><ol class="rm-list rm-next" id="rm-next"></ol></div>
+    <div class="rm-card"><h2>Meilensteine</h2><div class="rm-grid" id="rm-milestones"></div></div>
+    <div class="rm-card"><h2>Offene Entscheidungen</h2><table class="rm-table" id="rm-decisions"></table></div>
+    <div class="rm-card"><h2>Ziele</h2><table class="rm-table" id="rm-goals"></table></div>
+    <div class="rm-card"><h2>Ist-Stand</h2><table class="rm-table" id="rm-status"></table></div>
+    <div class="rm-card"><h2>Statuslog</h2><table class="rm-table" id="rm-log"></table></div>
+  </div>
+
+  <script>
+    function el(tag, text, cls) {
+      const node = document.createElement(tag);
+      if (text !== undefined) node.textContent = text;
+      if (cls) node.className = cls;
+      return node;
+    }
+
+    function ownerBadge(owner) {
+      const cls = owner === 'Du' ? 'du' : owner === 'Agent' ? 'agent' : 'both';
+      return el('span', owner, 'rm-owner ' + cls);
+    }
+
+    function fillTable(id, header, rows) {
+      const table = document.getElementById(id);
+      table.replaceChildren();
+      const head = el('tr');
+      header.forEach(h => head.appendChild(el('th', h)));
+      table.appendChild(head);
+      rows.forEach(row => {
+        const tr = el('tr');
+        row.forEach(cell => tr.appendChild(el('td', cell)));
+        table.appendChild(tr);
+      });
+    }
+
+    async function rmLoad() {
+      const response = await fetch('api/roadmap', { cache: 'no-store' });
+      const data = await response.json();
+      if (!response.ok) {
+        document.getElementById('rm-updated').textContent = data.error || 'Fehler';
+        return;
+      }
+      const pct = data.progress.total ? Math.round(100 * data.progress.done / data.progress.total) : 0;
+      document.getElementById('rm-progress').style.width = pct + '%';
+      document.getElementById('rm-progress-text').textContent =
+        data.progress.done + ' / ' + data.progress.total + ' Aufgaben (' + pct + ' %)';
+      document.getElementById('rm-updated').textContent =
+        'Stand der Datei: ' + new Date(data.updated_at).toLocaleString('de-DE');
+
+      const next = document.getElementById('rm-next');
+      next.replaceChildren(...data.next_steps.map(step => el('li', step)));
+
+      const grid = document.getElementById('rm-milestones');
+      grid.replaceChildren();
+      data.milestones.forEach(ms => {
+        const card = el('div', undefined, 'rm-ms');
+        card.appendChild(el('h3', ms.id + ' – ' + ms.title));
+        card.appendChild(el('div', ms.done + ' / ' + ms.total + ' erledigt', 'rm-muted'));
+        const bar = el('div', undefined, 'rm-bar');
+        const fill = el('div');
+        fill.style.width = (ms.total ? Math.round(100 * ms.done / ms.total) : 0) + '%';
+        bar.appendChild(fill);
+        card.appendChild(bar);
+        const list = el('ul');
+        ms.tasks.forEach(task => {
+          const li = el('li');
+          li.appendChild(el('span', task.done ? '☑' : '☐'));
+          if (task.owner) li.appendChild(ownerBadge(task.owner));
+          li.appendChild(el('span', task.text, task.done ? 'rm-done' : ''));
+          list.appendChild(li);
+        });
+        card.appendChild(list);
+        grid.appendChild(card);
+      });
+
+      fillTable('rm-decisions', ['Nr.', 'Frage', 'Empfehlung'],
+        data.decisions.map(d => [d.id, d.question, d.recommendation]));
+      fillTable('rm-goals', ['Kennzahl', 'Ziel'], data.goals.map(g => [g.metric, g.target]));
+      fillTable('rm-status', ['Bereich', 'Befund', 'Beleg'],
+        data.status.map(s => [s.area, s.finding, s.source]));
+      fillTable('rm-log', ['Datum', 'Eintrag'], data.log.slice().reverse().map(l => [l.date, l.entry]));
+    }
+
+    rmLoad();
+    setInterval(rmLoad, 60000);
+  </script>
+</body>
+</html>

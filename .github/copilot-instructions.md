@@ -7,8 +7,9 @@ them here.
 
 ## Purpose
 
-Automated pipeline that turns German podcast/news episodes (currently ARD
-tagesschau) into Turkish YouTube videos. Python 3.12, Click CLI, Flask
+Automated pipeline that turns German news (currently the 20:00 ARD
+tagesschau) into Turkish YouTube videos under the ALMANYA24 brand and feeds the
+ALMANYA24 newsroom website. Python 3.12, Click CLI, Flask
 dashboard, SQLAlchemy 2.0 + SQLite + FTS5, Pydantic settings. Runs on a
 Raspberry Pi via systemd timers behind a Caddy reverse proxy.
 Entry point: `btcedu = "btcedu.cli:cli"`.
@@ -23,9 +24,12 @@ Entry point: `btcedu = "btcedu.cli:cli"`.
 - `btcedu/profiles/` — profile YAML: stage routing, providers, gates
 - `btcedu/prompts/` — versioned templates (YAML frontmatter + Jinja2)
 - `btcedu/web/` — Flask dashboard (`api.py`, `static/app.js`)
+- `btcedu/core/editorial/` — ALMANYA24 newsroom (claims, evidence, Turkish
+  articles, website); daily run assembled in `scripts/almanya24_preview/`
 - `btcedu/failover/` — external control plane, leases/fencing and node coordination
-- `tests/` — pytest suite (~2655 tests)
+- `tests/` — pytest suite (~4420 tests)
 - `docs/implementation/` — implementation notes and audits
+- `docs/ROADMAP.md` — single planning file: goal, status, next steps
 
 ## Pipeline (v2)
 
@@ -33,11 +37,18 @@ Entry point: `btcedu = "btcedu.cli:cli"`.
 download → transcribe → transcript_analyze → transcript_verify → correct →
 transcript_qa → review_gate_transcript_qa → review_gate_1 → segment →
 translate → adapt → review_gate_2 → chapterize → frameextract → imagegen →
-review_gate_stock → tts → anchorgen → render → review_gate_3 → publish
+review_gate_stock → tts → sceneplan → anchorgen → review_gate_anchor → render →
+review_gate_3 → publish
 ```
 
 v1 is legacy: stored v1 episodes keep a compatibility path, new v1 profiles are
 not supported. All v2-only stages are guarded in `_run_stage()`.
+
+## Planning
+
+When asked where the project stands or how to continue, read `docs/ROADMAP.md`
+and work from its "Nächste Schritte". Update its checkboxes and status log after
+finishing an item.
 
 ## Coding Rules
 
@@ -133,7 +144,7 @@ temperatures) must be attributed and excluded from claim validation.
 
 <!--
 Documentation sync
-Baseline: d1b4676
+Baseline: 999f4fd
 Synced through: current working tree
-Date: 2026-08-22
+Date: 2026-11-12
 -->

@@ -1,9 +1,17 @@
-# btcedu — Bitcoin Education Video Pipeline
+# btcedu — ALMANYA24 News Video Pipeline
 
-Automated pipeline: German Bitcoin podcast episodes → Turkish YouTube videos.
+Automated pipeline: the German 20:00 ARD tagesschau → Turkish YouTube news videos
+under the ALMANYA24 brand, plus a Turkish newsroom website built from the same
+stories. The name `btcedu` is historic (the project started with German Bitcoin
+podcasts; profile `bitcoin_podcast` still exists).
 Stack: Python 3.12, Click CLI, Flask web dashboard, SQLAlchemy 2.0 + SQLite + FTS5, Pydantic settings.
 Deployed on Raspberry Pi via systemd timers + Caddy reverse proxy.
-Entry point: `btcedu = "btcedu.cli:cli"` (pyproject.toml). All 11 sprints complete.
+Entry point: `btcedu = "btcedu.cli:cli"` (pyproject.toml).
+
+**Goal, status and next steps live in `docs/ROADMAP.md`** — the single planning
+file. Read it when asked where the project stands or how to continue; after
+finishing a roadmap item, tick it, add a status-log line and reset
+"Nächste Schritte".
 
 ## Build & Test
 
@@ -18,8 +26,8 @@ ruff check btcedu/ tests/            # lint (py312, line-length 100, E/W/F/I/UP)
 btcedu regression-run --from-stage correct --only-stage  # isolated stage replay
 ```
 
-Current collection baseline: **2655 tests** (`pytest --collect-only -q`,
-2026-08-22).
+Current collection baseline: **4420 tests** (`pytest --collect-only -q`,
+2026-11-12).
 
 ## Pipeline Architecture
 
@@ -32,10 +40,11 @@ new v1 profile definitions are not supported.
 download → transcribe → transcript_analyze → transcript_verify → correct →
 transcript_qa → review_gate_transcript_qa → review_gate_1 → segment →
 translate → adapt → review_gate_2/translation quality gate → chapterize →
-frameextract → imagegen → review_gate_stock → tts → anchorgen → render →
-review_gate_3 → publish
+frameextract → imagegen → review_gate_stock → tts → sceneplan → anchorgen →
+review_gate_anchor → render → review_gate_3 → publish
 ```
 
+`segment` is inserted before `translate` when the profile enables it.
 Translation QA runs deterministic checks before an independent LLM cascade.
 GREEN stores the approved narration hash; RED blocks chapterize and creates an
 artifact-bound review. Automatic targeted translate/adapt retries are bounded.
@@ -129,6 +138,18 @@ calls obtain the exclusive local pipeline lock, mark orphaned `RUNNING`
 committed before long stage work. The dashboard shows pipeline/stage start
 times, completion times, summed retry duration/cost and attempt counts.
 
+**ALMANYA24 newsroom (website):** `btcedu/core/editorial/` turns the video
+pipeline's `data/outputs/<episode>/stories.json` into claim-checked Turkish
+articles (research, evidence, licensed media, article revisions; `news_*`
+tables). The unattended daily run is `editorial/daily.run_daily()`, assembled in
+`scripts/almanya24_preview/daily_run.py` and scheduled by
+`deploy/almanya24-daily.timer`. It currently writes only to the development
+preview (`data/almanya24-preview/`, served under `/almanya24-dev/`, noindex);
+the production `news_*` tables are empty. `btcedu site …` (publish, build,
+switch, withdraw) is manual by design. See
+`docs/implementation/almanya24-daily-automation.md` and
+`docs/plans/almanya24-news-platform/`.
+
 ## Coding Conventions
 
 - Python 3.12, ruff-enforced (line-length 100, select E/W/F/I/UP, ignore UP042)
@@ -179,6 +200,10 @@ times, completion times, summed retry duration/cost and attempt counts.
   hide the misconfiguration until nothing is left. The switch is sticky for the
   rest of the run and the rejected request is not billed, so the chunk is simply
   re-sent.
+- **Copilot CLI calls leave no saved session.** `_call_copilot_cli()` passes a
+  fresh `--session-id` and deletes `~/.copilot/session-state/<id>` (or under
+  `$COPILOT_HOME`) afterwards; otherwise every pipeline call appears as a chat
+  session in VS Code.
 - **YouTube deps are optional**: `pip install -e ".[youtube]"`. `run.sh` auto-installs if `data/client_secret.json` exists.
 - **YouTube chapter marks come from the rendered timeline, not from the audio.**
   Intro, per-topic cards and outro sit between the chapters, so summing TTS
@@ -257,7 +282,7 @@ The dashboard page `/whatsapp` shows the pairing QR code.
 
 <!--
 Documentation sync
-Baseline: d1b4676
+Baseline: 999f4fd
 Synced through: current working tree
-Date: 2026-08-22
+Date: 2026-11-12
 -->

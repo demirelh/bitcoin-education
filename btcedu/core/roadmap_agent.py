@@ -322,7 +322,9 @@ def _launch(settings, state: dict, message: str, operator: str, autopilot: bool,
     log_path = shlex.quote(str(directory / f"{run_id}.log"))
     shell = (
         f"{shlex.join(['env', *unset, *copilot_cmd])} > {log_path} 2>&1; "
-        f'status=$?; {shlex.join(finish_cmd)} --exit-code "$status"'
+        # The hook must import btcedu and read .env from the main checkout, not the worktree.
+        f"status=$?; cd {shlex.quote(str(REPOSITORY))} && "
+        f'{shlex.join(finish_cmd)} --exit-code "$status"'
     )
     started = subprocess.run(
         [tmux, "new-session", "-d", "-s", session, "-c", str(worktree), shell],
@@ -455,8 +457,9 @@ def _finish(state_dir: Path, run_id: str, exit_code: int) -> None:
     run.update(finished_at=_utcnow(), exit_code=exit_code)
     _save(state_dir, state)
 
-    os.chdir(REPOSITORY)  # Settings read .env from the cwd; the worktree has none.
     settings = Settings()
+    if not settings.notify_whatsapp_enabled and run.get("channel") == "whatsapp":
+        print(f"WhatsApp disabled in {Path.cwd()}/.env, reply not sent", file=sys.stderr)
     if run.get("channel") == "whatsapp":
         prefix = "" if exit_code == 0 else f"(Exit {exit_code}) "
         send_notification(settings, f"🧭 {prefix}{run_reply(state, run)}")

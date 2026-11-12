@@ -306,6 +306,11 @@ def _launch(settings, state: dict, message: str, operator: str, autopilot: bool,
     copilot_cmd += ["--allow-all-tools", "--no-ask-user", "--add-dir", str(directory)]
     # Tests need the production checkout's .venv; the agent only reads there.
     copilot_cmd += ["--add-dir", str(REPOSITORY)]
+    # --add-dir alone is not enough for the checkout's virtualenv: .venv/bin/python
+    # is a symlink to the interpreter in /usr, and path verification rejects the
+    # resolved target. Without this the agent cannot run the test suite at all;
+    # the dangerous commands stay blocked by DENIED_TOOLS.
+    copilot_cmd += ["--allow-all-paths"]
     for tool in DENIED_TOOLS:
         copilot_cmd += ["--deny-tool", tool]
     if autopilot:

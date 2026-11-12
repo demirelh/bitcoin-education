@@ -4,6 +4,8 @@ import hashlib
 import inspect
 import json
 import logging
+import shutil
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -344,6 +346,8 @@ def _call_copilot_cli(
         pf.write(combined)
         prompt_path = pf.name
 
+    session_id = str(uuid.uuid4())
+    env = copilot_cli_env()
     cmd = [
         binary,
         "--model",
@@ -354,6 +358,8 @@ def _call_copilot_cli(
         "--add-dir",
         str(Path(prompt_path).parent),
         "--no-ask-user",
+        "--session-id",
+        session_id,
         "--output-format",
         "json",
         "-p",
@@ -367,9 +373,10 @@ def _call_copilot_cli(
             capture_output=True,
             text=True,
             timeout=getattr(settings, "copilot_cli_timeout", 900),
-            env=copilot_cli_env(),
+            env=env,
         )
     finally:
+        _discard_copilot_session(session_id, env)
         try:
             import os as _os
 
@@ -471,6 +478,12 @@ def copilot_cli_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
         if value.startswith(UNSUPPORTED_COPILOT_TOKEN_PREFIXES):
             env.pop(name, None)
     return env
+
+
+def _discard_copilot_session(session_id: str, env: dict[str, str]) -> None:
+    """Remove the saved session of a one-shot call so it does not flood the session list."""
+    home = Path(env.get("COPILOT_HOME") or Path.home() / ".copilot")
+    shutil.rmtree(home / "session-state" / session_id, ignore_errors=True)
 
 
 def _copilot_prompt_argument(prompt: str, prompt_path: str) -> str:
@@ -603,25 +616,32 @@ def _copilot_cli_fallback_text(binary: str, model: str, prompt: str, settings) -
     """Fallback to text-format output, stripping the stats footer."""
     import subprocess
 
-    proc = subprocess.run(
-        [
-            binary,
-            "--model",
-            model,
-            "--no-custom-instructions",
-            "--available-tools=view",
-            "--allow-tool=view",
-            "--no-ask-user",
-            "--output-format",
-            "text",
-            "-p",
-            prompt,
-        ],
-        capture_output=True,
-        text=True,
-        timeout=getattr(settings, "copilot_cli_timeout", 900),
-        env=copilot_cli_env(),
-    )
+    session_id = str(uuid.uuid4())
+    env = copilot_cli_env()
+    try:
+        proc = subprocess.run(
+            [
+                binary,
+                "--model",
+                model,
+                "--no-custom-instructions",
+                "--available-tools=view",
+                "--allow-tool=view",
+                "--no-ask-user",
+                "--session-id",
+                session_id,
+                "--output-format",
+                "text",
+                "-p",
+                prompt,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=getattr(settings, "copilot_cli_timeout", 900),
+            env=env,
+        )
+    finally:
+        _discard_copilot_session(session_id, env)
     if proc.returncode != 0:
         raise RuntimeError(
             f"copilot CLI text fallback exited {proc.returncode}: "

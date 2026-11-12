@@ -138,7 +138,8 @@ Verantwortlich: **Du** = Betreiber, **Agent** = Umsetzung im Repository.
 - [x] Anleitungsdateien der Agents geprüft und korrigiert (2026-11-12)
 - [x] Dieser Fahrplan angelegt
 - [x] Agententeam unter `.github/agents/` und Fahrplanseite `/roadmap` im Dashboard angelegt
-- [ ] **Agent + Du:** Commits pushen und mit `./run.sh` ausrollen (nach Freigabe)
+- [x] **Agent + Du:** Commits pushen und mit `./run.sh` ausrollen (nach Freigabe)
+- [x] **Agent:** Chat mit dem Koordinator im Dashboard (Seite „Fahrplan“)
 - [ ] **Agent:** Remote-Render-Fehler „did not appear within 120s" beheben (Workflow auf dem Ziel-Ref, Wartezeit, Fehlerbild)
 
 ### M1 – Erste Veröffentlichung (größter Hebel)
@@ -228,6 +229,10 @@ copilot --agent roadmap-lead --autopilot --max-autopilot-continues 15 \
   -p "Arbeite den nächsten Agent-Punkt aus docs/ROADMAP.md ab."
 ```
 
+Bequemer: im Dashboard unter **Fahrplan** im Feld „Koordinator" schreiben
+(Haken „Autopilot" für selbstständiges Arbeiten). Das startet denselben Aufruf
+in der tmux-Sitzung `roadmap-lead`; alle Nachrichten gehören zu einem Gespräch.
+
 Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
 übernehmen: `git merge --ff-only roadmap`, dann `git push` und `./run.sh`
 (nicht zwischen 19:30 und 23:30 Uhr).
@@ -254,10 +259,9 @@ Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
 
 ## Nächste Schritte
 
-1. **Agent + Du:** Commits prüfen, pushen und ausrollen (M0).
-2. **Du:** YouTube-Kanal, Google-Cloud-Projekt und OAuth einrichten (M1).
-3. **Du:** Entscheidungen E1–E3 treffen.
-4. **Agent:** KI-Kennzeichnung beim Upload umsetzen (M1), danach TTS parallelisieren (M4).
+1. **Du:** YouTube-Kanal, Google-Cloud-Projekt und OAuth einrichten (M1).
+2. **Du:** Entscheidungen E1–E3 treffen.
+3. **Agent:** KI-Kennzeichnung beim Upload umsetzen (M1), danach TTS parallelisieren (M4).
 
 ## Einordnung älterer Pläne
 
@@ -272,4 +276,5 @@ Danach im Dashboard unter **Fahrplan** den Stand prüfen und den Branch
 
 | Datum | Eintrag |
 |---|---|
+| 2026-11-12 | Ausgerollt: Fahrplanseite und Koordinator-Chat im Dashboard (`/dashboard/roadmap`), Agententeam unter `.github/agents/`. Koordinator-Testlauf erfolgreich (16 s, Exit 0). |
 | 2026-11-12 | Bestandsaufnahme: Pipeline stabil, ≈ 3,30 USD/Folge, fertig 21:37–22:42; kein YouTube-Upload bisher; Avatar blockiert; Newsroom nur Vorschau (200 Artikel). Fahrplan angelegt, Agent-Anleitungen korrigiert, Copilot-Session-Flut behoben (`999f4fd`), 8.948 alte Pipeline-Sessions gelöscht. |

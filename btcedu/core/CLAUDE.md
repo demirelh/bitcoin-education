@@ -58,6 +58,10 @@ Each v2 stage module follows the same pattern:
   Flux/Ideogram refusal. An exhausted Pexels search timeout is reported as `network`,
   not as the earlier Flux `quota_exhausted`; Pexels retries transport failures within
   its existing three-attempt search budget.
+  Empty fallback searches try the same leading four, then two subject words
+  (at most three queries); each query retains photo exclusions, and the manifest
+  records the successful query. HTTP/transport errors are not query misses;
+  exhausted searches still fail rather than substituting an unrelated picture.
 - `stock_images.py` (60KB) — Pexels stock search, intent extraction, ranking, candidate finalization
 - `renderer.py` — ffmpeg: per-chapter segments -> concat -> draft.mp4, intro/topic-intro
   cards, ticker. A studio scene plan is ignored while `anchor_enabled=false`,

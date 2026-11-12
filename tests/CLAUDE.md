@@ -58,6 +58,8 @@ job lifecycle tests, with every stage dependency mocked and the job awaited.
 - `test_pexels_service.py` / `test_image_generator.py` — bounded Pexels search
   transport retries and Flux quota-lock fallback: one search timeout recovers;
   exhausted retries report the terminal Pexels network error, not Flux billing.
+  Empty imagegen stock searches retry bounded shorter subject queries, preserve
+  attribution and exclusions, and fail closed if every query is empty.
 - `test_transcript_verifier.py` — quota-only independent secondary fallback,
   sticky provider selection, mixed-region cost/attribution and fail-closed errors;
   the exact OpenAI 429 `credit_balance_exhausted` response is mocked at the SDK.

@@ -79,7 +79,10 @@ Provider choice is profile-owned, not hardcoded. LLM calls go through
 `services/claude_service.call_claude()` (providers: `anthropic`, `openai`,
 `github_models`, `copilot_cli`). `tagesschau_tr` routes primary generation
 through Flux or Ideogram and uses Pexels as the terminal fallback; other
-profiles may route among Flux, Ideogram, DALL-E, Gemini or Pexels. Weather
+profiles may route among Flux, Ideogram, DALL-E, Gemini or Pexels. Empty imagegen
+fallback searches try the same leading four, then two subject words (at most
+three queries), retaining photo exclusions and crediting the successful query;
+provider errors and exhausted searches still fail. Weather
 cards are rendered deterministically (HTML/SVG + headless Chromium), never by
 an image model. TTS uses ElevenLabs.
 ElevenLabs may hold several accounts (`ELEVENLABS_API_KEY_FALLBACK`); the

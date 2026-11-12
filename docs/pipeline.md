@@ -114,6 +114,11 @@ türkische YouTube-Videos umwandeln.
   Pexels-Suchen wiederholen Timeouts und Verbindungsfehler innerhalb von maximal
   drei Versuchen (2 s / 4 s Wartezeit). Scheitert auch der Fallback, meldet
   Imagegen dessen letzten Fehler statt des vorherigen Flux-/Ideogram-Fehlers.
+  Liefert die Fallback-Suche kein unbenutztes Foto, versucht Imagegen dieselben
+  führenden Suchbegriffe mit vier, dann zwei Wörtern (maximal drei Suchanfragen).
+  Bereits verwendete Fotos bleiben ausgeschlossen; das Manifest dokumentiert
+  die erfolgreiche Suchanfrage. Providerfehler werden nicht als leere Treffer
+  behandelt. Bleiben alle Suchen erfolglos, schlägt die Stage weiterhin fehl.
 - **Kostenschutz:** Guard pro Episode (`max_episode_cost_usd`, Default $10).
 - **Robustheit:** Refusal-Retry (leerer/verweigerter LLM-Output → Reframe-Retry
   → Anthropic-Fallback), JSON-Korrektur-Retry (z. B. bei fehlerhaftem

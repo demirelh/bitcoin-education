@@ -1004,3 +1004,108 @@ def test_quota_fallback_retries_pexels_timeout(db_session, tmp_path, recover):
     assert entry["generation_method"] == ("pexels" if recover else "failed")
     if recover:
         assert (Path(settings.outputs_dir) / episode_id / entry["file_path"]).is_file()
+
+
+@pytest.mark.parametrize(
+    "successful_query", ["residential street german city", "residential street", None]
+)
+def test_pexels_fallback_shortens_empty_search(db_session, tmp_path, successful_query):
+    """The selected episode's ch05 needs fewer terms, not another identical search."""
+    from types import SimpleNamespace
+
+    from btcedu.core.image_generator import generate_images
+    from btcedu.services.errors import PipelineError
+
+    episode_id = "ep_empty_stock_search"
+    settings = _prepare_generative_episode(db_session, tmp_path, episode_id)
+    settings.pexels_api_key = "pexels-key"
+    episode_dir = Path(settings.outputs_dir) / episode_id
+    query = "residential street german city dusk long"
+    (episode_dir / "chapters.json").write_text(
+        json.dumps(
+            _make_chapters_json(
+                episode_id=episode_id, visual_type="b_roll", num_chapters=1, image_prompt=query
+            )
+        )
+    )
+    photo = SimpleNamespace(
+        id=123,
+        width=1920,
+        height=1080,
+        photographer="Photographer",
+        photographer_url="https://example.com/photographer",
+        url="https://example.com/photo",
+        alt="Residential street",
+    )
+    pexels = MagicMock()
+    pexels.search.side_effect = lambda **kwargs: SimpleNamespace(
+        photos=[photo] if kwargs["query"] == successful_query else [],
+        total_results=8000,
+    )
+    pexels.download_photo.side_effect = lambda _photo, path, size: path.write_bytes(b"stock")
+
+    with (
+        patch("btcedu.services.image_provider_factory.get_image_service", return_value=MagicMock()),
+        patch("btcedu.core.image_generator._create_media_asset_record"),
+        patch(
+            "btcedu.core.image_generator._generate_single_image",
+            side_effect=RuntimeError("Flux API rejected the request [quota_exhausted]"),
+        ),
+        patch("btcedu.services.pexels_service.PexelsService", return_value=pexels),
+    ):
+        if successful_query:
+            result = generate_images(db_session, episode_id, settings, force=True)
+            assert result.failed_count == 0
+        else:
+            with pytest.raises(PipelineError, match="Pexels returned no fallback image"):
+                generate_images(db_session, episode_id, settings, force=True)
+
+    expected_queries = [query, "residential street german city", "residential street"]
+    if successful_query:
+        expected_queries = expected_queries[: expected_queries.index(successful_query) + 1]
+    assert [call.kwargs["query"] for call in pexels.search.call_args_list] == expected_queries
+    entry = json.loads((episode_dir / "images" / "manifest.json").read_text())["images"][0]
+    if successful_query:
+        assert entry["prompt"] == entry["metadata"]["search_query"] == successful_query
+        assert entry["metadata"]["photographer"] == "Photographer"
+        assert (episode_dir / entry["file_path"]).read_bytes() == b"stock"
+    else:
+        pexels.download_photo.assert_not_called()
+        assert entry["generation_method"] == "failed"
+
+
+@pytest.mark.parametrize("query", ["residential street german city dusk long", "street"])
+def test_pexels_fallback_preserves_exclusions_when_shortening(tmp_path, query):
+    from types import SimpleNamespace
+
+    from btcedu.config import Settings
+    from btcedu.core.image_generator import _generate_pexels_fallback
+
+    chapter = ChapterDocument(**_make_chapters_json(visual_type="b_roll")).chapters[0]
+    settings = Settings(pexels_api_key="test")
+    excluded = SimpleNamespace(id=123)
+    photo = SimpleNamespace(
+        id=124,
+        width=1920,
+        height=1080,
+        photographer="Photographer",
+        photographer_url="https://example.com/photographer",
+        url="https://example.com/photo",
+        alt="Residential street",
+    )
+    pexels = MagicMock()
+    pexels.search.side_effect = lambda **kwargs: SimpleNamespace(
+        photos=[excluded] if len(kwargs["query"].split()) > 2 else [excluded, photo]
+    )
+    pexels.download_photo.side_effect = lambda _photo, path, size: path.write_bytes(b"stock")
+
+    with patch("btcedu.services.pexels_service.PexelsService", return_value=pexels):
+        entry = _generate_pexels_fallback(
+            chapter, tmp_path, settings, beat_index=1, query=query, exclude_ids=frozenset({123})
+        )
+
+    assert entry.metadata["pexels_id"] == 124
+    assert entry.metadata["beat_index"] == 1
+    assert pexels.search.call_count == (3 if len(query.split()) > 2 else 1)
+    assert all(call.kwargs["per_page"] == 2 for call in pexels.search.call_args_list)
+    assert pexels.download_photo.call_args.args[0] is photo

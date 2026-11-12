@@ -324,21 +324,33 @@ def _generate_pexels_fallback(
     """Download one attributed stock photo when a generative provider is unavailable.
 
     A presenter block searches with its own English image prompt and skips
-    photos the chapter already shows.
+    photos the chapter already shows. Empty searches retry with the leading
+    four, then two subject words, without substituting an unrelated topic.
     """
     from btcedu.core.stock_images import _derive_search_query
     from btcedu.services.pexels_service import PexelsService
 
     service = PexelsService(api_key=settings.pexels_api_key)
     query = query or _derive_search_query(chapter, domain_tag="news")
-    result = service.search(
-        query=query,
-        per_page=len(exclude_ids) + 1,
-        orientation=settings.pexels_orientation,
-    )
-    photo = next((p for p in result.photos if p.id not in exclude_ids), None)
-    if photo is None:
-        raise RuntimeError(f"Pexels returned no fallback image for query {query!r}")
+    words = query.split()
+    queries = [query]
+    queries.extend(" ".join(words[:length]) for length in (4, 2) if len(words) > length)
+    for query in queries:
+        result = service.search(
+            query=query,
+            per_page=len(exclude_ids) + 1,
+            orientation=settings.pexels_orientation,
+        )
+        photo = next((p for p in result.photos if p.id not in exclude_ids), None)
+        if photo is not None:
+            break
+        logger.info(
+            "Pexels query %r returned no unused photo for chapter %s",
+            query,
+            chapter.chapter_id,
+        )
+    else:
+        raise RuntimeError(f"Pexels returned no fallback image for queries {queries!r}")
 
     suffix = f"_b{beat_index}" if beat_index else ""
     filename = f"{chapter.chapter_id}_{_slugify_filename_part(chapter.title)}{suffix}_pexels.jpg"

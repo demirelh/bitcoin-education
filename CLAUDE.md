@@ -78,6 +78,9 @@ pointing at a file that was never written.
 Pexels search retries timeouts and connection failures within its three-attempt
 budget. If fallback still fails, imagegen reports that terminal error rather
 than the earlier generative-provider failure.
+An empty imagegen fallback search retries the same leading subject terms at
+four, then two words (at most three queries), retaining photo exclusions and
+crediting the successful query. Exhausted searches still fail the stage.
 With `imagegen.free_media_first` (`tagesschau_tr`), a `b_roll` chapter first
 gets a freely licensed photograph from the curated collection or a Wikidata
 portrait (`core/free_media.py`, same rights check as the newsroom): a place or

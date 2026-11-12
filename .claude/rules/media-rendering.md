@@ -13,6 +13,7 @@ paths:
 # Media & Rendering Rules
 
 - imagegen dispatch is profile-owned: tagesschau_tr uses Flux/Ideogram with Pexels fallback, not Gemini frame editing. Pexels search retries transport failures within three attempts; terminal fallback errors must not be masked by the earlier generative-provider error.
+- Empty imagegen fallback searches try the leading four, then two subject words (at most three queries), retaining photo exclusions and recording the successful query. Provider errors propagate; exhausted searches still fail.
 - Gemini frame editor: translates German text overlays to Turkish on extracted video frames
 - ElevenLabs TTS: raw HTTP (not SDK), retry logic, text chunking for long narrations
 - ffmpeg rendering: per-chapter segments → concat → draft.mp4
